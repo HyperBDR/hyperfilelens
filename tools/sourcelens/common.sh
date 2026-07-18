@@ -24,6 +24,8 @@ SOURCELENS_COMPOSE=()
 
 # shellcheck source=../lib/logging.sh
 source "${HFL_ROOT}/tools/lib/logging.sh"
+# shellcheck source=../lib/docker-images.sh
+source "${HFL_ROOT}/tools/lib/docker-images.sh"
 sourcelens_log() { hfl_log_info "$@"; }
 sourcelens_die() { hfl_die "$1" "${2:-1}"; }
 
@@ -57,6 +59,13 @@ sourcelens_load_config() {
 	SOURCELENS_PIP_RETRY_MAX="${SOURCELENS_PIP_RETRY_MAX:-${HFL_PIP_RETRY_MAX:-${BUILD_PIP_RETRY_MAX:-5}}}"
 	SOURCELENS_PIP_RETRY_DELAY="${SOURCELENS_PIP_RETRY_DELAY:-${HFL_PIP_RETRY_DELAY:-${BUILD_PIP_RETRY_DELAY:-5}}}"
 	SOURCELENS_NPM_REGISTRY="${SOURCELENS_NPM_REGISTRY:-${NPM_REGISTRY:-${BUILD_NPM_REGISTRY:-}}}"
+	SOURCELENS_DOCKER_MIRROR="${SOURCELENS_DOCKER_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
+	SOURCELENS_DOCKER_PULL_TIMEOUT="${SOURCELENS_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
+	SOURCELENS_DOCKER_PULL_RETRIES="${SOURCELENS_DOCKER_PULL_RETRIES:-${DOCKER_PULL_RETRIES:-2}}"
+	SOURCELENS_OFFLINE="${SOURCELENS_OFFLINE:-${DEV_OFFLINE:-0}}"
+	SOURCELENS_FORCE_PULL="${SOURCELENS_FORCE_PULL:-0}"
+	SOURCELENS_GIT_TIMEOUT_SECONDS="${SOURCELENS_GIT_TIMEOUT_SECONDS:-120}"
+	SOURCELENS_GIT_RETRIES="${SOURCELENS_GIT_RETRIES:-2}"
 }
 
 sourcelens_resolve_version() {
@@ -151,6 +160,32 @@ sourcelens_git() {
 	fi
 }
 
+sourcelens_git_network() {
+	local attempt timeout_seconds="${SOURCELENS_GIT_TIMEOUT_SECONDS}" retries="${SOURCELENS_GIT_RETRIES}"
+	local clone_dest=""
+	[[ "${1:-}" != "clone" ]] || clone_dest="${!#}"
+	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ && "${retries}" =~ ^[1-9][0-9]*$ ]] \
+		|| sourcelens_die "SourceLens Git timeout and retries must be positive integers" 2
+	for attempt in $(seq 1 "${retries}"); do
+		if [[ -n "${clone_dest}" && "${attempt}" -gt 1 ]]; then
+			rm -rf "${clone_dest}"
+		fi
+		if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+			if timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=https://github.com/" \
+				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=git@github.com:" "$@"; then
+				return 0
+			fi
+		elif timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+			-c "url.https://github.com/.insteadOf=https://github.com/" "$@"; then
+			return 0
+		fi
+		sourcelens_log "SourceLens Git command failed or timed out (attempt ${attempt}/${retries})"
+	done
+	[[ -z "${clone_dest}" ]] || rm -rf "${clone_dest}"
+	return 1
+}
+
 sourcelens_image_exists() {
 	docker image inspect "$1" >/dev/null 2>&1
 }
@@ -190,7 +225,14 @@ try:
         with tarfile.open(fileobj=gz, mode="r:") as tar:
             member = tar.getmember("index.json")
             data = json.load(tar.extractfile(member))
-except (OSError, KeyError, json.JSONDecodeError, tarfile.TarError):
+except (
+    EOFError,
+    OSError,
+    KeyError,
+    gzip.BadGzipFile,
+    json.JSONDecodeError,
+    tarfile.TarError,
+):
     sys.exit(0)
 
 manifests = data.get("manifests") or []
@@ -223,6 +265,26 @@ sourcelens_ensure_shared_network() {
 	docker network create "${SOURCELENS_SHARED_NETWORK}" >/dev/null
 }
 
+sourcelens_ensure_tls_certs() {
+	local cert_dir=$1
+	local cert="${cert_dir}/tls.crt"
+	local key="${cert_dir}/tls.key"
+	mkdir -p "${cert_dir}"
+	if [[ -s "${cert}" && -s "${key}" ]]; then
+		return 0
+	fi
+	command -v openssl >/dev/null 2>&1 \
+		|| sourcelens_die "openssl is required to generate SourceLens TLS certificates"
+	sourcelens_log "Generating SourceLens development TLS certificates in ${cert_dir#${HFL_ROOT}/}"
+	openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+		-keyout "${key}" \
+		-out "${cert}" \
+		-subj "/CN=localhost" \
+		-addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1" 2>/dev/null
+	chmod 644 "${cert}"
+	chmod 600 "${key}"
+}
+
 sourcelens_sync_source() {
 	command -v git >/dev/null 2>&1 || sourcelens_die "git not found (required to fetch SourceLens)"
 	if sourcelens_git_needs_github_token && [[ -z "${GITHUB_TOKEN:-}" ]]; then
@@ -235,9 +297,12 @@ sourcelens_sync_source() {
 		sourcelens_log "Removing incomplete SourceLens clone at ${SOURCELENS_SOURCE_CACHE#${HFL_ROOT}/}"
 		rm -rf "${SOURCELENS_SOURCE_CACHE}"
 	fi
+	if [[ "${SOURCELENS_OFFLINE}" -eq 1 && ! -d "${SOURCELENS_SOURCE_CACHE}/.git" ]]; then
+		sourcelens_die "SourceLens source cache is missing and offline mode forbids cloning"
+	fi
 	if [[ ! -d "${SOURCELENS_SOURCE_CACHE}/.git" ]]; then
 		sourcelens_log "Cloning ${SOURCELENS_GIT_URL} (${SOURCELENS_GIT_REF})..."
-		sourcelens_git clone "${SOURCELENS_GIT_URL}" "${SOURCELENS_SOURCE_CACHE}"
+		sourcelens_git_network clone "${SOURCELENS_GIT_URL}" "${SOURCELENS_SOURCE_CACHE}"
 	fi
 	git -C "${SOURCELENS_SOURCE_CACHE}" reset --hard HEAD >/dev/null
 	rm -f "${SOURCELENS_SOURCE_CACHE}/.hfl-built-commit"
@@ -249,7 +314,10 @@ sourcelens_sync_source() {
 	sourcelens_log "Checking out SourceLens ref ${SOURCELENS_GIT_REF}..."
 	(
 		cd "${SOURCELENS_SOURCE_CACHE}"
-		if sourcelens_git fetch origin --tags --prune; then
+		if [[ "${SOURCELENS_OFFLINE}" -eq 1 ]]; then
+			fetch_succeeded=0
+			sourcelens_log "Offline mode: using the existing SourceLens source cache"
+		elif sourcelens_git_network fetch origin --tags --prune; then
 			fetch_succeeded=1
 		else
 			fetch_succeeded=0
@@ -258,14 +326,18 @@ sourcelens_sync_source() {
 		if sourcelens_git show-ref --verify --quiet "refs/heads/${SOURCELENS_GIT_REF}"; then
 			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 			if [[ "${fetch_succeeded}" -eq 1 ]]; then
-				sourcelens_git pull --ff-only origin "${SOURCELENS_GIT_REF}" || true
+				sourcelens_git_network pull --ff-only origin "${SOURCELENS_GIT_REF}" || true
 			fi
 		elif sourcelens_git show-ref --verify --quiet "refs/tags/${SOURCELENS_GIT_REF}"; then
 			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		else
 			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		fi
-		sourcelens_git submodule update --init --recursive
+		if [[ "${SOURCELENS_OFFLINE}" -eq 1 ]]; then
+			sourcelens_git submodule update --init --recursive --no-fetch
+		else
+			sourcelens_git_network submodule update --init --recursive
+		fi
 	)
 	# shellcheck source=sourcelens-lensnode-patch.sh
 	source "${HFL_ROOT}/tools/sourcelens/lensnode-patch.sh"
@@ -638,6 +710,38 @@ path.write_text("".join(out), encoding="utf-8")
 PY
 }
 
+sourcelens_patch_compose_npm_registry() {
+	local src=$1
+	local compose="${src}/docker-compose.yml"
+	[[ -f "${compose}" ]] || return 0
+	python3 - "${compose}" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+pattern = re.compile(
+    r"(?ms)(^  frontend:\n.*?^    build:\n.*?^      args:\n)(.*?)(?=^    \S)"
+)
+matches = list(pattern.finditer(text))
+if len(matches) != 1:
+    raise SystemExit(
+        f"expected one frontend build args block in {path}, found {len(matches)}"
+    )
+
+match = matches[0]
+args = match.group(2)
+line = "        NPM_REGISTRY: ${NPM_REGISTRY:-}\n"
+if re.search(r"(?m)^        NPM_REGISTRY:.*$", args):
+    args = re.sub(r"(?m)^        NPM_REGISTRY:.*$", line.rstrip(), args, count=1)
+else:
+    args = args.rstrip("\n") + "\n" + line
+text = text[: match.start(2)] + args + text[match.end(2) :]
+path.write_text(text, encoding="utf-8")
+PY
+}
+
 sourcelens_distribution_image_ref() {
 	local component=$1 tag="${2:-${SOURCELENS_VERSION}}"
 	local repository="sourcelens-${component}"
@@ -712,9 +816,28 @@ sourcelens_publish_gateway_lensnode_bundle() {
 	local refs=()
 
 	mkdir -p "${dest_dir}"
+	command -v flock >/dev/null 2>&1 \
+		|| sourcelens_die "flock is required for atomic LensNode bundle publishing"
 
 	if [[ -n "${source_archive}" && -f "${source_archive}" ]]; then
-		cp -f "${source_archive}" "${dest}"
+		(
+			local temporary="${dest}.tmp.$$"
+			exec 9>"${dest}.lock"
+			flock 9
+			trap 'rm -f "${temporary}"' EXIT INT TERM
+			# Release staging exposes the same LensNode archive at two public paths.
+			# A hard link keeps both contracts without storing the 250+ MiB blob
+			# twice; copying remains the safe fallback across filesystems.
+			if ! ln "${source_archive}" "${temporary}" 2>/dev/null; then
+				cp "${source_archive}" "${temporary}"
+			fi
+			gzip -t "${temporary}"
+			[[ -n "$(sourcelens_gateway_lensnode_bundle_image_id "${temporary}")" ]] \
+				|| sourcelens_die "source LensNode archive is missing a valid Docker image index"
+			chmod 0644 "${temporary}"
+			mv -f "${temporary}" "${dest}"
+			trap - EXIT INT TERM
+		)
 		sourcelens_log "Published gateway LensNode bundle -> ${dest#${HFL_ROOT}/}"
 		return 0
 	fi
@@ -753,21 +876,48 @@ sourcelens_publish_gateway_lensnode_bundle() {
 		sourcelens_die "LensNode image ${primary_ref} lacks HFL TLS bypass (lensnode.tls); rebuild SourceLens app images first"
 	fi
 
-	sourcelens_log "Saving gateway LensNode bundle -> ${dest#${HFL_ROOT}/}"
-	docker save "${refs[@]}" | gzip -c >"${dest}"
+	sourcelens_log "Saving gateway LensNode bundle atomically -> ${dest#${HFL_ROOT}/}"
+	(
+		local temporary="${dest}.tmp.$$"
+		exec 9>"${dest}.lock"
+		flock 9
+		trap 'rm -f "${temporary}"' EXIT INT TERM
+		docker save "${refs[@]}" | gzip -c >"${temporary}"
+		gzip -t "${temporary}"
+		local exported_id
+		exported_id="$(sourcelens_gateway_lensnode_bundle_image_id "${temporary}")"
+		[[ -n "${exported_id}" && "${exported_id}" == "$(sourcelens_lensnode_image_id "${primary_ref}")" ]] \
+			|| sourcelens_die "exported LensNode archive failed image identity validation"
+		chmod 0644 "${temporary}"
+		mv -f "${temporary}" "${dest}"
+		trap - EXIT INT TERM
+	)
 	bundle_id="$(sourcelens_gateway_lensnode_bundle_image_id "${dest}")"
 	sourcelens_log "Published gateway LensNode bundle ($(du -h "${dest}" | awk '{print $1}'), ${bundle_id:-unknown id})"
 }
 
 sourcelens_build_app_images() {
 	local force=${1:-0}
+	local no_cache=${2:-0}
+	local requested_services="${SOURCELENS_BUILD_SERVICES:-backend-api frontend lensnode}"
+	local full_build=1
+	if [[ "${requested_services}" != "backend-api frontend lensnode" ]]; then
+		full_build=0
+		local service
+		for service in ${requested_services}; do
+			case "${service}" in
+			backend-api | frontend | lensnode) ;;
+			*) sourcelens_die "unsupported SourceLens build service: ${service}" 2 ;;
+			esac
+		done
+	fi
 	sourcelens_ensure_compose
-	if [[ "${force}" -eq 0 ]] && sourcelens_build_skippable; then
+	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 ]] && sourcelens_build_skippable; then
 		sourcelens_log "SourceLens app images already built for source stamp $(sourcelens_read_built_commit); skipping compose build"
 		sourcelens_tag_lensnode_alias
 		return 0
 	fi
-	if [[ "${force}" -eq 0 \
+	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 \
 		&& "$(sourcelens_read_built_commit)" == "$(sourcelens_current_build_stamp)" ]] \
 		&& sourcelens_upstream_images_ready; then
 		sourcelens_log "SourceLens upstream images match the build stamp; applying normalized distribution tags"
@@ -775,7 +925,7 @@ sourcelens_build_app_images() {
 		sourcelens_tag_lensnode_alias
 		return 0
 	fi
-	if [[ "${force}" -eq 0 ]] && sourcelens_app_images_ready; then
+	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 ]] && sourcelens_app_images_ready; then
 		sourcelens_log "SourceLens app images present but source commit changed; rebuilding"
 	fi
 
@@ -826,8 +976,17 @@ sourcelens_build_app_images() {
 		sourcelens_log "Using SourceLens pip resilience: BuildKit uv/pip cache + retry max=${SOURCELENS_PIP_RETRY_MAX} delay=${SOURCELENS_PIP_RETRY_DELAY}s"
 		sourcelens_log "Using SourceLens uv network: timeout=${UV_HTTP_TIMEOUT}s concurrent=${UV_CONCURRENT_DOWNLOADS} (uv retries=default)"
 		sourcelens_log "Using SourceLens npm registry: ${NPM_REGISTRY}"
-		DOCKER_BUILDKIT=1 "${SOURCELENS_COMPOSE[@]}" build backend-api frontend lensnode
+		local -a build_args=(build)
+		[[ "${no_cache}" -eq 1 ]] && build_args+=(--no-cache)
+		# shellcheck disable=SC2206
+		local -a services=(${requested_services})
+		build_args+=("${services[@]}")
+		DOCKER_BUILDKIT=1 "${SOURCELENS_COMPOSE[@]}" "${build_args[@]}"
 	)
+	if [[ "${full_build}" -eq 0 ]]; then
+		sourcelens_log "Built requested SourceLens service(s): ${requested_services}"
+		return 0
+	fi
 	sourcelens_tag_app_images_latest
 	sourcelens_tag_lensnode_alias
 	sourcelens_write_built_commit "$(sourcelens_current_build_stamp)"
@@ -835,10 +994,26 @@ sourcelens_build_app_images() {
 
 sourcelens_ensure_nginx_image() {
 	local force_pull=${1:-0}
-	if [[ "${force_pull}" -eq 1 ]] || ! sourcelens_image_exists "nginx:stable-alpine"; then
-		sourcelens_log "Pulling nginx:stable-alpine for SourceLens edge proxy..."
-		docker pull nginx:stable-alpine
+	sourcelens_ensure_runtime_image "nginx:stable-alpine" "${force_pull}"
+}
+
+sourcelens_ensure_runtime_image() {
+	local image=$1 force_pull=${2:-${SOURCELENS_FORCE_PULL}}
+	sourcelens_log "Resolving runtime image ${image} (offline=${SOURCELENS_OFFLINE}, force_pull=${force_pull})"
+	if ! hfl_docker_ensure_image "${image}" "${SOURCELENS_DOCKER_MIRROR}" \
+		"${force_pull}" "${SOURCELENS_OFFLINE}" "${SOURCELENS_DOCKER_PLATFORM}" \
+		"${SOURCELENS_DOCKER_PULL_TIMEOUT}" "${SOURCELENS_DOCKER_PULL_RETRIES}"; then
+		sourcelens_die "unable to prepare ${image}: ${HFL_DOCKER_LAST_ERROR}"
 	fi
+	sourcelens_log "Runtime image ${image} ready (source=${HFL_DOCKER_IMAGE_SOURCE})"
+}
+
+sourcelens_ensure_runtime_images() {
+	local force_pull=${1:-${SOURCELENS_FORCE_PULL}}
+	local image
+	for image in nginx:stable-alpine postgres:17 redis:alpine; do
+		sourcelens_ensure_runtime_image "${image}" "${force_pull}"
+	done
 }
 
 sourcelens_patch_env_runtime_defaults() {
@@ -890,6 +1065,16 @@ if target not in text and not any(source in text for source in sources):
     raise SystemExit(f"SourceLens UI upstream declaration not found in {path}")
 for source in sources:
     text = text.replace(source, target)
+text = text.replace(
+    "/etc/nginx/certs/nginx-selfsigned.crt",
+    "/etc/nginx/certs/tls.crt",
+)
+text = text.replace(
+    "/etc/nginx/certs/nginx-selfsigned.key",
+    "/etc/nginx/certs/tls.key",
+)
+if "/etc/nginx/certs/tls.crt" not in text or "/etc/nginx/certs/tls.key" not in text:
+    raise SystemExit(f"SourceLens TLS certificate declarations not found in {path}")
 path.write_text(text, encoding="utf-8")
 PY
 }
@@ -970,12 +1155,12 @@ sourcelens_prepare_dev_runtime_tree() {
 	[[ -f "${nginx_config}" ]] \
 		|| sourcelens_die "missing SourceLens nginx config: ${nginx_config}"
 
-	mkdir -p "${dev_root}/deploy/nginx/certs" "${dev_root}/deploy/postgresql"
+	mkdir -p "${dev_root}/deploy/nginx" "${dev_root}/deploy/postgresql"
 	cp "${nginx_config}" "${dev_root}/deploy/nginx/default.conf"
 	sourcelens_patch_runtime_nginx "${dev_root}/deploy/nginx/default.conf"
-	if [[ -d "${src}/docker/nginx/certs" ]]; then
-		rsync -a "${src}/docker/nginx/certs/" "${dev_root}/deploy/nginx/certs/"
-	fi
+	sourcelens_ensure_tls_certs "${HFL_ROOT}/deploy/nginx/certs"
+	rm -rf "${dev_root}/deploy/nginx/certs"
+	ln -s "${HFL_ROOT}/deploy/nginx/certs" "${dev_root}/deploy/nginx/certs"
 	if [[ -d "${src}/docker/postgresql" ]]; then
 		rsync -a "${src}/docker/postgresql/" "${dev_root}/deploy/postgresql/"
 	fi

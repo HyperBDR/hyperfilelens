@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:ci": "vitest run --testTimeout=15000",
     "preview": "vite preview"
   },
   "dependencies": {

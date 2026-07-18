@@ -18,6 +18,7 @@ x-backend-volumes: &backend-volumes
 
 x-backend-image: &backend-image
   image: hyperfilelens-backend:dev
+  pull_policy: never
   platform: linux/amd64
   env_file:
     - ./.env
@@ -124,6 +125,7 @@ services:
 
   postgres:
     image: postgres:17
+    pull_policy: never
     # Official PostgreSQL image; pin a distribution variant when required.
     env_file:
       - ./.env
@@ -150,6 +152,7 @@ services:
 
   redis:
     image: redis:alpine
+    pull_policy: never
     volumes:
       - ./data/redis:/data
     healthcheck:
@@ -165,6 +168,7 @@ services:
 
   ui:
     image: hyperfilelens-frontend:dev
+    pull_policy: never
     env_file:
       - ./.env
     extra_hosts:
@@ -201,6 +205,7 @@ services:
 
   nginx:
     image: nginx:stable-alpine
+    pull_policy: never
     depends_on:
       api:
         condition: service_healthy

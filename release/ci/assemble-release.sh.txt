@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+prefix=${1:?Usage: assemble-release.sh hyperfilelens-X.Y.Z-XXXXXXX.tar.gz}
+cat "${prefix}.part-"* >"${prefix}"
+sha256sum -c SHA256SUMS

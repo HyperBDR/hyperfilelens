@@ -2,6 +2,7 @@
 # Compile HyperFileLens Agent source only (Go cross-build).
 # Does not fetch runtime resources, run tests, or assemble distribution archives.
 set -euo pipefail
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

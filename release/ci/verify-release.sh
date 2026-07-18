@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Validate a final release asset and optionally perform a full ephemeral install.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+install=0
+archive=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--archive) archive=${2:-}; shift 2 ;;
+	--install) install=1; shift ;;
+	*) printf 'ERROR: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+	esac
+done
+[[ -s "${archive}" ]] || { printf 'ERROR: release archive is missing\n' >&2; exit 2; }
+gzip -t "${archive}"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+tar -xzf "${archive}" -C "${tmp}"
+pkg_root="$(find "${tmp}" -mindepth 1 -maxdepth 1 -type d -name 'hyperfilelens-*' -print -quit)"
+[[ -n "${pkg_root}" && -s "${pkg_root}/MANIFEST.json" ]] || {
+	printf 'ERROR: invalid release package layout\n' >&2
+	exit 1
+}
+
+python3 - "${pkg_root}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "MANIFEST.json").read_text(encoding="utf-8"))
+for image in manifest.get("images", []):
+    path = root / image["file"]
+    if not path.is_file():
+        raise SystemExit(f"missing image archive: {image['file']}")
+    checksum = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            checksum.update(chunk)
+    digest = checksum.hexdigest()
+    if digest != image.get("sha256"):
+        raise SystemExit(f"image checksum mismatch: {image['file']}")
+print(f"verified {len(manifest.get('images', []))} image archives")
+PY
+
+while IFS= read -r image_archive; do
+	gzip -t "${image_archive}"
+done < <(find "${pkg_root}/images" -maxdepth 1 -type f -name '*.tar.gz' | sort)
+"${ROOT}/tools/quality/check-release-contracts.sh"
+
+if [[ "${install}" -ne 1 ]]; then
+	printf 'Release structure verification passed: %s\n' "${archive}"
+	exit 0
+fi
+
+available_kib="$(df -Pk / | awk 'NR == 2 {print $4}')"
+((available_kib >= 8 * 1024 * 1024)) || {
+	printf 'ERROR: full install verification requires at least 8 GiB free\n' >&2
+	exit 1
+}
+
+sudo env HFL_PUBLIC_HOST=127.0.0.1 HFL_SHOW_GENERATED_CREDENTIALS=0 \
+	bash "${pkg_root}/install.sh" install
+
+deadline=$((SECONDS + 600))
+while ((SECONDS < deadline)); do
+	if curl -kfsS https://127.0.0.1:10443/health/ready >/dev/null \
+		&& curl -kfsS https://127.0.0.1:10444/ >/dev/null \
+		&& curl -kfsS https://127.0.0.1:10446/ >/dev/null; then
+		break
+	fi
+	sleep 5
+done
+((SECONDS < deadline)) || {
+	docker compose -f /opt/hyperfilelens/docker-compose.yml --env-file /opt/hyperfilelens/.env ps || true
+	printf 'ERROR: release services did not become ready\n' >&2
+	exit 1
+}
+
+export HFL_TENANT_PORT=10443
+export HFL_ADMIN_PORT=10444
+export SOURCELENS_CONSOLE_PORT=10446
+export SEED_ADMIN_EMAIL
+export SEED_ADMIN_PASSWORD
+SEED_ADMIN_EMAIL="$(sed -n 's/^SEED_ADMIN_EMAIL=//p' /opt/hyperfilelens/.env | head -1)"
+SEED_ADMIN_PASSWORD="$(sed -n 's/^SEED_ADMIN_PASSWORD=//p' /opt/hyperfilelens/.env | head -1)"
+export SMOKE_REQUIRE_HMR=0
+export SMOKE_SOURCELENS_ENV_FILE=/opt/hyperfilelens/data/sourcelens/config/.env
+"${ROOT}/tools/dev/browser-smoke.sh"
+printf 'Full release install and login verification passed\n'

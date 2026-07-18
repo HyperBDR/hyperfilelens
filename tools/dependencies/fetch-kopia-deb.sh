@@ -8,6 +8,7 @@
 #   ./tools/dependencies/fetch-kopia-deb.sh --kopia-version 0.23.0 --github-download-mirror https://ghfast.top
 #
 set -euo pipefail
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

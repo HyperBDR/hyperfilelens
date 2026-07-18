@@ -11,6 +11,7 @@
 #   ./tools/agent/publish.sh --version 0.1.0
 #
 set -euo pipefail
+umask 022
 
 DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 
@@ -32,6 +33,7 @@ Options:
   --ubuntu2404-arch ARCH           NAS deb arch when --bundle is all or ubuntu2404: amd64 | arm64 | all
                                    (env: AGENT_UBUNTU2404_ARCH; default: amd64)
   --force-fetch                    Re-download fetch-deps.sh inputs (--force)
+  --pull                           Refresh the NAS Ubuntu image instead of using a matching local image
   --releases-dir DIR               Publish target (default: data/media/agent-releases; env: AGENT_RELEASES_DIR)
 
 Build (passed to build.sh):
@@ -43,6 +45,7 @@ Fetch (passed to fetch-deps.sh):
   --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for NAS ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
+  --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
 
 Output:
@@ -79,6 +82,7 @@ BUILD_DIR="${ROOT}/build/agent"
 DEFAULT_RELEASES_DIR="${ROOT}/data/media/agent-releases"
 BUNDLE="${AGENT_BUNDLE:-all}"
 FORCE_FETCH=0
+FORCE_PULL=0
 UBUNTU2404_ARCH="${AGENT_UBUNTU2404_ARCH:-amd64}"
 MATRIX="${AGENT_MATRIX:-${DEFAULT_MATRIX}}"
 OPT_VERSION=""
@@ -91,6 +95,7 @@ OPT_GO_SUMDB=""
 OPT_GITHUB_DOWNLOAD_MIRROR=""
 OPT_GITHUB_TOKEN=""
 OPT_DOCKER_DOWNLOAD_MIRROR=""
+OPT_DOCKER_PULL_TIMEOUT=""
 OPT_APT_MIRROR=""
 OPT_KOPIA_VERSION=""
 LOG_FILE="${HFL_LOG_FILE:-}"
@@ -111,6 +116,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--force-fetch | --refresh-kopia-cache)
 		FORCE_FETCH=1
+		shift
+		;;
+	--pull)
+		FORCE_PULL=1
 		shift
 		;;
 	--matrix)
@@ -161,6 +170,11 @@ while [[ $# -gt 0 ]]; do
 	--docker-download-mirror)
 		require_value "$1" "${2:-}"
 		OPT_DOCKER_DOWNLOAD_MIRROR="$2"
+		shift 2
+		;;
+	--docker-pull-timeout)
+		require_value "$1" "${2:-}"
+		OPT_DOCKER_PULL_TIMEOUT="$2"
 		shift 2
 		;;
 	--apt-mirror)
@@ -222,6 +236,9 @@ esac
 GITHUB_DOWNLOAD_MIRROR="${OPT_GITHUB_DOWNLOAD_MIRROR:-${GITHUB_DOWNLOAD_MIRROR:-}}"
 GITHUB_TOKEN="${OPT_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 DOCKER_DOWNLOAD_MIRROR="${OPT_DOCKER_DOWNLOAD_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
+DOCKER_PULL_TIMEOUT_SECONDS="${OPT_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
+[[ "${DOCKER_PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] \
+	|| hfl_die "DOCKER_PULL_TIMEOUT_SECONDS must be a positive integer" 2
 APT_MIRROR="${OPT_APT_MIRROR:-${APT_MIRROR:-}}"
 # shellcheck source=../dependencies/versions/kopia.env
 source "${ROOT}/tools/dependencies/versions/kopia.env"
@@ -264,12 +281,14 @@ ubuntu2404_arch=${UBUNTU2404_ARCH}
 build_dir=${BUILD_DIR}/${VERSION}
 releases_dir=${RELEASES_DIR}
 force_fetch=${FORCE_FETCH}
+force_pull=${FORCE_PULL}
 kopia_version=${KOPIA_VERSION}
 go_proxy=${GO_PROXY:-<official>}
 go_sumdb=${GO_SUMDB:-<official>}
 github_download_mirror=${GITHUB_DOWNLOAD_MIRROR:-<official>}
 github_token=$(hfl_redact "${GITHUB_TOKEN}")
 docker_download_mirror=${DOCKER_DOWNLOAD_MIRROR:-<official>}
+docker_pull_timeout_seconds=${DOCKER_PULL_TIMEOUT_SECONDS}
 apt_mirror=${APT_MIRROR:-<official>}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
@@ -360,6 +379,9 @@ fetch_common_args+=(--kopia-version "${KOPIA_VERSION}")
 if [[ "${FORCE_FETCH}" -eq 1 ]]; then
 	fetch_common_args+=(--force)
 fi
+if [[ "${FORCE_PULL}" -eq 1 ]]; then
+	fetch_common_args+=(--pull)
+fi
 if [[ -n "${GITHUB_DOWNLOAD_MIRROR}" ]]; then
 	fetch_common_args+=(--github-download-mirror "${GITHUB_DOWNLOAD_MIRROR}")
 fi
@@ -369,6 +391,7 @@ fi
 if [[ -n "${DOCKER_DOWNLOAD_MIRROR}" ]]; then
 	fetch_common_args+=(--docker-download-mirror "${DOCKER_DOWNLOAD_MIRROR}")
 fi
+fetch_common_args+=(--docker-pull-timeout "${DOCKER_PULL_TIMEOUT_SECONDS}")
 if [[ -n "${APT_MIRROR}" ]]; then
 	fetch_common_args+=(--apt-mirror "${APT_MIRROR}")
 fi
@@ -386,6 +409,7 @@ publish_archives() {
 			ubuntu2404_archive_matches "${base}" || continue
 			dest="${RELEASES_DIR}/${VERSION}/${base}"
 			cp -f "${archive}" "${dest}"
+			chmod 644 "${dest}"
 			hfl_log_ok "Published ${base}"
 			published=$((published + 1))
 		done
@@ -400,6 +424,7 @@ publish_archives() {
 			fi
 			dest="${RELEASES_DIR}/${VERSION}/$(basename "${archive}")"
 			cp -f "${archive}" "${dest}"
+			chmod 644 "${dest}"
 			hfl_log_ok "Published $(basename "${dest}")"
 			published=$((published + 1))
 		done
@@ -413,6 +438,7 @@ publish_archives() {
 			fi
 			dest="${RELEASES_DIR}/${VERSION}/$(basename "${archive}")"
 			cp -f "${archive}" "${dest}"
+			chmod 644 "${dest}"
 			hfl_log_ok "Published $(basename "${dest}")"
 			published=$((published + 1))
 
@@ -421,6 +447,7 @@ publish_archives() {
 				if [[ -f "${archive}" ]]; then
 					dest="${RELEASES_DIR}/${VERSION}/$(basename "${archive}")"
 					cp -f "${archive}" "${dest}"
+					chmod 644 "${dest}"
 					hfl_log_ok "Published $(basename "${dest}")"
 					published=$((published + 1))
 				fi
@@ -438,6 +465,8 @@ publish_archives() {
 		cp -f "${BOOTSTRAP_DIR}/${name}" "${dest}"
 		if [[ "${name}" == *.sh ]]; then
 			chmod 755 "${dest}"
+		else
+			chmod 644 "${dest}"
 		fi
 		hfl_log_ok "Published ${name}"
 	done
@@ -489,6 +518,7 @@ publish_archives() {
 	done
 	if [[ -n "${host_debs_dir}" ]]; then
 		tar -czf "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_DEBS_ARCHIVE}" -C "${host_debs_dir}" .
+		chmod 644 "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_DEBS_ARCHIVE}"
 		hfl_log_ok "Published ${GATEWAY_DOCKER_DEBS_ARCHIVE}"
 	else
 		hfl_log_skip "${GATEWAY_DOCKER_DEBS_ARCHIVE}: host debs not found; run release/build.sh or tools/dependencies/fetch-docker-ce-debs.sh"

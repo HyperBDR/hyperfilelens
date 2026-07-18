@@ -27,6 +27,10 @@ Commands:
 
 Options:
   --force-build       Rebuild SourceLens app images even when present locally
+  --pull              Refresh runtime images, with valid local fallback
+  --offline           Forbid registry and SourceLens Git network access
+  --pull-timeout SECONDS  Per-attempt Docker pull timeout
+  --pull-retries COUNT    Docker pull attempts (default: 2)
   --sourcelens-git-url URL  Override SOURCELENS_GIT_URL
   --sourcelens-ref REF      SourceLens release tag in vX.Y.Z form
   --github-token TOKEN  GitHub token for private repo clone/fetch (env: GITHUB_TOKEN)
@@ -67,6 +71,10 @@ frontend_image=$(sourcelens_frontend_image_ref)
 lensnode_image=$(sourcelens_lensnode_image_ref)
 docker_platform=${SOURCELENS_DOCKER_PLATFORM}
 force_build=${FORCE_BUILD}
+offline=${SOURCELENS_OFFLINE}
+force_pull=${SOURCELENS_FORCE_PULL}
+docker_pull_timeout=${SOURCELENS_DOCKER_PULL_TIMEOUT}
+docker_pull_retries=${SOURCELENS_DOCKER_PULL_RETRIES}
 github_token=$(hfl_redact "${GITHUB_TOKEN:-}")
 apt_mirror=${SOURCELENS_APT_MIRROR:-<official>}
 pip_index_url=${SOURCELENS_PIP_INDEX_URL:-<official>}
@@ -93,6 +101,24 @@ parse_args() {
 		--force-build)
 			FORCE_BUILD=1
 			shift
+			;;
+		--pull)
+			SOURCELENS_FORCE_PULL=1
+			shift
+			;;
+		--offline)
+			SOURCELENS_OFFLINE=1
+			shift
+			;;
+		--pull-timeout)
+			require_value "$1" "${2:-}"
+			SOURCELENS_DOCKER_PULL_TIMEOUT="$2"
+			shift 2
+			;;
+		--pull-retries)
+			require_value "$1" "${2:-}"
+			SOURCELENS_DOCKER_PULL_RETRIES="$2"
+			shift 2
 			;;
 		--prepare-only)
 			CMD="prepare"
@@ -164,10 +190,12 @@ require_docker() {
 
 cmd_prepare() {
 	require_docker
+	hfl_docker_validate_pull_settings "${SOURCELENS_DOCKER_PULL_TIMEOUT}" \
+		"${SOURCELENS_DOCKER_PULL_RETRIES}" \
+		|| sourcelens_die "invalid Docker pull timeout/retry settings"
 	sourcelens_sync_source
-	sourcelens_prepare_source_build_env
 	sourcelens_build_app_images "${FORCE_BUILD}"
-	sourcelens_ensure_nginx_image "${FORCE_BUILD}"
+	sourcelens_ensure_runtime_images "${SOURCELENS_FORCE_PULL}"
 	sourcelens_prepare_dev_runtime_tree
 	sourcelens_publish_gateway_lensnode_bundle "${FORCE_BUILD}"
 	sourcelens_configure_hfl_env
@@ -176,7 +204,6 @@ cmd_prepare() {
 cmd_gateway() {
 	require_docker
 	sourcelens_sync_source
-	sourcelens_prepare_source_build_env
 	sourcelens_build_app_images "${FORCE_BUILD}"
 	sourcelens_publish_gateway_lensnode_bundle "${FORCE_BUILD}"
 }
@@ -185,7 +212,7 @@ cmd_up() {
 	cmd_prepare
 	sourcelens_ensure_shared_network
 	sourcelens_log "Starting SourceLens stack (project=${SOURCELENS_COMPOSE_PROJECT})"
-	sourcelens_dev_compose up -d --pull never --force-recreate --remove-orphans
+	sourcelens_dev_compose up -d --pull never --remove-orphans
 	sourcelens_ensure_database_initialized
 	if command -v curl >/dev/null 2>&1; then
 		sourcelens_wait_for_health || true

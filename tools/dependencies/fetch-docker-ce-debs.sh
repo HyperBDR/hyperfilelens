@@ -7,6 +7,7 @@
 #   ./tools/dependencies/fetch-docker-ce-debs.sh --apt-mirror URL --docker-apt-mirror URL
 #
 set -euo pipefail
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

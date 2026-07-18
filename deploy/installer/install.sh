@@ -13,6 +13,8 @@ LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
 SESSION_STARTED=0
+PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"
+SHOW_GENERATED_CREDENTIALS="${HFL_SHOW_GENERATED_CREDENTIALS:-auto}"
 
 usage() {
 	cat <<'USAGE'
@@ -144,6 +146,8 @@ install_dir=${INSTALL_DIR}
 sourcelens_install_dir=${SOURCELENS_INSTALL_DIR}
 upgrade_tmp=${UPGRADE_TMP}
 bridge_network=${HFL_BRIDGE_NETWORK}
+public_host=${PUBLIC_HOST:-<auto>}
+show_generated_credentials=${SHOW_GENERATED_CREDENTIALS}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
 EOF
@@ -540,6 +544,19 @@ sync_runtime_media() {
 	[[ -d "${packaged_media}" ]] || return 0
 	mkdir -p "${ROOT}/data/media"
 	rsync -a "${packaged_media}/" "${ROOT}/data/media/"
+	local dir
+	for dir in agent-releases enroll-bootstrap gateway-bootstrap; do
+		[[ -d "${ROOT}/data/media/${dir}" ]] || continue
+		find "${ROOT}/data/media/${dir}" -type d -exec chmod 755 {} +
+		find "${ROOT}/data/media/${dir}" -type f -exec chmod 644 {} +
+	done
+	find "${ROOT}/data/media/agent-releases" -type f -name '*.sh' \
+		-exec chmod 755 {} + 2>/dev/null || true
+	if [[ -d "${ROOT}/data/media/enroll-bootstrap" ]]; then
+		find "${ROOT}/data/media/enroll-bootstrap" -type f -exec chmod 755 {} +
+	fi
+	find "${ROOT}/data/media/gateway-bootstrap" -type f -name '*.sh' \
+		-exec chmod 755 {} + 2>/dev/null || true
 }
 
 ensure_tls_certs() {
@@ -589,7 +606,10 @@ ensure_env_file() {
 	secret="$(random_hex)"
 	db_pass="$(random_hex | cut -c1-32)"
 	admin_pass="Hfl-0$(random_hex | cut -c1-20)!"
-	host="$(hostname -I 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if (!found && $i ~ /^[0-9]+\./) { print $i; found = 1 } }' || true)"
+	host="${PUBLIC_HOST}"
+	if [[ -z "${host}" ]]; then
+		host="$(hostname -I 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if (!found && $i ~ /^[0-9]+\./) { print $i; found = 1 } }' || true)"
+	fi
 	[[ -n "${host}" ]] || host="127.0.0.1"
 
 	step "Creating .env from .env.example ..."
@@ -661,14 +681,77 @@ stack_containers_present() {
 	[[ "${count}" -gt 0 ]]
 }
 
+wait_for_hfl_health() {
+	local timeout_seconds="${HFL_HEALTH_TIMEOUT_SECONDS:-600}"
+	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || die "HFL_HEALTH_TIMEOUT_SECONDS must be positive"
+	local tenant_port
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=10443
+	local deadline=$((SECONDS + timeout_seconds))
+	local -a services=(postgres redis worker scheduler api nginx)
+	step "Waiting for HyperFileLens health checks (timeout ${timeout_seconds}s) ..."
+	while ((SECONDS < deadline)); do
+		local ready=1 service cid status
+		for service in "${services[@]}"; do
+			cid="$(compose_in_root ps -q "${service}" 2>/dev/null | head -1)"
+			if [[ -z "${cid}" ]]; then
+				ready=0
+				break
+			fi
+			status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
+			if [[ "${status}" != "healthy" && "${status}" != "running" ]]; then
+				ready=0
+				break
+			fi
+		done
+		if [[ "${ready}" -eq 1 ]] \
+			&& curl -kfsS "https://127.0.0.1:${tenant_port}/health/ready" >/dev/null 2>&1; then
+			ok "HyperFileLens health gate passed"
+			return 0
+		fi
+		sleep 5
+	done
+	warn "HyperFileLens health gate timed out"
+	compose_in_root ps || true
+	return 1
+}
+
+wait_for_sourcelens_health() {
+	[[ "$(configured_sourcelens_mode)" == "bundled" ]] || return 0
+	sourcelens_installed || return 0
+	local nginx_cid
+	nginx_cid="$(sourcelens_compose ps -q nginx 2>/dev/null | head -1)"
+	if [[ -z "${nginx_cid}" ]]; then
+		log "Bundled SourceLens is not running; skipping its health gate"
+		return 0
+	fi
+	local timeout_seconds="${SOURCELENS_HEALTH_TIMEOUT_SECONDS:-600}"
+	local port
+	port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
+	[[ -n "${port}" ]] || port=10446
+	step "Waiting for bundled SourceLens HTTPS health (timeout ${timeout_seconds}s) ..."
+	local deadline=$((SECONDS + timeout_seconds))
+	while ((SECONDS < deadline)); do
+		if curl -kfsS "https://127.0.0.1:${port}/" >/dev/null 2>&1; then
+			ok "Bundled SourceLens health gate passed"
+			return 0
+		fi
+		sleep 5
+	done
+	warn "Bundled SourceLens health gate timed out"
+	sourcelens_compose ps || true
+	return 1
+}
+
 load_images_from_manifest() {
 	local skip_sourcelens=${1:-0}
+	local package_root=${2:-${ROOT}}
 	local sourcelens_mode
 	sourcelens_mode="$(configured_sourcelens_mode)"
 	if [[ "${sourcelens_mode}" == "external" ]]; then
 		skip_sourcelens=1
 	fi
-	python3 - "${ROOT}" "${skip_sourcelens}" <<'PY'
+	python3 - "${package_root}" "${skip_sourcelens}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -795,8 +878,52 @@ backup_env_and_data() {
 	log "Backup complete: ${archive}"
 }
 
+backup_postgresql_dump() {
+	[[ -f "${ROOT}/.env" ]] || return 0
+	local cid
+	cid="$(compose_in_root ps -q postgres 2>/dev/null | head -1)"
+	[[ -n "${cid}" ]] || { warn "PostgreSQL is not running; skipping logical database dump"; return 0; }
+	local stamp dump globals
+	stamp="$(date +%Y%m%d-%H%M%S)"
+	mkdir -p "${ROOT}/backup"
+	dump="${ROOT}/backup/hyperfilelens-postgresql-${stamp}.dump"
+	globals="${ROOT}/backup/hyperfilelens-postgresql-globals-${stamp}.sql"
+	step "Creating consistent PostgreSQL logical backup ..."
+	compose_in_root exec -T postgres sh -ec \
+		'exec pg_dump -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-hyperfilelens}" -Fc' \
+		>"${dump}.part"
+	compose_in_root exec -T postgres sh -ec \
+		'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --globals-only' \
+		>"${globals}.part"
+	mv "${dump}.part" "${dump}"
+	mv "${globals}.part" "${globals}"
+	chmod 600 "${dump}" "${globals}"
+	ok "PostgreSQL logical backup created under ${ROOT}/backup"
+
+	if sourcelens_installed; then
+		local sl_cid sl_dump sl_globals
+		sl_cid="$(sourcelens_compose ps -q postgresql 2>/dev/null | head -1)"
+		if [[ -n "${sl_cid}" ]]; then
+			sl_dump="${ROOT}/backup/sourcelens-postgresql-${stamp}.dump"
+			sl_globals="${ROOT}/backup/sourcelens-postgresql-globals-${stamp}.sql"
+			step "Creating consistent bundled SourceLens PostgreSQL backup ..."
+			sourcelens_compose exec -T postgresql sh -ec \
+				'exec pg_dump -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-backend}" -Fc' \
+				>"${sl_dump}.part"
+			sourcelens_compose exec -T postgresql sh -ec \
+				'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --globals-only' \
+				>"${sl_globals}.part"
+			mv "${sl_dump}.part" "${sl_dump}"
+			mv "${sl_globals}.part" "${sl_globals}"
+			chmod 600 "${sl_dump}" "${sl_globals}"
+			ok "Bundled SourceLens PostgreSQL logical backup created"
+		fi
+	fi
+}
+
 apply_upgrade_files() {
 	local from_root=$1
+	local remove_sourcelens=${2:-0}
 	step "Overwriting application files and release payload ..."
 	mkdir -p "${ROOT}/deploy/nginx" "${ROOT}/images" "${ROOT}/host" "${ROOT}/payload"
 	rsync -a --delete "${from_root}/payload/" "${ROOT}/payload/"
@@ -806,7 +933,10 @@ apply_upgrade_files() {
 		safe_rm_dir "${ROOT}/src"
 		log "Removed legacy host source tree; application code now ships only in images"
 	fi
-	if [[ -d "${from_root}/sourcelens" ]]; then
+	if [[ "${remove_sourcelens}" -eq 1 && -d "${ROOT}/sourcelens" ]]; then
+		safe_assert_path_under_dir "${ROOT}/sourcelens" "${ROOT}" "SourceLens runtime path"
+		safe_rm_dir "${ROOT}/sourcelens"
+	elif [[ -d "${from_root}/sourcelens" ]]; then
 		rsync -a --delete "${from_root}/sourcelens/" "${ROOT}/sourcelens/"
 	fi
 	cp "${from_root}/docker-compose.yml" "${ROOT}/docker-compose.yml"
@@ -982,8 +1112,19 @@ print_console_access_summary() {
 		[[ -n "${seed_email}" ]] || seed_email="admin@hyperfilelens.com"
 		[[ -n "${seed_pass}" ]] || seed_pass="Admin@123"
 		[[ -n "${seed_org}" ]] || seed_org="HyperFileLens"
-		log "Default admin email: ${seed_email} (environment variable SEED_ADMIN_EMAIL)."
-		log "Default admin password: ${seed_pass} (environment variable SEED_ADMIN_PASSWORD)."
+		local show_credentials=0
+		case "${SHOW_GENERATED_CREDENTIALS}" in
+		1 | true | yes | on) show_credentials=1 ;;
+		0 | false | no | off) show_credentials=0 ;;
+		auto) [[ -t 2 ]] && show_credentials=1 || true ;;
+		*) die "invalid HFL_SHOW_GENERATED_CREDENTIALS=${SHOW_GENERATED_CREDENTIALS}" ;;
+		esac
+		if [[ "${show_credentials}" -eq 1 ]]; then
+			log "Default admin email: ${seed_email} (environment variable SEED_ADMIN_EMAIL)."
+			log "Default admin password: ${seed_pass} (environment variable SEED_ADMIN_PASSWORD)."
+		else
+			log "Initial admin credentials are stored in ${env_file}; values are hidden in non-interactive logs."
+		fi
 		log "Default organization: ${seed_org} (environment variable SEED_ORG_NAME)."
 		log "Initial seeding is enabled (SEED_INITIAL_DATA=1); the worker service creates this account on first startup."
 		log "Change the default password after your first login."
@@ -1166,7 +1307,83 @@ should_upgrade_sourcelens() {
 		;;
 	esac
 	[[ "$(configured_sourcelens_mode)" == "bundled" ]] \
-		&& package_has_sourcelens_dir "${src_root}"
+		&& package_has_sourcelens_dir "${src_root}" \
+		&& sourcelens_bundle_changed "${src_root}"
+}
+
+sourcelens_bundle_fingerprint() {
+	local root=$1
+	python3 - "${root}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+paths = [
+    "docker-compose.yml",
+    ".env.example",
+    "install.sh",
+    "patch-env-runtime.py",
+]
+deploy = root / "deploy"
+if deploy.is_dir():
+    paths.extend(
+        path.relative_to(root).as_posix()
+        for path in sorted(deploy.rglob("*"))
+        if path.is_file() and "certs" not in path.parts
+    )
+digest = hashlib.sha256()
+
+# Registry transit references and rebuilt image IDs can change for every HFL
+# tag even while the bundled SourceLens release remains pinned. Only semantic
+# SourceLens identity belongs in the bundle fingerprint; runtime files below
+# capture HFL-owned integration changes.
+build_info_path = root / "BUILD_INFO.json"
+if build_info_path.is_file():
+    info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    identity = {
+        "git_url": info.get("git_url", ""),
+        "git_ref": info.get("git_ref", ""),
+        "git_commit": info.get("git_commit", ""),
+        "version": info.get("version", ""),
+        "patch_sha256": info.get("patch_sha256", ""),
+        "embed_local_lensnode": info.get("embed_local_lensnode", False),
+    }
+    digest.update(b"BUILD_INFO.identity\0")
+    digest.update(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    )
+else:
+    digest.update(b"missing:BUILD_INFO.json\0")
+
+for rel in sorted(set(paths)):
+    path = root / rel
+    if not path.is_file():
+        digest.update(f"missing:{rel}\0".encode())
+        continue
+    digest.update(rel.encode() + b"\0")
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+print(digest.hexdigest())
+PY
+}
+
+sourcelens_bundle_changed() {
+	local src_root=$1
+	if ! sourcelens_installed || [[ ! -f "${ROOT}/sourcelens/BUILD_INFO.json" ]]; then
+		return 0
+	fi
+	local current target
+	current="$(sourcelens_bundle_fingerprint "${ROOT}/sourcelens")"
+	target="$(sourcelens_bundle_fingerprint "${src_root}/sourcelens")"
+	if [[ "${current}" == "${target}" ]]; then
+		log "Bundled SourceLens is unchanged (${current:0:12}); keeping 10446 online"
+		return 1
+	fi
+	log "Bundled SourceLens changed (${current:0:12} -> ${target:0:12})"
+	return 0
 }
 
 should_remove_sourcelens() {
@@ -1240,6 +1457,7 @@ install_bundled_sourcelens() {
 	SOURCELENS_INSTALL_DIR="${ROOT}/sourcelens" \
 		SOURCELENS_DATA_DIR="${ROOT}/data/sourcelens" \
 		SOURCELENS_CONFIG_DIR="${ROOT}/data/sourcelens/config" \
+		SOURCELENS_TLS_CERT_DIR="${ROOT}/deploy/nginx/certs" \
 		SOURCELENS_CONSOLE_BIND_ADDRESS="${console_bind}" \
 		SOURCELENS_CONSOLE_PORT="${console_port}" \
 		SOURCELENS_NGINX_HTTPS_PORT="${console_port}" \
@@ -1328,6 +1546,8 @@ cmd_install() {
 	step "[5/6] Starting services ..."
 	log "Log rotation: built into nginx container (hourly; daily or 500M; keep 30)"
 	compose_in_root up -d --no-build --remove-orphans
+	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
+	wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
 
 	step "[6/6] Done"
 	log "Install and startup complete"
@@ -1348,6 +1568,8 @@ cmd_start() {
 	fi
 	step "Starting services (docker compose up -d --no-build) ..."
 	compose_in_root up -d --no-build --remove-orphans
+	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
+	wait_for_sourcelens_health || die "bundled SourceLens failed its startup health gate"
 	log "Services started"
 	compose_in_root ps
 }
@@ -1881,7 +2103,7 @@ cmd_uninstall() {
 	log "Uninstall complete (services and images removed)"
 	log "Install directory kept: ${ROOT}"
 	log "  Remaining: install.sh, docker-compose.yml, deploy/, images/, payload/, backup/, host/, and other package files"
-	if [[ "${with_sourcelens}" -eq 0 && sourcelens_installed ]]; then
+	if [[ "${with_sourcelens}" -eq 0 ]] && sourcelens_installed; then
 		log "  SourceLens still installed at ${SOURCELENS_INSTALL_DIR} (use --with-sourcelens to remove)"
 	fi
 	if [[ "${purge_data}" -eq 0 ]]; then
@@ -1901,7 +2123,7 @@ cmd_uninstall() {
 cmd_upgrade() {
 	local from="" with_upgrade_docker=0
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
-	local src_root new_version cur_version
+	local src_root new_version cur_version upgrade_sourcelens=0
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--from)
@@ -1939,6 +2161,7 @@ cmd_upgrade() {
 	log "Upgrading: ${cur_version} -> ${new_version}"
 
 	step "[1/7] Backing up current config and data ..."
+	backup_postgresql_dump
 	backup_env_and_data
 
 	step "[2/7] Validating upgrade package ..."
@@ -1946,17 +2169,26 @@ cmd_upgrade() {
 	if package_has_sourcelens_dir "${src_root}"; then
 		preflight_sourcelens_bundle "${src_root}"
 	fi
+	if should_upgrade_sourcelens "${sourcelens_mode}" "${src_root}"; then
+		upgrade_sourcelens=1
+	fi
+	if [[ "${remove_sourcelens}" -eq 1 ]]; then
+		upgrade_sourcelens=0
+	fi
 
 	step "[3/7] Checking/upgrading Docker ..."
 	upgrade_host_docker_from_source "${ROOT}" "${src_root}" "${with_upgrade_docker}"
 	require_docker
 	ensure_bridge_network
 
+	step "Preloading verified target images before the maintenance window ..."
+	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
+
 	step "[4/7] Stopping current services ..."
 	if [[ -f "${ROOT}/.env" ]]; then
 		compose_in_root down || true
 	fi
-	if should_remove_sourcelens "${remove_sourcelens}" || should_upgrade_sourcelens "${sourcelens_mode}" "${src_root}"; then
+	if should_remove_sourcelens "${remove_sourcelens}" || [[ "${upgrade_sourcelens}" -eq 1 ]]; then
 		stop_bundled_sourcelens
 	fi
 	if should_remove_sourcelens "${remove_sourcelens}"; then
@@ -1965,19 +2197,18 @@ cmd_upgrade() {
 
 	step "[5/7] Merging .env and overwriting app files ..."
 	sync_env_from_example "${src_root}/.env.example"
-	apply_upgrade_files "${src_root}"
+	apply_upgrade_files "${src_root}" "${remove_sourcelens}"
 	update_env_versions "${new_version}"
 
-	if should_remove_sourcelens "${remove_sourcelens}" && [[ "${purge_sourcelens_data}" -eq 1 ]]; then
+	if [[ "${remove_sourcelens}" -eq 1 && "${purge_sourcelens_data}" -eq 1 ]]; then
 		purge_sourcelens_data_dir
 	fi
-	if should_remove_sourcelens "${remove_sourcelens}"; then
-		log "SourceLens removed from this host (install dir kept: ${SOURCELENS_INSTALL_DIR})"
+	if [[ "${remove_sourcelens}" -eq 1 ]]; then
+		log "SourceLens application runtime removed from this host"
 	fi
 
 	step "[6/7] Loading images and starting services ..."
-	load_images_from_manifest "$([[ "${sourcelens_mode}" -eq 0 ]] && echo 1 || echo 0)"
-	if should_upgrade_sourcelens "${sourcelens_mode}" "${src_root}"; then
+	if [[ "${upgrade_sourcelens}" -eq 1 ]]; then
 		install_bundled_sourcelens
 	fi
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] \
@@ -1987,7 +2218,11 @@ cmd_upgrade() {
 	fi
 	ensure_data_dirs
 	sync_runtime_media
+	compose_in_root up -d postgres redis
+	compose_in_root run --rm worker migrate
 	compose_in_root up -d --no-build --remove-orphans
+	wait_for_hfl_health || die "HyperFileLens failed its post-upgrade health gate"
+	wait_for_sourcelens_health || die "bundled SourceLens failed its post-upgrade health gate"
 
 	step "[7/7] Cleaning up temporary directory ..."
 	cleanup_upgrade_tmp
