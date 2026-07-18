@@ -7,6 +7,7 @@
 #   ./release/build.sh --github-download-mirror https://ghfast.top --docker-download-mirror docker.m.daocloud.io --apt-mirror https://mirrors.tuna.tsinghua.edu.cn
 set -euo pipefail
 export COPYFILE_DISABLE=1
+umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="${ROOT}/release"
@@ -28,6 +29,7 @@ MIRROR_DOCKER_DOWNLOAD=""
 MIRROR_DOCKER_APT=""
 MIRROR_APT=""
 FORCE_PULL=0
+NO_CACHE=0
 SOURCELENS_FORCE_BUILD="${SOURCELENS_FORCE_BUILD:-0}"
 BUILD_SOURCELENS="${BUILD_SOURCELENS:-}"
 SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-}"
@@ -50,6 +52,41 @@ tar_create_gz() {
 	COPYFILE_DISABLE=1 tar -C "${base_dir}" -czf "${out}" "${entry}"
 }
 
+normalize_release_permissions() {
+	local pkg_root=$1
+	find "${pkg_root}" -type d -exec chmod 755 {} +
+	find "${pkg_root}" -type f -exec chmod 644 {} +
+	chmod 755 "${pkg_root}/install.sh"
+	if [[ -d "${pkg_root}/sourcelens" ]]; then
+		chmod 755 "${pkg_root}/sourcelens/install.sh" \
+			"${pkg_root}/sourcelens/patch-env-runtime.py"
+		find "${pkg_root}/sourcelens/deploy/postgresql/initdb.d" \
+			-type f -name '*.sh' -exec chmod 755 {} +
+	fi
+	find "${pkg_root}/payload/media" -type f -name '*.sh' -exec chmod 755 {} +
+	if [[ -d "${pkg_root}/payload/media/enroll-bootstrap" ]]; then
+		find "${pkg_root}/payload/media/enroll-bootstrap" -type f -exec chmod 755 {} +
+	fi
+}
+
+validate_release_security() {
+	local pkg_root=$1 bad=""
+	bad="$(find "${pkg_root}" \
+		\( -name '.env' -o -name '*.key' -o -name '*.pem' -o -name '*.p12' \
+		-o -name '*.pfx' -o -name 'id_rsa' \) -print -quit)"
+	[[ -z "${bad}" ]] || die "release package contains forbidden secret material: ${bad#${pkg_root}/}"
+	for public_dir in \
+		"${pkg_root}/payload/media/agent-releases" \
+		"${pkg_root}/payload/media/enroll-bootstrap" \
+		"${pkg_root}/payload/media/gateway-bootstrap"; do
+		[[ -d "${public_dir}" ]] || continue
+		bad="$(find "${public_dir}" -type f ! -perm -004 -print -quit)"
+		[[ -z "${bad}" ]] \
+			|| die "release download is not readable by the nginx worker: ${bad#${pkg_root}/}"
+	done
+	log "Release secret and download permission validation passed"
+}
+
 require_value() {
 	if [[ $# -lt 2 || -z "${2:-}" || "${2:0:1}" == "-" ]]; then
 		die "${1} requires a value" 2
@@ -63,6 +100,7 @@ load_repo_env_defaults() {
 		GITHUB_DOWNLOAD_MIRROR GITHUB_TOKEN DOCKER_DOWNLOAD_MIRROR \
 		DOCKER_APT_MIRROR APT_MIRROR PIP_INDEX_URL PIP_TRUSTED_HOST \
 		PIP_TIMEOUT NPM_REGISTRY GOPROXY GOSUMDB BUILD_SOURCELENS \
+		DOCKER_PULL_TIMEOUT_SECONDS \
 		SOURCELENS_GIT_REF SOURCELENS_GIT_URL SENTRY_ENABLED SENTRY_DSN \
 		SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE \
 		SENTRY_SEND_DEFAULT_PII VITE_SHOW_EULA; do
@@ -81,6 +119,13 @@ apply_mirror_env_defaults() {
 apply_go_proxy_env_defaults() {
 	export GOPROXY="${GOPROXY:-${BUILD_GOPROXY:-https://proxy.golang.org,direct}}"
 	export GOSUMDB="${GOSUMDB:-${BUILD_GOSUMDB:-sum.golang.org}}"
+}
+
+validate_docker_pull_timeout() {
+	DOCKER_PULL_TIMEOUT_SECONDS="${DOCKER_PULL_TIMEOUT_SECONDS:-180}"
+	[[ "${DOCKER_PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] \
+		|| die "DOCKER_PULL_TIMEOUT_SECONDS must be a positive integer" 2
+	export DOCKER_PULL_TIMEOUT_SECONDS
 }
 
 export_build_mirror_env() {
@@ -136,6 +181,7 @@ Mirror options (Kopia fetch + Agent publishing + runtime image pull; env fallbac
   --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for ubuntu:24.04, postgres, redis (env: DOCKER_DOWNLOAD_MIRROR)
+  --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)
   --docker-apt-mirror URL          Docker CE apt repo base URL (env: DOCKER_APT_MIRROR / BUILD_DOCKER_APT_MIRROR)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
   --ubuntu2404-arch ARCH           NAS deb arch for agent bundle: amd64 | arm64 | all (default: amd64)
@@ -146,6 +192,7 @@ Mirror options (Kopia fetch + Agent publishing + runtime image pull; env fallbac
   --npm-registry URL               npm registry (env: NPM_REGISTRY)
 
   --pull                           Re-check registry and pull runtime images (default: use local if present)
+  --no-cache                       Rebuild HFL and SourceLens Docker layers without BuildKit cache
 
 SourceLens bundle (tools/sourcelens/defaults.env; default: enabled):
   --no-sourcelens                  Skip SourceLens clone/build/bundle
@@ -174,6 +221,7 @@ print_config() {
 	sourcelens_version="${BASH_REMATCH[1]}"
 	apply_mirror_env_defaults
 	apply_go_proxy_env_defaults
+	validate_docker_pull_timeout
 	apply_ubuntu2404_arch_default
 	export_build_mirror_env
 	cat <<EOF
@@ -190,10 +238,12 @@ sourcelens_upstream_image_prefix=${SOURCELENS_UPSTREAM_IMAGE_PREFIX}
 sourcelens_image_registry=${SOURCELENS_IMAGE_REGISTRY:-<local>}
 ubuntu2404_arch=${UBUNTU2404_ARCH}
 force_pull=${FORCE_PULL}
+no_cache=${NO_CACHE}
 force_sourcelens_build=${SOURCELENS_FORCE_BUILD}
 github_download_mirror=${MIRROR_GITHUB_DOWNLOAD:-<official>}
 github_token=$(hfl_redact "${MIRROR_GITHUB_TOKEN}")
 docker_download_mirror=${MIRROR_DOCKER_DOWNLOAD:-<official>}
+docker_pull_timeout_seconds=${DOCKER_PULL_TIMEOUT_SECONDS:-180}
 docker_apt_mirror=${MIRROR_DOCKER_APT:-https://download.docker.com/linux/ubuntu}
 apt_mirror=${MIRROR_APT:-<official>}
 go_proxy=${GOPROXY}
@@ -242,6 +292,12 @@ parse_common_option() {
 	--docker-download-mirror)
 		require_value "$1" "${2:-}"
 		MIRROR_DOCKER_DOWNLOAD="$2"
+		return 0
+		;;
+	--docker-pull-timeout)
+		require_value "$1" "${2:-}"
+		[[ "$2" =~ ^[1-9][0-9]*$ ]] || die "$1 requires a positive integer" 2
+		export DOCKER_PULL_TIMEOUT_SECONDS="$2"
 		return 0
 		;;
 	--docker-apt-mirror)
@@ -338,12 +394,16 @@ parse_args() {
 			LOG_FILE="$2"
 			shift 2
 			;;
-		--github-download-mirror | --github-token | --docker-download-mirror | --docker-apt-mirror | --apt-mirror | --ubuntu2404-arch | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry)
+		--github-download-mirror | --github-token | --docker-download-mirror | --docker-pull-timeout | --docker-apt-mirror | --apt-mirror | --ubuntu2404-arch | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry)
 			parse_common_option "$@" || die "failed to parse option: $1"
 			shift 2
 			;;
 		--pull)
 			FORCE_PULL=1
+			shift
+			;;
+		--no-cache)
+			NO_CACHE=1
 			shift
 			;;
 		--force-build)
@@ -387,6 +447,7 @@ publish_agent() {
 	args+=(--commit "${RELEASE_COMMIT}")
 	args+=(--version "${HFL_VERSION}")
 	args+=(--kopia-version "${KOPIA_VERSION}")
+	[[ "${FORCE_PULL}" -eq 1 ]] && args+=(--pull)
 	[[ -n "${GOPROXY:-}" ]] && args+=(--go-proxy "${GOPROXY}")
 	[[ -n "${GOSUMDB:-}" ]] && args+=(--go-sumdb "${GOSUMDB}")
 	local mirror
@@ -402,6 +463,7 @@ build_sourcelens_bundle() {
 	local images_dir=$2
 	local args=(--pkg-root "${pkg_root}" --images-dir "${images_dir}")
 	[[ "${FORCE_PULL}" -eq 1 ]] && args+=(--pull)
+	[[ "${NO_CACHE}" -eq 1 ]] && args+=(--no-cache)
 	[[ "${SOURCELENS_FORCE_BUILD}" -eq 1 ]] && args+=(--force-build)
 	[[ -n "${SOURCELENS_GIT_REF:-}" ]] && args+=(--sourcelens-ref "${SOURCELENS_GIT_REF}")
 	if [[ -n "${SOURCELENS_GIT_URL:-}" ]]; then
@@ -453,6 +515,9 @@ build_control_plane_images() {
 	)
 	if [[ "${FORCE_PULL}" -eq 1 ]]; then
 		common_args+=(--pull)
+	fi
+	if [[ "${NO_CACHE}" -eq 1 ]]; then
+		common_args+=(--no-cache)
 	fi
 
 	log "Building hyperfilelens-backend:${HFL_VERSION} (alias: latest)"
@@ -910,6 +975,7 @@ main() {
 	hfl_logging_configure release "${LOG_FILE}" "${VERBOSE}"
 	apply_mirror_env_defaults
 	apply_go_proxy_env_defaults
+	validate_docker_pull_timeout
 	apply_ubuntu2404_arch_default
 	if [[ "${PRINT_CONFIG}" -eq 1 ]]; then
 		print_config
@@ -983,6 +1049,7 @@ main() {
 
 	mkdir -p "${pkg_root}/host/debs"
 	rsync -a "${HOST_DEBS_CACHE}/" "${pkg_root}/host/debs/"
+	normalize_release_permissions "${pkg_root}"
 
 	local payload_sha
 	payload_sha="$(tree_sha256 "${pkg_root}/payload")"
@@ -991,6 +1058,7 @@ main() {
 		"${backend_digest}" "${frontend_digest}" "${postgres_digest}" "${redis_digest}"
 	validate_release_publish_artifacts "${pkg_root}"
 	write_package_readme "${pkg_root}" "${version}"
+	validate_release_security "${pkg_root}"
 
 	mkdir -p "${DIST_DIR}"
 	tar_path="${DIST_DIR}/${tar_basename}"
@@ -999,13 +1067,16 @@ main() {
 	log "Creating ${tar_path}"
 	tar_create_gz "${tar_tmp}" "${STAGING_BASE}" "${pkg_name}"
 	mv -f "${tar_tmp}" "${tar_path}"
+	chmod 644 "${tar_path}"
 
 	log "Package sizes:"
 	du -sh "${pkg_root}/host/debs" "${images_dir}" "${pkg_root}/payload" "${tar_path}" || true
 	log "Done: ${tar_path}"
 }
 
-hfl_logging_configure release
-trap 'rc=$?; hfl_logging_finish "${rc}"' EXIT
-trap 'exit 130' INT TERM
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	hfl_logging_configure release
+	trap 'rc=$?; hfl_logging_finish "${rc}"' EXIT
+	trap 'exit 130' INT TERM
+	main "$@"
+fi

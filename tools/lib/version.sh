@@ -60,3 +60,12 @@ resolve_commit7() {
 	[[ "${commit7}" =~ ^[0-9a-f]{7,40}$ ]] || version_die "invalid git commit: ${full}"
 	printf '%.7s' "${commit7}"
 }
+
+release_package_basename_for_version() {
+	local version commit7
+	version="$(normalize_release_version "$1")" || return $?
+	commit7="${2,,}"
+	[[ "${commit7}" =~ ^[0-9a-f]{7}$ ]] \
+		|| version_die "invalid short git commit: ${2} (expected 7 hexadecimal characters)" 2
+	printf 'hyperfilelens-%s-%s.tar.gz' "${version}" "${commit7}"
+}

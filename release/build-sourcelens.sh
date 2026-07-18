@@ -3,6 +3,7 @@
 # Invoked from release/build.sh when BUILD_SOURCELENS=1.
 set -euo pipefail
 export COPYFILE_DISABLE=1
+umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../tools/sourcelens/common.sh
@@ -14,7 +15,9 @@ die() { hfl_die "$1" "${2:-1}"; }
 PKG_ROOT=""
 IMAGES_DIR=""
 FORCE_PULL=0
+NO_CACHE=0
 FORCE_BUILD="${SOURCELENS_FORCE_BUILD:-0}"
+PREBUILT=0
 LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
@@ -32,7 +35,9 @@ Usage: ./release/build-sourcelens.sh --pkg-root DIR --images-dir DIR [options]
   --pkg-root DIR       Release package staging root (hyperfilelens-<version>/)
   --images-dir DIR     images/ directory inside the package root
   --pull               Pull nginx:stable-alpine even when present locally
+  --no-cache           Rebuild SourceLens Docker layers without BuildKit cache
   --force-build        Rebuild SourceLens images even when the build stamp matches
+  --prebuilt           Package normalized images already loaded in Docker
   --sourcelens-git-url URL  Override SOURCELENS_GIT_URL
   --sourcelens-ref REF      SourceLens release tag in vX.Y.Z form
   --github-token TOKEN GitHub token for private repo clone/fetch (env: GITHUB_TOKEN)
@@ -64,6 +69,8 @@ docker_platform=${SOURCELENS_DOCKER_PLATFORM}
 build_sourcelens=${BUILD_SOURCELENS}
 force_build=${FORCE_BUILD}
 force_pull=${FORCE_PULL}
+no_cache=${NO_CACHE}
+prebuilt=${PREBUILT}
 github_token=$(hfl_redact "${GITHUB_TOKEN:-}")
 apt_mirror=${SOURCELENS_APT_MIRROR:-<official>}
 pip_index_url=${SOURCELENS_PIP_INDEX_URL:-<official>}
@@ -95,8 +102,16 @@ parse_args() {
 			FORCE_PULL=1
 			shift
 			;;
+		--no-cache)
+			NO_CACHE=1
+			shift
+			;;
 		--force-build)
 			FORCE_BUILD=1
+			shift
+			;;
+		--prebuilt)
+			PREBUILT=1
 			shift
 			;;
 		--sourcelens-git-url | --git-url)
@@ -237,7 +252,6 @@ stage_runtime_tree() {
 	log "Using upstream SourceLens nginx configuration"
 	cp "${src}/docker/nginx/default.conf" "${sl_root}/deploy/nginx/default.conf"
 	sourcelens_patch_runtime_nginx "${sl_root}/deploy/nginx/default.conf"
-	rsync -a "${src}/docker/nginx/certs/" "${sl_root}/deploy/nginx/certs/"
 	if [[ -d "${src}/docker/postgresql" ]]; then
 		rsync -a "${src}/docker/postgresql/" "${sl_root}/deploy/postgresql/"
 	fi
@@ -343,8 +357,14 @@ main() {
 	command -v python3 >/dev/null 2>&1 || die "python3 not found" 2
 
 	sourcelens_sync_source
-	sourcelens_prepare_source_build_env
-	sourcelens_build_app_images "${FORCE_BUILD}"
+	if [[ "${PREBUILT}" -eq 1 ]]; then
+		sourcelens_app_images_ready \
+			|| die "--prebuilt requires normalized SourceLens backend, frontend, and LensNode images"
+		sourcelens_tag_lensnode_alias
+		log "Using prebuilt SourceLens application images"
+	else
+		sourcelens_build_app_images "${FORCE_BUILD}" "${NO_CACHE}"
+	fi
 	sourcelens_ensure_nginx_image "${FORCE_PULL}"
 	save_image_archives
 	stage_runtime_tree

@@ -20,6 +20,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from common.http.public_api import AnonymousPublicViewMixin
 
+from apps.iam.auth.authentication import OptionalJWTAuthenticationFromCookies
+from apps.iam.auth.serializers import UserDetailsSerializer
 from apps.iam.profile_models import Profile
 from apps.iam.services.human_verification import (
     credentials_and_human_verification_present,
@@ -440,6 +442,48 @@ class TokenRefreshView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+
+    @extend_schema(
+        tags=["auth"],
+        summary="Inspect the cookie session without producing an authentication error",
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def get(self, request):
+        """Return session availability with HTTP 200 for signed-out clients."""
+        cookie_settings = getattr(settings, "COOKIE_AUTH", {})
+        refresh_cookie_name = cookie_settings.get(
+            "REFRESH_TOKEN_COOKIE_NAME",
+            "refresh_token",
+        )
+        result = OptionalJWTAuthenticationFromCookies().authenticate(request)
+        if result is None:
+            response = Response(
+                {
+                    "authenticated": False,
+                    "refresh_available": bool(
+                        request.COOKIES.get(refresh_cookie_name),
+                    ),
+                    "user": None,
+                },
+                status=status.HTTP_200_OK,
+            )
+            response["Cache-Control"] = "no-store"
+            return response
+
+        user, _validated_token = result
+        serializer = UserDetailsSerializer(user, context={"request": request})
+        response = Response(
+            {
+                "authenticated": True,
+                "refresh_available": bool(
+                    request.COOKIES.get(refresh_cookie_name),
+                ),
+                "user": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+        response["Cache-Control"] = "no-store"
+        return response
 
     @extend_schema(
         tags=["auth"],

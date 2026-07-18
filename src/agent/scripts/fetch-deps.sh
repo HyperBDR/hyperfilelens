@@ -2,6 +2,7 @@
 # Download external Agent runtime resources only (Kopia CLI and Ubuntu NAS debs).
 # Does not compile source or assemble distribution archives.
 set -euo pipefail
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -92,11 +93,13 @@ Options:
   --version VERSION                Release version (env: RELEASE_VERSION)
   --matrix MATRIX                  Space-separated os:arch list (env: AGENT_MATRIX)
   --force                          Refresh cached inputs (env: AGENT_FORCE_FETCH=1)
+  --pull                           Refresh the NAS Ubuntu image even when a matching local image exists
   --kopia-version VERSION          Kopia version without v prefix (env: KOPIA_VERSION)
   --github-download-mirror URL     Explicit GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN; environment recommended)
   --ubuntu2404-arch ARCH           amd64 | arm64 | all (env: AGENT_UBUNTU2404_ARCH)
   --docker-download-mirror URL     Docker Hub mirror (env: DOCKER_DOWNLOAD_MIRROR)
+  --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)
   --apt-mirror URL                 Ubuntu apt mirror (env: APT_MIRROR)
   --log-file FILE                  Append console output to FILE (env: AGENT_LOG_FILE)
   --verbose                        Enable detailed source logging (env: AGENT_VERBOSE=1)
@@ -131,6 +134,7 @@ USAGE
 DO_KOPIA=0
 DO_NAS=0
 FORCE=0
+FORCE_PULL=0
 EXPLICIT=0
 OPT_VERSION=""
 OPT_MATRIX=""
@@ -139,6 +143,7 @@ OPT_UBUNTU2404_ARCH=""
 OPT_GITHUB_DOWNLOAD_MIRROR=""
 OPT_GITHUB_TOKEN=""
 OPT_DOCKER_DOWNLOAD_MIRROR=""
+OPT_DOCKER_PULL_TIMEOUT=""
 OPT_APT_MIRROR=""
 
 while [[ $# -gt 0 ]]; do
@@ -161,6 +166,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--force)
 		FORCE=1
+		shift
+		;;
+	--pull)
+		FORCE_PULL=1
 		shift
 		;;
 	--log-file)
@@ -211,6 +220,11 @@ while [[ $# -gt 0 ]]; do
 		OPT_DOCKER_DOWNLOAD_MIRROR="$2"
 		shift 2
 		;;
+	--docker-pull-timeout)
+		require_value "$1" "${2:-}"
+		OPT_DOCKER_PULL_TIMEOUT="$2"
+		shift 2
+		;;
 	--apt-mirror)
 		require_value "$1" "${2:-}"
 		OPT_APT_MIRROR="$2"
@@ -244,6 +258,11 @@ case "${AGENT_FORCE_FETCH:-0}" in
 0 | false | no | "") ;;
 *) printf 'ERROR: AGENT_FORCE_FETCH must be 0 or 1\n' >&2; exit 2 ;;
 esac
+case "${AGENT_FORCE_PULL:-0}" in
+1 | true | yes) FORCE_PULL=1 ;;
+0 | false | no | "") ;;
+*) printf 'ERROR: AGENT_FORCE_PULL must be 0 or 1\n' >&2; exit 2 ;;
+esac
 
 AGENT_VERSION="$(normalize_release_version "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
 # shellcheck source=../../../tools/dependencies/versions/kopia.env
@@ -259,6 +278,9 @@ GITHUB_DOWNLOAD_MIRROR="${OPT_GITHUB_DOWNLOAD_MIRROR:-${GITHUB_DOWNLOAD_MIRROR:-
 GITHUB_TOKEN="${OPT_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 DOCKER_DOWNLOAD_MIRROR="${OPT_DOCKER_DOWNLOAD_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
 APT_MIRROR="${OPT_APT_MIRROR:-${APT_MIRROR:-}}"
+DOCKER_PULL_TIMEOUT_SECONDS="${OPT_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
+[[ "${DOCKER_PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] \
+	|| { printf 'ERROR: DOCKER_PULL_TIMEOUT_SECONDS must be a positive integer\n' >&2; exit 2; }
 OPT_UBUNTU2404_ARCH="${OPT_UBUNTU2404_ARCH:-${AGENT_UBUNTU2404_ARCH:-}}"
 KOPIA_GITHUB_REPO="kopia/kopia"
 
@@ -303,6 +325,8 @@ docker_download_mirror=${DOCKER_DOWNLOAD_MIRROR:-<official>}
 apt_mirror=${APT_MIRROR:-<official>}
 ubuntu2404_arch=${OPT_UBUNTU2404_ARCH:-<from-matrix>}
 force=${FORCE}
+force_pull=${FORCE_PULL}
+docker_pull_timeout_seconds=${DOCKER_PULL_TIMEOUT_SECONDS}
 kopia_output=${WORK_ROOT}
 nas_output=${NAS_DEPS_ROOT}
 CONFIG
@@ -912,29 +936,68 @@ normalize_docker_mirror_host() {
 
 pull_nas_image() {
 	local platform=$1
-	local mirror_host img
+	local mirror_host mirrored official="ubuntu:24.04"
 
 	mirror_host="$(normalize_docker_mirror_host "${DOCKER_DOWNLOAD_MIRROR:-}")"
+	mirrored=""
 	if [[ -n "${mirror_host}" ]]; then
-		img="${mirror_host}/library/ubuntu:24.04"
-		log_step "Pulling ${img} for ${platform}"
-		if docker pull --platform "${platform}" "${img}"; then
-			NAS_IMAGE="${img}"
+		mirrored="${mirror_host}/library/ubuntu:24.04"
+	fi
+
+	if [[ "${FORCE_PULL}" -eq 0 ]]; then
+		if [[ -n "${mirrored}" ]] && nas_image_matches_platform "${mirrored}" "${platform}"; then
+			NAS_IMAGE="${mirrored}"
+			log_skip "Using local ${NAS_IMAGE} for ${platform}"
+			return 0
+		fi
+		if nas_image_matches_platform "${official}" "${platform}"; then
+			NAS_IMAGE="${official}"
+			log_skip "Using local ${NAS_IMAGE} for ${platform}"
+			return 0
+		fi
+	fi
+
+	if [[ -n "${mirrored}" ]]; then
+		log_step "Pulling ${mirrored} for ${platform} (timeout=${DOCKER_PULL_TIMEOUT_SECONDS}s)"
+		if timeout --foreground "${DOCKER_PULL_TIMEOUT_SECONDS}s" \
+			docker pull --platform "${platform}" "${mirrored}"; then
+			NAS_IMAGE="${mirrored}"
 			return 0
 		fi
 		log_warn "Docker mirror pull failed; trying the official registry"
 	fi
 
-	img="ubuntu:24.04"
-	log_step "Pulling ${img} for ${platform}"
-	if docker pull --platform "${platform}" "${img}"; then
-		NAS_IMAGE="${img}"
+	log_step "Pulling ${official} for ${platform} (timeout=${DOCKER_PULL_TIMEOUT_SECONDS}s)"
+	if timeout --foreground "${DOCKER_PULL_TIMEOUT_SECONDS}s" \
+		docker pull --platform "${platform}" "${official}"; then
+		NAS_IMAGE="${official}"
+		return 0
+	fi
+	if nas_image_matches_platform "${official}" "${platform}"; then
+		NAS_IMAGE="${official}"
+		log_warn "Registry refresh failed; using existing local ${NAS_IMAGE}"
+		return 0
+	fi
+	if [[ -n "${mirrored}" ]] && nas_image_matches_platform "${mirrored}" "${platform}"; then
+		NAS_IMAGE="${mirrored}"
+		log_warn "Registry refresh failed; using existing local ${NAS_IMAGE}"
 		return 0
 	fi
 
 	log_warn "Failed to pull ubuntu:24.04 for ${platform}"
 	log_info "Optional mirror example: --docker-download-mirror docker.m.daocloud.io --apt-mirror https://mirrors.tuna.tsinghua.edu.cn"
 	return 1
+}
+
+nas_image_matches_platform() {
+	local image=$1 platform=$2 expected_arch actual
+	case "${platform}" in
+	linux/amd64) expected_arch=amd64 ;;
+	linux/arm64) expected_arch=arm64 ;;
+	*) return 1 ;;
+	esac
+	actual="$(docker image inspect "${image}" --format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)"
+	[[ "${actual}" == "linux/${expected_arch}" ]]
 }
 
 fetch_nas_deps() {
@@ -967,6 +1030,8 @@ fetch_nas_deps() {
 			log_warn "Docker is required to fetch Ubuntu NAS dependencies for ${arch}"
 			return 2
 		fi
+		command -v timeout >/dev/null 2>&1 \
+			|| { log_warn "timeout is required to pull NAS dependency images"; return 2; }
 
 		if ! pull_nas_image "${platform}"; then
 			return 1

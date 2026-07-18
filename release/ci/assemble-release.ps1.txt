@@ -1,0 +1,26 @@
+param([Parameter(Mandatory=$true)][string]$Output)
+$checksums = @{}
+Get-Content "SHA256SUMS" | ForEach-Object {
+    if ($_ -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') {
+        $checksums[$Matches[2]] = $Matches[1].ToLowerInvariant()
+    }
+}
+$parts = Get-ChildItem -File "$Output.part-*" | Sort-Object Name
+if ($parts.Count -eq 0) { throw "No release parts found for $Output" }
+foreach ($part in $parts) {
+    if (-not $checksums.ContainsKey($part.Name)) {
+        throw "No checksum found for $($part.Name)"
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 $part.FullName).Hash.ToLowerInvariant()
+    if ($actual -ne $checksums[$part.Name]) {
+        throw "Checksum mismatch for $($part.Name)"
+    }
+}
+$target = [System.IO.File]::Create($Output)
+try {
+    foreach ($part in $parts) {
+        $source = [System.IO.File]::OpenRead($part.FullName)
+        try { $source.CopyTo($target) } finally { $source.Dispose() }
+    }
+} finally { $target.Dispose() }
+Write-Host "Assembled $Output"

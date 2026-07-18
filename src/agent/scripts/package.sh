@@ -2,6 +2,7 @@
 # Assemble customer-facing Agent archives from existing build and dependency inputs.
 # This script does not compile source, download dependencies, or call other scripts.
 set -euo pipefail
+umask 022
 export COPYFILE_DISABLE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -385,6 +386,7 @@ def write_archive(root: Path, output: Path, goos: str) -> None:
             with tarfile.open(temporary, "w:gz") as archive:
                 archive.add(root, arcname=root.name)
         os.replace(temporary, output)
+        output.chmod(0o644)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -470,7 +472,7 @@ def safe_extract_tar(archive_path: Path, destination: Path) -> Path:
             roots.add(parts[0])
         if len(roots) != 1:
             raise PrerequisiteError(f"base archive must contain one root directory: {archive_path}")
-        archive.extractall(destination)
+        archive.extractall(destination, filter="data")
     return destination / next(iter(roots))
 
 

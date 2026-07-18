@@ -101,6 +101,41 @@ class TokenRefreshTests(TestCase):
         self.assertIn(b"AUTH_401_UNAUTHORIZED", response.content)
         self.assertNotIn(b"REFRESH_EXPIRED", response.content)
 
+    def test_session_probe_reports_signed_out_without_unauthorized_status(self):
+        response = self.client.get("/api/v1/auth/token/refresh")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertFalse(response.data["authenticated"])
+        self.assertFalse(response.data["refresh_available"])
+        self.assertIsNone(response.data["user"])
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_session_probe_returns_user_for_valid_access_cookie(self):
+        access, refresh = self._token_pair()
+        self.client.cookies["access_token"] = access
+        self.client.cookies["refresh_token"] = refresh
+
+        response = self.client.get("/api/v1/auth/token/refresh")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertTrue(response.data["authenticated"])
+        self.assertTrue(response.data["refresh_available"])
+        self.assertEqual(response.data["user"]["id"], self.user.id)
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_session_probe_marks_expired_access_as_refreshable(self):
+        refresh = self._refresh_token()
+        expired_access = AccessToken.for_user(self.user)
+        expired_access.set_exp(lifetime=-timedelta(seconds=1))
+        self.client.cookies["access_token"] = str(expired_access)
+        self.client.cookies["refresh_token"] = refresh
+
+        response = self.client.get("/api/v1/auth/token/refresh")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertFalse(response.data["authenticated"])
+        self.assertTrue(response.data["refresh_available"])
+
     def test_reusing_rotated_refresh_token_is_rejected(self):
         original_refresh = self._refresh_token()
         self.client.cookies["refresh_token"] = original_refresh

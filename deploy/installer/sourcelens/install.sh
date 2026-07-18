@@ -6,6 +6,7 @@ set -euo pipefail
 SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-/opt/hyperfilelens/sourcelens}"
 SOURCELENS_DATA_DIR="${SOURCELENS_DATA_DIR:-/opt/hyperfilelens/data/sourcelens}"
 SOURCELENS_CONFIG_DIR="${SOURCELENS_CONFIG_DIR:-${SOURCELENS_DATA_DIR}/config}"
+SOURCELENS_TLS_CERT_DIR="${SOURCELENS_TLS_CERT_DIR:-}"
 SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_NGINX_HTTPS_PORT:-10446}"
 SOURCELENS_CONSOLE_BIND_ADDRESS="${SOURCELENS_CONSOLE_BIND_ADDRESS:-0.0.0.0}"
 SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT:-${SOURCELENS_NGINX_HTTPS_PORT}}"
@@ -63,6 +64,7 @@ print_config() {
 install_dir=${SOURCELENS_INSTALL_DIR}
 data_dir=${SOURCELENS_DATA_DIR}
 config_dir=${SOURCELENS_CONFIG_DIR}
+tls_cert_dir=${SOURCELENS_TLS_CERT_DIR}
 console_bind_address=${SOURCELENS_CONSOLE_BIND_ADDRESS}
 console_port=${SOURCELENS_CONSOLE_PORT}
 bridge_network=${HFL_BRIDGE_NETWORK}
@@ -86,6 +88,32 @@ resolve_package_root() {
 		return 0
 	fi
 	printf '%s' "${bundle}"
+}
+
+resolve_tls_cert_dir() {
+	if [[ -z "${SOURCELENS_TLS_CERT_DIR}" ]]; then
+		SOURCELENS_TLS_CERT_DIR="$(dirname "${SOURCELENS_INSTALL_DIR}")/deploy/nginx/certs"
+	fi
+}
+
+ensure_tls_certs() {
+	local cert="${SOURCELENS_TLS_CERT_DIR}/tls.crt"
+	local key="${SOURCELENS_TLS_CERT_DIR}/tls.key"
+	run_as_root mkdir -p "${SOURCELENS_TLS_CERT_DIR}"
+	if [[ -s "${cert}" && -s "${key}" ]]; then
+		log "Using existing shared TLS certificates from ${SOURCELENS_TLS_CERT_DIR}"
+		return 0
+	fi
+	command -v openssl >/dev/null 2>&1 \
+		|| die "openssl is required to generate SourceLens TLS certificates"
+	step "Generating self-signed SourceLens TLS certificates"
+	run_as_root openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+		-keyout "${key}" \
+		-out "${cert}" \
+		-subj "/CN=localhost" \
+		-addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
+	run_as_root chmod 644 "${cert}"
+	run_as_root chmod 600 "${key}"
 }
 
 run_as_root() {
@@ -156,7 +184,8 @@ PY
 	run_as_root python3 "${patch_script}" "${env_file}"
 	run_as_root python3 - "${env_file}" \
 		"${SOURCELENS_CONSOLE_BIND_ADDRESS}" \
-		"${SOURCELENS_CONSOLE_PORT}" <<'PY'
+		"${SOURCELENS_CONSOLE_PORT}" \
+		"${SOURCELENS_TLS_CERT_DIR}" <<'PY'
 import pathlib
 import re
 import sys
@@ -164,12 +193,14 @@ import sys
 path = pathlib.Path(sys.argv[1])
 bind_address = sys.argv[2]
 port = sys.argv[3]
+tls_cert_dir = sys.argv[4]
 text = path.read_text(encoding="utf-8")
 
 for name, value in {
     "SOURCELENS_CONSOLE_BIND_ADDRESS": bind_address,
     "SOURCELENS_CONSOLE_PORT": port,
     "NGINX_HTTPS_PORT": port,
+    "SOURCELENS_TLS_CERT_DIR": tls_cert_dir,
 }.items():
     pattern = rf"^{re.escape(name)}=.*$"
     line = f"{name}={value}"
@@ -344,6 +375,7 @@ cmd_install() {
 	docker info >/dev/null 2>&1 || die "cannot connect to Docker daemon"
 
 	materialize_install_dir "${bundle_root}" "${install_root}"
+	ensure_tls_certs
 	ensure_env_file "${install_root}"
 	ensure_data_dirs "${install_root}"
 
@@ -389,6 +421,7 @@ main() {
 		esac
 	done
 	set -- "${args[@]}"
+	resolve_tls_cert_dir
 	if [[ "${PRINT_CONFIG}" -eq 1 ]]; then
 		print_config
 		return 0

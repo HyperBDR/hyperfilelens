@@ -96,6 +96,7 @@ type CurrentUserFetchResult = {
   status?: number
   errorCode?: string
   refreshFailed?: boolean
+  refreshAvailable?: boolean
 }
 
 function extractSessionErrorCode(data: unknown): string | undefined {
@@ -129,8 +130,8 @@ async function readResponseJson(res: Response): Promise<unknown> {
   }
 }
 
-async function fetchCurrentUserOnce(): Promise<CurrentUserFetchResult> {
-  const res = await fetch('/api/v1/auth/user', {
+async function inspectCurrentSession(): Promise<CurrentUserFetchResult> {
+  const res = await fetch('/api/v1/auth/token/refresh', {
     credentials: 'include',
     headers: getCorrelationHeaders(),
   })
@@ -144,21 +145,31 @@ async function fetchCurrentUserOnce(): Promise<CurrentUserFetchResult> {
     }
   }
 
-  const payload = parseUserPayload(data)
+  const body = data && typeof data === 'object'
+    ? data as Record<string, unknown>
+    : {}
+  const session = body.data && typeof body.data === 'object'
+    ? body.data as Record<string, unknown>
+    : body
+  const payload = parseUserPayload(session.user)
   if (payload?.id) {
     setUser(payload)
-    return { user: payload, status: res.status }
+    return {
+      user: payload,
+      status: res.status,
+      refreshAvailable: session.refresh_available === true,
+    }
   }
-  return { user: null, status: res.status }
+  return {
+    user: null,
+    status: res.status,
+    refreshAvailable: session.refresh_available === true,
+  }
 }
 
 async function fetchCurrentUserWithRefresh(): Promise<CurrentUserFetchResult> {
-  const first = await fetchCurrentUserOnce()
-  if (first.user || first.status !== 401) return first
-
-  if (first.errorCode && SESSION_INVALID_CODES.includes(first.errorCode)) {
-    return first
-  }
+  const first = await inspectCurrentSession()
+  if (first.user || !first.refreshAvailable) return first
 
   const refreshed = await refreshAuthToken()
   if (!refreshed.ok) {
@@ -169,7 +180,7 @@ async function fetchCurrentUserWithRefresh(): Promise<CurrentUserFetchResult> {
     }
   }
 
-  return fetchCurrentUserOnce()
+  return inspectCurrentSession()
 }
 
 /** Load the signed-in user and sync org context from the backend access profile. */

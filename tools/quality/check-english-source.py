@@ -30,6 +30,7 @@ SKIPPED_DIRECTORY_NAMES = {
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".venv",
     "__pycache__",
     "dist",
     "node_modules",

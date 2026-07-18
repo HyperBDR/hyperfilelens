@@ -19,6 +19,8 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${ROOT}/tools/lib/logging.sh"
 # shellcheck source=../tools/lib/env-file.sh
 source "${ROOT}/tools/lib/env-file.sh"
+# shellcheck source=../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
 # shellcheck source=../tools/dependencies/versions/kopia.env
 source "${ROOT}/tools/dependencies/versions/kopia.env"
 
@@ -40,6 +42,13 @@ HFL_ONLY_DOWN=0
 LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
+FORCE_PULL=0
+DEV_OFFLINE="${DEV_OFFLINE:-}"
+DOCKER_PULL_TIMEOUT="${DOCKER_PULL_TIMEOUT_SECONDS:-}"
+DOCKER_PULL_RETRIES="${DOCKER_PULL_RETRIES:-}"
+CLEAN_SCOPE=""
+CLEAN_YES=0
+STATE_FILE="${ROOT}/build/state/dev-stack.json"
 
 usage() {
 	cat <<'USAGE'
@@ -51,6 +60,13 @@ Commands:
   down --hfl-only    Stop HyperFileLens only; leave SourceLens running
   restart            Refresh dependencies/configuration and recreate changed services
   restart --force    Clean caches and rebuild development dependency images without cache
+  status             Show HFL and SourceLens service state and published ports
+  doctor             Check host tools, configuration, images, permissions, and ports
+  smoke              Run pinned Playwright login/HMR smoke tests against the running stack
+  clean --runtime    Remove containers, Compose networks, and the frontend modules volume
+  clean --cache      Remove generated build cache and local development images
+  clean --data --yes Remove runtime databases, logs, and generated media
+  clean --all --yes  Remove runtime, cache, and data
 
 Prepare (up / restart) always includes:
   .env (create from .env.example if missing)
@@ -79,6 +95,10 @@ Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallb
   --pip-index-url URL              Python package index (env: PIP_INDEX_URL)
   --pip-trusted-host HOST          Trusted pip host (env: PIP_TRUSTED_HOST)
   --npm-registry URL               npm registry (env: NPM_REGISTRY)
+  --pull                           Refresh runtime images with valid local fallback
+  --offline                        Forbid registry, Git, and dependency network access
+  --pull-timeout SECONDS           Per-attempt Docker pull timeout (default: 180)
+  --pull-retries COUNT             Docker pull attempts (default: 2)
 
 Output options:
   --log-file FILE                  Append runtime logs to FILE; normal output remains on stderr
@@ -112,9 +132,15 @@ load_repo_env_defaults() {
 	for key in \
 		GITHUB_DOWNLOAD_MIRROR GITHUB_TOKEN DOCKER_DOWNLOAD_MIRROR \
 		APT_MIRROR GOPROXY GOSUMDB PIP_INDEX_URL PIP_TRUSTED_HOST \
-		NPM_REGISTRY BUILD_SOURCELENS SOURCELENS_GIT_REF SOURCELENS_GIT_URL; do
+		NPM_REGISTRY BUILD_SOURCELENS SOURCELENS_GIT_REF SOURCELENS_GIT_URL \
+		DOCKER_PULL_TIMEOUT_SECONDS DOCKER_PULL_RETRIES DEV_OFFLINE \
+		DEV_SMOKE_PLAYWRIGHT_VERSION SOURCELENS_GIT_TIMEOUT_SECONDS \
+		SOURCELENS_GIT_RETRIES; do
 		hfl_env_load_default "${key}"
 	done
+	DOCKER_PULL_TIMEOUT="${DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
+	DOCKER_PULL_RETRIES="${DOCKER_PULL_RETRIES:-2}"
+	DEV_OFFLINE="${DEV_OFFLINE:-0}"
 }
 
 apply_mirror_env_defaults() {
@@ -162,6 +188,11 @@ go_sumdb=${OPT_GO_SUMDB:-<official>}
 pip_index_url=${OPT_PIP_INDEX_URL:-<official>}
 pip_trusted_host=${OPT_PIP_TRUSTED_HOST:-<unset>}
 npm_registry=${OPT_NPM_REGISTRY:-<official>}
+docker_pull_timeout=${DOCKER_PULL_TIMEOUT}
+docker_pull_retries=${DOCKER_PULL_RETRIES}
+offline=${DEV_OFFLINE}
+force_pull=${FORCE_PULL}
+state_file=${STATE_FILE#${ROOT}/}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
 EOF
@@ -249,9 +280,8 @@ ensure_tls_certs() {
 }
 
 ensure_data_dirs() {
-	mkdir -p \
-		"${ROOT}/data/postgresql" \
-		"${ROOT}/data/redis" \
+	mkdir -p "${ROOT}/data/postgresql" "${ROOT}/data/redis"
+	install -d -m 0755 \
 		"${ROOT}/data/logs" \
 		"${ROOT}/data/lang-packs" \
 		"${ROOT}/data/media/agent-releases" \
@@ -259,10 +289,118 @@ ensure_data_dirs() {
 		"${ROOT}/data/media/gateway-bootstrap" \
 		"${ROOT}/data/media/snapshot-downloads" \
 		"${ROOT}/data/staticfiles"
+	chmod 0755 \
+		"${ROOT}/data/lang-packs" \
+		"${ROOT}/data/media" \
+		"${ROOT}/data/media/agent-releases" \
+		"${ROOT}/data/media/enroll-bootstrap" \
+		"${ROOT}/data/media/gateway-bootstrap" \
+		"${ROOT}/data/media/snapshot-downloads" \
+		"${ROOT}/data/staticfiles"
+	local manifest="${ROOT}/data/lang-packs/installed.json"
+	if [[ ! -f "${manifest}" ]]; then
+		local temporary="${manifest}.tmp.$$"
+		printf '%s\n' '{"packs":[]}' >"${temporary}"
+		chmod 0644 "${temporary}"
+		mv -f "${temporary}" "${manifest}"
+		log "Created empty runtime language-pack manifest"
+	fi
+}
+
+validate_network_policy() {
+	[[ "${DEV_OFFLINE}" =~ ^[01]$ ]] || die "DEV_OFFLINE must be 0 or 1" 2
+	hfl_docker_validate_pull_settings "${DOCKER_PULL_TIMEOUT}" "${DOCKER_PULL_RETRIES}" \
+		|| die "Docker pull timeout/retries must be positive integers and timeout must be installed" 2
+}
+
+ensure_runtime_images() {
+	local image
+	validate_network_policy
+	for image in nginx:stable-alpine postgres:17 redis:alpine; do
+		log "Resolving runtime image ${image} (offline=${DEV_OFFLINE}, force_pull=${FORCE_PULL})"
+		if ! hfl_docker_ensure_image "${image}" "${MIRROR_DOCKER_DOWNLOAD}" \
+			"${FORCE_PULL}" "${DEV_OFFLINE}" "linux/amd64" \
+			"${DOCKER_PULL_TIMEOUT}" "${DOCKER_PULL_RETRIES}"; then
+			die "unable to prepare ${image}: ${HFL_DOCKER_LAST_ERROR}"
+		fi
+		log "Runtime image ${image} ready (source=${HFL_DOCKER_IMAGE_SOURCE})"
+	done
+}
+
+cache_fingerprint() {
+	local args=(fingerprint --root "${ROOT}") item
+	while [[ $# -gt 0 && "$1" != "--" ]]; do
+		args+=(--path "$1")
+		shift
+	done
+	[[ $# -eq 0 ]] || shift
+	for item in "$@"; do
+		args+=(--value "${item}")
+	done
+	python3 "${ROOT}/tools/dev/cache_state.py" "${args[@]}"
+}
+
+cache_matches() {
+	python3 "${ROOT}/tools/dev/cache_state.py" check \
+		--state "${STATE_FILE}" --key "$1" --fingerprint "$2"
+}
+
+cache_update() {
+	python3 "${ROOT}/tools/dev/cache_state.py" update \
+		--state "${STATE_FILE}" --key "$1" --fingerprint "$2"
+}
+
+build_dev_images() {
+	local force=$1 backend_fingerprint frontend_fingerprint
+	backend_fingerprint="$(cache_fingerprint \
+		deploy/docker/backend.Dockerfile deploy/docker/backend-entrypoint.sh deploy/bootstrap \
+		pyproject.toml uv.lock build/dependencies/kopia/kopia_linux_amd64.deb -- \
+		"apt=${MIRROR_APT}" "pip=${OPT_PIP_INDEX_URL}" \
+		"pip_host=${OPT_PIP_TRUSTED_HOST}" "kopia=${KOPIA_VERSION}")"
+	frontend_fingerprint="$(cache_fingerprint \
+		deploy/docker/frontend.Dockerfile deploy/docker/frontend-dev-entrypoint.sh \
+		src/frontend/package.json \
+		src/frontend/package-lock.json -- "npm=${OPT_NPM_REGISTRY}")"
+
+	if [[ "${force}" -eq 1 ]] || ! docker image inspect hyperfilelens-backend:dev >/dev/null 2>&1 \
+		|| ! cache_matches backend-image "${backend_fingerprint}"; then
+		[[ "${DEV_OFFLINE}" -eq 0 ]] \
+			|| die "backend development image is missing or stale in offline mode"
+		log "Building backend development dependency image"
+		if [[ "${force}" -eq 1 ]]; then
+			compose build --no-cache worker
+		else
+			compose build worker
+		fi
+		cache_update backend-image "${backend_fingerprint}"
+	else
+		log "Backend development image fingerprint unchanged; reusing local image"
+	fi
+
+	if [[ "${force}" -eq 1 ]] || ! docker image inspect hyperfilelens-frontend:dev >/dev/null 2>&1 \
+		|| ! cache_matches frontend-image "${frontend_fingerprint}"; then
+		[[ "${DEV_OFFLINE}" -eq 0 ]] \
+			|| die "frontend development image is missing or stale in offline mode"
+		log "Building frontend development dependency image"
+		if [[ "${force}" -eq 1 ]]; then
+			compose build --no-cache ui
+		else
+			compose build ui
+		fi
+		cache_update frontend-image "${frontend_fingerprint}"
+	else
+		log "Frontend development image fingerprint unchanged; reusing local image"
+	fi
 }
 
 fetch_kopia_deb() {
 	local force=$1
+	local cached="${ROOT}/build/dependencies/kopia/kopia_linux_amd64.deb"
+	if [[ "${DEV_OFFLINE}" -eq 1 ]]; then
+		[[ -s "${cached}" ]] || die "Kopia dependency is missing and offline mode forbids downloading it"
+		log "Offline mode: reusing cached Kopia deb"
+		return 0
+	fi
 	local args=(--kopia-version "${KOPIA_VERSION}")
 	[[ "${force}" -eq 1 ]] && args+=(--force)
 	if [[ -n "${MIRROR_GITHUB_DOWNLOAD}" ]]; then
@@ -316,6 +454,9 @@ prepare_sourcelens_dev() {
 		args=(gateway)
 	fi
 	[[ "${force}" -eq 1 ]] && args+=(--force-build)
+	[[ "${FORCE_PULL}" -eq 1 ]] && args+=(--pull)
+	[[ "${DEV_OFFLINE}" -eq 1 ]] && args+=(--offline)
+	args+=(--pull-timeout "${DOCKER_PULL_TIMEOUT}" --pull-retries "${DOCKER_PULL_RETRIES}")
 	[[ -n "${SOURCELENS_GIT_REF}" ]] && args+=(--sourcelens-ref "${SOURCELENS_GIT_REF}")
 	[[ -n "${SOURCELENS_GIT_URL}" ]] && args+=(--sourcelens-git-url "${SOURCELENS_GIT_URL}")
 	[[ -n "${MIRROR_APT}" ]] && export APT_MIRROR="${MIRROR_APT}"
@@ -326,6 +467,10 @@ prepare_sourcelens_dev() {
 	[[ -n "${OPT_PIP_INDEX_URL}" ]] && export PIP_INDEX_URL="${OPT_PIP_INDEX_URL}"
 	[[ -n "${OPT_PIP_TRUSTED_HOST}" ]] && export PIP_TRUSTED_HOST="${OPT_PIP_TRUSTED_HOST}"
 	[[ -n "${OPT_NPM_REGISTRY}" ]] && export NPM_REGISTRY="${OPT_NPM_REGISTRY}"
+	export DEV_OFFLINE="${DEV_OFFLINE}"
+	export DOCKER_PULL_TIMEOUT_SECONDS="${DOCKER_PULL_TIMEOUT}"
+	export DOCKER_PULL_RETRIES
+	export SOURCELENS_GIT_TIMEOUT_SECONDS SOURCELENS_GIT_RETRIES
 	export SOURCELENS_CONSOLE_BIND_ADDRESS SOURCELENS_CONSOLE_PORT SOURCELENS_NGINX_HTTPS_PORT
 	SOURCELENS_CONSOLE_BIND_ADDRESS="$(read_env_value_or SOURCELENS_CONSOLE_BIND_ADDRESS 0.0.0.0 "${ROOT}/.env")"
 	SOURCELENS_CONSOLE_PORT="$(read_env_value_or SOURCELENS_CONSOLE_PORT 10446 "${ROOT}/.env")"
@@ -346,6 +491,24 @@ stop_sourcelens_dev() {
 
 publish_agent() {
 	local force=$1
+	local fingerprint
+	fingerprint="$(cache_fingerprint src/agent tools/agent tools/dependencies/versions deploy/bootstrap \
+		tools/lib/version.sh tools/lib/logging.sh -- \
+		"arch=${UBUNTU2404_ARCH}" "kopia=${KOPIA_VERSION}" \
+		"commit=$(git -C "${ROOT}" rev-parse HEAD)" \
+		"github_mirror=${MIRROR_GITHUB_DOWNLOAD}" \
+		"docker_mirror=${MIRROR_DOCKER_DOWNLOAD}" "apt=${MIRROR_APT}" \
+		"goproxy=${OPT_GO_PROXY}" "gosumdb=${OPT_GO_SUMDB}")"
+	if [[ "${force}" -eq 0 ]] \
+		&& cache_matches agent-publish "${fingerprint}" \
+		&& find "${ROOT}/data/media/agent-releases" -type f \
+			\( -name '*.tar.gz' -o -name '*.zip' \) -print -quit 2>/dev/null | grep -q .; then
+		log "Agent publish fingerprint unchanged; reusing published packages"
+		return 0
+	fi
+	if [[ "${DEV_OFFLINE}" -eq 1 ]]; then
+		die "Agent packages are missing or stale and offline mode forbids rebuilding network dependencies"
+	fi
 	if [[ "${force}" -eq 1 ]]; then
 		log "Cleaning Agent build output"
 		"${ROOT}/src/agent/scripts/build.sh" --clean
@@ -361,6 +524,7 @@ publish_agent() {
 	[[ -n "${OPT_GO_SUMDB}" ]] && args+=(--go-sumdb "${OPT_GO_SUMDB}")
 	log "Publishing Agent packages (bundle=all, ubuntu2404-arch=${UBUNTU2404_ARCH}, force_fetch=${force})"
 	"${ROOT}/tools/agent/publish.sh" "${args[@]}"
+	cache_update agent-publish "${fingerprint}"
 }
 
 prepare_dev() {
@@ -377,6 +541,7 @@ prepare_dev() {
 	fetch_kopia_deb "${force}"
 	strip_bundled_lang_packs "${ROOT}/src/frontend"
 	publish_agent "${force}"
+	build_dev_images "${force}"
 }
 
 read_env_value() {
@@ -519,11 +684,12 @@ cmd_up() {
 	apply_mirror_env_defaults
 	ensure_env_file
 	require_docker
+	ensure_runtime_images
 	ensure_bridge_network
 	prepare_sourcelens_dev 0
 	prepare_dev 0
-	log "Starting hot-reload HFL stack: docker compose up -d --build"
-	compose up -d --build --remove-orphans
+	log "Starting hot-reload HFL stack from explicitly prepared images"
+	compose up -d --no-build --pull never --remove-orphans
 	print_urls
 }
 
@@ -542,20 +708,129 @@ cmd_restart() {
 	apply_mirror_env_defaults
 	ensure_env_file
 	require_docker
+	ensure_runtime_images
 	ensure_bridge_network
 	prepare_sourcelens_dev "${force}"
 	prepare_dev "${force}"
 
 	if [[ "${force}" -eq 1 ]]; then
-		log "Force restart: rebuild development dependency images without cache"
-		compose down || true
-		compose build --no-cache worker ui
-		compose up -d --force-recreate --remove-orphans
+		log "Force restart: recreating services from freshly rebuilt images"
+		compose up -d --no-build --pull never --force-recreate --remove-orphans
 	else
-		log "Refreshing development dependency images and recreating changed services"
-		compose up -d --build --remove-orphans
+		log "Restarting only services whose image or configuration changed"
+		compose up -d --no-build --pull never --remove-orphans
 	fi
 	print_urls
+}
+
+cmd_status() {
+	ensure_env_file
+	require_docker
+	log "HyperFileLens services"
+	compose ps
+	if [[ -f "${ROOT}/build/sourcelens/dev/docker-compose.yml" ]]; then
+		log "SourceLens services"
+		# SourceLens helper resolves the generated Compose project without changing it.
+		(
+			cd "${ROOT}/build/sourcelens/dev"
+			docker compose --env-file "${ROOT}/data/sourcelens/config/.env" \
+				-p "${SOURCELENS_COMPOSE_PROJECT:-sourcelens}" -f docker-compose.yml ps
+		)
+	else
+		log "SourceLens runtime has not been prepared"
+	fi
+}
+
+cmd_doctor() {
+	local failures=0 command image mode
+	ensure_env_file
+	apply_mirror_env_defaults
+	for command in docker python3 openssl timeout flock gzip; do
+		if command -v "${command}" >/dev/null 2>&1; then
+			printf 'ok      command %s\n' "${command}"
+		else
+			printf 'missing command %s\n' "${command}"
+			failures=$((failures + 1))
+		fi
+	done
+	validate_network_policy || failures=$((failures + 1))
+	if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+		printf 'ok      Docker daemon reachable\n'
+		for image in nginx:stable-alpine postgres:17 redis:alpine \
+			hyperfilelens-backend:dev hyperfilelens-frontend:dev; do
+			if docker image inspect "${image}" >/dev/null 2>&1; then
+				printf 'ok      image %s\n' "${image}"
+			else
+				printf 'pending image %s (prepared by up)\n' "${image}"
+			fi
+		done
+	else
+		printf 'missing Docker daemon is not reachable\n'
+		failures=$((failures + 1))
+	fi
+	if [[ -d "${ROOT}/data/lang-packs" ]]; then
+		mode="$(stat -c '%a' "${ROOT}/data/lang-packs")"
+		if [[ "${mode}" =~ ^(755|775|777)$ && -r "${ROOT}/data/lang-packs/installed.json" ]]; then
+			printf 'ok      language packs mode=%s manifest=readable\n' "${mode}"
+		else
+			printf 'invalid language packs mode=%s or manifest unreadable (run up)\n' "${mode}"
+			failures=$((failures + 1))
+		fi
+	else
+		printf 'pending data directories (created by up)\n'
+	fi
+	if [[ "${failures}" -ne 0 ]]; then
+		die "doctor found ${failures} blocking issue(s)"
+	fi
+	printf 'doctor: no blocking issues found\n'
+}
+
+clean_runtime() {
+	require_docker
+	ensure_env_file
+	compose down --volumes --remove-orphans || true
+	if [[ -x "${ROOT}/dev/sourcelens.sh" ]]; then
+		"${ROOT}/dev/sourcelens.sh" down || true
+	fi
+	docker network rm hyperfilelens-bridge >/dev/null 2>&1 || true
+	log "Removed development containers, Compose networks, and modules volume"
+}
+
+clean_cache() {
+	require_docker
+	local image
+	for image in hyperfilelens-backend:dev hyperfilelens-frontend:dev; do
+		docker image rm "${image}" >/dev/null 2>&1 || true
+	done
+	rm -rf "${ROOT}/build/agent" "${ROOT}/build/state" "${ROOT}/build/sourcelens"
+	log "Removed generated build caches and local HFL development images"
+}
+
+clean_data() {
+	[[ "${CLEAN_YES}" -eq 1 ]] \
+		|| die "clean --data and clean --all require --yes because databases and runtime data are deleted" 2
+	rm -rf "${ROOT}/data"
+	log "Removed runtime data"
+}
+
+cmd_clean() {
+	if [[ "${CLEAN_SCOPE}" == "data" || "${CLEAN_SCOPE}" == "all" ]]; then
+		[[ "${CLEAN_YES}" -eq 1 ]] \
+			|| die "clean --data and clean --all require --yes because databases and runtime data are deleted" 2
+	fi
+	case "${CLEAN_SCOPE}" in
+	runtime) clean_runtime ;;
+	cache) clean_cache ;;
+	data) clean_runtime; clean_data ;;
+	all) clean_runtime; clean_cache; clean_data ;;
+	*) die "clean requires exactly one of --runtime, --cache, --data, or --all" 2 ;;
+	esac
+}
+
+cmd_smoke() {
+	ensure_env_file
+	require_docker
+	"${ROOT}/tools/dev/browser-smoke.sh"
 }
 
 parse_common_option() {
@@ -636,6 +911,24 @@ parse_common_option() {
 		HFL_ONLY_DOWN=1
 		return 0
 		;;
+	--pull)
+		FORCE_PULL=1
+		return 0
+		;;
+	--offline)
+		DEV_OFFLINE=1
+		return 0
+		;;
+	--pull-timeout)
+		require_value "$1" "${2:-}"
+		DOCKER_PULL_TIMEOUT="$2"
+		return 0
+		;;
+	--pull-retries)
+		require_value "$1" "${2:-}"
+		DOCKER_PULL_RETRIES="$2"
+		return 0
+		;;
 	esac
 	return 1
 }
@@ -655,13 +948,22 @@ main() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		up | down | restart)
+		up | down | restart | status | doctor | smoke | clean)
 			[[ -z "${cmd}" ]] || die "multiple commands specified"
 			cmd="$1"
 			shift
 			;;
 		--force)
 			restart_force=1
+			shift
+			;;
+		--runtime | --cache | --data | --all)
+			[[ -z "${CLEAN_SCOPE}" ]] || die "multiple clean scopes specified" 2
+			CLEAN_SCOPE="${1#--}"
+			shift
+			;;
+		--yes)
+			CLEAN_YES=1
 			shift
 			;;
 		-h | --help | help)
@@ -681,9 +983,10 @@ main() {
 			LOG_FILE="$2"
 			shift 2
 			;;
-		--github-download-mirror | --github-token | --docker-download-mirror | --apt-mirror | --ubuntu2404-arch | --kopia-version | --sourcelens-ref | --sourcelens-git-url | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry | --no-sourcelens | --hfl-only)
+		--github-download-mirror | --github-token | --docker-download-mirror | --apt-mirror | --ubuntu2404-arch | --kopia-version | --sourcelens-ref | --sourcelens-git-url | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry | --pull-timeout | --pull-retries | --no-sourcelens | --hfl-only | --pull | --offline)
 			parse_common_option "$@" || die "failed to parse option: $1"
-			if [[ "$1" == "--no-sourcelens" || "$1" == "--hfl-only" ]]; then
+			if [[ "$1" == "--no-sourcelens" || "$1" == "--hfl-only" \
+				|| "$1" == "--pull" || "$1" == "--offline" ]]; then
 				shift
 			else
 				shift 2
@@ -713,11 +1016,21 @@ main() {
 	if [[ "${HFL_ONLY_DOWN}" -eq 1 && "${cmd}" != "down" ]]; then
 		die "--hfl-only is only valid with down" 2
 	fi
+	if [[ -n "${CLEAN_SCOPE}" && "${cmd}" != "clean" ]]; then
+		die "clean scope options are only valid with clean" 2
+	fi
+	if [[ "${CLEAN_YES}" -eq 1 && "${cmd}" != "clean" ]]; then
+		die "--yes is only valid with clean" 2
+	fi
 
 	case "${cmd}" in
 	up) cmd_up ;;
 	down) cmd_down ;;
 	restart) cmd_restart "${restart_force}" ;;
+	status) cmd_status ;;
+	doctor) cmd_doctor ;;
+	smoke) cmd_smoke ;;
+	clean) cmd_clean ;;
 	esac
 }
 

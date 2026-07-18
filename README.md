@@ -115,10 +115,40 @@ Common lifecycle commands:
 ./dev/stack.sh down --hfl-only
 ./dev/stack.sh restart
 ./dev/stack.sh restart --force
+./dev/stack.sh status
+./dev/stack.sh doctor
+./dev/stack.sh smoke
 ```
 
 Use `restart --force` after changing dependency manifests or Dockerfiles.
 Normal backend and frontend source changes reload automatically.
+Unchanged dependency images, Agent packages, and the Gateway LensNode archive
+are reused through content fingerprints and archive identity checks.
+
+`down` is intentionally non-destructive: it preserves the shared bridge and
+frontend modules volume for the next start. Explicit cleanup is available when
+a genuinely clean runtime or data reset is required:
+
+```bash
+./dev/stack.sh clean --runtime
+./dev/stack.sh clean --cache
+./dev/stack.sh clean --data --yes
+./dev/stack.sh clean --all --yes
+```
+
+The data forms require `--yes` because they delete local databases, logs, and
+generated media. After one successful online preparation, a warm-cache stack
+can be started or restarted without registry or Git access:
+
+```bash
+./dev/stack.sh up --offline
+./dev/stack.sh restart --offline
+```
+
+Use `--pull` for an explicit runtime-image refresh. Docker pulls and SourceLens
+Git operations have configurable finite timeouts and retry limits. The `smoke`
+command uses a pinned Playwright version to verify Tenant, Platform Operations,
+SourceLens login, and the development HMR WebSocket path.
 
 To inspect options without starting services:
 
@@ -262,6 +292,7 @@ The public repository requires English source, comments, and documentation:
 
 ```bash
 python3 tools/quality/check-english-source.py
+./tools/quality/check-release-contracts.sh
 ```
 
 Run the relevant backend, frontend, and Agent tests before opening a pull

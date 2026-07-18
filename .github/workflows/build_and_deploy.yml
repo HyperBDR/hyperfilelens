@@ -1,0 +1,580 @@
+name: Build, Release, and Deploy
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+  group: hyperfilelens-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ${{ vars.REGISTRY }}
+  HFL_DEPLOY_PATH: ${{ vars.HFL_DEPLOY_PATH }}
+  HFL_PUBLIC_HOST: ${{ vars.HFL_PUBLIC_HOST }}
+  HFL_SSH_HOST: ${{ vars.HFL_SSH_HOST }}
+  HFL_SSH_PORT: ${{ vars.HFL_SSH_PORT }}
+  HFL_SSH_USER: ${{ vars.HFL_SSH_USER }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      commit: ${{ steps.version.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag and commit
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          VERSION="${BASH_REMATCH[1]}"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "commit=$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+          [[ "${REGISTRY}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || {
+            echo "REGISTRY repository variable is missing or invalid" >&2
+            exit 1
+          }
+
+      - name: Create or reuse draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --json isDraft >/tmp/hfl-release.json 2>/dev/null; then
+            [[ "$(jq -r .isDraft /tmp/hfl-release.json)" == "true" ]] || {
+              echo "Refusing to overwrite an already-published release" >&2
+              exit 1
+            }
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --draft \
+              --generate-notes \
+              --title "HyperFileLens $GITHUB_REF_NAME"
+          fi
+
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: prepare
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hyperfilelens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hyperfilelens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hyperfilelens
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CACHE_REDIS_URL: redis://127.0.0.1:6379/1
+      SECRET_KEY: ci-only-secret-key-with-at-least-32-bytes
+      DJANGO_DEBUG: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/agent/go.mod
+          cache-dependency-path: src/agent/go.sum
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.2"
+          enable-cache: true
+
+      - name: Release and source checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/quality/check-english-source.py
+          ./tools/quality/check-release-contracts.sh
+          ./tools/quality/test-ci-release-assembly.sh
+          git diff --check
+          while IFS= read -r script; do bash -n "$script"; done < <(find . -path './build' -prune -o -path './data' -prune -o -type f -name '*.sh' -print)
+
+      - name: Backend checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --locked --group dev
+          uv run ruff check src/backend
+          uv run python src/backend/manage.py test
+
+      - name: Frontend checks
+        working-directory: src/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run lint
+          npm run test:ci
+          npm run build
+
+      - name: Agent checks
+        working-directory: src/agent
+        run: go test ./...
+
+  build-hfl-images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [prepare, quality]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: hfl-backend
+            repository: hyperfilelens-backend
+            context: .
+            dockerfile: deploy/docker/backend.Dockerfile
+            cache_scope: hfl-backend
+            needs_kopia: true
+          - component: hfl-frontend
+            repository: hyperfilelens-frontend
+            context: .
+            dockerfile: deploy/docker/frontend.Dockerfile
+            cache_scope: hfl-frontend
+            needs_kopia: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Fetch pinned Kopia package
+        if: matrix.needs_kopia
+        run: ./tools/dependencies/fetch-kopia-deb.sh
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
+          build-args: |
+            KOPIA_DEB=build/dependencies/kopia/kopia_linux_amd64.deb
+            PIP_TIMEOUT=600
+            SENTRY_ENABLED=false
+            SENTRY_ENVIRONMENT=production
+            SENTRY_RELEASE=${{ needs.prepare.outputs.tag }}
+            SENTRY_TRACES_SAMPLE_RATE=0
+            SENTRY_SEND_DEFAULT_PII=false
+            VITE_SHOW_EULA=false
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=min
+
+      - name: Upload immutable image metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="_internal-${{ matrix.component }}.json"
+          ./release/ci/write-image-metadata.sh \
+            "${{ matrix.component }}" "$IMAGE_REF" "$IMAGE_DIGEST" "$output"
+          gh release upload "${{ needs.prepare.outputs.tag }}" "$output" --clobber
+
+      - name: Disk report
+        if: always()
+        run: |
+          df -h
+          docker system df || true
+
+  build-sourcelens-images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: [prepare, quality]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend, lensnode]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and push bundled SourceLens component
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./release/ci/build-sourcelens-image.sh \
+            "${{ matrix.component }}" \
+            "$REGISTRY" \
+            "${{ needs.prepare.outputs.version }}" \
+            "_internal-sourcelens-${{ matrix.component }}.json"
+
+      - name: Upload immutable image metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.prepare.outputs.tag }}" \
+            "_internal-sourcelens-${{ matrix.component }}.json" --clobber
+
+      - name: Disk report and cleanup
+        if: always()
+        run: |
+          df -h
+          docker system df || true
+          docker builder prune -af || true
+
+  build-agent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [prepare, quality]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux:amd64
+            asset: linux-amd64
+          - target: linux:arm64
+            asset: linux-arm64
+          - target: darwin:amd64
+            asset: darwin-amd64
+          - target: darwin:arm64
+            asset: darwin-arm64
+          - target: windows:amd64
+            asset: windows-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/agent/go.mod
+          cache-dependency-path: src/agent/go.sum
+      - name: Build Agent asset
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./release/ci/build-agent-asset.sh \
+            "${{ matrix.target }}" \
+            "${{ needs.prepare.outputs.version }}" \
+            "${{ needs.prepare.outputs.commit }}" \
+            "_internal-agent-${{ matrix.asset }}.tar.gz"
+      - name: Upload Agent asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.prepare.outputs.tag }}" \
+            "_internal-agent-${{ matrix.asset }}.tar.gz" --clobber
+
+  build-host-debs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [prepare, quality]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build host dependency asset
+        run: ./release/ci/build-host-debs-asset.sh _internal-host-debs.tar.gz
+      - name: Upload host dependency asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-host-debs.tar.gz --clobber
+
+  export-hfl-images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [prepare, build-hfl-images]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Download image metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/ci-metadata
+          gh release download "${{ needs.prepare.outputs.tag }}" --pattern '_internal-hfl-*.json' --dir build/ci-metadata
+          for file in build/ci-metadata/_internal-*.json; do mv "$file" "${file/_internal-/}"; done
+      - name: Export offline HFL archive
+        run: |
+          ./release/ci/export-hfl-images.sh \
+            build/ci-metadata \
+            "${{ needs.prepare.outputs.version }}" \
+            _internal-hfl-images.tar.gz
+      - name: Upload offline HFL archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar.gz --clobber
+
+  export-sourcelens-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [prepare, build-sourcelens-images]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Download image metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/ci-metadata
+          gh release download "${{ needs.prepare.outputs.tag }}" --pattern '_internal-sourcelens-*.json' --dir build/ci-metadata
+          for file in build/ci-metadata/_internal-*.json; do mv "$file" "${file/_internal-/}"; done
+      - name: Export bundled SourceLens runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./release/ci/export-sourcelens-bundle.sh \
+            build/ci-metadata \
+            "${{ needs.prepare.outputs.version }}" \
+            _internal-sourcelens-bundle.tar.gz
+      - name: Upload bundled SourceLens runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-sourcelens-bundle.tar.gz --clobber
+
+  export-runtime-images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [prepare, quality]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - run: ./release/ci/export-runtime-images.sh _internal-runtime-images.tar.gz
+      - name: Upload runtime images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar.gz --clobber
+
+  assemble-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs:
+      - prepare
+      - build-agent
+      - build-host-debs
+      - export-hfl-images
+      - export-sourcelens-bundle
+      - export-runtime-images
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download matrix bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/ci-input
+          gh release download "${{ needs.prepare.outputs.tag }}" --pattern '_internal-*.tar.gz' --dir build/ci-input
+      - name: Assemble canonical offline release
+        run: |
+          ./release/ci/assemble-release.sh \
+            --input-dir build/ci-input \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --commit "${{ needs.prepare.outputs.commit }}"
+      - name: Upload final assets to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r asset_id; do
+            [[ -n "$asset_id" ]] || continue
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+          done < <(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${{ needs.prepare.outputs.tag }}" \
+            --jq '.assets[] | select(.name | startswith("_internal-") | not) | .id')
+          while IFS= read -r asset; do
+            gh release upload "${{ needs.prepare.outputs.tag }}" \
+              "build/release/dist/${asset}" --clobber
+          done < build/release/release-assets.txt
+      - name: Disk report
+        if: always()
+        run: df -h
+
+  verify-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [prepare, assemble-release]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reclaim unused runner toolchains
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          docker system prune -af || true
+          df -h
+      - name: Download public release candidates from draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/release-candidate
+          gh release download "${{ needs.prepare.outputs.tag }}" \
+            --pattern 'hyperfilelens-*.tar.gz*' \
+            --pattern 'SHA256SUMS' \
+            --pattern 'MANIFEST.json' \
+            --pattern 'SBOM.spdx.json' \
+            --pattern 'assemble-release.*' \
+            --dir build/release-candidate
+      - name: Verify checksums and reconstruct package when split
+        id: package
+        working-directory: build/release-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          archive="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -print -quit)"
+          if [[ -z "$archive" ]]; then
+            first="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
+            [[ -n "$first" ]]
+            archive="${first%.part-000}"
+            cat "${archive}.part-"* > "$archive"
+          fi
+          echo "archive=$(realpath "$archive")" >> "$GITHUB_OUTPUT"
+      - name: Full offline install and browser login smoke
+        run: ./release/ci/verify-release.sh --archive "${{ steps.package.outputs.archive }}" --install
+
+  publish-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: [prepare, verify-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Remove internal assets and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r asset_id; do
+            [[ -n "$asset_id" ]] || continue
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+          done < <(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${{ needs.prepare.outputs.tag }}" \
+            --jq '.assets[] | select(.name | startswith("_internal-")) | .id')
+          gh release edit "${{ needs.prepare.outputs.tag }}" --draft=false --latest
+
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: [prepare, publish-release]
+    if: ${{ vars.HFL_AUTO_DEPLOY == 'true' }}
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$HFL_SSH_HOST" ]]
+          [[ -n "$HFL_SSH_USER" ]]
+          # HFL_SSH_PORT is supplied by the workflow-level env map.
+          # shellcheck disable=SC2153
+          [[ "$HFL_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$HFL_DEPLOY_PATH" == /opt/hyperfilelens ]]
+          [[ -n "$HFL_PUBLIC_HOST" ]]
+      - name: Install SSH credentials
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
+      - name: Download and deploy the complete release package on the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -p "$HFL_SSH_PORT" \
+            "$HFL_SSH_USER@$HFL_SSH_HOST" \
+            bash -s -- \
+              --tag "${{ needs.prepare.outputs.tag }}" \
+              --public-host "$HFL_PUBLIC_HOST" \
+              --install-dir "$HFL_DEPLOY_PATH" \
+            < .github/scripts/remote-deploy.sh
+      - name: Post-deploy health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -kfsS --retry 24 --retry-delay 5 "https://${HFL_PUBLIC_HOST}:10443/health/ready"
+          curl -kfsS --retry 12 --retry-delay 5 "https://${HFL_PUBLIC_HOST}:10444/" >/dev/null
+          curl -kfsS --retry 24 --retry-delay 5 "https://${HFL_PUBLIC_HOST}:10446/" >/dev/null
