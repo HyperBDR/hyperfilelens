@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin />
+    <link rel="dns-prefetch" href="https://challenges.cloudflare.com" />
+    <title>HyperFileLens</title>
+    <style>
+      :root {
+        --boot-bg: #f4f4f7;
+        --boot-ink: #171721;
+        --boot-primary: #6d5ef6;
+        --boot-accent: #f5a623;
+      }
+
+      html,
+      body,
+      #app {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--boot-bg);
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+
+      .hfl-boot {
+        min-height: 100vh;
+        display: grid;
+        align-items: center;
+        justify-items: center;
+        padding: 32px;
+        box-sizing: border-box;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(109, 94, 246, 0.1), transparent 28%),
+          var(--boot-bg);
+      }
+
+      .hfl-boot__panel {
+        display: grid;
+        justify-items: center;
+        gap: 16px;
+        width: min(320px, 100%);
+        color: var(--boot-ink);
+        text-align: center;
+      }
+
+      .hfl-boot__mark {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background:
+          linear-gradient(135deg, rgba(245, 166, 35, 0.95), transparent 46%),
+          linear-gradient(135deg, #a99bff, var(--boot-primary));
+        box-shadow: 0 16px 34px rgba(109, 94, 246, 0.28);
+        transform: rotate(45deg);
+      }
+
+      .hfl-boot__brand {
+        margin: 4px 0 0;
+        color: var(--boot-ink);
+        font-size: 20px;
+        font-weight: 750;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .hfl-boot__brand span {
+        color: var(--boot-accent);
+      }
+
+      .hfl-boot__bar {
+        position: relative;
+        width: 220px;
+        height: 7px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(109, 94, 246, 0.14);
+      }
+
+      .hfl-boot__bar::after {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 42%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--boot-accent), var(--boot-primary));
+        animation: hfl-boot-progress 1.3s ease-in-out infinite;
+      }
+
+      @keyframes hfl-boot-progress {
+        0% {
+          transform: translateX(-115%);
+        }
+
+        100% {
+          transform: translateX(260%);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="hfl-boot" aria-hidden="true">
+        <div class="hfl-boot__panel">
+          <i class="hfl-boot__mark"></i>
+          <div class="hfl-boot__brand"><span>Hyper</span>FileLens</div>
+          <div class="hfl-boot__bar"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

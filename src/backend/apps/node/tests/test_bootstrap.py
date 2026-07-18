@@ -1,0 +1,77 @@
+"""Tests for enrollment bootstrap API."""
+
+from django.test import TestCase
+from django.utils import timezone
+from rest_framework.test import APIRequestFactory
+
+from apps.iam.models import Organization
+from apps.node.api.views.bootstrap import BootstrapView
+from apps.node.models import NodeToken
+from apps.node.models.base import NodeRole
+
+
+class BootstrapViewTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(key="bootstrap-org", name="Bootstrap Org")
+        self.token_row = NodeToken.objects.create(
+            organization=self.org,
+            role=NodeRole.AGENT,
+            token="bootstrap-token-abc",
+            is_active=True,
+        )
+        self.factory = APIRequestFactory()
+
+    def _get(self, script_type: str, **extra):
+        params = {
+            "type": script_type,
+            "org": self.org.key,
+            "role": "agent",
+            "token": self.token_row.token,
+            "api_base": "https://console.example",
+            **extra,
+        }
+        request = self.factory.get("/api/v1/node/enrollment/bootstrap", params)
+        return BootstrapView.as_view()(request)
+
+    def test_linux_bootstrap_renders_credentials(self):
+        response = self._get("linux")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("bootstrap-org", body)
+        self.assertIn("bootstrap-token-abc", body)
+        self.assertIn("hfl-enroll-linux-${HFL_ARCH}", body)
+        self.assertIn("https://console.example", body)
+        self.assertIn('HFL_ENROLL_ARGS=(--yes "$@")', body)
+
+    def test_windows_bootstrap_renders(self):
+        response = self._get("windows")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("$bin install", body)
+        self.assertIn("bootstrap-token-abc", body)
+
+    def test_used_token_still_returns_bootstrap_script(self):
+        self.token_row.is_active = False
+        self.token_row.used_at = timezone.now()
+        self.token_row.save(update_fields=["is_active", "used_at"])
+
+        response = self._get("linux")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("bootstrap-token-abc", body)
+        self.assertIn("hfl-enroll-linux-${HFL_ARCH}", body)
+
+    def test_invalid_token_returns_executable_error_script(self):
+        response = self._get("linux", token="wrong-token")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertTrue(body.startswith("#!/usr/bin/env bash"))
+        self.assertIn("[FAIL ]", body)
+        self.assertIn("invalid or expired enrollment link", body)
+
+    def test_missing_token_returns_executable_error_script(self):
+        response = self._get("linux", token="")
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertTrue(body.startswith("#!/usr/bin/env bash"))
+        self.assertIn("[FAIL ]", body)

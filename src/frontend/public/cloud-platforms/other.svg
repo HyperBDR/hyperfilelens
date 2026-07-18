@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="other-s3-rim" x1="12" y1="3.5" x2="12" y2="8.5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6EA3D0"/>
+      <stop offset="1" stop-color="#457AB0"/>
+    </linearGradient>
+    <linearGradient id="other-s3-shell" x1="12" y1="8.5" x2="12" y2="20.5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#457AB0"/>
+      <stop offset="1" stop-color="#2F5F86"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="12" cy="6.75" rx="7.5" ry="2.5" fill="url(#other-s3-rim)"/>
+  <path fill="url(#other-s3-shell)" d="M4.5 6.75V16.5c0 1.38 3.36 2.5 7.5 2.5s7.5-1.12 7.5-2.5V6.75c0 1.38-3.36 2.5-7.5 2.5S4.5 8.13 4.5 6.75Z"/>
+  <ellipse cx="12" cy="11.25" rx="7.5" ry="2.5" fill="#FFFFFF" fill-opacity="0.2"/>
+  <ellipse cx="12" cy="15.75" rx="7.5" ry="2.5" fill="#FFFFFF" fill-opacity="0.12"/>
+  <ellipse cx="12" cy="19" rx="7.5" ry="2.5" fill="#FFFFFF" fill-opacity="0.08"/>
+  <path fill="#FFFFFF" fill-opacity="0.95" d="M7.8 5.55h8.4a1 1 0 0 0 0-2H7.8a1 1 0 1 0 0 2Z"/>
+</svg>

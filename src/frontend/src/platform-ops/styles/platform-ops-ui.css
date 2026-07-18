@@ -1,0 +1,324 @@
+/* Admin Console — align list/detail/settings with HyperFileLens hfl-* tokens */
+
+.platform-ops-shell .hfl-list-toolbar {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.platform-ops-shell .hfl-list-toolbar > .hfl-list-toolbar__right {
+  margin-left: auto;
+}
+
+.platform-ops-shell .hfl-list-toolbar > .hfl-list-toolbar__right--solo {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.platform-ops-shell .platform-ops-list-table--clickable .el-table .el-table__row {
+  cursor: pointer;
+}
+
+/* List table headers: left-aligned, show full label text (Admin Console lists). */
+.platform-ops-shell .hfl-list-table .el-table__header th.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) {
+  text-align: left;
+}
+
+.platform-ops-shell .hfl-list-table .el-table__header th.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell {
+  justify-content: flex-start;
+  text-align: left;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.platform-ops-shell .platform-ops-muted {
+  color: var(--page-text-secondary, var(--color-text-secondary));
+  font-size: 13px;
+}
+
+/* Full-width layout: use the entire main content area beside the sidebar. */
+.platform-ops-shell .module-page {
+  width: 100%;
+}
+
+.platform-ops-shell .main-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.platform-ops-shell .page-body {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.platform-ops-shell .page-body--fill {
+  display: flex;
+  flex-direction: column;
+}
+
+.platform-ops-shell .page-body--fill > .hfl-list-shell,
+.platform-ops-shell .page-body--fill > .platform-settings,
+.platform-ops-shell .page-body--fill > .platform-env,
+.platform-ops-shell .page-body--fill > .platform-ops-detail,
+.platform-ops-shell .page-body--fill > .platform-ops-monitor-cards,
+.platform-ops-shell .page-body--fill > .platform-host-monitor {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+}
+
+/* Detail pages */
+.platform-ops-shell .platform-ops-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.platform-ops-shell .platform-ops-detail__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.platform-ops-shell .platform-ops-detail__back {
+  flex-shrink: 0;
+}
+
+.platform-ops-shell .platform-ops-detail__head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  flex: 1;
+  min-width: 0;
+  color: var(--page-text, var(--color-text-title));
+}
+
+.platform-ops-shell .platform-ops-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.platform-ops-shell .platform-ops-detail__sections {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.platform-ops-shell .platform-ops-detail__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: rgba(248, 250, 252, 0.5);
+}
+
+.platform-ops-shell .platform-ops-detail__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px 16px;
+}
+
+.platform-ops-shell .platform-ops-detail__link {
+  color: var(--el-color-primary);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.platform-ops-shell .platform-ops-detail__link:hover {
+  text-decoration: underline;
+}
+
+.platform-ops-shell .platform-ops-detail__table-wrap {
+  padding: 0 0 4px;
+}
+
+.platform-ops-shell .platform-ops-detail__table-footer {
+  margin-top: 8px;
+}
+
+.platform-ops-shell .hfl-detail-section .hfl-list-table {
+  border: 0;
+}
+
+.platform-ops-shell .hfl-detail-row__value .el-input,
+.platform-ops-shell .hfl-detail-row__value .el-switch {
+  width: 100%;
+  max-width: 360px;
+}
+
+/* Settings pages */
+.platform-ops-shell .platform-settings {
+  width: 100%;
+  overflow-y: auto;
+}
+
+.platform-ops-shell .platform-settings__intro {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary, #64748b);
+}
+
+.platform-ops-shell .platform-settings__toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.platform-ops-shell .platform-settings__toolbar .platform-settings__intro {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  max-width: 52rem;
+}
+
+.platform-ops-shell .platform-settings__panel {
+  max-width: 640px;
+  padding: 20px 24px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-bg-color, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item:last-child {
+  margin-bottom: 0;
+}
+
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item__content > .el-input,
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item__content > .el-textarea,
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item__content > .el-select,
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item__content > .el-input-number {
+  max-width: none;
+}
+
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item__content > .el-select,
+.platform-ops-shell .platform-settings__panel .platform-settings__form .el-form-item__content > .el-input-number {
+  width: 100%;
+}
+
+.platform-ops-shell .platform-settings__form {
+  width: 100%;
+}
+
+.platform-ops-shell .platform-settings__form .el-form-item__content > .el-input,
+.platform-ops-shell .platform-settings__form .el-form-item__content > .el-textarea {
+  max-width: 560px;
+}
+
+.platform-ops-shell .platform-settings__hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.platform-ops-shell .platform-settings__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 4px;
+}
+
+.platform-ops-shell .platform-settings__test-block {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.platform-ops-shell .platform-settings__test-block .platform-settings__section {
+  margin: 0 0 12px;
+}
+
+.platform-ops-shell .platform-settings__test-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.platform-ops-shell .platform-settings__test-row .el-input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.platform-ops-shell .platform-settings__section {
+  margin: 24px 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-title, #1d2129);
+}
+
+/* Environment read-only page */
+.platform-ops-shell .platform-env {
+  width: 100%;
+  overflow-y: auto;
+}
+
+.platform-ops-shell .platform-env__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+/* Monitoring queues cards */
+.platform-ops-shell .platform-ops-monitor-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.platform-ops-shell .platform-ops-monitor-cards .hfl-detail-section {
+  margin: 0;
+}
+
+.platform-ops-shell .platform-ops-monitor-cards .hfl-detail-section__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.platform-ops-shell .platform-ops-release-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.86);
+  font-size: 13px;
+}
+
+.platform-ops-shell .platform-ops-release-meta__item {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.platform-ops-shell .platform-ops-release-meta__label {
+  color: var(--color-text-secondary, #64748b);
+  white-space: nowrap;
+}
+
+.platform-ops-shell .platform-ops-release-meta__value {
+  font-weight: 600;
+  color: var(--color-text-title, #1d2129);
+  word-break: break-all;
+}

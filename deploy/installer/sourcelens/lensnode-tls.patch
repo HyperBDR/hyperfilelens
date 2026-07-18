@@ -1,0 +1,165 @@
+diff --git a/lensnode/lensnode/agent_runtime.py b/lensnode/lensnode/agent_runtime.py
+index 39c0df3ed7e1384276a8146b5e12c431336a432b..180fe3d4c31d1fe8e4ef8ea99c2ba00b9d855d0b 100644
+--- a/lensnode/lensnode/agent_runtime.py
++++ b/lensnode/lensnode/agent_runtime.py
+@@ -153,0 +154 @@ def _build_summarization_middleware(
++        tls_insecure=config.tls_insecure,
+@@ -244,0 +246 @@ class LensDeepAgentRuntime:
++                tls_insecure=self.config.tls_insecure,
+diff --git a/lensnode/lensnode/config.py b/lensnode/lensnode/config.py
+index c70daced50355a35cf5d272575a4aba231243033..12558d81336eef32c6edee18555b8181c27eefae 100644
+--- a/lensnode/lensnode/config.py
++++ b/lensnode/lensnode/config.py
+@@ -3,0 +4,2 @@ import os
++from .tls import tls_insecure_enabled
++
+@@ -21,0 +24 @@ class LensNodeConfig:
++    tls_insecure: bool
+@@ -69,0 +73 @@ def load_config():
++        tls_insecure=tls_insecure_enabled(),
+diff --git a/lensnode/lensnode/gateway_model.py b/lensnode/lensnode/gateway_model.py
+index e9c07f19566cbfe77903367cdeb361e379c77b9e..bfd28c68e3beea0c7923cd35c347f7995b3de150 100644
+--- a/lensnode/lensnode/gateway_model.py
++++ b/lensnode/lensnode/gateway_model.py
+@@ -13,0 +14,2 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
++from .tls import httpx_verify
++
+@@ -68,0 +71 @@ class LensGatewayChatModel(BaseChatModel):
++    tls_insecure: bool = False
+@@ -141 +144,4 @@ class LensGatewayChatModel(BaseChatModel):
+-        with httpx.Client(timeout=self.request_timeout_s) as client:
++        with httpx.Client(
++            timeout=self.request_timeout_s,
++            verify=not self.tls_insecure,
++        ) as client:
+@@ -175 +181,4 @@ class LensGatewayChatModel(BaseChatModel):
+-        with httpx.Client(timeout=self.request_timeout_s) as client:
++        with httpx.Client(
++            timeout=self.request_timeout_s,
++            verify=not self.tls_insecure,
++        ) as client:
+@@ -399 +408 @@ def describe_image_result(
+-    with httpx.Client(timeout=120) as client:
++    with httpx.Client(timeout=120, verify=httpx_verify()) as client:
+diff --git a/lensnode/lensnode/main.py b/lensnode/lensnode/main.py
+index c8f2cd8981482e0d02deb412542ad6c49cbc9af0..eff2e91dbc110986775e2a46ec1507c81585429a 100644
+--- a/lensnode/lensnode/main.py
++++ b/lensnode/lensnode/main.py
+@@ -10,0 +11 @@ from .config import load_config
++from .tls import websocket_ssl_option
+@@ -121,0 +123 @@ class LensNodeClient:
++            ssl=websocket_ssl_option(url),
+diff --git a/lensnode/lensnode/runtime_resources.py b/lensnode/lensnode/runtime_resources.py
+index af8687ec52076f7ca032805f42e67b8348b65790..4b6fb95e727842140978b7b04c3660173996f54c 100644
+--- a/lensnode/lensnode/runtime_resources.py
++++ b/lensnode/lensnode/runtime_resources.py
+@@ -12,0 +13,2 @@ import httpx
++from .tls import httpx_verify
++
+@@ -152 +154,4 @@ def _download_skill_package(config, skill):
+-    with httpx.Client(timeout=config.request_timeout_s) as client:
++    with httpx.Client(
++        timeout=config.request_timeout_s,
++        verify=httpx_verify(),
++    ) as client:
+diff --git a/lensnode/lensnode/tls.py b/lensnode/lensnode/tls.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..00ce7c8ce9c2690ddf8311b12d82067a940ce6d6
+--- /dev/null
++++ b/lensnode/lensnode/tls.py
+@@ -0,0 +1,47 @@
++"""TLS verification helpers for LensNode outbound HTTPS/WSS connections."""
++
++from __future__ import annotations
++
++import os
++import ssl
++
++_TRUTHY = frozenset({"1", "true", "yes", "on"})
++_FALSY = frozenset({"0", "false", "no", "off"})
++
++
++def _env_truthy(name: str) -> bool:
++    return os.getenv(name, "").strip().lower() in _TRUTHY
++
++
++def tls_insecure_enabled() -> bool:
++    """Return True when TLS certificate verification should be skipped."""
++
++    ssl_verify = os.getenv("LENSNODE_SSL_VERIFY", "").strip().lower()
++    if ssl_verify in _FALSY:
++        return True
++    if ssl_verify in _TRUTHY:
++        return False
++    if _env_truthy("LENSNODE_INSECURE_TLS"):
++        return True
++    if _env_truthy("HFL_INSECURE_TLS"):
++        return True
++    return False
++
++
++def httpx_verify() -> bool:
++    """Return the httpx verify argument for SourceLens requests."""
++
++    return not tls_insecure_enabled()
++
++
++def websocket_ssl_option(url: str) -> bool | ssl.SSLContext | None:
++    """Return the websockets SSL argument for the given URL."""
++
++    if not str(url).lower().startswith("wss://"):
++        return None
++    if tls_insecure_enabled():
++        context = ssl.create_default_context()
++        context.check_hostname = False
++        context.verify_mode = ssl.CERT_NONE
++        return context
++    return True
+diff --git a/lensnode/tests/test_tls.py b/lensnode/tests/test_tls.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..70e5bbdd26d558c243cb18539aa1ef2f278a2ead
+--- /dev/null
++++ b/lensnode/tests/test_tls.py
+@@ -0,0 +1,42 @@
++from lensnode.tls import (
++    httpx_verify,
++    tls_insecure_enabled,
++    websocket_ssl_option,
++)
++
++
++def test_tls_insecure_from_lensnode_env(monkeypatch):
++    monkeypatch.delenv("LENSNODE_SSL_VERIFY", raising=False)
++    monkeypatch.delenv("HFL_INSECURE_TLS", raising=False)
++    monkeypatch.setenv("LENSNODE_INSECURE_TLS", "1")
++    assert tls_insecure_enabled() is True
++    assert httpx_verify() is False
++
++
++def test_tls_insecure_from_hfl_env(monkeypatch):
++    monkeypatch.delenv("LENSNODE_INSECURE_TLS", raising=False)
++    monkeypatch.delenv("LENSNODE_SSL_VERIFY", raising=False)
++    monkeypatch.setenv("HFL_INSECURE_TLS", "1")
++    assert tls_insecure_enabled() is True
++
++
++def test_tls_verify_explicit_off(monkeypatch):
++    monkeypatch.delenv("LENSNODE_INSECURE_TLS", raising=False)
++    monkeypatch.delenv("HFL_INSECURE_TLS", raising=False)
++    monkeypatch.setenv("LENSNODE_SSL_VERIFY", "0")
++    assert tls_insecure_enabled() is True
++
++
++def test_tls_secure_by_default(monkeypatch):
++    monkeypatch.delenv("LENSNODE_INSECURE_TLS", raising=False)
++    monkeypatch.delenv("HFL_INSECURE_TLS", raising=False)
++    monkeypatch.delenv("LENSNODE_SSL_VERIFY", raising=False)
++    assert tls_insecure_enabled() is False
++    assert httpx_verify() is True
++
++
++def test_websocket_ssl_option_for_wss(monkeypatch):
++    monkeypatch.setenv("LENSNODE_INSECURE_TLS", "1")
++    context = websocket_ssl_option("wss://example.com/ws/")
++    assert context is not None
++    assert context.check_hostname is False

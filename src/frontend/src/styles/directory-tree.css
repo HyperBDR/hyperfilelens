@@ -1,0 +1,159 @@
+.hfl-dir-tree-shell {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 8px;
+  padding: 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(248, 250, 252, 0.96) 100%);
+}
+
+.hfl-dir-tree-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 16px;
+  color: rgb(100 116 139);
+  font-size: 13px;
+  background: rgba(248, 250, 252, 0.88);
+  border-radius: 6px;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+}
+
+.hfl-dir-tree {
+  max-height: 260px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 0;
+  border-radius: 0;
+  padding: 2px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.hfl-dir-tree--framed {
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.hfl-dir-tree--tall {
+  max-height: min(48vh, 360px);
+}
+
+.hfl-dir-tree--fill {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+.hfl-dir-tree.el-tree {
+  background: transparent;
+}
+
+.hfl-dir-tree .el-tree-node__content {
+  height: auto;
+  min-height: 30px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+  border-radius: 4px;
+}
+
+.hfl-dir-tree .el-tree-node__content:hover {
+  background: rgba(226, 232, 240, 0.5);
+}
+
+.hfl-dir-tree .el-checkbox {
+  margin-right: 6px;
+}
+
+.hfl-dir-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.hfl-dir-tree-node__icon {
+  flex-shrink: 0;
+  color: #d97706;
+}
+
+.hfl-dir-tree-node__text {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.hfl-dir-tree-node__label {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 17px;
+  color: rgb(30 41 59);
+}
+
+.hfl-dir-tree-node__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 15px;
+  color: rgb(100 116 139);
+}
+
+.hfl-dir-tree-node__refresh {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  color: rgb(100 116 139);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.14s ease,
+    color 0.14s ease,
+    border-color 0.14s ease,
+    background-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.hfl-dir-tree .el-tree-node__content:hover .hfl-dir-tree-node__refresh,
+.hfl-dir-tree-node:hover > .hfl-dir-tree-node__refresh,
+.hfl-dir-tree-node__refresh:focus-visible,
+.hfl-dir-tree-node__refresh.is-refreshing {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hfl-dir-tree-node__refresh:hover,
+.hfl-dir-tree-node__refresh:focus-visible,
+.hfl-dir-tree-node__refresh.is-refreshing {
+  border-color: color-mix(in srgb, var(--color-primary) 28%, #fff);
+  background: color-mix(in srgb, var(--color-primary) 7%, #fff);
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.08);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.hfl-dir-tree-node__refresh:disabled {
+  cursor: wait;
+}
+
+.hfl-dir-tree-node__refresh .is-spinning {
+  animation: hfl-dir-tree-refresh-spin 0.85s linear infinite;
+}
+
+@keyframes hfl-dir-tree-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

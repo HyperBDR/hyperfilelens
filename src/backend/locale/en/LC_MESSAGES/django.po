@@ -1,0 +1,398 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: hyperfilelens
+"
+"Report-Msgid-Bugs-To: 
+"
+"Language: en
+"
+"MIME-Version: 1.0
+"
+"Content-Type: text/plain; charset=UTF-8
+"
+"Content-Transfer-Encoding: 8bit
+"
+
+#: accounts/serializers.py:100
+msgid "JWT access token"
+msgstr ""
+
+#: accounts/serializers.py:101
+msgid "JWT refresh token"
+msgstr ""
+
+#: accounts/serializers.py:102
+msgid "User basic info"
+msgstr ""
+
+#: accounts/serializers.py:119
+msgid "Scene key (e.g., 'chat', 'product_issue')"
+msgstr ""
+
+#: accounts/serializers.py:122
+msgid "Scene display name in requested language"
+msgstr ""
+
+#: accounts/serializers.py:125
+msgid "Scene description in requested language"
+msgstr ""
+
+#: accounts/serializers.py:135
+msgid "User's email address"
+msgstr ""
+
+#: accounts/serializers.py:187
+msgid "This email address is already registered. Please login instead."
+msgstr ""
+
+#: accounts/serializers.py:209
+msgid "Virtual email username (will become username@domain)"
+msgstr ""
+
+#: accounts/serializers.py:230
+msgid "Username cannot start or end with a dot"
+msgstr ""
+
+#: accounts/serializers.py:241
+msgid "This username is reserved and cannot be used"
+msgstr ""
+
+#: accounts/serializers.py:246
+msgid "This username is already taken"
+msgstr ""
+
+#: accounts/serializers.py:258 accounts/views/registration.py:200
+msgid "Registration verification token"
+msgstr ""
+
+#: accounts/serializers.py:267
+msgid "User password (8-32 characters, must contain letters and numbers)"
+msgstr ""
+
+#: accounts/serializers.py:276 accounts/serializers.py:365
+msgid "Virtual email username"
+msgstr ""
+
+#: accounts/serializers.py:282
+msgid "User's selected scene (e.g., 'chat', 'product_issue')"
+msgstr ""
+
+#: accounts/serializers.py:298
+msgid "User's timezone (e.g., 'UTC', 'Asia/Shanghai')"
+msgstr ""
+
+#: accounts/serializers.py:310 accounts/views/password.py:317
+msgid "Password must be at least 8 characters long"
+msgstr ""
+
+#: accounts/serializers.py:315 accounts/views/password.py:327
+msgid "Password cannot exceed 32 characters"
+msgstr ""
+
+#: accounts/serializers.py:323 accounts/views/password.py:340
+msgid "Password must contain both letters and numbers"
+msgstr ""
+
+#: accounts/serializers.py:370
+msgid "User's selected scene"
+msgstr ""
+
+#: accounts/serializers.py:383
+msgid "User's timezone"
+msgstr ""
+
+#: accounts/serializers.py:436
+msgid "Primary virtual email address for receiving emails"
+msgstr ""
+
+#: accounts/serializers.py:442
+msgid "User profile information"
+msgstr ""
+
+#: accounts/serializers.py:447
+msgid "Authentication method and related information"
+msgstr ""
+
+#: accounts/serializers.py:608
+msgid "No user found with this email address"
+msgstr ""
+
+#: accounts/serializers.py:623
+msgid "Please complete registration first"
+msgstr ""
+
+#: accounts/serializers.py:627
+msgid "User profile not found"
+msgstr ""
+
+#: accounts/services/email.py:77
+msgid "Complete Your Registration"
+msgstr ""
+
+#: accounts/services/email.py:79
+#, python-format
+msgid "Please complete your registration by visiting: %(url)s"
+msgstr ""
+
+#: accounts/services/email.py:205
+msgid "Reset Your Password"
+msgstr ""
+
+#: accounts/services/email.py:207
+#, python-format
+msgid "Please reset your password by visiting: %(url)s"
+msgstr ""
+
+#: accounts/views/oauth.py:49
+msgid "Complete OAuth user setup"
+msgstr ""
+
+#: accounts/views/oauth.py:71
+msgid "User has already completed registration"
+msgstr ""
+
+#: accounts/views/oauth.py:152
+#, fuzzy
+#| msgid "OSS configuration validated successfully"
+msgid "Setup completed successfully"
+msgstr "OSS configuration validated successfully"
+
+#: core/error_codes.py:25
+msgid "Unauthorized"
+msgstr ""
+
+#: core/error_codes.py:26
+msgid "Forbidden"
+msgstr ""
+
+#: core/error_codes.py:27
+msgid "Validation failed"
+msgstr ""
+
+#: core/error_codes.py:28
+msgid "Not found"
+msgstr ""
+
+#: core/error_codes.py:29
+msgid "Server error"
+msgstr ""
+
+#: core/error_codes.py:30
+msgid "Not acceptable"
+msgstr ""
+
+#: core/error_codes.py:31
+msgid "Error"
+msgstr ""
+
+#: accounts/views/oauth.py:194
+msgid "Failed to complete setup"
+msgstr ""
+
+#: accounts/views/password.py:51
+msgid "Send password reset email"
+msgstr ""
+
+#: accounts/views/password.py:110
+msgid "Password reset email sent successfully"
+msgstr ""
+
+#: accounts/views/password.py:128
+msgid "Failed to send password reset email"
+msgstr ""
+
+#: accounts/views/password.py:151
+msgid "User with this email does not exist"
+msgstr ""
+
+#: accounts/views/password.py:184
+msgid "Failed to process password reset request"
+msgstr ""
+
+#: accounts/views/password.py:204
+msgid "Confirm password reset"
+msgstr ""
+
+#: accounts/views/password.py:253
+#, fuzzy
+#| msgid "{} is required"
+msgid "All fields are required"
+msgstr "{} is required"
+
+#: accounts/views/password.py:262
+msgid "Passwords do not match"
+msgstr ""
+
+#: accounts/views/password.py:294
+#, fuzzy
+#| msgid "Invalid Access Key ID"
+msgid "Invalid reset link"
+msgstr "Invalid Access Key ID"
+
+#: accounts/views/password.py:306
+msgid "Invalid or expired reset link"
+msgstr ""
+
+#: accounts/views/password.py:358
+msgid "Password has been reset successfully"
+msgstr ""
+
+#: accounts/views/password.py:395
+msgid "Failed to reset password"
+msgstr ""
+
+#: accounts/views/registration.py:51
+msgid "Send registration email"
+msgstr ""
+
+#: accounts/views/registration.py:123
+#, fuzzy
+#| msgid "OSS configuration validated successfully"
+msgid "Registration email sent successfully"
+msgstr "OSS configuration validated successfully"
+
+#: accounts/views/registration.py:144
+msgid "Failed to send registration email"
+msgstr ""
+
+#: accounts/views/registration.py:175
+msgid "Failed to process registration request"
+msgstr ""
+
+#: accounts/views/registration.py:194
+msgid "Verify registration token"
+msgstr ""
+
+#: accounts/views/registration.py:235 accounts/views/registration.py:421
+msgid "Registration has already been completed"
+msgstr ""
+
+#: accounts/views/registration.py:286
+#, fuzzy
+#| msgid "Code is required"
+msgid "Token has expired"
+msgstr "Code is required"
+
+#: accounts/views/registration.py:306
+msgid "Invalid token"
+msgstr ""
+
+#: accounts/views/registration.py:323
+msgid "Complete registration"
+msgstr ""
+
+#: accounts/views/registration.py:399
+msgid "Invalid registration token"
+msgstr ""
+
+#: accounts/views/registration.py:448
+msgid "Registration token has expired"
+msgstr ""
+
+#: accounts/views/registration.py:561
+msgid "Failed to complete registration"
+msgstr ""
+
+#: accounts/views/registration.py:580
+msgid "Check username availability"
+msgstr ""
+
+#: accounts/views/registration.py:586
+msgid "Username to check"
+msgstr ""
+
+#: accounts/views/registration.py:604
+msgid "Username is available"
+msgstr ""
+
+#: accounts/views/registration.py:611
+msgid "Invalid username"
+msgstr ""
+
+#: accounts/views/scenes.py:46
+msgid "Get available scenes"
+msgstr ""
+
+#: accounts/views/scenes.py:52
+msgid "Language code (e.g., 'en', 'fr-CA', 'es')"
+msgstr ""
+
+#: accounts/views/scenes.py:130
+msgid "Failed to retrieve available scenes"
+msgstr ""
+
+#: apps/iam/services/verification_email.py
+msgid "%(code)s is your HyperFileLens verification code"
+msgstr "%(code)s is your HyperFileLens verification code"
+
+#: apps/iam/services/verification_email.py
+msgid "Thank you for choosing <strong>HyperFileLens</strong>. Please use the following verification code to complete your registration:"
+msgstr "Thank you for choosing <strong>HyperFileLens</strong>. Please use the following verification code to complete your registration:"
+
+#: apps/iam/services/verification_email.py
+msgid "Thank you for choosing HyperFileLens. Please use the following verification code to complete your registration:"
+msgstr "Thank you for choosing HyperFileLens. Please use the following verification code to complete your registration:"
+
+#: apps/iam/services/verification_email.py
+msgid "Hello,"
+msgstr "Hello,"
+
+#: apps/iam/services/verification_email.py
+msgid "This code will expire in <strong>%(minutes)s minutes</strong>."
+msgstr "This code will expire in <strong>%(minutes)s minutes</strong>."
+
+#: apps/iam/services/verification_email.py
+msgid "© %(year)s HyperFileLens. %(tagline)s"
+msgstr "© %(year)s HyperFileLens. %(tagline)s"
+
+#: apps/iam/services/verification_email.py
+msgid "%(code)s is your HyperFileLens password reset code"
+msgstr "%(code)s is your HyperFileLens password reset code"
+
+#: apps/iam/services/verification_email.py
+msgid "We received a request to reset your <strong>HyperFileLens</strong> password. Use the verification code below to continue:"
+msgstr "We received a request to reset your <strong>HyperFileLens</strong> password. Use the verification code below to continue:"
+
+#: apps/iam/services/verification_email.py
+msgid "We received a request to reset your HyperFileLens password. Use the verification code below to continue:"
+msgstr "We received a request to reset your HyperFileLens password. Use the verification code below to continue:"
+
+#: apps/iam/services/verification_email.py
+msgid "%(code)s is your HyperFileLens sign-in verification code"
+msgstr "%(code)s is your HyperFileLens sign-in verification code"
+
+#: apps/iam/services/verification_email.py
+msgid "Use the verification code below to finish signing in to <strong>HyperFileLens</strong>:"
+msgstr "Use the verification code below to finish signing in to <strong>HyperFileLens</strong>:"
+
+#: apps/iam/services/verification_email.py
+msgid "Use the verification code below to finish signing in to HyperFileLens:"
+msgstr "Use the verification code below to finish signing in to HyperFileLens:"
+
+#: apps/iam/services/verification_email.py
+msgid "If you did not request this code, please ignore this email."
+msgstr "If you did not request this code, please ignore this email."
+
+#: apps/iam/services/registration_service.py
+msgid "This code will expire in %(minutes)s minutes."
+msgstr "This code will expire in %(minutes)s minutes."
+
+#: apps/iam/services/registration_service.py
+msgid "If you did not create a HyperFileLens account, please ignore this email."
+msgstr "If you did not create a HyperFileLens account, please ignore this email."
+
+#: apps/iam/services/registration_service.py
+msgid "If you did not request a password reset, please ignore this email."
+msgstr "If you did not request a password reset, please ignore this email."
+
+#: apps/iam/services/registration_service.py
+msgid "Password must be 8-20 characters"
+msgstr "Password must be 8-20 characters"
+
+#: apps/iam/services/registration_service.py
+msgid "Password must contain at least one letter"
+msgstr "Password must contain at least one letter"
+
+#: apps/iam/services/registration_service.py
+msgid "Password must contain at least one digit"
+msgstr "Password must contain at least one digit"

@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+from django.core.exceptions import ObjectDoesNotExist
+from rest_framework import serializers
+
+from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.services.interface import create_task
+
+
+class TaskResourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaskResource
+        fields = ["resource_type", "resource_subtype", "resource_id", "is_primary"]
+
+
+class TaskStepSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaskStep
+        fields = ["id", "step_index", "step_name", "status", "progress", "created_at"]
+        read_only_fields = fields
+
+
+class TaskEventSerializer(serializers.ModelSerializer):
+    step_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = TaskEvent
+        fields = ["id", "step_id", "seq", "level", "message", "metadata", "created_at"]
+        read_only_fields = fields
+
+
+class TaskSerializer(serializers.ModelSerializer):
+    resources = TaskResourceSerializer(many=True, read_only=True)
+    steps = TaskStepSerializer(many=True, read_only=True)
+    recent_events = serializers.SerializerMethodField()
+    primary_resource = serializers.SerializerMethodField()
+    transfer_progress = serializers.SerializerMethodField()
+    operation_type = serializers.SerializerMethodField()
+    repository_owner = serializers.SerializerMethodField()
+    repository_target = serializers.SerializerMethodField()
+    repository_cleanup = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Task
+        fields = [
+            "id",
+            "organization_id",
+            "task_uuid",
+            "task_type",
+            "display_name",
+            "status",
+            "progress",
+            "current_step",
+            "retry_count",
+            "trigger_type",
+            "request_payload",
+            "result_payload",
+            "transfer_progress",
+            "operation_type",
+            "repository_owner",
+            "repository_target",
+            "repository_cleanup",
+            "error_code",
+            "error_message",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+            "resources",
+            "primary_resource",
+            "steps",
+            "recent_events",
+        ]
+        read_only_fields = fields
+
+    def get_transfer_progress(self, obj: Task) -> dict | None:
+        payload = obj.result_payload if isinstance(obj.result_payload, dict) else {}
+        transfer = payload.get("transfer_progress")
+        return transfer if isinstance(transfer, dict) else None
+
+    def get_recent_events(self, obj: Task) -> list[dict]:
+        events = obj.events.order_by("-seq", "-id")[:5]
+        return TaskEventSerializer(list(reversed(list(events))), many=True).data
+
+    def get_primary_resource(self, obj: Task) -> dict | None:
+        resource = next((item for item in obj.resources.all() if item.is_primary), None)
+        return TaskResourceSerializer(resource).data if resource else None
+
+    def _repository_operation(self, obj: Task):
+        if obj.task_type != Task.Type.REPOSITORY_OPERATION:
+            return None
+        try:
+            return obj.repository_operation
+        except ObjectDoesNotExist:
+            return None
+
+    def get_operation_type(self, obj: Task) -> str | None:
+        operation = self._repository_operation(obj)
+        return operation.operation_type if operation else None
+
+    def get_repository_owner(self, obj: Task) -> dict | None:
+        operation = self._repository_operation(obj)
+        if operation is None:
+            return None
+        return {
+            "type": operation.owner_type,
+            "node_id": operation.owner_node_id,
+            "identity": operation.owner_identity,
+        }
+
+    def get_repository_target(self, obj: Task) -> dict | None:
+        operation = self._repository_operation(obj)
+        if operation is None or operation.execution_target_id is None:
+            return None
+        return {
+            "id": operation.execution_target_id,
+            "key": operation.execution_target.target_key,
+            "repository_subdir": operation.execution_target.repository_subdir,
+        }
+
+    def get_repository_cleanup(self, obj: Task) -> dict | None:
+        operation = self._repository_operation(obj)
+        if operation is None or operation.operation_type not in {
+            "cleanup.target",
+            "cleanup.repository",
+        }:
+            return None
+        return {
+            "force": operation.force,
+            "triggered_by_task_uuid": (
+                str(operation.triggered_by_task.task_uuid)
+                if operation.triggered_by_task_id
+                else None
+            ),
+            "triggered_by_task_type": (
+                operation.triggered_by_task.task_type
+                if operation.triggered_by_task_id
+                else None
+            ),
+        }
+
+
+class TaskResourceInputSerializer(serializers.Serializer):
+    resource_type = serializers.ChoiceField(choices=TaskResource.Type.choices)
+    resource_subtype = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    resource_id = serializers.IntegerField(min_value=1)
+    is_primary = serializers.BooleanField(required=False, default=False)
+
+
+class TaskStepInputSerializer(serializers.Serializer):
+    step_name = serializers.CharField(max_length=64)
+    status = serializers.ChoiceField(
+        choices=TaskStep.Status.choices,
+        required=False,
+        default=TaskStep.Status.PENDING,
+    )
+    progress = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        min_value=0,
+        max_value=100,
+        required=False,
+        default=0,
+    )
+
+
+class TaskCreateSerializer(serializers.Serializer):
+    task_type = serializers.ChoiceField(
+        choices=[choice for choice in Task.Type.choices if choice[0] != Task.Type.REPOSITORY_OPERATION]
+    )
+    display_name = serializers.CharField(max_length=255, trim_whitespace=True)
+    trigger_type = serializers.ChoiceField(
+        choices=Task.TriggerType.choices,
+        default=Task.TriggerType.MANUAL,
+    )
+    request_payload = serializers.JSONField(required=False)
+    resources = TaskResourceInputSerializer(many=True, required=False)
+    steps = TaskStepInputSerializer(many=True, required=False)
+
+    def validate_resources(self, resources):
+        if sum(1 for resource in resources if resource.get("is_primary")) > 1:
+            raise serializers.ValidationError("A task can have at most one primary resource.")
+        return resources
+
+    def create(self, validated_data):
+        organization_id = self.context["organization_id"]
+        return create_task(
+            organization_id=organization_id,
+            task_type=validated_data["task_type"],
+            display_name=validated_data["display_name"],
+            trigger_type=validated_data["trigger_type"],
+            request_payload=validated_data.get("request_payload") or None,
+            resources=validated_data.get("resources") or [],
+            steps=validated_data.get("steps") or None,
+        )
+
+
+class TaskCancelSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class TaskRetrySerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)

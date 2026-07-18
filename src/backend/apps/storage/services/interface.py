@@ -1,0 +1,508 @@
+from __future__ import annotations
+
+from django.apps import apps
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError as DRFValidationError
+
+from apps.storage.repositories.models import Credential, Repository
+from apps.storage.services.internal.repository_initializer import (
+    RepositoryInitializationError,
+    check_s3_repository,
+    initialize_s3_repository,
+)
+from apps.storage.services.internal.nas_repository import (
+    NASRepositoryError,
+    check_proxy_nas_repository,
+    initialize_proxy_nas_repository,
+    nas_mount_point,
+)
+from apps.storage.services.internal.proxy_fs_repository import (
+    ProxyFSRepositoryError,
+    check_proxy_fs_repository,
+    initialize_proxy_fs_repository,
+)
+from apps.storage.services.internal.repository_errors import (
+    REPOSITORY_ALREADY_EXISTS_CODE,
+    REPOSITORY_ALREADY_EXISTS_MESSAGE,
+    RepositoryAlreadyExistsError,
+)
+from apps.storage.services.internal.repository_cleanup import (
+    RepositoryCleanupBlocked,
+    create_direct_nas_target_cleanup_task,
+    direct_nas_cleanup_target_ids,
+    repository_cleanup_task_payload,
+    run_repository_cleanup_task,
+)
+from apps.storage.services.internal.repository_usage import (
+    apply_capacity_from_config,
+    capacity_bytes_from_config,
+    enqueue_repository_usage_refresh,
+    sync_repository_usage,
+)
+from apps.storage.services.internal.repository_secrets import (
+    build_credential_metadata,
+    build_secret_payload,
+    sanitize_repository_config,
+    scrub_secrets,
+)
+from apps.task.models import Task
+from common.errors import AppError
+
+__all__ = [
+    "RepositoryCleanupBlocked",
+    "create_direct_nas_target_cleanup_task",
+    "direct_nas_cleanup_target_ids",
+    "repository_cleanup_task_payload",
+    "run_repository_cleanup_task",
+]
+
+
+def _set_nas_proxy_mount_path(repository: Repository) -> bool:
+    if (
+        repository.repo_type != Repository.Type.NAS
+        or repository.bind_node_type != Repository.BindNodeType.PROXY
+        or not repository.bind_node_id
+    ):
+        return False
+    config = dict(repository.config or {})
+    existing = str(config.get("proxy_mount_path") or "").strip()
+    if existing and not existing.startswith("/proxy-data/"):
+        return False
+    mount_path = nas_mount_point(repository, node_id=int(repository.bind_node_id))
+    if config.get("proxy_mount_path") == mount_path:
+        return False
+    config["proxy_mount_path"] = mount_path
+    repository.config = config
+    return True
+
+
+def _with_default_kopia_password(config: dict | None) -> dict:
+    normalized = {**(config or {})}
+    return normalized
+
+
+def _sanitize_secret_message(message: str, config: dict | None) -> str:
+    return str(scrub_secrets(message, extra_values=[str(v) for v in (config or {}).values() if v]))
+
+
+def _repository_already_exists_app_error(repository: Repository) -> AppError:
+    return AppError(
+        code=REPOSITORY_ALREADY_EXISTS_CODE,
+        status=409,
+        retryable=False,
+        title="Repository already exists",
+        diagnostic=REPOSITORY_ALREADY_EXISTS_MESSAGE,
+        meta={"repository_type": repository.repo_type},
+    )
+
+
+def create_credential(
+    *,
+    organization_id: int,
+    credential_type: str,
+    secret: str,
+    metadata: dict | None = None,
+) -> Credential:
+    credential = Credential(
+        organization_id=organization_id,
+        credential_type=credential_type,
+        metadata=metadata or {},
+    )
+    credential.set_secret(secret)
+    credential.save()
+    return credential
+
+
+def create_credential_payload(
+    *,
+    organization_id: int,
+    credential_type: str,
+    secret_payload: dict,
+    metadata: dict | None = None,
+) -> Credential:
+    credential = Credential(
+        organization_id=organization_id,
+        credential_type=credential_type,
+        metadata=metadata or {},
+    )
+    credential.set_secret_payload(secret_payload)
+    credential.save()
+    return credential
+
+
+def update_credential(
+    *,
+    credential: Credential,
+    secret: str | None = None,
+    metadata: dict | None = None,
+) -> Credential:
+    if secret is not None:
+        credential.set_secret(secret)
+    if metadata is not None:
+        credential.metadata = metadata
+    credential.save(update_fields=["secret_cipher", "metadata", "updated_at"])
+    return credential
+
+
+def update_credential_payload(
+    *,
+    credential: Credential,
+    secret_payload: dict | None = None,
+    metadata: dict | None = None,
+) -> Credential:
+    update_fields = ["updated_at"]
+    if secret_payload is not None:
+        credential.set_secret_payload(secret_payload)
+        update_fields.append("secret_cipher")
+    if metadata is not None:
+        credential.metadata = metadata
+        update_fields.append("metadata")
+    credential.save(update_fields=update_fields)
+    return credential
+
+
+def delete_credential(*, credential: Credential) -> None:
+    credential.delete()
+
+
+def create_repository(
+    *,
+    organization_id: int,
+    name: str,
+    repo_type: str,
+    config: dict | None = None,
+    s3_platform: str | None = None,
+    s3_bucket: str | None = None,
+    nas_protocol: str | None = None,
+    bind_node_type: str | None = None,
+    bind_node_id: int | None = None,
+    credential_payload: dict | None = None,
+) -> Repository:
+    config = _with_default_kopia_password(config)
+    secret_payload = build_secret_payload(
+        repository_type=repo_type,
+        nas_protocol=nas_protocol,
+        config=config,
+        credential_payload=credential_payload,
+    )
+    sanitized_config = sanitize_repository_config(config)
+    credential_type = _credential_type_for_repository(repo_type, nas_protocol)
+    credential_metadata = build_credential_metadata(
+        repository_type=repo_type,
+        config=sanitized_config,
+        credential_payload=credential_payload,
+    )
+    initial_status = Repository.Status.CREATED
+    if (
+        repo_type == Repository.Type.S3
+        or (repo_type == Repository.Type.NAS and bind_node_type)
+        or repo_type == Repository.Type.PROXY_FS
+    ):
+        initial_status = Repository.Status.CREATING
+    initial_health = (
+        Repository.Health.UNVERIFIED
+        if repo_type == Repository.Type.NAS and not bind_node_type
+        else Repository.Health.OFFLINE
+    )
+    config_dict = sanitized_config if isinstance(sanitized_config, dict) else {}
+    capacity_bytes = capacity_bytes_from_config(config_dict)
+
+    with transaction.atomic():
+        credential = create_credential_payload(
+            organization_id=organization_id,
+            credential_type=credential_type,
+            secret_payload=secret_payload,
+            metadata=credential_metadata,
+        )
+        repository = Repository.objects.create(
+            organization_id=organization_id,
+            name=name,
+            repo_type=repo_type,
+            status=initial_status,
+            health=initial_health,
+            config=sanitized_config,
+            credential_id=credential.id,
+            capacity_bytes=capacity_bytes,
+            s3_platform=s3_platform or None,
+            s3_bucket=s3_bucket or None,
+            nas_protocol=nas_protocol or None,
+            bind_node_type=bind_node_type or None,
+            bind_node_id=bind_node_id,
+        )
+
+    if repository.repo_type == Repository.Type.NAS:
+        if not repository.bind_node_type:
+            enqueue_repository_usage_refresh(
+                organization_id=repository.organization_id,
+                repository_ids=[repository.id],
+                force=True,
+                trigger="storage.repository.create_nas",
+            )
+            return repository
+        if _set_nas_proxy_mount_path(repository):
+            repository.save(update_fields=["config", "updated_at"])
+        try:
+            initialize_proxy_nas_repository(repository)
+        except RepositoryAlreadyExistsError as exc:
+            repository.delete()
+            credential.delete()
+            raise _repository_already_exists_app_error(repository) from exc
+        except (NASRepositoryError, ValidationError) as exc:
+            repository.delete()
+            credential.delete()
+            raise DRFValidationError({"detail": _sanitize_secret_message(str(exc), {**config, **secret_payload})}) from exc
+        repository.status = Repository.Status.CREATED
+        repository.health = Repository.Health.ONLINE
+        repository.last_checked_at = timezone.now()
+        repository.save(update_fields=["status", "health", "last_checked_at", "updated_at"])
+        enqueue_repository_usage_refresh(
+            organization_id=repository.organization_id,
+            repository_ids=[repository.id],
+            force=True,
+            trigger="storage.repository.create_nas",
+        )
+        return repository
+
+    if repository.repo_type == Repository.Type.PROXY_FS:
+        try:
+            initialize_proxy_fs_repository(repository)
+        except RepositoryAlreadyExistsError as exc:
+            repository.delete()
+            credential.delete()
+            raise _repository_already_exists_app_error(repository) from exc
+        except (ProxyFSRepositoryError, ValidationError) as exc:
+            # Keep the row in place so the operator can see the failure reason.
+            repository.status = Repository.Status.CREATE_FAILED
+            repository.health = Repository.Health.OFFLINE
+            repository.last_checked_at = timezone.now()
+            repository.save(
+                update_fields=["status", "health", "last_checked_at", "updated_at"]
+            )
+            raise DRFValidationError(
+                {"detail": _sanitize_secret_message(str(exc), {**config, **secret_payload})}
+            ) from exc
+        repository.status = Repository.Status.CREATED
+        repository.health = Repository.Health.ONLINE
+        repository.last_checked_at = timezone.now()
+        repository.save(update_fields=["status", "health", "last_checked_at", "updated_at"])
+        return sync_repository_usage(repository)
+
+    if repository.repo_type != Repository.Type.S3:
+        return sync_repository_usage(repository)
+
+    try:
+        initialize_s3_repository(repository)
+    except RepositoryAlreadyExistsError as exc:
+        repository.delete()
+        credential.delete()
+        raise _repository_already_exists_app_error(repository) from exc
+    except RepositoryInitializationError as exc:
+        repository.delete()
+        credential.delete()
+        raise DRFValidationError({"detail": str(exc)}) from exc
+
+    repository.status = Repository.Status.CREATED
+    repository.health = Repository.Health.ONLINE
+    repository.last_checked_at = timezone.now()
+    repository.save(update_fields=["status", "health", "last_checked_at", "updated_at"])
+    return sync_repository_usage(repository)
+
+
+def update_repository(
+    *,
+    repository: Repository,
+    name: str | None = None,
+    config: dict | None = None,
+    s3_platform: str | None = None,
+    s3_bucket: str | None = None,
+    nas_protocol: str | None = None,
+    bind_node_type: str | None = None,
+    bind_node_id: int | None = None,
+    credential_payload: dict | None = None,
+) -> Repository:
+    with transaction.atomic():
+        if name is not None:
+            repository.name = name
+        if config is not None:
+            # Shallow-merge: keep existing keys that the caller did not pass so
+            # credentials and other immutable fields are preserved on partial updates.
+            merged = {**(repository.config or {}), **config}
+            merged = _with_default_kopia_password(merged)
+            if repository.credential_id or credential_payload is not None:
+                repository.config = sanitize_repository_config(merged)
+            else:
+                repository.config = merged
+        if s3_platform is not None:
+            repository.s3_platform = s3_platform or None
+        if s3_bucket is not None:
+            repository.s3_bucket = s3_bucket or None
+        if nas_protocol is not None:
+            repository.nas_protocol = nas_protocol or None
+        if bind_node_type is not None:
+            repository.bind_node_type = bind_node_type or None
+        if bind_node_id is not None:
+            repository.bind_node_id = bind_node_id
+
+        apply_capacity_from_config(repository)
+        _set_nas_proxy_mount_path(repository)
+        repository.save()
+
+        if credential_payload is not None:
+            _rotate_repository_credential(
+                repository=repository,
+                config={**(repository.config or {}), **(config or {})},
+                credential_payload=credential_payload,
+            )
+
+    enqueue_repository_usage_refresh(
+        organization_id=repository.organization_id,
+        repository_ids=[repository.id],
+        force=True,
+        trigger="storage.repository.update",
+    )
+    return repository
+
+
+def _credential_type_for_repository(repo_type: str, nas_protocol: str | None = None) -> str:
+    if repo_type == Repository.Type.S3:
+        return Credential.Type.S3
+    if repo_type == Repository.Type.NAS and nas_protocol == Repository.NasProtocol.SMB:
+        return Credential.Type.SMB
+    return Credential.Type.REPO_PASSWORD
+
+
+def _rotate_repository_credential(
+    *,
+    repository: Repository,
+    config: dict,
+    credential_payload: dict,
+) -> Credential:
+    credential = None
+    existing_payload: dict = {}
+    if repository.credential_id:
+        credential = Credential.objects.filter(
+            id=repository.credential_id,
+            organization_id=repository.organization_id,
+        ).first()
+    if credential is not None:
+        existing_payload = credential.get_secret_payload()
+    secret_payload = build_secret_payload(
+        repository_type=repository.repo_type,
+        nas_protocol=repository.nas_protocol,
+        config=config,
+        credential_payload=credential_payload,
+        existing_secrets=existing_payload,
+    )
+    metadata = build_credential_metadata(
+        repository_type=repository.repo_type,
+        config=repository.config,
+        credential_payload=credential_payload,
+    )
+    credential_type = _credential_type_for_repository(repository.repo_type, repository.nas_protocol)
+    if credential is None:
+        credential = create_credential_payload(
+            organization_id=repository.organization_id,
+            credential_type=credential_type,
+            secret_payload=secret_payload,
+            metadata=metadata,
+        )
+        repository.credential_id = credential.id
+        repository.save(update_fields=["credential_id", "updated_at"])
+        return credential
+    credential.credential_type = credential_type
+    credential.set_secret_payload(secret_payload)
+    credential.metadata = metadata
+    credential.save(update_fields=["credential_type", "secret_cipher", "metadata", "updated_at"])
+    return credential
+
+
+def delete_repository(*, repository: Repository) -> None:
+    backup_config_model = apps.get_model("protection", "BackupConfig")
+    backup_source_snapshot_model = apps.get_model("protection", "BackupSourceSnapshot")
+    if backup_config_model.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+    ).exists():
+        raise ValidationError("Repository has backup configs and cannot be deleted.")
+    if backup_source_snapshot_model.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+    ).exists():
+        raise ValidationError("Repository has backup snapshots and cannot be deleted.")
+
+    with transaction.atomic():
+        repository_operation_tasks = Task.objects.filter(
+            organization_id=repository.organization_id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            repository_operation__repository_id=repository.id,
+        )
+        if repository_operation_tasks.filter(
+            status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+        ).exists():
+            raise ValidationError("Repository has maintenance tasks in progress and cannot be deleted.")
+
+        # A RepositoryTask protects its execution target from deletion. Remove
+        # terminal operation tasks first so their metadata, resources, steps,
+        # and events are deleted together before the repository cascades to its
+        # execution targets.
+        repository_operation_tasks.delete()
+
+        credential_id = repository.credential_id
+        organization_id = repository.organization_id
+        repository.delete()
+        if credential_id and not Repository.objects.filter(
+            organization_id=organization_id,
+            credential_id=credential_id,
+        ).exists():
+            Credential.objects.filter(
+                organization_id=organization_id,
+                id=credential_id,
+            ).delete()
+
+
+def check_repository(*, repository: Repository) -> Repository:
+    if repository.repo_type == Repository.Type.S3:
+        try:
+            check_s3_repository(repository)
+        except RepositoryInitializationError as exc:
+            repository.health = Repository.Health.OFFLINE
+            repository.last_checked_at = timezone.now()
+            repository.save(update_fields=["health", "last_checked_at", "updated_at"])
+            raise DRFValidationError({"detail": str(exc), "repository_id": repository.id}) from exc
+        repository.health = Repository.Health.ONLINE
+    elif repository.repo_type == Repository.Type.NAS:
+        if not repository.bind_node_type:
+            repository.health = Repository.Health.UNVERIFIED
+        else:
+            try:
+                check_proxy_nas_repository(repository)
+            except (NASRepositoryError, ValidationError) as exc:
+                repository.health = Repository.Health.OFFLINE
+                repository.last_checked_at = timezone.now()
+                repository.save(update_fields=["health", "last_checked_at", "updated_at"])
+                raise DRFValidationError(
+                    {
+                        "detail": _sanitize_secret_message(str(exc), repository.config),
+                        "repository_id": repository.id,
+                    }
+                ) from exc
+            repository.health = Repository.Health.ONLINE
+    elif repository.repo_type == Repository.Type.PROXY_FS:
+        try:
+            check_proxy_fs_repository(repository)
+        except (ProxyFSRepositoryError, ValidationError) as exc:
+            repository.health = Repository.Health.OFFLINE
+            repository.last_checked_at = timezone.now()
+            repository.save(update_fields=["health", "last_checked_at", "updated_at"])
+            raise DRFValidationError(
+                {
+                    "detail": _sanitize_secret_message(str(exc), repository.config),
+                    "repository_id": repository.id,
+                }
+            ) from exc
+        repository.health = Repository.Health.ONLINE
+    repository.last_checked_at = timezone.now()
+    repository.save(update_fields=["health", "last_checked_at", "updated_at"])
+    return sync_repository_usage(repository)

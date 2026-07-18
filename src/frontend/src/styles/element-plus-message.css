@@ -1,0 +1,90 @@
+/* Element Plus message: compact, high-contrast notification styling. */
+.el-message {
+  --hfl-message-accent: var(--color-primary);
+  --hfl-message-accent-soft: rgba(92, 92, 255, 0.08);
+  box-sizing: border-box;
+  min-width: 280px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 14px 12px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-left: 4px solid var(--hfl-message-accent);
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  align-items: center;
+}
+
+.el-message .el-message__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  color: var(--hfl-message-accent);
+  background: var(--hfl-message-accent-soft);
+}
+
+.el-message .el-message__content {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-text-title);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.el-message .el-message__closeBtn {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  flex-shrink: 0;
+  margin-left: 0;
+  color: var(--color-text-tertiary);
+  transition: color var(--transition-fast);
+}
+
+.el-message .el-message__closeBtn:hover,
+.el-message .el-message__closeBtn:focus {
+  color: var(--color-text-primary);
+}
+
+.el-message.is-closable {
+  padding-right: 36px;
+}
+
+.el-message--success {
+  --hfl-message-accent: var(--color-success);
+  --hfl-message-accent-soft: var(--color-success-light);
+}
+
+.el-message--warning {
+  --hfl-message-accent: var(--color-warning);
+  --hfl-message-accent-soft: var(--color-warning-light);
+}
+
+.el-message--error {
+  --hfl-message-accent: var(--color-error);
+  --hfl-message-accent-soft: var(--color-error-light);
+}
+
+.el-message--info {
+  --el-message-text-color: var(--color-info);
+  --hfl-message-accent: var(--color-info);
+  --hfl-message-accent-soft: var(--color-info-light);
+}
+
+.el-message--info .el-message__icon,
+.el-message .el-message-icon--info {
+  color: var(--color-info);
+}
+
+@media (max-width: 640px) {
+  .el-message {
+    min-width: auto;
+    width: calc(100vw - 32px);
+  }
+}

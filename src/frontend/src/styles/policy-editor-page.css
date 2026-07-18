@@ -1,0 +1,1153 @@
+/* Backup policy editor — align with Add Object Storage Repository fullscreen form shell */
+
+/* Typography: Inter + same scale as fullscreen-form-shell / resource-add */
+.resource-add-fullscreen .policy-editor-page,
+.resource-add-fullscreen .policy-editor-page .policy-editor-form,
+.resource-add-fullscreen .policy-editor-page .filter-rule-form {
+  color: #1d2129;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-section__title,
+.resource-add-fullscreen .policy-editor-page .policy-card-header .fullscreen-form-section__title {
+  color: #1d2129;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-section__subtitle,
+.resource-add-fullscreen .policy-editor-page .filter-rules-subsection__subtitle {
+  color: rgb(71 85 105);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.resource-add-fullscreen .policy-editor-page .retention-item__title,
+.resource-add-fullscreen .policy-editor-page .advanced-settings-item__title,
+.resource-add-fullscreen .policy-editor-page .toggle-row__title,
+.resource-add-fullscreen .policy-editor-page .error-policy-list__title {
+  color: #1d2129;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .policy-editor-page .retention-item__desc,
+.resource-add-fullscreen .policy-editor-page .advanced-settings-item__desc,
+.resource-add-fullscreen .policy-editor-page .toggle-row__sub,
+.resource-add-fullscreen .policy-editor-page .error-policy-list__desc,
+.resource-add-fullscreen .policy-editor-page .policy-option-desc,
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-field__hint {
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resource-add-fullscreen .policy-editor-page .retention-tier-label,
+.resource-add-fullscreen .policy-editor-page .retention-item__control-label,
+.resource-add-fullscreen .policy-editor-page .retention-item__control-unit,
+.resource-add-fullscreen .policy-editor-page .advanced-settings-item__control-label,
+.resource-add-fullscreen .policy-editor-page .advanced-settings-item__control-unit,
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__prefix,
+.resource-add-fullscreen .policy-editor-page .policy-inline-label,
+.resource-add-fullscreen .policy-editor-page .toggle-row__details .policy-inline-label {
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-card-header__enable-label {
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form .el-form-item__label {
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form--strong-label .el-form-item__label {
+  color: rgb(30 41 59);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form .el-input__wrapper,
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form .el-select__wrapper,
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form .el-input-number .el-input__wrapper {
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form .el-input__inner,
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-el-form .el-input-number .el-input__inner {
+  font-size: 13px;
+  color: #1d2129;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-cron-help,
+.resource-add-fullscreen .policy-editor-page .policy-cron-help__lead,
+.resource-add-fullscreen .policy-editor-page .policy-cron-help__section-title {
+  font-size: 12px;
+}
+
+.resource-add-fullscreen .policy-editor-page .create-kind-card__name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d2129;
+}
+
+.resource-add-fullscreen .policy-editor-page .create-kind-card__sub {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.resource-add-fullscreen .policy-editor-page .fullscreen-form-field__label {
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-cron-help {
+  color: #4e5969;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-cron-help__lead,
+.resource-add-fullscreen .policy-editor-page .policy-cron-help__section-title {
+  color: #1d2129;
+  font-weight: 600;
+}
+
+.resource-add-fullscreen .policy-editor-page .create-kind-grid--filter-presets .create-kind-card__sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row .el-input__wrapper,
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row .el-select__wrapper {
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row__pattern.el-input {
+  width: 100%;
+  max-width: 100%;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row__pattern .el-input__wrapper {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row__type.el-select {
+  width: 120px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row__type .el-select__wrapper {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-row .el-input__inner {
+  font-size: 13px;
+  color: #1d2129;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__prefix {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number {
+  flex: 0 0 120px;
+  width: 120px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number :deep(.el-input-number) {
+  width: 120px !important;
+  max-width: 120px;
+  height: 38px !important;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number :deep(.el-input-number .el-input-number__decrease),
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number :deep(.el-input-number .el-input-number__increase) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number :deep(.el-input-number .el-input) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number :deep(.el-input-number .el-input__wrapper) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__number :deep(.el-input-number .el-input__inner) {
+  height: 36px !important;
+  line-height: 36px !important;
+  text-align: center;
+  font-size: 13px;
+  color: #1d2129;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__unit {
+  flex: 0 0 88px;
+  width: 88px !important;
+  max-width: 88px;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-large-file-row__unit :deep(.el-select__wrapper) {
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+/* Filter Advanced Settings: controls always visible on the right of each toggle row */
+.policy-editor-page .filter-advanced-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) var(--policy-control-track-width);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.policy-editor-page .filter-advanced-item--local-ignore {
+  grid-template-columns: 44px minmax(0, 1fr) var(--policy-control-track-width);
+}
+
+.policy-editor-page .filter-advanced-item--plain {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.policy-editor-page .filter-advanced-item__switch {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.policy-editor-page .filter-advanced-item__main {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  min-width: 0;
+  align-self: start;
+}
+
+.policy-editor-page .filter-advanced-item__controls {
+  grid-row: 1;
+  grid-column: 3;
+  align-self: center;
+  min-width: 0;
+}
+
+.policy-editor-page .filter-advanced-item--large-file .policy-control-track__input {
+  display: flex;
+  align-items: center;
+}
+
+.policy-editor-page .filter-advanced-item--large-file .filter-large-file-row__unit {
+  width: 100%;
+  max-width: var(--policy-control-unit-width);
+}
+
+.policy-editor-page .filter-local-ignore-controls {
+  width: var(--policy-control-track-width);
+  max-width: var(--policy-control-track-width);
+  margin-left: auto;
+  min-width: 0;
+}
+
+.policy-editor-page .filter-large-file-controls {
+  width: var(--policy-control-track-width);
+  max-width: 100%;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.policy-editor-page .filter-large-file-controls__track {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  border-radius: 4px;
+  background: var(--el-fill-color-blank, #fff);
+}
+
+.policy-editor-page .filter-large-file-controls__track:focus-within {
+  border-color: var(--el-color-primary);
+}
+
+.policy-editor-page .filter-large-file-controls__prefix {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 12px;
+  color: #4e5969;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  border-right: 1px solid var(--el-border-color, #dcdfe6);
+}
+
+.policy-editor-page .filter-large-file-controls__number {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.policy-editor-page .filter-large-file-controls__number :deep(.el-input-number) {
+  width: 100%;
+}
+
+.policy-editor-page .filter-large-file-controls__number :deep(.el-input-number .el-input__wrapper) {
+  min-height: 38px;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.policy-editor-page .filter-large-file-controls__unit {
+  flex: 0 0 var(--policy-control-unit-width);
+  width: var(--policy-control-unit-width);
+  border-left: 1px solid var(--el-border-color, #dcdfe6);
+}
+
+.policy-editor-page .filter-large-file-controls__unit :deep(.el-select__wrapper) {
+  min-height: 38px;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.policy-editor-page .filter-local-ignore-controls__input {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+
+.policy-editor-page .filter-local-ignore-controls__input.el-input {
+  width: 100%;
+  max-width: 100%;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-local-ignore-controls__input .el-input__wrapper {
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-custom-rule-add {
+  font-size: 12px;
+  font-weight: 400;
+  color: #4e5969;
+}
+
+/* Right preview: compact retention summary in fixed-width sidebar */
+.resource-add-fullscreen .policy-editor-page .add-form-preview-row--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+.resource-add-fullscreen .policy-editor-page .add-form-preview-row--stacked .add-form-preview-row__label,
+.resource-add-fullscreen .policy-editor-page .add-form-preview-row--stacked .add-form-preview-row__value {
+  width: 100%;
+  text-align: left;
+}
+
+.policy-editor-page .add-form-preview-row__value--compact {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .policy-editor-page .add-form-preview-row--summary-only {
+  padding-top: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .add-form-preview-row--summary-only .add-form-preview-row__value {
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.policy-editor-page .add-form-preview-card {
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.policy-editor-page .add-form-preview-body {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.policy-editor-page .fullscreen-form-step-stack {
+  gap: 16px;
+}
+
+.policy-editor-page .policy-editor-form {
+  width: 100%;
+}
+
+.policy-editor-page .fullscreen-form-grid .fullscreen-form-field--full {
+  grid-column: 1 / -1;
+}
+
+
+.policy-editor-page .policy-merged-section-divider,
+.policy-editor-page .policy-basic-schedule-divider {
+  margin: 18px 0 !important;
+  border-color: #e5e6eb;
+}
+
+.policy-editor-page .policy-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.policy-editor-page .policy-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.policy-editor-page .policy-name-field .fullscreen-form-field__hint {
+  margin: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-rule-form .policy-name-field,
+.resource-add-fullscreen .policy-editor-page .policy-editor-form .policy-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-rule-form .policy-name-field .fullscreen-form-field__hint,
+.resource-add-fullscreen .policy-editor-page .filter-rule-form .filter-custom-block .fullscreen-form-field__hint {
+  margin: 0;
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resource-add-fullscreen .policy-editor-page .filter-rule-form .fullscreen-form-item--in-card .el-form-item__content {
+  gap: 6px;
+}
+
+.policy-editor-page .policy-card-header .fullscreen-form-section__title,
+.policy-editor-page .policy-card-header .policy-dialog-card__title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.policy-editor-page .policy-card-header__enable {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.policy-editor-page .policy-card-header__enable-label {
+  white-space: nowrap;
+}
+
+.policy-editor-page .policy-subsection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+.policy-editor-page .policy-subsection-header .policy-merged-subsection-subtitle,
+.policy-editor-page .policy-subsection-header .policy-section-head__title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.policy-editor-page .policy-subsection-header + .policy-section-off-hint {
+  margin-top: 12px;
+}
+
+.policy-editor-page .policy-subsection-header + .policy-section-body,
+.policy-editor-page .policy-subsection-header + .policy-section-nested {
+  margin-top: 16px;
+}
+
+.policy-editor-page .policy-merged-subsection-subtitle--standalone,
+.policy-editor-page .policy-merged-subsection-subtitle {
+  margin: 0;
+}
+
+.policy-editor-page .policy-section-enable-head .policy-merged-subsection-subtitle,
+.policy-editor-page .policy-section-enable-head .policy-basic-schedule-subtitle {
+  color: rgb(30 41 59);
+}
+
+.policy-editor-page .policy-section-enable-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.policy-editor-page .policy-section-enable-head .el-checkbox {
+  flex-shrink: 0;
+  height: auto;
+}
+
+.policy-editor-page .policy-section-enable-head .fullscreen-form-section__title {
+  margin: 0;
+}
+
+.policy-editor-page .policy-section-off-hint {
+  margin: 12px 0 0;
+  line-height: 1.5;
+}
+
+.policy-editor-page .policy-section-body {
+  margin-top: 16px;
+}
+
+.policy-editor-page .policy-section-body--module-off {
+  opacity: 0.72;
+}
+
+/* Schedule mode + inputs share one track aligned to segment buttons */
+.resource-add-fullscreen .policy-editor-page .policy-schedule-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: min(100%, 520px);
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-schedule-editor .hfl-segment-radio-row {
+  width: 100%;
+  max-width: none;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-schedule-editor .policy-freq-segment {
+  margin-bottom: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-schedule-editor .schedule-interval-block,
+.resource-add-fullscreen .policy-editor-page .policy-schedule-editor .schedule-cron-block {
+  width: 100%;
+  margin-top: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-schedule-editor .policy-cron-help {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Fixed interval: Every [− N +] [unit ▼] */
+.resource-add-fullscreen .policy-editor-page .schedule-interval-block {
+  gap: 6px;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-block .fullscreen-form-field__hint {
+  margin: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__prefix {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__controls {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__number {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 120px;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__number :deep(.el-input-number) {
+  width: 100% !important;
+  max-width: none;
+  height: 38px !important;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__number :deep(.el-input-number .el-input__inner) {
+  height: 36px !important;
+  line-height: 36px !important;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__unit {
+  flex: 0 0 112px;
+  width: 112px !important;
+  max-width: 112px;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-interval-row__unit :deep(.el-select__wrapper) {
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-cron-block > .el-form-item {
+  width: 100%;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-cron-block > .el-form-item .el-form-item__content {
+  width: 100%;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-cron-field {
+  width: 100%;
+  max-width: none;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-cron-field .el-input,
+.resource-add-fullscreen .policy-editor-page .schedule-cron-field__input {
+  width: 100% !important;
+  max-width: none;
+}
+
+.resource-add-fullscreen .policy-editor-page .schedule-cron-field__input :deep(.el-input__wrapper) {
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.policy-editor-page .policy-basic-schedule-divider {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.policy-editor-page .policy-retention-divider {
+  margin: 16px 0 !important;
+  border-color: #e5e6eb;
+}
+
+.policy-editor-page {
+  --policy-control-label-width: 100px;
+  --policy-control-input-width: 120px;
+  --policy-control-unit-width: 112px;
+  --policy-control-gap: 8px;
+  --policy-control-track-width: calc(
+    var(--policy-control-label-width) + var(--policy-control-input-width) +
+      var(--policy-control-unit-width) + 2 * var(--policy-control-gap)
+  );
+}
+
+.policy-editor-page .policy-control-track {
+  display: grid;
+  grid-template-columns:
+    var(--policy-control-label-width)
+    var(--policy-control-input-width)
+    var(--policy-control-unit-width);
+  column-gap: var(--policy-control-gap);
+  align-items: center;
+  width: var(--policy-control-track-width);
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.policy-editor-page .policy-control-track__label {
+  justify-self: end;
+  text-align: right;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+
+.policy-editor-page .policy-control-track__input {
+  width: var(--policy-control-input-width);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.policy-editor-page .policy-control-track__unit {
+  justify-self: start;
+  text-align: left;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+
+.policy-editor-page .policy-control-track :deep(.el-input-number) {
+  width: var(--policy-control-input-width) !important;
+  max-width: var(--policy-control-input-width);
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+
+.policy-editor-page .policy-control-track :deep(.el-input-number .el-input-number__decrease),
+.policy-editor-page .policy-control-track :deep(.el-input-number .el-input-number__increase) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+}
+
+.policy-editor-page .policy-control-track :deep(.el-input-number .el-input) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.policy-editor-page .policy-control-track :deep(.el-input-number .el-input__wrapper) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.policy-editor-page .policy-control-track :deep(.el-input-number .el-input__inner) {
+  text-align: center;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-control-track :deep(.el-input-number) {
+  height: 38px !important;
+}
+
+.resource-add-fullscreen .policy-editor-page .policy-control-track :deep(.el-input-number .el-input__inner) {
+  height: 36px !important;
+  line-height: 36px !important;
+}
+
+.policy-editor-page .retention-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) var(--policy-control-track-width);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: center;
+}
+
+.policy-editor-page .retention-item__switch {
+  grid-row: 1;
+  grid-column: 1;
+  align-self: start;
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.policy-editor-page .retention-item__switch--spacer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.policy-editor-page .retention-item__main {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  min-width: 0;
+  align-self: start;
+}
+
+.policy-editor-page .retention-item__title {
+  margin: 0;
+}
+
+.policy-editor-page .retention-item__desc {
+  margin: 4px 0 0;
+}
+
+.policy-editor-page .retention-item__controls {
+  grid-row: 1;
+  grid-column: 3;
+  align-self: center;
+  padding-top: 0;
+}
+
+.policy-editor-page .retention-item__control-label,
+.policy-editor-page .retention-item__control-unit {
+  white-space: nowrap;
+  line-height: 1.45;
+}
+
+.policy-editor-page .retention-item__control-input,
+.policy-editor-page .retention-recent-input-wrap,
+.policy-editor-page .retention-tier-input-wrap {
+  width: var(--policy-control-input-width);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.policy-editor-page .retention-recent-input-wrap :deep(.el-input-number),
+.policy-editor-page .retention-tier-input-wrap :deep(.el-input-number) {
+  width: 100%;
+}
+
+.policy-editor-page .retention-gfs-tier {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e6eb;
+}
+
+.policy-editor-page .retention-tier-label,
+.policy-editor-page .retention-tier-unit {
+  white-space: nowrap;
+}
+
+.policy-editor-page .toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.policy-editor-page .toggle-row__switch {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.policy-editor-page .toggle-row__title {
+  margin: 0 0 4px;
+}
+
+.policy-editor-page .toggle-row__sub {
+  margin: 0;
+}
+
+.policy-editor-page .toggle-row__details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 12px;
+  padding-left: 44px;
+}
+
+.policy-editor-page .toggle-row__details .policy-inline-label {
+  white-space: nowrap;
+}
+
+.policy-editor-page .advanced-settings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policy-editor-page .advanced-settings-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) var(--policy-control-track-width);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.policy-editor-page .advanced-settings-item:not(.advanced-settings-item--bandwidth):not(.advanced-settings-item--local-ignore):not(.advanced-settings-item--large-file) {
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+
+.policy-editor-page .advanced-settings-item--local-ignore {
+  grid-template-columns: 44px minmax(0, 1fr) var(--policy-control-track-width);
+}
+
+.policy-editor-page .advanced-settings-item--large-file {
+  grid-template-columns: 44px minmax(0, 1fr) var(--policy-control-track-width);
+}
+
+.policy-editor-page .advanced-settings-item--local-ignore .advanced-settings-item__controls {
+  min-width: 0;
+}
+
+.policy-editor-page .advanced-settings-item--bandwidth .policy-control-track__input {
+  display: flex;
+  align-items: center;
+}
+
+.policy-editor-page .advanced-settings-item--bandwidth .filter-large-file-row__unit {
+  width: 100%;
+  max-width: var(--policy-control-unit-width);
+}
+
+.policy-editor-page .advanced-settings-item--large-file .advanced-settings-item__controls {
+  min-width: 0;
+}
+
+.policy-editor-page .advanced-settings-item.is-last {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.policy-editor-page .advanced-settings-item__switch {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.policy-editor-page .advanced-settings-item__main {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  min-width: 0;
+}
+
+.policy-editor-page .advanced-settings-item__title {
+  margin: 0;
+}
+
+.policy-editor-page .advanced-settings-item__desc {
+  margin: 4px 0 0;
+}
+
+.policy-editor-page .advanced-settings-item__controls {
+  grid-row: 1;
+  grid-column: 3;
+  align-self: center;
+  padding-top: 0;
+}
+
+.policy-editor-page .advanced-settings-item__control-label,
+.policy-editor-page .advanced-settings-item__control-unit {
+  white-space: nowrap;
+  line-height: 1.45;
+}
+
+.policy-editor-page .advanced-settings-item__control-input {
+  width: var(--policy-control-input-width);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.policy-editor-page .advanced-settings-item__control-input :deep(.el-input-number) {
+  width: 100%;
+}
+
+.policy-editor-page .error-policy-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policy-editor-page .error-policy-list > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.policy-editor-page .error-policy-list > li.is-last {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.policy-editor-page .error-policy-list__switch {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.policy-editor-page .error-policy-list__title {
+  margin: 0 0 4px;
+}
+
+.policy-editor-page .error-policy-list__desc {
+  margin: 0;
+}
+
+.policy-editor-page .policy-option-desc--lead {
+  margin: 0 0 12px;
+}
+
+.policy-editor-page .cron-input--error :deep(.el-input__wrapper),
+.policy-editor-page .policy-input--error :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #f53f3f inset !important;
+}
+
+@media (max-width: 900px) {
+  .policy-editor-page .advanced-settings-item--bandwidth {
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .policy-editor-page .policy-retention-stack .retention-item,
+  .policy-editor-page .retention-item {
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .policy-editor-page .retention-item__controls,
+  .policy-editor-page .advanced-settings-item__controls {
+    grid-row: 3;
+    grid-column: 2;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    padding-top: 8px;
+    align-self: start;
+  }
+
+  .policy-editor-page .policy-control-track {
+    width: 100%;
+    max-width: 100%;
+    grid-template-columns:
+      minmax(72px, var(--policy-control-label-width))
+      var(--policy-control-input-width)
+      minmax(72px, var(--policy-control-unit-width));
+  }
+
+  .policy-editor-page .advanced-settings-item--local-ignore {
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .policy-editor-page .advanced-settings-item--large-file {
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .policy-editor-page .advanced-settings-item--large-file .advanced-settings-item__controls {
+    grid-row: 3;
+    grid-column: 2;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    padding-top: 8px;
+    align-self: start;
+  }
+
+  .policy-editor-page .filter-large-file-controls {
+    max-width: 100%;
+    margin-left: 0;
+  }
+
+  .policy-editor-page .advanced-settings-item--local-ignore .advanced-settings-item__controls {
+    grid-row: 3;
+    grid-column: 2;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    padding-top: 8px;
+    align-self: start;
+  }
+
+  .policy-editor-page .filter-local-ignore-controls {
+    max-width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .policy-editor-page .filter-local-ignore-controls__label {
+    max-width: none;
+    text-align: left;
+    width: 100%;
+  }
+
+  .policy-editor-page .filter-local-ignore-controls__input {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .policy-editor-page .filter-advanced-item,
+  .policy-editor-page .filter-advanced-item--local-ignore {
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .policy-editor-page .filter-advanced-item__controls {
+    grid-row: 3;
+    grid-column: 2;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    padding-top: 8px;
+    align-self: start;
+  }
+
+  .policy-editor-page .filter-local-ignore-controls {
+    max-width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .policy-editor-page .filter-local-ignore-controls__label {
+    max-width: none;
+    text-align: left;
+    width: 100%;
+  }
+
+  .policy-editor-page .filter-local-ignore-controls__input {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .policy-editor-page .toggle-row__details {
+    padding-left: 0;
+  }
+}

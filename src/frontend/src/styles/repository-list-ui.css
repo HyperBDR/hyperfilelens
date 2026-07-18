@@ -1,0 +1,328 @@
+/* ============================================
+   Repository list UI
+   ============================================ */
+
+.hfl-list-table .repo-usage-cell {
+  gap: 5px;
+  max-width: 100%;
+}
+
+.hfl-list-table .repo-usage-cell__numbers {
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.hfl-list-table .repo-usage-cell__used {
+  font-size: 12px;
+}
+
+.hfl-list-table .repo-usage-cell__capacity,
+.hfl-list-table .repo-usage-cell__percent {
+  font-size: 11px;
+}
+
+.hfl-list-table .repo-usage-bar {
+  height: 6px;
+  max-width: 100%;
+}
+
+.hfl-list-table .source-os-cell--repo-platform {
+  gap: 5px;
+}
+
+.hfl-list-table .source-os-cell--repo-platform .source-os-cell__icon-wrap {
+  width: 16px;
+  height: 16px;
+}
+
+.hfl-list-table .source-os-cell--repo-platform .source-os-cell__icon-wrap .source-os-cell__s3-icon,
+.hfl-list-table .source-os-cell--repo-platform .source-os-cell__icon-wrap .source-os-cell__s3-icon-lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.hfl-list-table .source-os-cell--repo-platform .source-os-cell__platform {
+  flex-shrink: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: inherit;
+}
+
+.repo-location-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.repo-location-cell__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgb(15 23 42);
+}
+
+.repo-location-cell__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgb(100 116 139);
+}
+
+.repo-protocol-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 62px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.repo-protocol-pill--smb {
+  background: rgba(255, 247, 237, 0.95);
+  color: rgb(194 65 12);
+}
+
+.repo-protocol-pill--nfs {
+  background: rgba(239, 246, 255, 0.95);
+  color: rgb(29 78 216);
+}
+
+.repo-s3-platform-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 62px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(241, 245, 249, 0.95);
+  color: rgb(51 65 85);
+}
+
+.repo-s3-platform-pill__icon {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  flex: 0 0 12px;
+}
+
+.repo-s3-platform-pill__icon-lucide {
+  flex: 0 0 12px;
+  color: #4f46e5;
+}
+
+.repo-s3-platform-pill--aliyun {
+  background: rgba(255, 247, 237, 0.95);
+  color: rgb(194 65 12);
+}
+
+.repo-s3-platform-pill--aws {
+  background: rgba(254, 252, 232, 0.95);
+  color: rgb(161 98 7);
+}
+
+.repo-s3-platform-pill--huawei {
+  background: rgba(245, 243, 255, 0.95);
+  color: rgb(109 40 217);
+}
+
+.repo-s3-endpoint-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  color: rgb(15 23 42);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.repo-s3-bucket-path {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  color: rgb(51 65 85);
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.repo-s3-region-empty {
+  color: rgb(148 163 184);
+}
+
+.repo-usage-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.repo-usage-cell__numbers {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.repo-usage-cell__used {
+  font-size: 13px;
+  font-weight: 400;
+  color: rgb(15 23 42);
+}
+
+.repo-usage-cell__capacity {
+  font-size: 12px;
+  color: rgb(100 116 139);
+}
+
+.repo-usage-cell__percent {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 7px;
+  border: 1px solid rgba(209, 213, 219, 0.9);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fff, rgb(248 250 252));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: rgb(75 85 99);
+}
+
+.repo-usage-cell__percent::before {
+  content: none;
+}
+
+.repo-usage-cell--compact {
+  gap: 5px;
+  max-width: 100%;
+}
+
+.repo-usage-cell--compact .repo-usage-cell__numbers {
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.repo-usage-cell--compact .repo-usage-cell__used {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgb(15 23 42);
+}
+
+.repo-usage-cell--compact .repo-usage-cell__capacity,
+.repo-usage-cell--compact .repo-usage-cell__percent {
+  font-size: 11px;
+}
+
+.repo-usage-cell--compact .repo-usage-bar {
+  height: 6px;
+  max-width: 100%;
+}
+
+.repo-usage-cell--detail {
+  gap: 8px;
+  width: 100%;
+}
+
+.repo-usage-cell--detail .repo-usage-cell__used {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(15 23 42);
+}
+
+.repo-usage-cell--detail .repo-usage-cell__capacity {
+  font-size: 12px;
+}
+
+.repo-usage-cell--detail .repo-usage-bar {
+  height: 8px;
+}
+
+.hfl-detail-row__value--stacked > .repo-usage-cell--detail {
+  width: 100%;
+}
+
+.repo-usage-cell--unlimited .repo-usage-cell__capacity {
+  color: rgb(71 85 105);
+}
+
+.repo-usage-bar {
+  position: relative;
+  width: 100%;
+  height: 9px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid rgba(209, 213, 219, 0.95);
+  border-radius: 2px;
+  background: linear-gradient(180deg, rgb(243 244 246), rgb(229 231 235));
+  box-shadow:
+    inset 0 1px 1px rgba(15, 23, 42, 0.08),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.repo-usage-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  background: #165fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset -1px 0 0 rgba(30, 64, 175, 0.18);
+}
+
+/* ============================================
+   Wizard tag pills (repo type + protocol)
+   Used in BackupCreateWizard step 2, TargetRepositoryPicker,
+   and TargetRepositoryDetailCard
+   ============================================ */
+
+.wizard-repo-type-tag.el-tag--plain {
+  border: none;
+  font-weight: 600;
+}
+
+.wizard-repo-type-tag--s3.el-tag--plain {
+  background: rgba(239, 246, 255, 0.95);
+  color: rgb(29 78 216);
+}
+
+.wizard-repo-type-tag--nas.el-tag--plain {
+  background: rgba(240, 253, 244, 0.95);
+  color: rgb(21 128 61);
+}
+
+.wizard-repo-type-tag--proxy_fs.el-tag--plain {
+  background: rgba(241, 245, 249, 0.95);
+  color: rgb(51 65 85);
+}
+
+.wizard-protocol-tag.el-tag--plain {
+  border: none;
+  font-weight: 600;
+}
+
+.wizard-protocol-tag--nfs.el-tag--plain {
+  background: rgba(239, 246, 255, 0.95);
+  color: rgb(29 78 216);
+}
+
+.wizard-protocol-tag--smb.el-tag--plain {
+  background: rgba(255, 247, 237, 0.95);
+  color: rgb(194 65 12);
+}

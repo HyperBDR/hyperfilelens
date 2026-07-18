@@ -1,0 +1,138 @@
+.host-monitor {
+  --hm-gap: 16px;
+  --hm-card-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.host-monitor__kpi {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--hm-gap);
+}
+
+.host-monitor__kpi-card {
+  min-height: 108px;
+}
+
+.host-monitor__kpi-card :deep(.hfl-ops-stat-card__value) {
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.host-monitor__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.host-monitor__section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.host-monitor__section-bar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: #4f46e5;
+  flex-shrink: 0;
+}
+
+.host-monitor__section-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-title, #1d2129);
+}
+
+.host-monitor__charts {
+  display: grid;
+  gap: var(--hm-gap);
+}
+
+.host-monitor__charts--quad {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.host-monitor__charts--pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  padding: 14px 16px 12px;
+  border-radius: var(--hm-card-radius);
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-bg-card, #fff);
+  min-width: 0;
+}
+
+.chart-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 28px;
+  margin-bottom: 4px;
+}
+
+.chart-card__head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-title, #1d2129);
+  white-space: nowrap;
+}
+
+.chart-card__filter {
+  width: 112px;
+  flex-shrink: 0;
+}
+
+.chart-card__chart {
+  flex: 1;
+  min-height: 220px;
+  width: 100%;
+}
+
+.chart-card__empty {
+  display: flex;
+  flex: 1;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--color-text-secondary, #86909c);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.chart-card__empty svg {
+  color: #94a3b8;
+  stroke-width: 1.7;
+}
+
+@media (max-width: 1280px) {
+  .host-monitor__kpi,
+  .host-monitor__charts--quad {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .host-monitor__kpi,
+  .host-monitor__charts--quad,
+  .host-monitor__charts--pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

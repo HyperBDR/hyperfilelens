@@ -1,0 +1,76 @@
+package install
+
+import (
+	"path/filepath"
+	"strings"
+)
+
+const (
+	dirBackup          = "backup"
+	dirRuntime         = "runtime"
+	dirLifecycle       = "lifecycle"
+	subState           = "state"
+	stateLatestArchive = "latest.tar.gz"
+	backupMetaFile     = "meta.json"
+	runtimeDownload    = "download"
+	runtimeWorkspace   = "workspace"
+	lifecycleUpgrade   = "upgrade"
+	lifecycleUninstall = "uninstall"
+)
+
+// BackupRollbackBinDir is the fixed rollback snapshot for install-dir binaries.
+func BackupRollbackBinDir(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, "rollback", "bin")
+}
+
+// BackupStateLatestPath is the fixed agent.env/agent.db snapshot path.
+func BackupStateLatestPath(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, subState, stateLatestArchive)
+}
+
+// BackupMetaPath is backup/meta.json describing the latest pre-upgrade snapshot.
+func BackupMetaPath(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirBackup, backupMetaFile)
+}
+
+// RuntimeDownloadDir holds WS download artifacts before staging.
+func RuntimeDownloadDir(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirRuntime, runtimeDownload)
+}
+
+// RuntimeWorkspaceDir is the extract target for install.sh upgrade --from archive.
+func RuntimeWorkspaceDir(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirRuntime, runtimeWorkspace)
+}
+
+// LifecycleUpgradeDir holds staged package + detached upgrade runner.
+func LifecycleUpgradeDir(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirLifecycle, lifecycleUpgrade)
+}
+
+// LifecycleUninstallDir holds detached uninstall runner.
+func LifecycleUninstallDir(dataDir string) string {
+	return filepath.Join(strings.TrimSpace(dataDir), dirLifecycle, lifecycleUninstall)
+}
+
+// LifecycleUpgradeFailedPath is written when detached upgrade fails.
+func LifecycleUpgradeFailedPath(dataDir string) string {
+	return filepath.Join(LifecycleUpgradeDir(dataDir), PendingUpgradeFailedMarker)
+}
+
+// StagedUpgradePackagePath returns lifecycle/upgrade/package.<ext>.
+func StagedUpgradePackagePath(dataDir, archivePath string) string {
+	return filepath.Join(LifecycleUpgradeDir(dataDir), stagedPackageFilename(archivePath))
+}
+
+// PathAllowedForRemoval reports whether an install or data directory may be rm -rf'd by uninstall.
+func PathAllowedForRemoval(path string) bool {
+	path = strings.TrimSpace(path)
+	switch path {
+	case "/opt/hyperfilelens-agent", "/var/lib/hyperfilelens-agent":
+		return true
+	default:
+		return strings.HasPrefix(path, "/opt/hyperfilelens-agent/") ||
+			strings.HasPrefix(path, "/var/lib/hyperfilelens-agent/")
+	}
+}

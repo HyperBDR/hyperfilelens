@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from django.core.exceptions import ValidationError
+
+from apps.node import agent_paths
+from apps.node.models import Node
+from apps.node.models.base import NodeRole
+from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_exception, log_agent_outcome
+from apps.node.services.interface import run_agent_task_sync
+from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_errors import (
+    REPOSITORY_ALREADY_EXISTS_MESSAGE,
+    RepositoryAlreadyExistsError,
+    agent_repository_failure_message,
+    agent_result_has_repository_conflict,
+)
+from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
+
+logger = logging.getLogger(__name__)
+
+
+NAS_REPOSITORY_ROOT = "hp-repos"
+NAS_PROXY_REPOSITORY_SUBDIR_TEMPLATE = f"{NAS_REPOSITORY_ROOT}/storage-{{repository_id}}"
+NAS_AGENT_REPOSITORY_SUBDIR_TEMPLATE = f"{NAS_REPOSITORY_ROOT}/agent-{{node_id}}"
+
+
+class NASRepositoryError(RuntimeError):
+    pass
+
+
+def nas_agent_repository_subdir(node_id: int) -> str:
+    return NAS_AGENT_REPOSITORY_SUBDIR_TEMPLATE.format(node_id=int(node_id))
+
+
+def nas_proxy_repository_subdir(repository: Repository) -> str:
+    return NAS_PROXY_REPOSITORY_SUBDIR_TEMPLATE.format(repository_id=int(repository.id))
+
+
+def nas_mount_point(repository: Repository, *, node_id: int | None = None) -> str:
+    return agent_paths.repository_mount_point(repository.id, node_id=node_id)
+
+
+def nas_repository_payload(
+    *,
+    repository: Repository,
+    subdir: str,
+    node_id: int | None = None,
+    secrets_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    config = repository.config if isinstance(repository.config, dict) else {}
+    secrets_payload = secrets_payload if isinstance(secrets_payload, dict) else resolve_repository_secrets(repository)
+    protocol = str(repository.nas_protocol or "").strip().lower()
+    payload: dict[str, Any] = {
+        "id": repository.id,
+        "type": Repository.Type.NAS,
+        "subdir": subdir,
+        "kopia_password": str(secrets_payload.get("kopia_password") or "").strip(),
+        "nas": {
+            "resource_id": repository.id,
+            "protocol": protocol,
+            "server": str(config.get("server_address") or "").strip(),
+            "mount_point": nas_mount_point(repository, node_id=node_id),
+            "options": str(config.get("mount_options") or "").strip(),
+            "storage_type": "nas_repository",
+        },
+    }
+    nas = payload["nas"]
+    if protocol == Repository.NasProtocol.SMB:
+        nas["share"] = str(config.get("share_path") or "").strip().lstrip("/")
+        nas["username"] = str(config.get("smb_username") or "").strip()
+        nas["password"] = str(secrets_payload.get("smb_password") or "")
+        domain = str(config.get("smb_domain") or "").strip()
+        if domain:
+            nas["domain"] = domain
+    else:
+        nas["export_path"] = str(config.get("share_path") or "").strip()
+    return payload
+
+
+def mount_point_from_repo_status_result(result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+    candidates: list[Any] = [
+        result.get("mount_point"),
+        result.get("resolved_mount_point"),
+    ]
+    for key in ("nas", "repository"):
+        nested = result.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested.get("mount_point"))
+            nas = nested.get("nas")
+            if isinstance(nas, dict):
+                candidates.append(nas.get("mount_point"))
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def sync_proxy_mount_path_from_repo_status(repository: Repository, result: Any) -> bool:
+    mount_point = mount_point_from_repo_status_result(result)
+    if not mount_point:
+        return False
+    config = dict(repository.config or {})
+    if config.get("proxy_mount_path") == mount_point:
+        return False
+    config["proxy_mount_path"] = mount_point
+    repository.config = config
+    repository.save(update_fields=["config", "updated_at"])
+    return True
+
+
+def validate_proxy_for_repository(repository: Repository) -> Node:
+    if repository.bind_node_type != Repository.BindNodeType.PROXY or not repository.bind_node_id:
+        raise ValidationError("NAS repository is not bound to a proxy node.")
+    node = Node.objects.filter(
+        id=repository.bind_node_id,
+        organization_id=repository.organization_id,
+        role=NodeRole.PROXY,
+        is_deleted=False,
+    ).first()
+    if node is None:
+        raise ValidationError("Bound proxy node not found.")
+    if node.status != Node.Status.ONLINE:
+        raise ValidationError(f'Bound proxy node "{node.name}" is not online.')
+    return node
+
+
+def initialize_proxy_nas_repository(repository: Repository):
+    return _run_proxy_nas_repository_task(
+        repository,
+        kind="repo.initialize",
+        log_scope="storage nas repo init",
+    )
+
+
+def check_proxy_nas_repository(repository: Repository):
+    return _run_proxy_nas_repository_task(
+        repository,
+        kind="repo.status",
+        log_scope="storage nas repo check",
+    )
+
+
+def _run_proxy_nas_repository_task(
+    repository: Repository,
+    *,
+    kind: str,
+    log_scope: str,
+):
+    node = validate_proxy_for_repository(repository)
+    payload = {
+        "repository": nas_repository_payload(
+            repository=repository,
+            subdir=nas_proxy_repository_subdir(repository),
+            node_id=node.id,
+        )
+    }
+    log_agent_dispatch(
+        log_scope,
+        node_id=node.id,
+        kind=kind,
+        correlation_type="storage_repository",
+        correlation_id=str(repository.id),
+        repository_id=repository.id,
+        org_id=repository.organization_id,
+    )
+    try:
+        outcome = run_agent_task_sync(
+            organization_id=repository.organization_id,
+            node_id=node.id,
+            kind=kind,
+            payload=payload,
+            correlation_type="storage_repository",
+            correlation_id=str(repository.id),
+            wait_timeout_seconds=180,
+        )
+    except Exception as exc:
+        log_agent_exception(
+            log_scope,
+            node_id=node.id,
+            kind=kind,
+            exc=exc,
+            correlation_type="storage_repository",
+            correlation_id=str(repository.id),
+            repository_id=repository.id,
+        )
+        raise NASRepositoryError(str(exc)) from exc
+    log_agent_outcome(
+        log_scope,
+        outcome=outcome,
+        node_id=node.id,
+        kind=kind,
+        correlation_type="storage_repository",
+        correlation_id=str(repository.id),
+        repository_id=repository.id,
+    )
+    if outcome.task.status != "success":
+        if agent_result_has_repository_conflict(outcome.result):
+            raise RepositoryAlreadyExistsError(REPOSITORY_ALREADY_EXISTS_MESSAGE)
+        message = agent_repository_failure_message(
+            outcome.result,
+            last_error=str(getattr(outcome.task, "last_error", "") or ""),
+        )
+        raise NASRepositoryError(message or "NAS repository initialization failed.")
+    sync_proxy_mount_path_from_repo_status(repository, outcome.result)
+    logger.info(
+        "%s ok repository_id=%s node_id=%s org_id=%s",
+        log_scope,
+        repository.id,
+        node.id,
+        repository.organization_id,
+    )
+    return outcome

@@ -1,0 +1,367 @@
+# HyperFileLens
+
+HyperFileLens is a self-hosted data protection control plane for managing
+backup sources, storage repositories, protection policies, restore operations,
+and distributed backup agents from one web console.
+
+> **Project status:** HyperFileLens is in public beta. Interfaces,
+> configuration, and release packaging may change before a stable release.
+
+The public source distribution is English-only. Additional languages are
+designed to be delivered separately as runtime language packs.
+
+## Features
+
+- Central management for backup sources, repositories, policies, snapshots,
+  and restore tasks
+- Kopia-based Agent for Linux, macOS, and Windows workloads
+- Source, proxy, and Data Gateway node roles
+- REST API and WebSocket-based Agent orchestration
+- Tenant, Platform Operations, and Django administration consoles
+- Task history, audit records, alerts, notifications, and system monitoring
+- Optional SourceLens integration for data discovery and insight workflows
+- Hot-reload Docker Compose development environment
+- Image-only, offline release packages for self-hosted deployment
+
+## Architecture
+
+| Component | Technology | Purpose |
+| --- | --- | --- |
+| Backend | Python 3.12, Django, DRF, Channels, Celery | API, authentication, orchestration, scheduling, and platform services |
+| Frontend | Vue 3, TypeScript, Vite, Element Plus | Tenant and Platform Operations web consoles |
+| Agent | Go 1.25, Kopia | Source discovery, backup execution, restore, and node communication |
+| Gateway | Nginx | HTTPS entry point for the UI, API, WebSockets, and release downloads |
+| State | PostgreSQL 17, Redis | Persistent application data, caching, messaging, and Channels |
+| SourceLens | Integrated image-only component | Data discovery and insight services |
+
+HyperFileLens currently supports PostgreSQL 17 as its only application
+database. SQLite, MySQL, and MariaDB are not supported.
+
+Nginx exposes the browser consoles and application endpoints over HTTPS.
+Backend services communicate with Agents through WebSockets and use Celery for
+asynchronous work. SourceLens runs as a separate image-only stack on the shared
+`hyperfilelens-bridge` Docker network.
+
+## Requirements
+
+### Local development
+
+- Linux host or Linux development environment
+- Git
+- Bash
+- Python 3
+- Go 1.25 with the Go 1.25.10 toolchain
+- OpenSSL, curl, rsync, and SHA-256 utilities
+- Docker Engine 24.0 or later
+- Docker Compose v2
+- An amd64 host, or an environment capable of running linux/amd64 containers
+- Internet access for the initial dependency, Agent, and SourceLens build
+
+Backend and frontend application dependencies, Kopia, PostgreSQL, and Redis are
+managed by the development workflow. Python and Go are used by repository
+quality, dependency, and Agent build scripts on the host.
+
+### Release installation
+
+The current offline installer targets **Ubuntu 24.04 amd64**. The target should
+have at least 4 CPU cores, 8 GB of memory, and adequate storage for application
+state, logs, metadata, and published artifacts.
+
+## Quick Start
+
+Start the complete hot-reload development environment from the repository
+root:
+
+```bash
+./dev/stack.sh up
+```
+
+On the first run, the script:
+
+1. Creates `.env` from `.env.example` when it is missing.
+2. Generates local self-signed TLS certificates.
+3. Fetches the pinned Kopia package and other build dependencies.
+4. Builds and publishes Agent packages under `data/media/`.
+5. Builds and starts the image-only SourceLens stack.
+6. Starts the bind-mounted HFL backend and frontend development services.
+
+The initial run can take several minutes because it prepares all development
+artifacts and container images.
+
+Default endpoints:
+
+| Service | URL |
+| --- | --- |
+| Tenant console | `https://localhost:10443/` |
+| Platform Operations | `https://localhost:10444/` |
+| Django Admin | `https://localhost:10444/admin/` |
+| SourceLens console | `https://localhost:10446/` |
+| OpenAPI UI | `https://localhost:10443/swagger` |
+
+Default HFL development administrator:
+
+```text
+Email:    admin@hyperfilelens.com
+Password: Admin@123
+```
+
+The development environment uses a self-signed certificate. Accept the local
+browser warning and change the default password after the first login.
+
+Common lifecycle commands:
+
+```bash
+./dev/stack.sh down
+./dev/stack.sh down --hfl-only
+./dev/stack.sh restart
+./dev/stack.sh restart --force
+```
+
+Use `restart --force` after changing dependency manifests or Dockerfiles.
+Normal backend and frontend source changes reload automatically.
+
+To inspect options without starting services:
+
+```bash
+./dev/stack.sh up --print-config
+./dev/stack.sh --help
+```
+
+## Configuration
+
+Runtime and build settings are documented in [`.env.example`](.env.example).
+The development stack automatically creates the ignored `.env` file from that
+template. Release packages include the same template, while the installer
+generates production secrets and host-specific values before startup.
+
+Configuration precedence for supported build options is:
+
+1. Command-line option
+2. Process environment variable
+3. Repository `.env`
+4. `.env.example` default
+
+Common settings include:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `HFL_TENANT_PORT` | `10443` | Tenant HTTPS console port |
+| `HFL_ADMIN_PORT` | `10444` | Platform Operations and Django Admin port |
+| `SOURCELENS_CONSOLE_PORT` | `10446` | SourceLens HTTPS console port |
+| `SOURCELENS_MODE` | `bundled` | Use the bundled or an external SourceLens deployment |
+| `HFL_REGISTRATION_ENABLED` | `true` | Enable public account registration |
+| `VITE_ENABLE_DEMO_DATA` | `false` | Enable development-only demo records |
+
+Optional download and package mirrors can be set in `.env` or passed as CLI
+options. For example:
+
+```bash
+./dev/stack.sh up \
+  --github-download-mirror https://ghfast.top \
+  --docker-download-mirror docker.m.daocloud.io \
+  --apt-mirror https://mirrors.tuna.tsinghua.edu.cn
+```
+
+Third-party mirrors are examples only and are never enabled automatically.
+
+## SourceLens Integration
+
+SourceLens is not vendored into this repository. Development and release
+workflows fetch the configured upstream tag into the ignored
+`build/sourcelens/source/` build cache and produce deployable images. Running
+HFL environments always use SourceLens images; SourceLens source is never bind
+mounted into runtime containers.
+
+The default `bundled` mode manages SourceLens with HFL:
+
+```env
+SOURCELENS_MODE=bundled
+```
+
+To connect to an independently managed SourceLens deployment:
+
+```env
+SOURCELENS_MODE=external
+LENS_BASE_URL=https://sourcelens.example.com
+```
+
+Skip SourceLens preparation for an HFL-only development session with:
+
+```bash
+./dev/stack.sh up --no-sourcelens
+```
+
+SourceLens is maintained as a separate upstream project at
+[HyperBDR/sourcelens](https://github.com/HyperBDR/sourcelens).
+
+## Development
+
+The default Compose stack bind mounts:
+
+- `src/backend/` to `/opt/backend`
+- `src/frontend/` to `/app`
+
+PostgreSQL, Redis, Nginx, and SourceLens remain containerized. Persistent local
+state is written under the ignored `data/` directory. Generated dependencies,
+build caches, and release output are written under the ignored `build/`
+directory.
+
+### Backend
+
+The backend package and runtime dependencies are defined in `pyproject.toml`
+and resolved reproducibly through the committed `uv.lock`. Backend images use
+the lock file directly and fail the build if it is out of date.
+After starting the development stack, run the Django test suite in a backend
+container:
+
+```bash
+docker compose exec worker python manage.py test
+```
+
+### Frontend
+
+```bash
+docker compose exec ui npm run lint
+docker compose exec ui npm run test
+docker compose exec ui npm run build
+```
+
+`package-lock.json` is generated from the official npm registry and committed
+to keep CI and release builds reproducible.
+
+### Agent
+
+Run Agent tests:
+
+```bash
+cd src/agent
+go test ./...
+```
+
+Build and package the default Agent platform matrix:
+
+```bash
+./src/agent/scripts/fetch-deps.sh --all
+./src/agent/scripts/build.sh --release
+./src/agent/scripts/package.sh
+```
+
+The default matrix is Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+Run each script with `--help` for version, platform, mirror, logging, and output
+options.
+
+Publish Agent packages for the local control plane:
+
+```bash
+./tools/agent/publish.sh --bundle all
+```
+
+### Quality checks
+
+The public repository requires English source, comments, and documentation:
+
+```bash
+python3 tools/quality/check-english-source.py
+```
+
+Run the relevant backend, frontend, and Agent tests before opening a pull
+request.
+
+## Release Packages
+
+Build a complete offline package on a connected amd64 build host:
+
+```bash
+./release/build.sh
+```
+
+The generated archive is written to `build/release/dist/` and contains:
+
+- HFL backend and frontend images
+- PostgreSQL and Redis runtime images
+- Optional bundled SourceLens images
+- Agent installers and enrollment bootstrap files
+- Ubuntu 24.04 amd64 Docker CE packages
+- Runtime Compose, Nginx, installer, and license files
+
+Application source code is not copied into the release package. Installed
+runtime files are placed under `/opt/hyperfilelens`, with persistent state
+under `/opt/hyperfilelens/data`.
+
+Install a generated package:
+
+```bash
+tar xzf hyperfilelens-<version>-<commit7>.tar.gz
+cd hyperfilelens-<version>
+sudo ./install.sh install
+```
+
+The installer creates `.env`, generates application, database, and initial
+administrator secrets, creates a self-signed certificate, loads the packaged
+images, and starts the stack. It prints the generated administrator password
+after installation.
+
+Upgrade an existing installation:
+
+```bash
+sudo /opt/hyperfilelens/install.sh upgrade \
+  --from /path/to/hyperfilelens-<version>-<commit7>.tar.gz
+```
+
+Inspect all build options from the repository and installer options from an
+extracted release package with:
+
+```bash
+./release/build.sh --help
+sudo ./install.sh --help
+```
+
+## Repository Layout
+
+```text
+hyperfilelens/
+├── deploy/              Runtime Compose, Docker, Nginx, bootstrap, and installer assets
+├── dev/                 Local development entry points
+├── docs/                Reserved documentation directory
+├── release/             Offline release build entry points
+├── src/
+│   ├── agent/           Go Agent source and packaging templates
+│   ├── backend/         Django control plane source
+│   └── frontend/        Vue web console source
+├── tools/               Shared build, dependency, quality, and publishing tools
+├── build/               Ignored build output and dependency caches
+├── data/                Ignored local runtime state and published artifacts
+├── .env.example         Documented configuration template
+├── docker-compose.yml   Hot-reload development stack
+├── pyproject.toml       Python project metadata and backend dependencies
+├── LICENSE              Apache License 2.0
+└── README.md
+```
+
+## Security
+
+Development defaults are intentionally convenient and are not production
+credentials. Release installation generates random application, database, and
+administrator secrets, but operators must still:
+
+- Replace self-signed certificates with certificates trusted by their users.
+- Review listener bind addresses and restrict administrative access.
+- Configure trusted hostnames, CSRF/CORS origins, email, and optional OAuth.
+- Protect `.env`, TLS private keys, backups, logs, and `data/`.
+- Keep credentials and generated runtime files out of version control.
+
+Do not commit `.env`, private keys, access tokens, runtime data, build output,
+or release archives.
+
+## Contributing
+
+1. Create a focused branch from the current default branch.
+2. Keep source code, comments, documentation, commits, and pull requests in
+   English.
+3. Add or update tests for behavior changes.
+4. Run the relevant quality checks and builds.
+5. Open a pull request describing the problem, solution, and validation.
+
+## License
+
+HyperFileLens is licensed under the [Apache License 2.0](LICENSE).

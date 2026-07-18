@@ -1,0 +1,17 @@
+[Unit]
+Description=HyperFileLens Agent
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/hyperfilelens-agent/agent.env
+WorkingDirectory=/opt/hyperfilelens-agent
+ExecStart=/opt/hyperfilelens-agent/hfl-agent run
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+"""
+Register periodic tasks for storage reconciliation.
+"""
+
+from celery.schedules import crontab, schedule
+
+from common.scheduling.registry import TASK_REGISTRY
+from apps.storage.services.internal.repository_operations import maintenance_settings
+
+
+def register_periodic_tasks():
+    settings = maintenance_settings()
+    TASK_REGISTRY.add(
+        name="storage_schedule_repository_maintenance",
+        task="apps.storage.tasks.schedule_repository_maintenance",
+        schedule=schedule(settings.scan_interval),
+        args=(),
+        kwargs={},
+        queue=None,
+        enabled=settings.enabled,
+    )
+    TASK_REGISTRY.add(
+        name="storage_reconcile_repositories",
+        task="apps.storage.tasks.reconcile_storage_repositories",
+        schedule=crontab(minute="*/15"),
+        args=(),
+        kwargs={"limit": 200, "stale_after_seconds": 900},
+        queue=None,
+        enabled=True,
+    )

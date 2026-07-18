@@ -1,0 +1,998 @@
+from __future__ import annotations
+
+import os
+import shutil
+from pathlib import Path
+from typing import Any, Iterable
+
+from django.apps import apps
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+
+from apps.audit.constants import AuditAction, AuditResult, AuditResourceType
+from apps.audit.services.interface import write_audit_log
+from apps.iam.models import Organization
+from apps.node.models import Node
+from apps.storage.repositories.models import (
+    Credential,
+    Repository,
+    RepositoryExecutionTarget,
+    RepositoryTask,
+    RepositoryUsageShard,
+)
+from apps.storage.services.internal.repository_access import repository_payload_for_node
+from apps.storage.services.internal.repository_secrets import (
+    resolve_repository_secrets,
+    sanitize_repository_config,
+    scrub_secrets,
+    secret_values_for_scrub,
+)
+from apps.storage.services.internal.s3_client import S3ClientError, delete_s3_prefix
+from apps.task.models import Task, TaskResource, TaskStep
+from apps.task.services.interface import complete_task, create_task, start_task
+
+
+ACTIVE_TASK_STATUSES = (Task.Status.PENDING, Task.Status.RUNNING)
+CLEANUP_STEPS = (
+    "check_cleanup_dependencies",
+    "verify_cleanup_owner",
+    "prepare_cleanup_target",
+    "delete_physical_repository",
+    "cleanup_owner_local_state",
+    "verify_cleanup_result",
+    "finalize_cleanup_metadata",
+)
+
+
+class RepositoryCleanupBlocked(ValidationError):
+    def __init__(self, preflight: dict[str, Any]):
+        super().__init__("Repository cleanup is blocked.")
+        self.preflight = preflight
+
+
+def repository_cleanup_preflight(
+    *,
+    repository: Repository,
+    force: bool = False,
+    allow_associations: bool = False,
+    ignored_task_ids: Iterable[int] = (),
+) -> dict[str, Any]:
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    ignored = {int(task_id) for task_id in ignored_task_ids if task_id}
+    backup_config_model = apps.get_model("protection", "BackupConfig")
+    snapshot_model = apps.get_model("protection", "BackupSourceSnapshot")
+
+    associated_source_count = backup_config_model.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+    ).count()
+    active_snapshot_count = snapshot_model.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+    ).exclude(status="deleted").count()
+    if not allow_associations and associated_source_count:
+        blockers.append(
+            {
+                "code": "associated_sources",
+                "detail": f"Repository has {associated_source_count} associated backup source(s).",
+                "count": associated_source_count,
+            }
+        )
+    if not allow_associations and active_snapshot_count:
+        blockers.append(
+            {
+                "code": "active_snapshots",
+                "detail": f"Repository has {active_snapshot_count} active snapshot record(s).",
+                "count": active_snapshot_count,
+            }
+        )
+
+    targets = _ensure_cleanup_targets(repository)
+    if (
+        not allow_associations
+        and repository.repo_type == Repository.Type.NAS
+        and repository.bind_node_id is None
+    ):
+        active_targets = [target for target in targets if target.is_active]
+        if active_targets:
+            item = {
+                "code": "active_physical_targets",
+                "detail": (
+                    f"Direct NAS repository still has {len(active_targets)} physical target(s) "
+                    + (
+                        "that will be retained for manual cleanup."
+                        if force
+                        else "that must be cleaned through source unregister."
+                    )
+                ),
+                "count": len(active_targets),
+            }
+            (warnings if force else blockers).append(item)
+
+    active_tasks = _active_repository_tasks(repository=repository).exclude(id__in=ignored)
+    for task in active_tasks.order_by("-created_at", "-id")[:50]:
+        blockers.append(
+            {
+                "code": "active_task",
+                "detail": f'{task.task_type} task "{task.display_name}" is still active.',
+                "task_id": task.id,
+                "task_uuid": str(task.task_uuid),
+                "task_type": task.task_type,
+            }
+        )
+
+    active_cleanup = _logical_cleanup_tasks(repository).filter(
+        task__status__in=ACTIVE_TASK_STATUSES,
+    ).select_related("task", "execution_target", "triggered_by_task").first()
+    return {
+        "allowed": not blockers,
+        "force": force,
+        "repository_id": repository.id,
+        "repository_status": repository.status,
+        "associated_source_count": associated_source_count,
+        "active_snapshot_count": active_snapshot_count,
+        "blockers": blockers,
+        "warnings": warnings,
+        "targets": _cleanup_target_payloads(repository=repository, targets=targets),
+        "active_cleanup_task": (
+            repository_cleanup_task_payload(active_cleanup) if active_cleanup else None
+        ),
+    }
+
+
+def create_repository_cleanup_task(
+    *,
+    repository: Repository,
+    requested_by=None,
+    force: bool = False,
+    dispatch: bool = True,
+) -> RepositoryTask:
+    existing = _logical_cleanup_tasks(repository).filter(
+        task__status__in=ACTIVE_TASK_STATUSES,
+    ).select_related("task", "execution_target", "triggered_by_task").first()
+    if existing is not None:
+        if existing.force == force:
+            return existing
+        raise ValidationError(
+            {"detail": "Repository already has an active cleanup task in a different mode."}
+        )
+    if repository.status == Repository.Status.REMOVED:
+        latest = _logical_cleanup_tasks(repository).filter(
+            task__status=Task.Status.SUCCESS,
+        ).select_related("task", "execution_target", "triggered_by_task").first()
+        if latest is not None:
+            return latest
+
+    preflight = repository_cleanup_preflight(repository=repository, force=force)
+    if not preflight["allowed"]:
+        raise RepositoryCleanupBlocked(preflight)
+
+    with transaction.atomic():
+        locked = Repository.objects.select_for_update().get(
+            pk=repository.id,
+            organization_id=repository.organization_id,
+        )
+        active = _logical_cleanup_tasks(locked).filter(
+            task__status__in=ACTIVE_TASK_STATUSES,
+        ).select_related("task", "execution_target", "triggered_by_task").first()
+        if active is not None:
+            if active.force == force:
+                return active
+            raise ValidationError(
+                {"detail": "Repository already has an active cleanup task in a different mode."}
+            )
+        if locked.status == Repository.Status.REMOVED:
+            latest = _logical_cleanup_tasks(locked).filter(
+                task__status=Task.Status.SUCCESS,
+            ).select_related("task", "execution_target", "triggered_by_task").first()
+            if latest is not None:
+                return latest
+        if locked.status not in {Repository.Status.CREATED, Repository.Status.REMOVE_FAILED}:
+            raise ValidationError(
+                {"detail": f"Repository in status {locked.status} cannot be cleaned up."}
+            )
+        second_preflight = repository_cleanup_preflight(repository=locked, force=force)
+        if not second_preflight["allowed"]:
+            raise RepositoryCleanupBlocked(second_preflight)
+
+        targets = _ensure_cleanup_targets(locked)
+        target: RepositoryExecutionTarget | None
+        if locked.repo_type == Repository.Type.NAS and locked.bind_node_id is None:
+            target = None
+        else:
+            target = targets[0] if targets else None
+            if target is None:
+                raise ValidationError({"detail": "Repository physical cleanup target was not found."})
+
+        locked.status = Repository.Status.REMOVING
+        locked.save(update_fields=["status", "updated_at"])
+        repository_task = _create_cleanup_task(
+            repository=locked,
+            operation_type=RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+            target=target,
+            requested_by=requested_by,
+            force=force,
+            triggered_by_task=None,
+        )
+        _write_cleanup_audit(
+            repository_task=repository_task,
+            user=requested_by,
+            result=AuditResult.SUCCESS,
+            details="Repository lifecycle cleanup accepted",
+        )
+        if dispatch:
+            transaction.on_commit(lambda: _dispatch_cleanup_task(repository_task.id))
+        return repository_task
+
+
+def create_direct_nas_target_cleanup_task(
+    *,
+    repository: Repository,
+    target_id: int,
+    triggered_by_task: Task,
+    requested_by=None,
+    dispatch: bool = False,
+) -> RepositoryTask:
+    if triggered_by_task.task_type != Task.Type.SOURCE_UNREGISTER:
+        raise ValidationError(
+            {"triggered_by_task": "Direct NAS physical cleanup must be triggered by source unregister."}
+        )
+    ignored_task_ids = [
+        triggered_by_task.id,
+        *_active_target_cleanup_task_ids(repository),
+    ]
+    preflight = repository_cleanup_preflight(
+        repository=repository,
+        allow_associations=True,
+        ignored_task_ids=ignored_task_ids,
+    )
+    if not preflight["allowed"]:
+        raise RepositoryCleanupBlocked(preflight)
+
+    with transaction.atomic():
+        locked = Repository.objects.select_for_update().get(
+            pk=repository.id,
+            organization_id=repository.organization_id,
+        )
+        if locked.repo_type != Repository.Type.NAS or locked.bind_node_id is not None:
+            raise ValidationError(
+                {"detail": "Physical target cleanup is only supported for Direct NAS repositories."}
+            )
+        if locked.status != Repository.Status.CREATED:
+            raise ValidationError(
+                {"detail": "Direct NAS physical cleanup requires an active logical repository."}
+            )
+        target = RepositoryExecutionTarget.objects.select_for_update().filter(
+            pk=target_id,
+            repository=locked,
+            organization_id=locked.organization_id,
+        ).first()
+        if target is None:
+            raise ValidationError({"detail": "Direct NAS physical cleanup target was not found."})
+
+        source_unregister_attempt = int(triggered_by_task.retry_count or 0)
+        existing = RepositoryTask.objects.filter(
+            repository=locked,
+            execution_target=target,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+            triggered_by_task=triggered_by_task,
+            task__request_payload__source_unregister_attempt=source_unregister_attempt,
+        ).select_related("task", "execution_target", "triggered_by_task").order_by(
+            "-created_at", "-id"
+        ).first()
+        if existing is not None:
+            return existing
+
+        second_ignored_task_ids = [
+            triggered_by_task.id,
+            *_active_target_cleanup_task_ids(locked),
+        ]
+        second_preflight = repository_cleanup_preflight(
+            repository=locked,
+            allow_associations=True,
+            ignored_task_ids=second_ignored_task_ids,
+        )
+        if not second_preflight["allowed"]:
+            raise RepositoryCleanupBlocked(second_preflight)
+
+        repository_task = _create_cleanup_task(
+            repository=locked,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+            target=target,
+            requested_by=requested_by,
+            force=False,
+            triggered_by_task=triggered_by_task,
+        )
+        _write_cleanup_audit(
+            repository_task=repository_task,
+            user=requested_by,
+            result=AuditResult.SUCCESS,
+            details="Direct NAS physical target cleanup accepted",
+        )
+        if dispatch:
+            transaction.on_commit(lambda: _dispatch_cleanup_task(repository_task.id))
+        return repository_task
+
+
+def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
+    repository_task = RepositoryTask.objects.select_related(
+        "task",
+        "repository",
+        "execution_target",
+        "triggered_by_task",
+    ).get(pk=repository_task_id)
+    if repository_task.operation_type not in {
+        RepositoryTask.OperationType.CLEANUP_TARGET,
+        RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+    }:
+        raise ValidationError("Repository task is not a cleanup operation.")
+    task = repository_task.task
+    if task.status in {Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT}:
+        return task.result_payload if isinstance(task.result_payload, dict) else {"status": task.status}
+
+    try:
+        start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
+    except ValidationError:
+        task.refresh_from_db()
+        if task.status != Task.Status.PENDING:
+            return {"status": task.status, "repository_task_id": repository_task.id, "idempotent": True}
+        raise
+
+    try:
+        _set_cleanup_step(task, "check_cleanup_dependencies", TaskStep.Status.RUNNING, 5)
+        is_target_cleanup = (
+            repository_task.operation_type == RepositoryTask.OperationType.CLEANUP_TARGET
+        )
+        ignored_task_ids = [task.id]
+        if is_target_cleanup:
+            ignored_task_ids.extend(_active_target_cleanup_task_ids(repository_task.repository))
+            if repository_task.triggered_by_task_id:
+                ignored_task_ids.append(repository_task.triggered_by_task_id)
+        preflight = repository_cleanup_preflight(
+            repository=repository_task.repository,
+            force=repository_task.force,
+            allow_associations=is_target_cleanup,
+            ignored_task_ids=ignored_task_ids,
+        )
+        if not preflight["allowed"]:
+            raise RepositoryCleanupBlocked(preflight)
+        _set_cleanup_step(task, "check_cleanup_dependencies", TaskStep.Status.SUCCESS, 10)
+        _set_cleanup_step(task, "verify_cleanup_owner", TaskStep.Status.SUCCESS, 20)
+        _set_cleanup_step(task, "prepare_cleanup_target", TaskStep.Status.SUCCESS, 30)
+        _set_cleanup_step(task, "delete_physical_repository", TaskStep.Status.RUNNING, 40)
+        if repository_task.force:
+            result = {"physical_cleanup": "skipped", "reason": "force_cleanup"}
+        else:
+            result = _execute_physical_cleanup(repository_task)
+        _set_cleanup_step(task, "delete_physical_repository", TaskStep.Status.SUCCESS, 75)
+        _set_cleanup_step(task, "cleanup_owner_local_state", TaskStep.Status.SUCCESS, 85)
+        _set_cleanup_step(task, "verify_cleanup_result", TaskStep.Status.SUCCESS, 95)
+        # Commit the lifecycle metadata and terminal task state together. This
+        # prevents a successful Task from being visible before the repository
+        # tombstone or Direct NAS target state has been persisted.
+        with transaction.atomic():
+            _apply_cleanup_success(repository_task_id=repository_task.id)
+            _set_cleanup_step(task, "finalize_cleanup_metadata", TaskStep.Status.SUCCESS, 100)
+            complete_task(
+                task_uuid=task.task_uuid,
+                organization_id=task.organization_id,
+                status=Task.Status.SUCCESS,
+                progress=100,
+                result_payload=scrub_secrets(result),
+            )
+        _finalize_cleanup_task(repository_task_id=repository_task.id)
+        return {"status": "success", "repository_task_id": repository_task.id, **scrub_secrets(result)}
+    except Exception as exc:
+        message = _cleanup_exception_message(exc)
+        safe_message = str(
+            scrub_secrets(
+                message,
+                extra_values=_repository_secret_values(repository_task.repository),
+            )
+        )[:2000]
+        _set_cleanup_step(
+            task,
+            str(task.current_step or "delete_physical_repository"),
+            TaskStep.Status.FAILED,
+            int(task.progress or 0),
+        )
+        complete_task(
+            task_uuid=task.task_uuid,
+            organization_id=task.organization_id,
+            status=Task.Status.FAILED,
+            progress=max(1, int(task.progress or 0)),
+            error_code=_cleanup_error_code(exc),
+            error_message=safe_message,
+        )
+        _finalize_cleanup_task(repository_task_id=repository_task.id)
+        return {"status": "failed", "repository_task_id": repository_task.id, "error": safe_message}
+
+
+def repository_cleanup_task_payload(repository_task: RepositoryTask) -> dict[str, Any]:
+    repository_task = RepositoryTask.objects.select_related(
+        "task",
+        "execution_target",
+        "triggered_by_task",
+    ).get(pk=repository_task.pk)
+    task = repository_task.task
+    return {
+        "id": task.id,
+        "task_uuid": str(task.task_uuid),
+        "repository_id": repository_task.repository_id,
+        "status": task.status,
+        "operation_type": repository_task.operation_type,
+        "force": repository_task.force,
+        "target_id": repository_task.execution_target_id,
+        "target_key": (
+            repository_task.execution_target.target_key
+            if repository_task.execution_target_id
+            else ""
+        ),
+        "owner_node_id": repository_task.owner_node_id,
+        "repository_subdir": (
+            repository_task.execution_target.repository_subdir
+            if repository_task.execution_target_id
+            else ""
+        ),
+        "triggered_by_task_uuid": (
+            str(repository_task.triggered_by_task.task_uuid)
+            if repository_task.triggered_by_task_id
+            else None
+        ),
+        "triggered_by_task_type": (
+            repository_task.triggered_by_task.task_type
+            if repository_task.triggered_by_task_id
+            else None
+        ),
+        "error_code": task.error_code,
+        "error_message": task.error_message,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+    }
+
+
+def direct_nas_cleanup_target_ids(
+    *,
+    repository: Repository,
+    backup_config_ids: Iterable[int],
+    owner_node_id: int | None = None,
+) -> list[int]:
+    if repository.repo_type != Repository.Type.NAS or repository.bind_node_id:
+        return []
+    config_ids = {int(value) for value in backup_config_ids if value}
+    targets = _ensure_cleanup_targets(repository)
+    matching_keys: set[tuple[int, str]] = set()
+    for shard in RepositoryUsageShard.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+        usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+    ):
+        shard_config_ids = {
+            int(value)
+            for value in (shard.source_config_ids if isinstance(shard.source_config_ids, list) else [])
+            if value
+        }
+        if config_ids & shard_config_ids or (
+            owner_node_id is not None and int(shard.node_id) == int(owner_node_id)
+        ):
+            matching_keys.add((int(shard.node_id), str(shard.repository_subdir)))
+    return [
+        target.id
+        for target in targets
+        if target.owner_node_id is not None
+        and (int(target.owner_node_id), str(target.repository_subdir)) in matching_keys
+    ]
+
+
+def _logical_cleanup_tasks(repository: Repository):
+    return RepositoryTask.objects.filter(
+        repository=repository,
+        operation_type=RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+        triggered_by_task=None,
+    )
+
+
+def _active_repository_tasks(*, repository: Repository):
+    task_ids: set[int] = set(
+        TaskResource.objects.filter(
+            resource_type=TaskResource.Type.REPOSITORY,
+            resource_id=repository.id,
+        ).values_list("task_id", flat=True)
+    )
+    task_ids.update(
+        RepositoryTask.objects.filter(repository=repository).values_list("task_id", flat=True)
+    )
+    snapshot_model = apps.get_model("protection", "BackupSourceSnapshot")
+    task_ids.update(
+        snapshot_model.objects.filter(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+        ).values_list("task_id", flat=True)
+    )
+    restore_item_model = apps.get_model("restore", "RestoreRecordItem")
+    task_ids.update(
+        restore_item_model.objects.filter(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+        ).values_list("restore_record__task_id", flat=True)
+    )
+    return Task.objects.filter(
+        organization_id=repository.organization_id,
+        status__in=ACTIVE_TASK_STATUSES,
+    ).filter(Q(id__in=task_ids) | Q(request_payload__repository_id=repository.id)).distinct()
+
+
+def _active_target_cleanup_task_ids(repository: Repository) -> list[int]:
+    return list(
+        RepositoryTask.objects.filter(
+            repository=repository,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+            task__status__in=ACTIVE_TASK_STATUSES,
+        ).values_list("task_id", flat=True)
+    )
+
+
+def _ensure_cleanup_targets(repository: Repository) -> list[RepositoryExecutionTarget]:
+    definitions: list[tuple[str, str, int | None, str]] = []
+    if repository.repo_type == Repository.Type.S3:
+        definitions.append(
+            (f"repository:{repository.id}", RepositoryExecutionTarget.OwnerType.CONTROLLER, None, "")
+        )
+    elif repository.bind_node_id:
+        definitions.append(
+            (
+                f"repository:{repository.id}",
+                RepositoryExecutionTarget.OwnerType.NODE,
+                int(repository.bind_node_id),
+                "",
+            )
+        )
+    elif repository.repo_type == Repository.Type.NAS:
+        shards = RepositoryUsageShard.objects.filter(
+            organization_id=repository.organization_id,
+            repository_id=repository.id,
+            usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+        ).order_by("node_id", "repository_subdir")
+        for shard in shards:
+            definitions.append(
+                (
+                    f"repository:{repository.id}:node:{shard.node_id}:subdir:{shard.repository_subdir}",
+                    RepositoryExecutionTarget.OwnerType.NODE,
+                    int(shard.node_id),
+                    str(shard.repository_subdir),
+                )
+            )
+    targets: list[RepositoryExecutionTarget] = []
+    for key, owner_type, node_id, subdir in definitions:
+        target, _created = RepositoryExecutionTarget.objects.update_or_create(
+            target_key=key,
+            defaults={
+                "organization_id": repository.organization_id,
+                "repository": repository,
+                "owner_type": owner_type,
+                "owner_node_id": node_id,
+                "owner_identity": _owner_identity(node_id),
+            },
+        )
+        if subdir and target.repository_subdir != subdir:
+            target.repository_subdir = subdir
+            target.save(update_fields=["repository_subdir", "updated_at"])
+        targets.append(target)
+    return targets
+
+
+def _create_cleanup_task(
+    *,
+    repository: Repository,
+    operation_type: str,
+    target: RepositoryExecutionTarget | None,
+    requested_by,
+    force: bool,
+    triggered_by_task: Task | None,
+) -> RepositoryTask:
+    owner_type = target.owner_type if target else RepositoryExecutionTarget.OwnerType.CONTROLLER
+    owner_node_id = target.owner_node_id if target else None
+    owner_identity = target.owner_identity if target else "hfl-cleanup@controller"
+    action_label = (
+        "Physical Target Cleanup"
+        if operation_type == RepositoryTask.OperationType.CLEANUP_TARGET
+        else "Repository Cleanup"
+    )
+    target_suffix = (
+        f" · {target.repository_subdir or target.target_key}"
+        if operation_type == RepositoryTask.OperationType.CLEANUP_TARGET and target
+        else ""
+    )
+    task = create_task(
+        organization_id=repository.organization_id,
+        task_type=Task.Type.REPOSITORY_OPERATION,
+        display_name=f"{action_label} · {repository.name}{target_suffix}",
+        trigger_type=(
+            Task.TriggerType.SYSTEM
+            if triggered_by_task is not None
+            else Task.TriggerType.MANUAL
+        ),
+        request_payload={
+            "repository_id": repository.id,
+            "operation_type": operation_type,
+            "target_key": target.target_key if target else "",
+            "force": force,
+            "triggered_by_task_uuid": (
+                str(triggered_by_task.task_uuid) if triggered_by_task is not None else None
+            ),
+            "source_unregister_attempt": (
+                int(triggered_by_task.retry_count or 0)
+                if triggered_by_task is not None
+                else None
+            ),
+        },
+        resources=[
+            {
+                "resource_type": TaskResource.Type.REPOSITORY,
+                "resource_id": repository.id,
+                "is_primary": True,
+            }
+        ],
+        steps=list(CLEANUP_STEPS),
+        normalize_trigger_type=False,
+    )
+    repository_task = RepositoryTask.objects.create(
+        task=task,
+        repository=repository,
+        execution_target=target,
+        triggered_by_task=triggered_by_task,
+        force=force,
+        requested_by_id=getattr(requested_by, "id", None),
+        operation_type=operation_type,
+        owner_type=owner_type,
+        owner_node_id=owner_node_id,
+        owner_identity=owner_identity,
+        due_at=timezone.now(),
+    )
+    if target is not None:
+        if target.active_task_id:
+            active_status = Task.objects.filter(pk=target.active_task_id).values_list(
+                "status", flat=True
+            ).first()
+            if active_status in {
+                Task.Status.SUCCESS,
+                Task.Status.FAILED,
+                Task.Status.CANCELLED,
+                Task.Status.TIMEOUT,
+            }:
+                target.active_task = None
+            else:
+                raise ValidationError(
+                    {"detail": f"Repository target {target.target_key} already has an active task."}
+                )
+        target.active_task = task
+        target.is_active = True
+        target.save(update_fields=["active_task", "is_active", "updated_at"])
+    return repository_task
+
+
+def _execute_physical_cleanup(repository_task: RepositoryTask) -> dict[str, Any]:
+    repository = repository_task.repository
+    target = repository_task.execution_target
+    if target is None:
+        return {"physical_cleanup": "not_required", "scope": "metadata"}
+    if target.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
+        if repository.repo_type != Repository.Type.S3:
+            return {"physical_cleanup": "not_required", "scope": "metadata"}
+        config = sanitize_repository_config(repository.config)
+        secrets_payload = resolve_repository_secrets(repository)
+        result = delete_s3_prefix(
+            endpoint=str(config.get("endpoint") or ""),
+            region=str(config.get("region") or ""),
+            bucket=str(repository.s3_bucket or ""),
+            prefix=str(config.get("prefix") or ""),
+            access_key_id=str(config.get("access_key_id") or ""),
+            secret_access_key=str(secrets_payload.get("secret_access_key") or ""),
+            s3_url_style=str(config.get("s3_url_style") or "virtual_hosted"),
+            use_tls=config.get("use_tls") is not False,
+        )
+        _remove_controller_repository_state(repository.id)
+        return {"physical_cleanup": "deleted", "scope": "s3_prefix", **result}
+
+    node = Node.objects.filter(
+        id=target.owner_node_id,
+        organization_id=repository.organization_id,
+        is_deleted=False,
+    ).first()
+    if node is None:
+        raise ValidationError("Repository owner node was not found.")
+    inventory = (node.metadata or {}).get("inventory") if isinstance(node.metadata, dict) else {}
+    capabilities = inventory.get("capabilities") if isinstance(inventory, dict) else []
+    if "repository_cleanup_v1" not in (capabilities if isinstance(capabilities, list) else []):
+        raise ValidationError("Repository owner does not advertise repository_cleanup_v1.")
+    from apps.node.services.interface import cancel_agent_task, run_agent_task_sync
+
+    repository_payload = repository_payload_for_node(
+        repository=repository,
+        node=node,
+        source_type="proxy" if node.role == "proxy" else "agent",
+        source_ref_id=node.id,
+    )
+    if repository.repo_type == Repository.Type.NAS and target.repository_subdir:
+        repository_payload["subdir"] = target.repository_subdir
+    outcome = run_agent_task_sync(
+        organization_id=repository.organization_id,
+        node_id=node.id,
+        kind="repository.operation",
+        payload={
+            "operation_type": repository_task.operation_type,
+            "repository": repository_payload,
+        },
+        correlation_type="repository_cleanup",
+        correlation_id=str(repository_task.task.task_uuid),
+        wait_timeout_seconds=1800,
+    )
+    RepositoryTask.objects.filter(pk=repository_task.id).update(remote_task_id=outcome.task.id)
+    if outcome.timed_out:
+        cancel_agent_task(task_id=outcome.task.id, reason="repository cleanup execution timeout")
+        raise TimeoutError("Repository owner did not finish cleanup before the execution timeout.")
+    if not outcome.ok:
+        raise RuntimeError(outcome.task.last_error or "Repository owner cleanup failed.")
+    result = outcome.result if isinstance(outcome.result, dict) else {}
+    return {"physical_cleanup": "deleted", **scrub_secrets(result)}
+
+
+def _apply_cleanup_success(*, repository_task_id: int) -> None:
+    with transaction.atomic():
+        repository_task = RepositoryTask.objects.select_for_update().select_related(
+            "task", "repository"
+        ).get(pk=repository_task_id)
+        target = (
+            RepositoryExecutionTarget.objects.select_for_update().get(
+                pk=repository_task.execution_target_id
+            )
+            if repository_task.execution_target_id
+            else None
+        )
+        repository = repository_task.repository
+        if repository_task.operation_type == RepositoryTask.OperationType.CLEANUP_TARGET:
+            if target is not None:
+                target.is_active = False
+                target.save(update_fields=["is_active", "updated_at"])
+                RepositoryUsageShard.objects.filter(
+                    organization_id=repository.organization_id,
+                    repository_id=repository.id,
+                    node_id=target.owner_node_id,
+                    repository_subdir=target.repository_subdir,
+                ).update(is_active=False)
+        else:
+            _tombstone_repository(repository=repository, force=repository_task.force)
+
+
+def _finalize_cleanup_task(*, repository_task_id: int) -> None:
+    with transaction.atomic():
+        repository_task = RepositoryTask.objects.select_for_update().select_related(
+            "task", "repository"
+        ).get(pk=repository_task_id)
+        task = repository_task.task
+        target = (
+            RepositoryExecutionTarget.objects.select_for_update().get(
+                pk=repository_task.execution_target_id
+            )
+            if repository_task.execution_target_id
+            else None
+        )
+        if target and target.active_task_id == task.id and task.status in {
+            Task.Status.SUCCESS,
+            Task.Status.FAILED,
+            Task.Status.CANCELLED,
+            Task.Status.TIMEOUT,
+        }:
+            target.active_task = None
+            if task.status == Task.Status.SUCCESS:
+                target.is_active = False
+            target.save(update_fields=["active_task", "is_active", "updated_at"])
+
+        repository = repository_task.repository
+        if task.status == Task.Status.SUCCESS:
+            audit_result = AuditResult.PARTIAL if repository_task.force else AuditResult.SUCCESS
+        else:
+            if repository_task.operation_type == RepositoryTask.OperationType.CLEANUP_REPOSITORY:
+                repository.status = Repository.Status.REMOVE_FAILED
+                repository.save(update_fields=["status", "updated_at"])
+            audit_result = AuditResult.FAILURE
+        _write_cleanup_audit(
+            repository_task=repository_task,
+            user=_repository_task_user(repository_task),
+            result=audit_result,
+            details=(
+                f"{repository_task.operation_type} finished with task status {task.status}"
+            ),
+        )
+
+
+def _tombstone_repository(*, repository: Repository, force: bool) -> None:
+    credential_id = repository.credential_id
+    repository.status = Repository.Status.REMOVED
+    repository.health = Repository.Health.OFFLINE
+    repository.removed_at = timezone.now()
+    repository.cleanup_result = (
+        Repository.CleanupResult.FORCE_SKIPPED if force else Repository.CleanupResult.DELETED
+    )
+    repository.config = sanitize_repository_config(repository.config)
+    repository.credential_id = None
+    repository.save(
+        update_fields=[
+            "status",
+            "health",
+            "removed_at",
+            "cleanup_result",
+            "config",
+            "credential_id",
+            "updated_at",
+        ]
+    )
+    RepositoryExecutionTarget.objects.filter(repository=repository).update(
+        is_active=False, active_task=None
+    )
+    RepositoryUsageShard.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+    ).update(is_active=False)
+    if credential_id and not Repository.objects.filter(
+        organization_id=repository.organization_id,
+        credential_id=credential_id,
+    ).exists():
+        Credential.objects.filter(
+            organization_id=repository.organization_id,
+            id=credential_id,
+        ).delete()
+    purge_model = apps.get_model("source", "BackupSourceRepositoryPurgePending")
+    purge_model.objects.filter(
+        organization_id=repository.organization_id,
+        repository_id=repository.id,
+    ).delete()
+
+
+def _set_cleanup_step(task: Task, step_name: str, status: str, progress: int) -> None:
+    from apps.storage.services.internal.repository_operations import set_task_step
+
+    task.refresh_from_db(fields=["current_step", "progress"])
+    set_task_step(task, step_name, status=status, progress=progress)
+
+
+def _cleanup_target_payloads(
+    *,
+    repository: Repository,
+    targets: list[RepositoryExecutionTarget],
+) -> list[dict[str, Any]]:
+    nodes = {
+        node.id: node
+        for node in Node.objects.filter(
+            organization_id=repository.organization_id,
+            id__in=[target.owner_node_id for target in targets if target.owner_node_id],
+            is_deleted=False,
+        )
+    }
+    return [
+        {
+            "id": target.id,
+            "target_key": target.target_key,
+            "repository_subdir": target.repository_subdir,
+            "owner_type": target.owner_type,
+            "owner_node_id": target.owner_node_id,
+            "owner_node_name": nodes[target.owner_node_id].name if target.owner_node_id in nodes else "",
+            "owner_online": (
+                nodes[target.owner_node_id].status == Node.Status.ONLINE
+                if target.owner_node_id in nodes
+                else target.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
+            ),
+            "is_active": target.is_active,
+        }
+        for target in targets
+    ]
+
+
+def _dispatch_cleanup_task(repository_task_id: int) -> None:
+    from apps.storage.tasks import execute_repository_operation
+
+    execute_repository_operation.apply_async(kwargs={"repository_task_id": repository_task_id})
+
+
+def _remove_controller_repository_state(repository_id: int) -> None:
+    base_dir = Path(os.environ.get("HFL_KOPIA_CONFIG_DIR", "/tmp/hfl-kopia")) / str(repository_id)
+    shutil.rmtree(base_dir, ignore_errors=True)
+
+
+def _cleanup_error_code(exc: Exception) -> str:
+    if isinstance(exc, RepositoryCleanupBlocked):
+        return "REPOSITORY_CLEANUP_BLOCKED"
+    if isinstance(exc, TimeoutError):
+        return "REPOSITORY_CLEANUP_TIMEOUT"
+    if isinstance(exc, S3ClientError):
+        return "REPOSITORY_S3_CLEANUP_FAILED"
+    if isinstance(exc, ValidationError):
+        return "REPOSITORY_CLEANUP_INVALID"
+    return "REPOSITORY_CLEANUP_FAILED"
+
+
+def _cleanup_exception_message(exc: Exception) -> str:
+    if isinstance(exc, RepositoryCleanupBlocked):
+        details = [
+            str(item.get("detail") or item.get("code") or "")
+            for item in exc.preflight.get("blockers", [])
+            if isinstance(item, dict)
+        ]
+        return "; ".join(item for item in details if item) or "Repository cleanup is blocked."
+    if isinstance(exc, ValidationError):
+        messages = list(getattr(exc, "messages", []) or [])
+        if messages:
+            return "; ".join(str(item) for item in messages)
+    return str(exc)
+
+
+def _repository_secret_values(repository: Repository) -> list[str]:
+    try:
+        secrets_payload = resolve_repository_secrets(repository)
+    except Exception:
+        secrets_payload = {}
+    return secret_values_for_scrub(repository, secrets_payload)
+
+
+def _owner_identity(node_id: int | None) -> str:
+    return f"hfl-maintenance@node-{node_id}" if node_id else "hfl-maintenance@controller"
+
+
+def _repository_task_user(repository_task: RepositoryTask):
+    if not repository_task.requested_by_id:
+        return None
+    from django.contrib.auth import get_user_model
+
+    return get_user_model().objects.filter(pk=repository_task.requested_by_id).first()
+
+
+def _write_cleanup_audit(
+    *,
+    repository_task: RepositoryTask,
+    user,
+    result: str,
+    details: str,
+) -> None:
+    organization = Organization.objects.filter(pk=repository_task.repository.organization_id).first()
+    if organization is None:
+        return
+    task = repository_task.task
+    write_audit_log(
+        organization=organization,
+        user=user,
+        action=AuditAction.DELETE,
+        resource_type=AuditResourceType.REPOSITORY,
+        resource_id=str(repository_task.repository_id),
+        resource_name=repository_task.repository.name,
+        correlation_id=str(task.task_uuid),
+        details=details,
+        result=result,
+        error_code=str(task.error_code or ""),
+        error_message=str(task.error_message or ""),
+        metadata={
+            "task_uuid": str(task.task_uuid),
+            "operation_type": repository_task.operation_type,
+            "force": repository_task.force,
+            "target_id": repository_task.execution_target_id,
+            "triggered_by_task_uuid": (
+                str(repository_task.triggered_by_task.task_uuid)
+                if repository_task.triggered_by_task_id
+                else None
+            ),
+        },
+    )
+
+
+__all__ = [
+    "RepositoryCleanupBlocked",
+    "create_direct_nas_target_cleanup_task",
+    "create_repository_cleanup_task",
+    "direct_nas_cleanup_target_ids",
+    "repository_cleanup_preflight",
+    "repository_cleanup_task_payload",
+    "run_repository_cleanup_task",
+]

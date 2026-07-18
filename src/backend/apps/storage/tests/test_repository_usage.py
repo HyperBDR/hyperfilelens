@@ -1,0 +1,374 @@
+from django.test import TestCase
+from django.utils import timezone
+from unittest import mock
+
+from apps.iam.models import Organization
+from apps.node.models import Node
+from apps.node.agent_paths import repository_mount_point
+from apps.protection.models import BackupConfig, BackupSourceSnapshot
+from apps.storage.repositories.models import Repository, RepositoryUsageShard
+from apps.storage.services.internal.repository_usage import (
+    RepositoryUsageProbeResult,
+    _parse_agent_repo_status_result,
+    capacity_bytes_from_config,
+    kopia_estimated_usage_from_packed,
+    parse_kopia_content_stats,
+    sync_repository_usage,
+)
+
+
+class RepositoryUsageTests(TestCase):
+    def test_capacity_bytes_from_config(self):
+        self.assertEqual(capacity_bytes_from_config({"quota_gb": 10}), 10 * 1024**3)
+        self.assertEqual(capacity_bytes_from_config({"quota_gb": 0}), 0)
+        self.assertEqual(capacity_bytes_from_config(None), 0)
+
+    def test_parse_kopia_content_stats_json(self):
+        payload = '{"totalSize": 2048, "totalFileCount": 3}'
+        self.assertEqual(parse_kopia_content_stats(payload), 2048)
+
+    def test_parse_kopia_content_stats_text(self):
+        text = "Total Size: 1.5 GB\nTotal File Count: 10"
+        parsed = parse_kopia_content_stats(text)
+        self.assertGreater(parsed, 1024**3)
+
+    def test_parse_kopia_content_stats_prefers_total_packed_text(self):
+        text = "Count: 70\nTotal Bytes: 10 MB\nTotal Packed: 2 MB (compression 80%)"
+        parsed = parse_kopia_content_stats(text)
+        self.assertEqual(parsed, 2 * 1024**2)
+
+    def test_kopia_estimated_usage_from_packed(self):
+        self.assertEqual(kopia_estimated_usage_from_packed(100), 105)
+
+    def test_parse_agent_repo_status_result(self):
+        estimated, total, mount_point = _parse_agent_repo_status_result(
+            {
+                "estimated_usage_bytes": 210,
+                "space_info": {"total_bytes": 1000, "used_bytes": 300},
+            }
+        )
+        self.assertEqual(estimated, 210)
+        self.assertEqual(total, 1000)
+        self.assertEqual(mount_point, "")
+
+    def test_parse_agent_repo_status_result_falls_back_to_space_used(self):
+        estimated, total, mount_point = _parse_agent_repo_status_result(
+            {
+                "repository_type": "proxy_fs",
+                "space_info": {"total_bytes": 1000, "used_bytes": 300},
+            }
+        )
+        self.assertEqual(estimated, 300)
+        self.assertEqual(total, 1000)
+        self.assertEqual(mount_point, "")
+
+    def test_parse_agent_repo_status_result_strips_repository_subdir_from_space_path(self):
+        _estimated, _total, mount_point = _parse_agent_repo_status_result(
+            {
+                "repository_type": "nas",
+                "space_info": {
+                    "path": "/mnt/hfl/storage-repositories/repo-34-node-43/hp-repos/agent-52",
+                    "total_bytes": 1000,
+                    "used_bytes": 300,
+                },
+            },
+            repository_subdir="hp-repos/agent-52",
+        )
+
+        self.assertEqual(mount_point, "/mnt/hfl/storage-repositories/repo-34-node-43")
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.collect_usage_candidates",
+        return_value=(0, None),
+    )
+    def test_sync_applies_quota_capacity(self, _collect):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="quota-repo",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.OFFLINE,
+            config={"proxy_node_dir": "/data/repo", "quota_gb": 2},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=9,
+        )
+        sync_repository_usage(repo)
+        repo.refresh_from_db()
+        self.assertEqual(repo.capacity_bytes, 2 * 1024**3)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
+        return_value=(5 * 1024**3, 100 * 1024**3),
+    )
+    def test_proxy_fs_sync_uses_agent_kopia_usage_and_mount_capacity(self, _probe):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="proxy-fs-repo",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            estimated_usage_bytes=999,
+            config={"proxy_node_dir": "/data/repo"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=9,
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 5 * 1024**3)
+        self.assertEqual(repo.capacity_bytes, 100 * 1024**3)
+
+    @mock.patch("apps.storage.services.internal.repository_usage.agent_repository_usage_probe")
+    def test_proxy_fs_sync_uses_quota_capacity_without_path_probe(self, mock_probe):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="proxy-fs-quota-repo",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            estimated_usage_bytes=999,
+            config={"proxy_node_dir": "/data/repo", "quota_gb": 2},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=9,
+        )
+        mock_probe.return_value = (3 * 1024**3, 100 * 1024**3)
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 3 * 1024**3)
+        self.assertEqual(repo.capacity_bytes, 2 * 1024**3)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
+        return_value=(2 * 1024**3, 50 * 1024**3),
+    )
+    def test_nas_sync_uses_agent_probe(self, _probe):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="nas-repo",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "192.168.1.10", "share_path": "/export/data"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=9,
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 2 * 1024**3)
+        self.assertEqual(repo.capacity_bytes, 50 * 1024**3)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.kopia_repository_estimated_usage_bytes",
+        return_value=None,
+    )
+    def test_sync_does_not_fallback_to_snapshot_logical_size(self, _kopia_estimated):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="s3-repo",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            estimated_usage_bytes=128,
+            config={"quota_gb": 2},
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="bucket",
+        )
+        BackupSourceSnapshot.objects.create(
+            organization_id=1,
+            snapshot_uid="bss-test",
+            idempotency_key="bss-test",
+            source_type="agent",
+            source_ref_id=1,
+            backup_config_id=1,
+            repository_id=repo.id,
+            task_id=1,
+            status=BackupSourceSnapshot.Status.AVAILABLE,
+            total_size_bytes=10 * 1024**3,
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 128)
+
+    @mock.patch("apps.storage.services.internal.repository_usage._run_repository_usage_probe")
+    def test_unbound_nas_sync_aggregates_direct_agent_shards(self, run_probe):
+        org = Organization.objects.create(key="usage-org", name="Usage Org")
+        agent_a = Node.objects.create(
+            organization=org,
+            name="agent-a",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.1.1",
+        )
+        agent_b = Node.objects.create(
+            organization=org,
+            name="agent-b",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.1.2",
+        )
+        repo = Repository.objects.create(
+            organization_id=org.id,
+            name="direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        BackupConfig.objects.create(
+            organization_id=org.id,
+            name="config-a",
+            source_type="agent",
+            source_ref_id=agent_a.id,
+            repository_id=repo.id,
+        )
+        BackupConfig.objects.create(
+            organization_id=org.id,
+            name="config-b",
+            source_type="agent",
+            source_ref_id=agent_b.id,
+            repository_id=repo.id,
+        )
+
+        def _probe(**kwargs):
+            if kwargs["node_id"] == agent_a.id:
+                return RepositoryUsageProbeResult(100, 1000)
+            return RepositoryUsageProbeResult(250, 800)
+
+        run_probe.side_effect = _probe
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 350)
+        self.assertEqual(repo.capacity_bytes, 1000)
+        self.assertEqual(repo.health, Repository.Health.ONLINE)
+        self.assertEqual(
+            RepositoryUsageShard.objects.filter(repository_id=repo.id, is_active=True).count(),
+            2,
+        )
+
+    @mock.patch("apps.storage.services.internal.repository_usage._run_repository_usage_probe")
+    def test_unbound_nas_sync_tracks_source_config_on_agent(self, run_probe):
+        org = Organization.objects.create(key="usage-dedupe-org", name="Usage Dedupe Org")
+        agent = Node.objects.create(
+            organization=org,
+            name="agent-a",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.2.1",
+        )
+        repo = Repository.objects.create(
+            organization_id=org.id,
+            name="direct-nas-dedupe",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        config = BackupConfig.objects.create(
+            organization_id=org.id,
+            name="config-a",
+            source_type="agent",
+            source_ref_id=agent.id,
+            repository_id=repo.id,
+        )
+        run_probe.return_value = RepositoryUsageProbeResult(
+            128,
+            1024,
+            mount_point=repository_mount_point(repo.id, node_id=agent.id),
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 128)
+        self.assertEqual(repo.health, Repository.Health.ONLINE)
+        self.assertEqual(run_probe.call_count, 1)
+        shard = RepositoryUsageShard.objects.get(repository_id=repo.id, node_id=agent.id)
+        self.assertEqual(shard.source_config_count, 1)
+        self.assertEqual(shard.source_config_ids, [config.id])
+        self.assertEqual(
+            shard.mount_point,
+            repository_mount_point(repo.id, node_id=agent.id),
+        )
+
+    @mock.patch("apps.storage.services.internal.repository_usage._run_repository_usage_probe")
+    def test_unbound_nas_sync_keeps_last_success_when_probe_fails(self, run_probe):
+        org = Organization.objects.create(key="usage-fail-org", name="Usage Fail Org")
+        agent = Node.objects.create(
+            organization=org,
+            name="agent-a",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.3.1",
+        )
+        repo = Repository.objects.create(
+            organization_id=org.id,
+            name="direct-nas-fail",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            estimated_usage_bytes=512,
+            capacity_bytes=4096,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+        config = BackupConfig.objects.create(
+            organization_id=org.id,
+            name="config-a",
+            source_type="agent",
+            source_ref_id=agent.id,
+            repository_id=repo.id,
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=org.id,
+            repository_id=repo.id,
+            usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+            node_id=agent.id,
+            repository_subdir=f"hp-repos/agent-{agent.id}",
+            estimated_usage_bytes=512,
+            capacity_bytes=4096,
+            source_config_count=1,
+            source_config_ids=[config.id],
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=True,
+            last_checked_at=timezone.now(),
+            last_success_checked_at=timezone.now(),
+        )
+        run_probe.return_value = RepositoryUsageProbeResult(None, None, "timeout")
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 512)
+        self.assertEqual(repo.capacity_bytes, 4096)
+        self.assertEqual(repo.health, Repository.Health.OFFLINE)
+        shard = RepositoryUsageShard.objects.get(repository_id=repo.id, node_id=agent.id)
+        self.assertEqual(shard.status, RepositoryUsageShard.Status.FAILED)
+        self.assertEqual(shard.estimated_usage_bytes, 512)
+
+    def test_unbound_nas_without_associated_sources_stays_unverified(self):
+        org = Organization.objects.create(key="usage-empty-org", name="Usage Empty Org")
+        repo = Repository.objects.create(
+            organization_id=org.id,
+            name="direct-nas-empty",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.OFFLINE,
+            config={"server_address": "10.0.0.10", "share_path": "/backup"},
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.health, Repository.Health.UNVERIFIED)

@@ -1,0 +1,810 @@
+
+.resource-add-fullscreen .agent-install-wizard {
+  width: 100%;
+  max-width: min(100%, 1300px);
+  margin: 0 auto;
+}
+
+.resource-add-fullscreen .agent-deploy-os-grid {
+  margin-bottom: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard__body-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+@media (min-width: 768px) {
+  .resource-add-fullscreen .agent-install-wizard__body-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 9fr);
+  }
+
+  .resource-add-fullscreen .agent-install-wizard__platform {
+    height: 100%;
+  }
+}
+
+.resource-add-fullscreen .agent-install-wizard__platform {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: 16px;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  background: #f7f8fa;
+}
+
+.resource-add-fullscreen .agent-platform-brand-icon {
+  display: block;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(29, 33, 41, 0.08));
+}
+
+.resource-add-fullscreen .agent-platform-brand-icon--linux {
+  width: 64px;
+  height: 64px;
+}
+
+.resource-add-fullscreen .agent-platform-brand-icon--windows {
+  width: 64px;
+  height: 64px;
+}
+
+.resource-add-fullscreen .agent-platform-brand-icon--macos {
+  width: 56px;
+  height: 56px;
+}
+
+.resource-add-fullscreen .agent-install-wizard__platform-name {
+  margin: 8px 0 0;
+  color: #1d2129;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .agent-install-wizard__platform-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: 148px;
+  margin-top: 8px;
+}
+
+.resource-add-fullscreen .agent-install-wizard__platform-hint-line {
+  margin: 0;
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.resource-add-fullscreen .agent-install-wizard__command-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard__command-lead {
+  margin: -8px 0 14px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__command-lead strong {
+  color: #4e5969;
+  font-weight: 600;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console.source-script-shell {
+  padding: 0;
+  border: 1px solid #2b2d36;
+  border-radius: 12px;
+  background: #2b2d36;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #3a3b45;
+  background: #25262e;
+  color: #c9cdd4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console-body {
+  position: relative;
+  min-height: 88px;
+  max-height: 140px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console-body--proxy {
+  display: flex;
+  align-items: center;
+  min-height: 90px;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console-pre {
+  margin: 0;
+  color: #d9f7be;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid #3a3b45;
+  background: #25262e;
+}
+
+.resource-add-fullscreen .agent-install-wizard__console-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .agent-install-wizard__copy-btn {
+  flex-shrink: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn {
+  margin: 0;
+  align-items: flex-start;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-title {
+  margin: 0;
+  color: #1d2129;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-subtitle {
+  margin: 0;
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-list {
+  margin: 0;
+  padding-left: 1.1em;
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-list li + li {
+  margin-top: 2px;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-code {
+  display: inline-block;
+  margin: 0 4px;
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 228, 186, 0.8);
+  border-radius: 4px;
+  background: #fff;
+  color: #ff7d00;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.resource-add-fullscreen .agent-install-wizard__warn-desc {
+  margin: 0;
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 767px) {
+  .resource-add-fullscreen .agent-deploy-os-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.resource-add-fullscreen .proxy-install-wizard {
+  width: 100%;
+  max-width: min(100%, 1300px);
+  margin: 0 auto;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__intro {
+  margin: 0 0 20px;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__req-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+@media (min-width: 900px) {
+  .resource-add-fullscreen .proxy-install-wizard__req-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.resource-add-fullscreen .proxy-install-wizard__req-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  background: #f7f8fa;
+  color: #4e5969;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__req-item .add-s3-platform-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: #f2f3f5;
+  color: #165dff;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__req-text {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__req-label {
+  color: #1d2129;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__req-sub {
+  color: #86909c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__generating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c9cdd4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.resource-add-fullscreen .proxy-install-wizard__generating-icon {
+  flex-shrink: 0;
+  color: #6aa1ff;
+  animation: proxy-install-spin 1s linear infinite;
+}
+
+.resource-add-fullscreen .proxy-install-wizard .add-s3-warning {
+  margin: 0;
+}
+
+@keyframes proxy-install-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Source Host embed (Add Backup Source / Add source host) — matches add-source-host mockup */
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__platform-card.fullscreen-form-card {
+  border: 1.5px solid var(--color-border, #e9e9ef);
+  border-radius: 14px;
+  background: var(--color-card-bg, #fff);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__platform-section {
+  padding: 22px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__platform-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__platform-head .fullscreen-form-section__title {
+  margin: 0;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 124px;
+  padding: 16px;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 12px;
+  background: var(--color-card-bg, #fff);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: none;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-primary, #6d5ef6) 38%, var(--color-border, #e9e9ef));
+  box-shadow: 0 8px 18px -16px rgba(28, 28, 38, 0.35);
+  transform: translateY(-1px);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card.is-checked {
+  border-color: var(--color-primary, #6d5ef6);
+  background: var(--color-primary-light, #f2f0fe);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #6d5ef6) 7%, transparent);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #f4f6fb;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__icon-wrap--linux {
+  background: #f2f0fe;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__icon-wrap--windows {
+  background: #eef5ff;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__icon-wrap--macos {
+  background: #f3f3f5;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card.is-checked .os-icon-card__icon-wrap {
+  border-color: var(--color-primary-disabled-bg, #dcd5fb);
+  background: #fff;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border, #e9e9ef);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__check span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card.is-checked .os-icon-card__check {
+  border-color: var(--color-primary, #6d5ef6);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card.is-checked .os-icon-card__check span {
+  background: var(--color-primary, #6d5ef6);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__brand {
+  display: block;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__brand.agent-platform-brand-icon--linux,
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__brand.agent-platform-brand-icon--windows {
+  width: 25px;
+  height: 25px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__brand.agent-platform-brand-icon--macos {
+  width: 23px;
+  height: 23px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__name {
+  color: var(--color-text-primary, #3a3a48);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card.is-checked .os-icon-card__name {
+  color: var(--color-primary-hover, #5546d8);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__meta {
+  margin-top: 2px;
+  color: var(--color-text-secondary, #70707e);
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support {
+  margin-top: 12px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 10px;
+  background: #fcfcfd;
+  color: var(--color-text-primary, #3a3a48);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__toggle:hover {
+  border-color: color-mix(in srgb, var(--color-primary, #6d5ef6) 30%, var(--color-border, #e9e9ef));
+  background: #fff;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__toggle:focus-visible {
+  outline: none;
+  border-color: var(--color-primary, #6d5ef6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #6d5ef6) 10%, transparent);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__toggle-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border-light, #f2f2f6);
+  border-radius: 7px;
+  background: var(--color-primary-light, #f2f0fe);
+  color: var(--color-primary-hover, #5546d8);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary, #9c9caa);
+  transition: transform 0.2s;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support.is-open .agent-os-support__chevron {
+  transform: rotate(180deg);
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__body {
+  padding-top: 16px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__group {
+  margin: 12px 0 8px;
+  color: #c9cdd4;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__group:first-child {
+  margin-top: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__chip {
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  padding: 10px 8px;
+  background: #fafbfc;
+  text-align: center;
+  color: #1d2129;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__chip-name {
+  display: block;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__chip-ver {
+  display: block;
+  margin-top: 2px;
+  color: #86909c;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__notes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-light, #f2f2f6);
+  border-radius: 8px;
+  background: var(--color-primary-light, #f2f0fe);
+  color: var(--color-text-primary, #3a3a48);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__note strong {
+  flex: 0 0 auto;
+  color: var(--color-primary-hover, #5546d8);
+  font-weight: 700;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__note span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__console-body {
+  max-height: none;
+  overflow: visible;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__console-foot--copy-only {
+  justify-content: flex-end;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #f2f3f5;
+  border-radius: 12px;
+  background: #f7f8fa;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__label {
+  margin: 0 0 10px;
+  color: #1d2129;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step {
+  margin: 0;
+  color: #4e5969;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step:not(:first-child) {
+  border-left: 1px solid #e5e6eb;
+  padding-left: 16px;
+}
+
+.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #1d2129;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .resource-add-fullscreen .agent-install-wizard--source-host .agent-install-wizard__platform-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .agent-os-support__notes {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__steps {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step:not(:first-child) {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid #e5e6eb;
+    padding-top: 8px;
+  }
+}
+
+/* Proxy Host deploy — four-card system requirements grid */
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 132px;
+  padding: 18px 12px 16px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #fff;
+  text-align: center;
+}
+
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 44px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__brand--ubuntu {
+  display: block;
+  width: 40px;
+  height: 40px;
+  color: #e95420;
+}
+
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__brand--hardware {
+  color: #4e5969;
+}
+
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__title {
+  color: #1d2129;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
+  margin-top: 6px;
+  color: #86909c;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (max-width: 960px) {
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card {
+    min-height: 0;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    text-align: left;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__icon-wrap {
+    width: auto;
+    height: auto;
+    margin: 0;
+    flex-shrink: 0;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__title,
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
+    display: block;
+    width: 100%;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
+    margin-top: 2px;
+  }
+}
+

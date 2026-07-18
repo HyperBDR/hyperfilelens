@@ -1,0 +1,77 @@
+/* Final Element Plus popper radius pass.
+   Keep this import last so page-level styles cannot fall back to Element Plus defaults. */
+
+:root {
+  --hfl-popper-radius: 10px;
+  --el-popper-border-radius: var(--hfl-popper-radius) !important;
+}
+
+.el-popper,
+.el-select__popper.el-popper,
+.el-dropdown__popper.el-popper,
+.el-picker__popper.el-popper,
+.el-popover.el-popper,
+.el-tooltip__popper.el-popper,
+.el-cascader__dropdown.el-popper,
+.el-table-filter,
+.kb-filter-popover.el-popper,
+.create-recovery-path-popover.el-popper,
+.dp-source-task-select-popper.el-popper,
+.nav-dropdown-popover.el-popper {
+  border-radius: 10px !important;
+}
+
+.el-popper:not(.is-pure),
+.el-select__popper.el-popper,
+.el-dropdown__popper.el-popper,
+.el-picker__popper.el-popper,
+.el-popover.el-popper,
+.el-tooltip__popper.el-popper,
+.el-cascader__dropdown.el-popper,
+.el-table-filter,
+.kb-filter-popover.el-popper,
+.create-recovery-path-popover.el-popper,
+.dp-source-task-select-popper.el-popper,
+.nav-dropdown-popover.el-popper {
+  overflow: hidden;
+}
+
+.el-select-dropdown,
+.el-dropdown-menu,
+.el-cascader-panel,
+.el-picker-panel,
+.el-date-picker,
+.el-date-range-picker,
+.el-time-panel,
+.el-table-filter__content {
+  border-radius: inherit !important;
+}
+
+.el-dropdown__popper.el-popper .el-dropdown-menu,
+.hfl-actions-dropdown.el-popper .el-dropdown-menu {
+  padding: 0 !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+.el-dropdown-menu__item:first-child {
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+}
+
+.el-dropdown-menu__item:last-child {
+  border-bottom-right-radius: inherit;
+  border-bottom-left-radius: inherit;
+}
+
+.el-dropdown-menu__item--divided {
+  margin-top: 0 !important;
+}
+
+.el-dropdown-menu__item--divided::before {
+  margin: 0 !important;
+}
+
+.hfl-pagination-size-popper.el-popper {
+  border-radius: var(--el-border-radius-base, 8px) !important;
+}

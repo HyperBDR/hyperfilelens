@@ -1,0 +1,58 @@
+# --- OS files ---
+.DS_Store
+Thumbs.db
+core
+*.core
+
+# --- IDE / Editor ---
+.vscode/*
+.puku/
+.idea/
+.cursor/
+*.sw?
+*~
+.claude/
+.codex/
+.agents/
+
+# --- Python (backend + agent) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# --- Node (frontend) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Environment files ---
+.env
+.env.local
+.env.*.local
+# .env.*.example matches .env.staging.example but NOT .env.example
+# (.env.example is tracked and intentionally kept in the repo)
+.env.*.example
+
+# --- Release packaging ---
+docker-compose.override.yml
+hyperfilelens-[0-9]*.tar.gz
+
+# --- Build outputs ---
+dist/
+src/backend/staticfiles/
+
+# --- Logs ---
+*.log
+
+# --- Other ---
+*.mo
+.tmp/
+.tools/

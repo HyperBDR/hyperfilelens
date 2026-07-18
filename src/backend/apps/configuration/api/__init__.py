@@ -1,0 +1,1 @@
+"""Configuration REST API."""

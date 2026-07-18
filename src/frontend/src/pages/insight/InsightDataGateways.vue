@@ -1,0 +1,787 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import {
+  ArrowUpCircle,
+  ChevronDown,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from 'lucide-vue-next'
+import { ElMessage, type ElTable } from 'element-plus'
+import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
+import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBanner.vue'
+import NodeLifecycleUpgradeConfirmDialog from '../../components/NodeLifecycleUpgradeConfirmDialog.vue'
+import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
+import HflCapacityCell from '../../components/HflCapacityCell.vue'
+import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
+import { useListTableLayout } from '../../composables/useListTableLayout'
+import { useListSearch } from '../../composables/useListSearch'
+import { usePageRequestScope } from '../../composables/usePageRequestScope'
+import { apiErrorMessage } from '../../lib/api'
+import { afterOverlayDismiss } from '../../lib/uiDefer'
+import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
+import {
+  fetchLensHealth,
+  listLensGateways,
+  setPlatformLensGatewayDefault,
+  setLensApiScope,
+  type LensGatewayInsight,
+} from '../../lib/lensApi'
+import { lensKnowledgePath } from '../../lib/lensEngineRoutes'
+import {
+  fetchLatestAgentVersion,
+  updateNode,
+} from '../../lib/nodeApi'
+import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
+import {
+  formatNodeBytes,
+  formatNodeDate,
+  nodeCpuCores,
+  nodeDiskCount,
+  nodeDiskUsageParts,
+  nodeEnrollmentOs,
+  nodeMemoryTotalBytes,
+  nodePlatformLabel,
+  type NodeOsPlatformLabels,
+} from '../../lib/nodeInventoryDisplay'
+import InsightGatewayDetailDrawer from './InsightGatewayDetailDrawer.vue'
+import GatewayCompositeStatusCell from './GatewayCompositeStatusCell.vue'
+import type { ApiNode } from '../../types/node'
+
+export type InsightGatewayRow = ApiNode & LensGatewayInsight
+
+const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const pageRequests = usePageRequestScope()
+
+/** Prefer route over module scope — Admin Engine can race with tenant scope resets. */
+const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
+
+const TABLE_HEADER_STYLE: Record<string, string> = {
+  background: 'rgba(248, 250, 252, 0.96)',
+  color: 'rgb(71 85 105)',
+  fontWeight: '600',
+  whiteSpace: 'nowrap',
+}
+
+const rows = ref<InsightGatewayRow[]>([])
+const busy = ref(false)
+const listLoaded = ref(false)
+const search = ref('')
+const bridgeReady = ref(false)
+const latestAgentVersion = ref<string | null>(null)
+const selectedRows = ref<InsightGatewayRow[]>([])
+const deleteOpen = ref(false)
+const deleteLoading = ref(false)
+const pendingDelete = ref<InsightGatewayRow[]>([])
+const moreActionsOpen = ref(false)
+const detailOpen = ref(false)
+const detailNodeId = ref<number | null>(null)
+const renameDialogOpen = ref(false)
+const renameInput = ref('')
+const renameTarget = ref<InsightGatewayRow | null>(null)
+
+const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
+const tableBlockRef = ref<HTMLElement | null>(null)
+const { tableMaxHeight, layoutTable, handleTableScroll } = useListTableLayout(tableRef, tableBlockRef)
+
+const pagination = reactive({ page: 1, pageSize: 30, count: 0 })
+const { appliedSearch, clearSearch } = useListSearch(search, () => {
+  pagination.page = 1
+  void load()
+})
+
+const osPlatformLabels = computed((): NodeOsPlatformLabels => ({
+  linux: t('protection.sourceResources.osPlatformLinux'),
+  windows: t('protection.sourceResources.osPlatformWindows'),
+  macos: t('protection.sourceResources.osPlatformMacos'),
+}))
+
+const lifecycleOps = useNodeLifecycleOps({
+  role: () => 'gateway',
+  t,
+  onRefresh: () => load(),
+  onLifecyclePatch: (patched) => {
+    const byId = new Map(patched.map((node) => [node.id, node]))
+    const batchIds = lifecycleOps.activeBatchNodeIds.value
+    const existingIds = new Set(rows.value.map((row) => row.id))
+    rows.value = rows.value.map((row) => {
+      const next = byId.get(row.id)
+      if (!next) return row
+      return {
+        ...row,
+        status: next.status,
+        routable: next.routable,
+        version: next.version,
+        lifecycle: next.lifecycle,
+        is_deleted: next.is_deleted,
+      }
+    })
+    // Remount / empty refresh: re-insert in-flight lifecycle rows from watch payload.
+    for (const node of patched) {
+      if (existingIds.has(node.id) || !batchIds.has(node.id)) continue
+      rows.value.push(
+        mergeLensIntoNode({
+          id: node.id,
+          organization: node.organization ?? 0,
+          name: node.name,
+          role: node.role || 'gateway',
+          status: node.status,
+          routable: node.routable,
+          version: node.version,
+          ip_address: node.ip_address ?? null,
+          lifecycle: node.lifecycle,
+          is_deleted: node.is_deleted,
+          created_at: node.created_at || '',
+          updated_at: node.updated_at || '',
+        } as ApiNode),
+      )
+      existingIds.add(node.id)
+    }
+    pagination.count = Math.max(pagination.count, rows.value.length)
+  },
+})
+const upgradeConfirmOpen = lifecycleOps.upgradeConfirmOpen
+const upgradeConfirmPreview = lifecycleOps.upgradeConfirmPreview
+
+const tableLoading = computed(() => !listLoaded.value)
+const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
+const batchDisabled = computed(() => selectedRows.value.length === 0)
+const batchRenameDisabled = computed(() => selectedRows.value.length !== 1)
+const batchUpgradeDisabled = computed(() => {
+  const upgradable = selectedRows.value.filter((row) => lifecycleOps.canUpgradeNode(row, canUpgrade))
+  return upgradable.length === 0
+})
+
+function canUpgrade(row: ApiNode) {
+  if ((row as InsightGatewayRow).managed_by_hfl === false) return false
+  return canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
+}
+
+function platformLabel(row: ApiNode) {
+  return nodePlatformLabel(nodeEnrollmentOs(row), osPlatformLabels.value)
+}
+
+function ipLine(row: ApiNode) {
+  return row.ip_address?.trim() || '—'
+}
+
+function aiPhase(row: InsightGatewayRow): 'not_provisioned' | 'pending_install' | 'online' | 'offline' | 'error' {
+  if (!bridgeReady.value) return 'not_provisioned'
+  if (row.managed_by_hfl === false) return 'not_provisioned'
+  if (!row.hfl_agent_online) return 'offline'
+  if (!row.ai_enabled) {
+    if (row.status === 'online') return 'error'
+    return 'not_provisioned'
+  }
+  if (row.sidecar_status === 'online') return 'online'
+  if (row.sidecar_status === 'error') return 'error'
+  if (row.sidecar_status === 'offline') return 'offline'
+  if (row.sidecar_status === 'not_deployed') return 'error'
+  return 'pending_install'
+}
+
+function openKnowledgeSources() {
+  if (isPlatformEngine.value) {
+    void router.push({ path: lensKnowledgePath() })
+    return
+  }
+  void router.push({ path: '/insight/copilot' })
+}
+
+function mergeLensIntoNode(node: ApiNode, lens?: LensGatewayInsight): InsightGatewayRow {
+  return {
+    ...node,
+    ...lens,
+    ai_enabled: lens?.ai_enabled ?? false,
+    sl_lensnode_uuid: lens?.sl_lensnode_uuid ?? null,
+    lensnode_status: lens?.lensnode_status ?? null,
+    knowledge_source_count: lens?.knowledge_source_count ?? 0,
+    workspace_root: lens?.workspace_root ?? '',
+    sidecar_status: lens?.sidecar_status ?? 'not_deployed',
+  }
+}
+
+/** Keep in-flight remove/upgrade rows visible when a refresh omits them. */
+function applyGatewayRows(next: InsightGatewayRow[], totalHint?: number) {
+  const prev = rows.value
+  const batchIds = lifecycleOps.activeBatchNodeIds.value
+  let merged = next
+  if (batchIds.size > 0) {
+    const nextIds = new Set(next.map((row) => row.id))
+    const ghosts = prev.filter((row) => batchIds.has(row.id) && !nextIds.has(row.id))
+    if (ghosts.length) merged = [...next, ...ghosts]
+  }
+  rows.value = lifecycleOps.mergeNodeListDuringLifecycleBatch(merged, prev, batchIds)
+  pagination.count = totalHint != null ? Math.max(totalHint, rows.value.length) : rows.value.length
+}
+
+async function loadLatestVersion(signal?: AbortSignal) {
+  try {
+    latestAgentVersion.value = await fetchLatestAgentVersion({ signal })
+  } catch (e) {
+    if (pageRequests.isAbortError(e)) return
+    latestAgentVersion.value = null
+  }
+}
+
+async function load() {
+  const signal = pageRequests.nextSignal('dg-list')
+  busy.value = true
+  if (isPlatformEngine.value) {
+    setLensApiScope('platform')
+  }
+  try {
+    // Admin Engine and Insights share the same SL-admin (platform) DG pool from listLensGateways.
+    let lensRows: LensGatewayInsight[] = []
+    let listFailed = false
+    const [lensResult, health] = await Promise.all([
+      listLensGateways()
+        .then((next) => {
+          lensRows = next
+          return next
+        })
+        .catch((e) => {
+          if (pageRequests.isAbortError(e)) throw e
+          listFailed = true
+          return null
+        }),
+      fetchLensHealth().catch(() => null),
+    ])
+    if (lensResult === null && listFailed) {
+      if (rows.value.length === 0) {
+        ElMessage.error({ message: t('errors.generic.loadFailed'), grouping: true })
+      }
+      bridgeReady.value = Boolean(health?.lens?.configured && health?.lens?.authenticated)
+      await loadLatestVersion(signal)
+      return
+    }
+    bridgeReady.value = Boolean(health?.lens?.configured && health?.lens?.authenticated)
+    const term = appliedSearch.value.trim().toLowerCase()
+    const filtered = term
+      ? lensRows.filter((row) => {
+          const name = (row.name || '').toLowerCase()
+          const ip = String(row.ip_address || '').toLowerCase()
+          return name.includes(term) || ip.includes(term)
+        })
+      : lensRows
+    const next = filtered.map((lens) => {
+      const base = lens as unknown as ApiNode
+      return mergeLensIntoNode(
+        {
+          id: lens.id,
+          organization: base.organization ?? 0,
+          name: lens.name,
+          role: (lens.role as ApiNode['role']) || 'gateway',
+          status: (lens.status as ApiNode['status']) || 'offline',
+          routable: base.routable,
+          version: base.version ?? null,
+          os_name: base.os_name,
+          ip_address: lens.ip_address,
+          metadata: base.metadata,
+          created_at: base.created_at || '',
+          updated_at: base.updated_at || '',
+          last_seen_at: base.last_seen_at,
+          lifecycle: base.lifecycle ?? null,
+          workload: base.workload ?? null,
+          is_deleted: (base as ApiNode & { is_deleted?: boolean }).is_deleted,
+        } as ApiNode,
+        lens,
+      )
+    })
+    applyGatewayRows(next, filtered.length)
+    await loadLatestVersion(signal)
+  } catch (e) {
+    if (pageRequests.isAbortError(e)) return
+    if (rows.value.length === 0) {
+      rows.value = []
+    }
+    ElMessage.error({ message: apiErrorMessage(e, t('errors.generic.loadFailed')), grouping: true })
+  } finally {
+    pageRequests.releaseSignal('dg-list', signal)
+    if (!signal.aborted) {
+      listLoaded.value = true
+      busy.value = false
+      layoutTable()
+    }
+  }
+}
+
+function openDetail(row: InsightGatewayRow) {
+  if (row.managed_by_hfl === false) return
+  detailNodeId.value = row.id
+  detailOpen.value = true
+}
+
+function canManageGateway(row: InsightGatewayRow) {
+  return row.managed_by_hfl !== false && row.id > 0
+}
+
+function readinessLabel(row: InsightGatewayRow) {
+  if (!row.managed_by_hfl) return `SL ${row.sl_runtime_status || row.sl_status || 'Offline'} · HFL Agent Missing`
+  if (!row.hfl_agent_online) return 'HFL Agent Offline'
+  if (!row.hfl_sidecar_online) return 'HFL LensNode Sidecar Offline'
+  return 'HFL Ready'
+}
+
+function originLabel(row: InsightGatewayRow) {
+  const origin = row.origin || 'external'
+  return t(`insight.dataGateway.origin.${origin}`)
+}
+
+async function setPlatformDefault(row: InsightGatewayRow) {
+  if (row.origin !== 'platform' || !canManageGateway(row) || !row.hfl_usable) return
+  try {
+    await setPlatformLensGatewayDefault(row.id)
+    ElMessage.success({ message: t('insight.dataGateway.defaultSetSuccess'), grouping: true })
+    await load()
+  } catch (error) {
+    ElMessage.error({ message: apiErrorMessage(error, t('errors.generic.loadFailed')), grouping: true })
+  }
+}
+
+function onSelectionChange(selection: InsightGatewayRow[]) {
+  selectedRows.value = selection
+}
+
+function clearSelection() {
+  selectedRows.value = []
+  tableRef.value?.clearSelection()
+}
+
+type MoreAction = 'rename' | 'upgrade' | 'remove'
+
+async function handleMoreAction(command: MoreAction) {
+  if (command === 'rename') openRenameDialog()
+  else if (command === 'upgrade') await onUpgradeSelected()
+  else if (command === 'remove') await deleteSelected()
+}
+
+function openRenameDialog() {
+  const node = singleSelected.value
+  if (!node) return
+  renameTarget.value = node
+  renameInput.value = node.name
+  renameDialogOpen.value = true
+}
+
+async function submitRename() {
+  const node = renameTarget.value
+  if (!node) return
+  const name = renameInput.value.trim()
+  if (!name) {
+    ElMessage.warning({ message: t('nodesPage.renamePlaceholder'), grouping: true })
+    return
+  }
+  try {
+    await updateNode(node.id, { name })
+    ElMessage.success({ message: t('nodesPage.renameSuccess'), grouping: true })
+    renameDialogOpen.value = false
+    clearSelection()
+    await load()
+  } catch {
+    ElMessage.error({ message: t('nodesPage.renameFailed'), grouping: true })
+  }
+}
+
+async function onUpgradeSelected() {
+  await afterOverlayDismiss()
+  const targets = selectedRows.value.filter((row) => lifecycleOps.canUpgradeNode(row, canUpgrade))
+  if (targets.length === 0) {
+    ElMessage.warning({ message: t('nodeLifecycle.nothingEligible'), grouping: true })
+    return
+  }
+  const started = await lifecycleOps.runBatch('upgrade', targets)
+  if (started) clearSelection()
+}
+
+async function deleteSelected() {
+  if (batchDisabled.value) return
+  await afterOverlayDismiss()
+  pendingDelete.value = [...selectedRows.value]
+  deleteOpen.value = true
+}
+
+async function confirmDelete() {
+  const targets = [...pendingDelete.value]
+  if (!targets.length) return
+  deleteLoading.value = true
+  try {
+    const started = await lifecycleOps.runBatch('remove', targets, { skipConfirm: true })
+    if (started) {
+      clearSelection()
+      deleteOpen.value = false
+      pendingDelete.value = []
+    }
+  } finally {
+    deleteLoading.value = false
+  }
+}
+
+function onPaginationSizeChange() {
+  pagination.page = 1
+  void load()
+}
+
+function onPaginationPageChange() {
+  void load()
+}
+
+watch(tableLoading, (loading) => {
+  if (!loading) layoutTable()
+})
+
+watch(
+  () => route.query[LIST_ROUTE_REFRESH_KEY],
+  (token) => {
+    if (token == null || Array.isArray(token)) return
+    void load().finally(() => {
+      router.replace({
+        path: route.path,
+        query: stripListRefreshQuery(route.query as Record<string, unknown>),
+      })
+    })
+  },
+)
+
+let listPollTimer: ReturnType<typeof setInterval> | null = null
+
+function stopListPoll() {
+  if (listPollTimer != null) {
+    clearInterval(listPollTimer)
+    listPollTimer = null
+  }
+}
+
+function startListPoll() {
+  stopListPoll()
+  const needsPoll = rows.value.some((row) => row.ai_enabled && aiPhase(row) !== 'online')
+  if (!needsPoll) return
+  listPollTimer = setInterval(() => {
+    if (!busy.value) void load()
+  }, 12000)
+}
+
+watch(rows, () => startListPoll(), { deep: true })
+
+onMounted(async () => {
+  if (isPlatformEngine.value) {
+    setLensApiScope('platform')
+  }
+  // Restore in-flight queue before first load so Removing rows can be retained.
+  lifecycleOps.restorePersisted()
+  await load()
+})
+
+onUnmounted(() => {
+  stopListPoll()
+})
+</script>
+
+<template>
+  <div class="hfl-list-shell hfl-list-shell--fill">
+    <div class="hfl-list-panel hfl-list-panel--fill">
+      <div class="hfl-list-toolbar">
+        <RouterLink
+          :to="isPlatformEngine ? '/node/nodes/deploy?role=gateway&gatewayScope=platform&returnTo=/platform-ops/engine/gateways' : '/node/nodes/deploy?role=gateway'"
+          class="inline-flex"
+        >
+          <ElButton type="primary">
+            <Plus :size="16" />
+            {{ t('insight.dataGateway.btnAdd') }}
+          </ElButton>
+        </RouterLink>
+
+        <ElDropdown
+          trigger="click"
+          popper-class="hfl-actions-dropdown"
+          @visible-change="moreActionsOpen = $event"
+          @command="handleMoreAction"
+        >
+          <ElButton>
+            {{ t('insight.dataGateway.btnMoreActions') }}
+            <ChevronDown
+              :size="16"
+              class="hfl-list-more__chev"
+              :class="{ 'hfl-list-more__chev--open': moreActionsOpen }"
+            />
+          </ElButton>
+          <template #dropdown>
+            <ElDropdownMenu>
+              <ElDropdownItem command="rename" :disabled="batchRenameDisabled">
+                <span class="el-dropdown-menu__item-content">
+                  <Pencil :size="14" class="shrink-0" />
+                  <span>{{ t('nodesPage.btnBatchRename') }}</span>
+                </span>
+              </ElDropdownItem>
+              <ElDropdownItem command="upgrade" :disabled="batchUpgradeDisabled">
+                <span class="el-dropdown-menu__item-content">
+                  <ArrowUpCircle :size="14" class="shrink-0" />
+                  <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                </span>
+              </ElDropdownItem>
+              <ElDropdownItem command="remove" divided class="el-dropdown-menu__item--danger" :disabled="batchDisabled">
+                <span class="el-dropdown-menu__item-content">
+                  <Trash2 :size="14" class="shrink-0" />
+                  <span>{{ t('nodesPage.actionDelete') }}</span>
+                </span>
+              </ElDropdownItem>
+            </ElDropdownMenu>
+          </template>
+        </ElDropdown>
+
+        <div class="hfl-list-toolbar__right">
+          <ElInput
+            v-model="search"
+            clearable
+            size="small"
+            :placeholder="t('insight.dataGateway.searchPlaceholder')"
+            class="hfl-list-search"
+            @clear="clearSearch"
+          >
+            <template #prefix>
+              <Search :size="16" class="hfl-list-search__icon" />
+            </template>
+          </ElInput>
+          <ElButton
+            class="hfl-refresh-button"
+            :title="t('protection.sourceResources.refresh')"
+            :disabled="busy"
+            @click="load()"
+          >
+            <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+          </ElButton>
+        </div>
+      </div>
+
+      <NodeLifecycleBanner :snapshot="lifecycleOps.snapshot" @cancel-queued="lifecycleOps.cancelQueued" />
+
+      <div ref="tableBlockRef" class="hfl-list-table-block">
+        <el-table
+          ref="tableRef"
+          v-table-overflow-title
+          v-table-header-scroll-sync
+          v-table-column-resize="'insight.dataGateways.list'"
+          v-loading="tableLoading"
+          row-key="id"
+          :data="rows"
+          stripe
+          class="hfl-list-table"
+          :max-height="tableMaxHeight"
+          :header-cell-style="TABLE_HEADER_STYLE"
+          @scroll="handleTableScroll"
+          @selection-change="onSelectionChange"
+        >
+          <el-table-column type="selection" width="35" fixed="left" :selectable="canManageGateway" />
+          <el-table-column
+            :label="t('protection.sourceResources.colName')"
+            min-width="200"
+            fixed="left"
+            class-name="hfl-table-name-col"
+          >
+            <template #default="{ row }">
+              <button
+                v-if="canManageGateway(row)"
+                type="button"
+                class="hfl-table-name-link hfl-table-name-link--full"
+                @click="openDetail(row)"
+              >
+                {{ row.name }}
+              </button>
+              <span v-else>{{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isPlatformEngine" :label="t('insight.dataGateway.colOrigin')" min-width="110">
+            <template #default="{ row }">
+              <span>{{ originLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isPlatformEngine" :label="t('insight.dataGateway.colOwner')" min-width="150">
+            <template #default="{ row }">
+              <span>{{ row.owner_username || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isPlatformEngine" label="HFL Readiness" min-width="190">
+            <template #default="{ row }">
+              <span>{{ readinessLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isPlatformEngine" :label="t('insight.dataGateway.colDefault')" min-width="128">
+            <template #default="{ row }">
+              <ElTag v-if="row.is_platform_default" type="success" effect="plain">
+                {{ t('insight.dataGateway.defaultActive') }}
+              </ElTag>
+              <ElButton
+                v-else-if="row.origin === 'platform' && canManageGateway(row) && row.hfl_usable"
+                link
+                type="primary"
+                @click="setPlatformDefault(row)"
+              >
+                {{ t('insight.dataGateway.defaultSet') }}
+              </ElButton>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="140">
+            <template #default="{ row }">{{ ipLine(row) }}</template>
+          </el-table-column>
+          <el-table-column label="OS" min-width="120">
+            <template #default="{ row }">
+              <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
+                <span class="source-os-cell__icon-wrap">
+                  <AgentPlatformBrandIcon :os="nodeEnrollmentOs(row)" />
+                </span>
+                <span class="source-os-cell__platform">{{ platformLabel(row) }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="88">
+            <template #default="{ row }">
+              <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="100">
+            <template #default="{ row }">
+              <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="96">
+            <template #default="{ row }">{{ nodeDiskCount(row) ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="200">
+            <template #default="{ row }">
+              <HflCapacityCell
+                :used-bytes="nodeDiskUsageParts(row).used"
+                :total-bytes="nodeDiskUsageParts(row).total"
+                variant="compact"
+                :format-bytes="formatNodeBytes"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('insight.dataGateway.colKnowledgeSources')"
+            min-width="168"
+            align="center"
+          >
+            <template #default="{ row }">
+              <button
+                v-if="row.knowledge_source_count > 0"
+                type="button"
+                class="dg-ks-link"
+                @click="openKnowledgeSources(row)"
+              >
+                {{ row.knowledge_source_count }}
+              </button>
+              <span v-else class="dg-muted">0</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="120">
+            <template #default="{ row }">
+              <GatewayCompositeStatusCell
+                :node="row"
+                :ai-phase="aiPhase(row)"
+                :resolve-display-status="lifecycleOps.resolveDisplayStatus"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colVersion')" min-width="130">
+            <template #default="{ row }">
+              <NodeVersionCell
+                :node="row"
+                :version-label="row.version || '--'"
+                :resolve-version-display="lifecycleOps.resolveVersionDisplay"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
+            <template #default="{ row }">
+              <span class="hfl-table-cell-time">{{ formatNodeDate(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty :description="t('nodesPage.emptyGateway')" :image-size="80" />
+          </template>
+        </el-table>
+      </div>
+
+      <div class="hfl-list-footer">
+        <span v-if="selectedRows.length > 0" class="hfl-list-footer__selected">
+          {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
+        </span>
+        <HflPagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.pageSize"
+          class="hfl-list-footer__pagination"
+          :total="pagination.count"
+          @current-change="onPaginationPageChange"
+          @size-change="onPaginationSizeChange"
+        />
+      </div>
+    </div>
+
+    <el-dialog
+      v-model="renameDialogOpen"
+      class="source-action-dialog"
+      :title="t('nodesPage.renameTitle')"
+      width="480px"
+      align-center
+      destroy-on-close
+    >
+      <ElForm label-position="top" class="source-action-dialog__form" @submit.prevent="submitRename">
+        <ElFormItem :label="t('nodesPage.renameLabel')" required>
+          <ElInput v-model="renameInput" :placeholder="t('nodesPage.renamePlaceholder')" maxlength="128" show-word-limit />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <el-button @click="renameDialogOpen = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="submitRename">{{ t('common.save') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <InsightGatewayDetailDrawer
+      v-model="detailOpen"
+      :node-id="detailNodeId"
+      @saved="load"
+    />
+    <NodeLifecycleUpgradeConfirmDialog
+      v-model="upgradeConfirmOpen"
+      :preview="upgradeConfirmPreview"
+      @confirm="lifecycleOps.resolveUpgradeConfirm()"
+      @cancel="lifecycleOps.cancelUpgradeConfirm()"
+    />
+    <DangerConfirmDialog
+      v-model="deleteOpen"
+      :title="t('nodesPage.deleteTitle')"
+      :message="t('nodesPage.deleteSelectedConfirm', { n: pendingDelete.length })"
+      :items="pendingDelete.map((row) => ({ key: row.id, name: row.name }))"
+      confirm-mode="keyword"
+      :confirm-keyword="t('common.deleteKeyword')"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="t('nodesPage.actionDelete')"
+      :loading="deleteLoading"
+      @confirm="confirmDelete"
+      @cancel="pendingDelete = []"
+    />
+  </div>
+</template>
+
+<style scoped>
+.dg-ks-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-primary, #2563eb);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.dg-muted {
+  color: var(--color-text-tertiary, #999);
+}
+</style>

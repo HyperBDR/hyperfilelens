@@ -1,0 +1,42 @@
+<script setup lang="ts">
+withDefaults(
+  defineProps<{
+    label: string
+    value: string | number
+    sub?: string
+    accent?: 'red' | 'yellow' | 'green' | 'blue' | 'indigo' | 'orange' | 'pink' | 'gray'
+    accentSide?: 'left' | 'top'
+    valueClass?: string
+    pulse?: boolean
+  }>(),
+  {
+    accent: 'indigo',
+    accentSide: 'top',
+    sub: '',
+    valueClass: '',
+    pulse: false,
+  },
+)
+</script>
+
+<template>
+  <div
+    class="hfl-ops-stat-card"
+    :class="[
+      `hfl-ops-stat-card--${accent}`,
+      accentSide === 'left' ? 'hfl-ops-stat-card--side-left' : 'hfl-ops-stat-card--side-top',
+    ]"
+  >
+    <div class="hfl-ops-stat-card__head">
+      <div class="hfl-ops-stat-card__label">{{ label }}</div>
+      <div v-if="$slots.icon" class="hfl-ops-stat-card__icon" aria-hidden="true">
+        <slot name="icon" />
+      </div>
+    </div>
+    <div class="hfl-ops-stat-card__value-row">
+      <div class="hfl-ops-stat-card__value" :class="valueClass">{{ value }}</div>
+      <span v-if="pulse" class="hfl-ops-stat-card__pulse" aria-hidden="true" />
+    </div>
+    <div v-if="sub" class="hfl-ops-stat-card__sub">{{ sub }}</div>
+  </div>
+</template>

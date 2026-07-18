@@ -1,0 +1,42 @@
+"""Celery tasks for system metric collection."""
+
+from celery import shared_task
+
+from common.observability.celery_context import logged_celery_task
+
+from apps.monitor.services.interface import cleanup_old_metrics, collect_and_persist_sample
+from apps.monitor.services.internal.resource_metrics import (
+    cleanup_old_resource_metrics,
+    snapshot_repository_metrics,
+)
+
+
+@shared_task(name="apps.monitor.tasks.metrics.collect_system_metrics")
+@logged_celery_task(name="apps.monitor.tasks.metrics.collect_system_metrics")
+def collect_system_metrics():
+    collect_and_persist_sample()
+    return {"status": "ok"}
+
+
+@shared_task(name="apps.monitor.tasks.metrics.cleanup_old_system_metrics")
+@logged_celery_task(name="apps.monitor.tasks.metrics.cleanup_old_system_metrics", trace_keys=("days_to_keep",))
+def cleanup_old_system_metrics(days_to_keep: int = 7):
+    deleted = cleanup_old_metrics(days_to_keep=days_to_keep)
+    return {"deleted": deleted}
+
+
+@shared_task(name="apps.monitor.tasks.metrics.snapshot_repository_metrics")
+@logged_celery_task(name="apps.monitor.tasks.metrics.snapshot_repository_metrics")
+def snapshot_repository_metrics_task():
+    created = snapshot_repository_metrics()
+    return {"created": created}
+
+
+@shared_task(name="apps.monitor.tasks.metrics.cleanup_old_resource_metrics")
+@logged_celery_task(
+    name="apps.monitor.tasks.metrics.cleanup_old_resource_metrics",
+    trace_keys=("days_to_keep",),
+)
+def cleanup_old_resource_metrics_task(days_to_keep: int = 14):
+    deleted = cleanup_old_resource_metrics(days_to_keep=days_to_keep)
+    return {"deleted": deleted}
