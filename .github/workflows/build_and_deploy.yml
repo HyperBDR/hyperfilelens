@@ -452,11 +452,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          while IFS= read -r asset_id; do
-            [[ -n "$asset_id" ]] || continue
-            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-          done < <(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${{ needs.prepare.outputs.tag }}" \
-            --jq '.assets[] | select(.name | startswith("_internal-") | not) | .id')
+          while IFS= read -r asset; do
+            [[ -n "$asset" ]] || continue
+            gh release delete-asset "${{ needs.prepare.outputs.tag }}" "$asset" --yes
+          done < <(gh release view "${{ needs.prepare.outputs.tag }}" --json assets \
+            --jq '.assets[] | select(.name | startswith("_internal-") | not) | .name')
           while IFS= read -r asset; do
             gh release upload "${{ needs.prepare.outputs.tag }}" \
               "build/release/dist/${asset}" --clobber
@@ -497,12 +497,14 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum -c SHA256SUMS
-          archive="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -print -quit)"
+          archive="$(awk '$2 ~ /^hyperfilelens-.*\.tar\.gz$/ { print $2; exit }' SHA256SUMS)"
           if [[ -z "$archive" ]]; then
-            first="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
+            first="$(awk '$2 ~ /^hyperfilelens-.*\.tar\.gz\.part-000$/ { print $2; exit }' SHA256SUMS)"
             [[ -n "$first" ]]
             archive="${first%.part-000}"
             cat "${archive}.part-"* > "$archive"
+          else
+            [[ -f "$archive" ]]
           fi
           echo "archive=$(realpath "$archive")" >> "$GITHUB_OUTPUT"
       - name: Full offline install and browser login smoke
@@ -521,11 +523,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          while IFS= read -r asset_id; do
-            [[ -n "$asset_id" ]] || continue
-            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-          done < <(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${{ needs.prepare.outputs.tag }}" \
-            --jq '.assets[] | select(.name | startswith("_internal-")) | .id')
+          while IFS= read -r asset; do
+            [[ -n "$asset" ]] || continue
+            gh release delete-asset "${{ needs.prepare.outputs.tag }}" "$asset" --yes
+          done < <(gh release view "${{ needs.prepare.outputs.tag }}" --json assets \
+            --jq '.assets[] | select(.name | startswith("_internal-")) | .name')
           gh release edit "${{ needs.prepare.outputs.tag }}" --draft=false --latest
 
   deploy-preprod:

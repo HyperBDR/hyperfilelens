@@ -605,7 +605,7 @@ ensure_env_file() {
 	version="$(read_version)"
 	secret="$(random_hex)"
 	db_pass="$(random_hex | cut -c1-32)"
-	admin_pass="Hfl-0$(random_hex | cut -c1-20)!"
+	admin_pass="Hfl-0$(random_hex | cut -c1-14)!"
 	host="${PUBLIC_HOST}"
 	if [[ -z "${host}" ]]; then
 		host="$(hostname -I 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if (!found && $i ~ /^[0-9]+\./) { print $i; found = 1 } }' || true)"

@@ -59,7 +59,7 @@ grep -F 'archive.extractall(destination, filter="data")' \
 	"${ROOT}/src/agent/scripts/package.sh" >/dev/null
 grep -F 'chown postgres:postgres /var/lib/postgresql/data' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
-if rg -n 'sourcelens_prepare_source_build_env' \
+if grep -R -n 'sourcelens_prepare_source_build_env' \
 	"${ROOT}/release" "${ROOT}/dev" "${ROOT}/tools/sourcelens" >/dev/null; then
 	printf 'ERROR: obsolete SourceLens prepare helper is still referenced\n' >&2
 	exit 1
@@ -102,6 +102,8 @@ grep -F 'repository: hyperfilelens-backend' "${workflow}" >/dev/null
 grep -F 'repository: hyperfilelens-frontend' "${workflow}" >/dev/null
 grep -F '"$REGISTRY_PREFIX"' "${workflow}" >/dev/null
 grep -F "select(.name | startswith(\"_internal-\") | not)" "${workflow}" >/dev/null
+grep -F 'gh release delete-asset' "${workflow}" >/dev/null
+grep -F "awk '\$2 ~ /^hyperfilelens-.*\\.tar\\.gz\$/" "${workflow}" >/dev/null
 grep -F 'uv run python src/backend/manage.py test' "${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
@@ -132,6 +134,7 @@ fi
 installer="${ROOT}/deploy/installer/install.sh"
 grep -F 'PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"' "${installer}" >/dev/null
 grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
+grep -F 'admin_pass="Hfl-0$(random_hex | cut -c1-14)!"' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
 fingerprint_body="$(sed -n '/^sourcelens_bundle_fingerprint()/,/^}/p' "${installer}")"
 grep -F 'BUILD_INFO.identity' <<<"${fingerprint_body}" >/dev/null
