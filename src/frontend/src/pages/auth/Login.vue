@@ -13,7 +13,7 @@ import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
 
-const registrationEnabled = ref(false)
+const emailSignupEnabled = ref(false)
 const showEula = appConfig.showEula
 const { t, locale } = useI18n()
 const {
@@ -597,7 +597,7 @@ onMounted(async () => {
   formItems.code.value = ''
   void loadGoogleConfig()
   const profile = await fetchDeployProfile()
-  registrationEnabled.value = !!profile?.registration_enabled
+  emailSignupEnabled.value = !!profile?.email_signup_enabled
   await loadCaptchaConfig()
   if (isImageCaptcha.value) {
     await getCode()
@@ -795,7 +795,7 @@ onMounted(async () => {
 
         <!-- Footer: Register + EULA -->
         <div class="login-footer">
-          <div v-if="registrationEnabled" class="footer-row">
+          <div v-if="emailSignupEnabled" class="footer-row">
             <span class="footer-text">{{ t('login.noAccount') }}</span>
             <a href="#" class="footer-link sign-up-link" @click.prevent="goRegister">{{ t('login.freeRegister') }}</a>
           </div>

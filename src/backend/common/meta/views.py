@@ -29,15 +29,15 @@ class DeployProfileView(APIView):
 
     def get(self, request):
         from apps.platform_ops.services.internal.runtime_settings import (
+            email_signup_enabled,
             platform_ops_enabled,
-            registration_enabled,
             self_service_password_reset_enabled,
         )
 
         site_role = resolve_site_role(request)
         payload = {
             "site_role": site_role,
-            "registration_enabled": registration_enabled() if site_role == "tenant" else False,
+            "email_signup_enabled": email_signup_enabled() if site_role == "tenant" else False,
             "platform_ops_enabled": platform_ops_enabled(),
             "self_service_password_reset": self_service_password_reset_enabled(),
             "tenant_public_url": tenant_public_url(),

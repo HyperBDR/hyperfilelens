@@ -64,6 +64,10 @@ class GoogleOAuthCallbackView(View):
 
         frontend = tenant_public_url()
 
+        if not is_google_oauth_enabled():
+            logout(request)
+            return HttpResponseRedirect(f"{frontend}/auth/oauth/error?reason=disabled")
+
         if not request.user.is_authenticated:
             return HttpResponseRedirect(f"{frontend}/auth/oauth/error?reason=not_authenticated")
 

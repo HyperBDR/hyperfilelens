@@ -9,12 +9,14 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect
 
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 
 from apps.iam.services.registration_service import complete_social_user_registration
+from apps.platform_ops.services.internal.runtime_settings import google_oauth_enabled
 from common.deploy.site import tenant_public_url
 
 User = get_user_model()
@@ -23,7 +25,12 @@ logger = logging.getLogger(__name__)
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     def is_open_for_signup(self, request, sociallogin):
-        return True
+        return google_oauth_enabled()
+
+    def get_provider(self, request, provider, client_id=None):
+        if provider == "google" and not google_oauth_enabled():
+            raise PermissionDenied("Google OAuth is disabled")
+        return super().get_provider(request, provider, client_id=client_id)
 
     def get_login_redirect_url(self, request):
         return settings.LOGIN_REDIRECT_URL

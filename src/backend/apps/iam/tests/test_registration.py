@@ -15,7 +15,17 @@ from apps.iam.services.registration_service import (
 )
 
 
-@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    HFL_EMAIL_SIGNUP_ENABLED=True,
+)
+@patch.dict(
+    "os.environ",
+    {
+        "EMAIL_BACKEND": "django.core.mail.backends.locmem.EmailBackend",
+        "HFL_EMAIL_SIGNUP_ENABLED": "true",
+    },
+)
 class RegistrationApiTests(APITestCase):
     def _send_code_payload(self, email: str) -> dict:
         return {
@@ -155,6 +165,47 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"]["error_code"], "VALIDATION_ERROR")
         self.assertIn("code", response.data["error"]["fields"])
+
+
+@override_settings(HFL_EMAIL_SIGNUP_ENABLED=False)
+@patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})
+class EmailSignupDisabledTests(APITestCase):
+    def test_email_signup_endpoints_are_forbidden(self):
+        requests = (
+            (
+                "email_register_send_code",
+                {"email": "disabled@example.com", "id": "captcha", "code": "abcd"},
+            ),
+            (
+                "email_register",
+                {
+                    "first_name": "Disabled",
+                    "last_name": "User",
+                    "email": "disabled@example.com",
+                    "id": "captcha",
+                    "code": "abcd",
+                },
+            ),
+            (
+                "email_register_confirm",
+                {
+                    "email": "disabled@example.com",
+                    "code": "123456",
+                    "password": "Pass1234",
+                },
+            ),
+        )
+
+        for route_name, payload in requests:
+            with self.subTest(route_name=route_name):
+                response = self.client.post(reverse(route_name), payload, format="json")
+                self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+                self.assertEqual(
+                    response.data["error"]["error_code"],
+                    "EMAIL_SIGNUP_DISABLED",
+                )
+
+        self.assertFalse(User.objects.filter(email="disabled@example.com").exists())
 
 
 class RegistrationServiceTests(APITestCase):

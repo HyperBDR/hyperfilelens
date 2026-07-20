@@ -639,7 +639,8 @@ sub_key("POSTGRES_PASSWORD", db_pass)
 sub_key("SEED_ADMIN_PASSWORD", admin_pass)
 sub_key("DJANGO_DEBUG", "false")
 sub_key("SENTRY_ENVIRONMENT", "production")
-sub_key("HFL_REGISTRATION_ENABLED", "true")
+sub_key("HFL_EMAIL_SIGNUP_ENABLED", "false")
+sub_key("HFL_GOOGLE_OAUTH_ENABLED", "false")
 sub_key("HFL_PLATFORM_OPS_ENABLED", "true")
 tenant_port = "10443"
 frontend_url = f"https://{host}:{tenant_port}"

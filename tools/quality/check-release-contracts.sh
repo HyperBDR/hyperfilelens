@@ -89,13 +89,18 @@ grep -F 'tags:' "${workflow}" >/dev/null
 for job in \
 	prepare quality build-hfl-images build-sourcelens-images build-agent \
 	build-host-debs export-hfl-images export-sourcelens-bundle \
-	export-runtime-images assemble-release verify-release publish-release deploy; do
+	export-runtime-images assemble-release verify-release publish-release \
+	deploy-preprod deploy-prod; do
 	grep -F "  ${job}:" "${workflow}" >/dev/null || {
 		printf 'ERROR: release workflow job is missing: %s\n' "${job}" >&2
 		exit 1
 	}
 done
-grep -F "if: \${{ vars.HFL_AUTO_DEPLOY == 'true' }}" "${workflow}" >/dev/null
+grep -F "if: \${{ vars.PREPROD_DEPLOY_ENABLED == 'true' }}" "${workflow}" >/dev/null
+grep -F "vars.PROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
+grep -F 'repository: hyperfilelens-backend' "${workflow}" >/dev/null
+grep -F 'repository: hyperfilelens-frontend' "${workflow}" >/dev/null
+grep -F '"$REGISTRY_PREFIX"' "${workflow}" >/dev/null
 grep -F "select(.name | startswith(\"_internal-\") | not)" "${workflow}" >/dev/null
 grep -F 'uv run python src/backend/manage.py test' "${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
@@ -104,6 +109,12 @@ if grep -F 'uv run pytest src/backend' "${workflow}" >/dev/null; then
 	printf 'ERROR: backend CI must initialize Django through manage.py\n' >&2
 	exit 1
 fi
+
+sourcelens_image_builder="${ROOT}/release/ci/build-sourcelens-image.sh"
+grep -F 'target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"' \
+	"${sourcelens_image_builder}" >/dev/null
+grep -F 'registry prefix must include host and namespace' \
+	"${sourcelens_image_builder}" >/dev/null
 
 remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 [[ -x "${remote_deploy}" ]] || {

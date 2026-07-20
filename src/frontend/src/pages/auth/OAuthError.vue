@@ -11,6 +11,8 @@ const reason = computed(() => String(route.query.reason || 'unknown'))
 
 const message = computed(() => {
   switch (reason.value) {
+    case 'disabled':
+      return t('login.googleErrorOAuthDisabled')
     case 'no_email':
       return t('login.googleErrorNoEmail')
     case 'account_disabled':

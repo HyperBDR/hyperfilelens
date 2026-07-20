@@ -33,6 +33,7 @@ from apps.iam.services.registration_service import (
     validate_password_format,
 )
 from apps.iam.services.token_service import blacklist_all_user_tokens
+from apps.platform_ops.services.internal.runtime_settings import email_signup_enabled
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -60,6 +61,15 @@ def _build_error_response(
 
 def _validate_email_format(email: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email))
+
+
+def _email_signup_disabled_response() -> Response:
+    """Return the canonical response for disabled public email sign-up."""
+    return _build_error_response(
+        "EMAIL_SIGNUP_DISABLED",
+        _("Email sign-up is disabled"),
+        http_status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 def _unique_username_for_email(email: str) -> str:
@@ -141,6 +151,9 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        if not email_signup_enabled():
+            return _email_signup_disabled_response()
+
         email = (request.data.get("email") or "").strip().lower()
 
         if not email or missing_human_verification_fields(request.data):
@@ -256,6 +269,9 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        if not email_signup_enabled():
+            return _email_signup_disabled_response()
+
         first_name = request.data.get("first_name")
         last_name = request.data.get("last_name")
         email = request.data.get("email")
@@ -394,6 +410,9 @@ class EmailRegisterConfirmView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        if not email_signup_enabled():
+            return _email_signup_disabled_response()
+
         email = (request.data.get("email") or "").strip().lower()
         code = request.data.get("code")
         password = request.data.get("password")

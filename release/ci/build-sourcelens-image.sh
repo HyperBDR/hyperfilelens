@@ -8,12 +8,12 @@ ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${ROOT}/tools/sourcelens/common.sh"
 
 usage() {
-	printf 'Usage: %s COMPONENT REGISTRY HFL_VERSION OUTPUT_JSON\n' "$0" >&2
+	printf 'Usage: %s COMPONENT REGISTRY_HOST/NAMESPACE HFL_VERSION OUTPUT_JSON\n' "$0" >&2
 }
 
 [[ $# -eq 4 ]] || { usage; exit 2; }
 component=$1
-registry=${2%/}
+registry_prefix=${2%/}
 hfl_version=${3#v}
 output=$4
 
@@ -23,8 +23,19 @@ frontend) service=frontend ;;
 lensnode) service=lensnode ;;
 *) printf 'ERROR: unsupported SourceLens component: %s\n' "${component}" >&2; exit 2 ;;
 esac
-[[ "${registry}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || {
-	printf 'ERROR: Docker Hub registry namespace is invalid: %s\n' "${registry}" >&2
+[[ "${registry_prefix}" == */* ]] || {
+	printf 'ERROR: registry prefix must include host and namespace: %s\n' "${registry_prefix}" >&2
+	exit 2
+}
+registry_host=${registry_prefix%%/*}
+registry_namespace=${registry_prefix#*/}
+[[ "${registry_host}" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]] || {
+	printf 'ERROR: registry host is invalid: %s\n' "${registry_host}" >&2
+	exit 2
+}
+[[ "${registry_namespace}" =~ ^[a-z0-9][a-z0-9._/-]*$ \
+	&& "${registry_namespace}" != */ && "${registry_namespace}" != *//* ]] || {
+	printf 'ERROR: registry namespace is invalid: %s\n' "${registry_namespace}" >&2
 	exit 2
 }
 [[ "${hfl_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -42,7 +53,7 @@ sourcelens_sync_source
 SOURCELENS_BUILD_SERVICES="${service}" sourcelens_build_app_images 1 0
 
 local_ref="$(sourcelens_upstream_image_ref "${component}")"
-target_ref="${registry}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"
+target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"
 docker image inspect "${local_ref}" >/dev/null
 docker tag "${local_ref}" "${target_ref}"
 docker push "${target_ref}"

@@ -1,0 +1,146 @@
+name: Deploy HFL target
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Published HFL release tag to deploy
+        required: true
+        type: string
+      public_host:
+        description: Public HFL hostname or IP address
+        required: true
+        type: string
+      ssh_host:
+        description: SSH deployment hostname or IP address
+        required: true
+        type: string
+      ssh_port:
+        description: SSH deployment port
+        required: true
+        type: string
+      ssh_user:
+        description: SSH deployment user
+        required: true
+        type: string
+      ssh_known_hosts:
+        description: Verified SSH known_hosts entries
+        required: true
+        type: string
+      turnstile_site_key:
+        description: Public Cloudflare Turnstile site key
+        required: true
+        type: string
+    secrets:
+      ssh_private_key:
+        description: SSH private key for the deployment target
+        required: true
+      turnstile_secret_key:
+        description: Private Cloudflare Turnstile verification key
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      APP_PUBLIC_HOST: ${{ inputs.public_host }}
+      DEPLOY_SSH_HOST: ${{ inputs.ssh_host }}
+      DEPLOY_SSH_PORT: ${{ inputs.ssh_port }}
+      DEPLOY_SSH_USER: ${{ inputs.ssh_user }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
+          TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$APP_PUBLIC_HOST" && "$APP_PUBLIC_HOST" != *[[:space:]]* ]]
+          [[ -n "$DEPLOY_SSH_HOST" && "$DEPLOY_SSH_HOST" != *[[:space:]]* ]]
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" ]]
+          [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
+          [[ "$TURNSTILE_SITE_KEY" =~ ^[A-Za-z0-9_-]+$ ]]
+          [[ "$TURNSTILE_SECRET_KEY" =~ ^[A-Za-z0-9_-]+$ ]]
+
+      - name: Install SSH credentials
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_deploy
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
+
+      - name: Stage Turnstile runtime configuration
+        env:
+          TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_env="$RUNNER_TEMP/hyperfilelens-runtime.env"
+          trap 'rm -f -- "$runtime_env"' EXIT
+          umask 077
+          printf '%s\n' \
+            'CAPTCHA_PROVIDER=turnstile' \
+            "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \
+            "TURNSTILE_SECRET_KEY=$TURNSTILE_SECRET_KEY" \
+            > "$runtime_env"
+          scp -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -P "$DEPLOY_SSH_PORT" \
+            "$runtime_env" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
+
+      - name: Download and deploy the complete release package on the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- \
+              --tag "${{ inputs.tag }}" \
+              --public-host "$APP_PUBLIC_HOST" \
+              --install-dir /opt/hyperfilelens \
+              --runtime-env-file "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
+            < .github/scripts/remote-deploy.sh
+
+      - name: Remove staged runtime configuration
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f ~/.ssh/hyperfilelens_deploy ]]; then
+            ssh -i ~/.ssh/hyperfilelens_deploy \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 \
+              -p "$DEPLOY_SSH_PORT" \
+              "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+              rm -f -- "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
+          fi
+
+      - name: Post-deploy health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -kfsS --retry 24 --retry-delay 5 "https://${APP_PUBLIC_HOST}:10443/health/ready"
+          curl -kfsS --retry 12 --retry-delay 5 "https://${APP_PUBLIC_HOST}:10444/" >/dev/null
+          curl -kfsS --retry 24 --retry-delay 5 "https://${APP_PUBLIC_HOST}:10446/" >/dev/null
