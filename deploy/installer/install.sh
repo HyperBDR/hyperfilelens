@@ -597,7 +597,8 @@ ensure_env_file() {
 	[[ -f "${example}" ]] || die "missing .env.example"
 
 	if [[ -f "${env_file}" ]]; then
-		log ".env already exists; leaving unchanged"
+		log ".env already exists; synchronizing missing keys"
+		sync_env_from_example "${example}"
 		return 0
 	fi
 
@@ -805,32 +806,11 @@ PY
 sync_env_from_example() {
 	local example=$1
 	local env_file="${ROOT}/.env"
+	local sync_script="$(dirname "${example}")/sync-env.py"
 	[[ -f "${example}" ]] || return 0
+	[[ -f "${sync_script}" ]] || die "missing environment sync script: ${sync_script}"
 	step "Merging missing keys from .env.example into .env ..."
-	python3 - "${env_file}" "${example}" <<'PY'
-import pathlib, re, sys
-env_path = pathlib.Path(sys.argv[1])
-example_path = pathlib.Path(sys.argv[2])
-if not env_path.exists():
-    env_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
-    print("[install.sh] created .env from .env.example")
-    raise SystemExit(0)
-env_text = env_path.read_text(encoding="utf-8")
-existing = set(re.findall(r"^([A-Z0-9_]+)=", env_text, flags=re.M))
-added = []
-for line in example_path.read_text(encoding="utf-8").splitlines():
-    if not line or line.lstrip().startswith("#") or "=" not in line:
-        continue
-    key = line.split("=", 1)[0].strip()
-    if key and key not in existing:
-        env_text = env_text.rstrip() + f"\n{line}\n"
-        added.append(key)
-if added:
-    env_path.write_text(env_text, encoding="utf-8")
-    print("[install.sh] merged env keys:", ", ".join(added))
-else:
-    print("[install.sh] no new env keys to merge")
-PY
+	python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
 }
 
 update_env_versions() {
@@ -953,6 +933,7 @@ apply_upgrade_files() {
 	read_version_from_dir "${from_root}" > "${ROOT}/VERSION"
 	cp "${from_root}/MANIFEST.json" "${ROOT}/MANIFEST.json"
 	[[ -f "${from_root}/.env.example" ]] && cp "${from_root}/.env.example" "${ROOT}/.env.example"
+	[[ -f "${from_root}/sync-env.py" ]] && cp "${from_root}/sync-env.py" "${ROOT}/sync-env.py" && chmod +x "${ROOT}/sync-env.py"
 	[[ -f "${from_root}/LICENSE" ]] && cp "${from_root}/LICENSE" "${ROOT}/LICENSE"
 	[[ -f "${from_root}/install.sh" ]] && cp "${from_root}/install.sh" "${ROOT}/install.sh" && chmod +x "${ROOT}/install.sh"
 	if [[ -d "${from_root}/host" ]]; then
