@@ -172,6 +172,7 @@ installer="${ROOT}/deploy/installer/install.sh"
 grep -F 'PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"' "${installer}" >/dev/null
 grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
 grep -F 'admin_pass="Hfl-0$(random_hex | cut -c1-14)!"' "${installer}" >/dev/null
+grep -F 'san_dns="DNS:localhost,DNS:${env_dns}"' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null

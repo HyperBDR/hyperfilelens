@@ -537,7 +537,7 @@ ensure_tls_certs() {
 			san_ip="IP:127.0.0.1,IP:::1,IP:${env_ip}"
 		fi
 		if [[ -n "${env_dns}" ]]; then
-			san_dns="DNS:localhost,${env_dns}"
+			san_dns="DNS:localhost,DNS:${env_dns}"
 		fi
 	fi
 	openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
