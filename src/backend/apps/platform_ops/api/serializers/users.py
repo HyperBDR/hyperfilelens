@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from rest_framework import serializers
 
 from apps.iam.models import Membership
@@ -67,6 +68,17 @@ class PlatformOpsUserCreateSerializer(serializers.Serializer):
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
     is_active = serializers.BooleanField(default=True)
     is_staff = serializers.BooleanField(default=False)
+
+    @staticmethod
+    def validate_email(value: str) -> str:
+        email = value.strip().lower()
+        if User.objects.filter(
+            Q(email__iexact=email) | Q(username__iexact=email)
+        ).exists():
+            raise serializers.ValidationError(
+                "A user with this email already exists."
+            )
+        return email
 
 
 class PlatformOpsUserUpdateSerializer(serializers.Serializer):

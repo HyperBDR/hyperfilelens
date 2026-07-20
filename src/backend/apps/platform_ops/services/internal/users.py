@@ -6,11 +6,32 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from apps.iam.models import Membership
 from apps.iam.profile_models import Profile
-from apps.iam.services.registration_service import validate_password_format
+from apps.iam.services.registration_service import (
+    provision_registered_user_tenant,
+    validate_password_format,
+)
 from common.platform_staff import apply_platform_staff, platform_staff_update_fields
 
 User = get_user_model()
+
+
+def _schedule_chat_user_provision(user: User) -> None:
+    """Queue SourceLens user provisioning after the database transaction commits."""
+    if not user.is_active or user.is_staff:
+        return
+
+    user_id = user.pk
+
+    def enqueue() -> None:
+        from apps.lens_bridge.services.chat_user_provisioning import (
+            enqueue_sl_chat_user_provision,
+        )
+
+        enqueue_sl_chat_user_provision(user_id=user_id)
+
+    transaction.on_commit(enqueue)
 
 
 @transaction.atomic
@@ -48,6 +69,9 @@ def create_platform_user(
             "registered_at": timezone.now(),
         },
     )
+    if not user.is_staff:
+        provision_registered_user_tenant(user)
+        _schedule_chat_user_provision(user)
     return user
 
 
@@ -88,4 +112,13 @@ def reset_platform_user_password(user: User, password: str) -> None:
 def delete_platform_user(*, user: User, actor: User) -> None:
     if actor.pk == user.pk:
         raise ValueError("You cannot delete your own account")
+    if Membership.objects.filter(
+        user=user,
+        role=Membership.Role.OWNER,
+        is_active=True,
+    ).exists():
+        raise ValueError(
+            "This user owns an organization. Disable the account or delete the "
+            "organization before deleting the user."
+        )
     user.delete()
