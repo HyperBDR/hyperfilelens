@@ -45,7 +45,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
     env:
       APP_PUBLIC_HOST: ${{ inputs.public_host }}
       DEPLOY_SSH_HOST: ${{ inputs.ssh_host }}
