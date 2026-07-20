@@ -470,7 +470,7 @@ jobs:
     timeout-minutes: 60
     needs: [prepare, assemble-release]
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Reclaim unused runner toolchains
