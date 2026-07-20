@@ -111,6 +111,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	[[ -n "${first}" ]]
 	archive="${first%.part-000}"
 	cat "${archive}.part-"* >"${archive}"
+	tar -tzf "${archive}" | grep -E '/sync-env\.py$' >/dev/null
 	"${ROOT}/release/ci/verify-release.sh" --archive "$(realpath "${archive}")"
 )
 

@@ -252,9 +252,12 @@ ensure_bridge_network() {
 ensure_env_file() {
 	local env_file="${ROOT}/.env"
 	local example="${ROOT}/.env.example"
+	local sync_script="${ROOT}/tools/config/sync_env.py"
 	[[ -f "${example}" ]] || die ".env.example not found"
 	if [[ -f "${env_file}" ]]; then
-		log ".env exists"
+		[[ -f "${sync_script}" ]] || die "environment sync script not found"
+		python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
+		log ".env exists; missing keys synchronized"
 	else
 		cp "${example}" "${env_file}"
 		log "Created .env from .env.example"

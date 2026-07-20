@@ -163,6 +163,9 @@ Runtime and build settings are documented in [`.env.example`](.env.example).
 The development stack automatically creates the ignored `.env` file from that
 template. Release packages include the same template, while the installer
 generates production secrets and host-specific values before startup.
+When `.env` already exists, development startup and release upgrades append
+missing template keys without overwriting existing values. Deprecated keys are
+left unchanged and reported as ignored so operators can remove them manually.
 
 Configuration precedence for supported build options is:
 

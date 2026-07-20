@@ -136,6 +136,9 @@ grep -F 'PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"' "${installer}" >/dev/null
 grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
 grep -F 'admin_pass="Hfl-0$(random_hex | cut -c1-14)!"' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
+grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
+grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
+	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 fingerprint_body="$(sed -n '/^sourcelens_bundle_fingerprint()/,/^}/p' "${installer}")"
 grep -F 'BUILD_INFO.identity' <<<"${fingerprint_body}" >/dev/null
 if grep -F 'upstream_ref' <<<"${fingerprint_body}" >/dev/null; then
