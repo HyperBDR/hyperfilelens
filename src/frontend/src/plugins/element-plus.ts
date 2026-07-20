@@ -56,31 +56,62 @@ import {
   ElSegmented,
 } from 'element-plus'
 import type { MessageHandler, MessageParamsWithType } from 'element-plus'
-
-function isEmptyMessage(options?: MessageParamsWithType): boolean {
-  if (options == null) return true
-  if (typeof options === 'string') return options.trim() === ''
-  if (typeof options === 'object' && 'message' in options) {
-    const message = options.message
-    return message == null || String(message).trim() === ''
-  }
-  return false
-}
+import { notifyError, notifyInfo, notifySuccess, notifyWarning, type NotifyHandler } from '../lib/notify'
 
 function noopMessageHandler(): MessageHandler {
   return { close: () => undefined } as MessageHandler
 }
 
-function installEmptyErrorMessageGuard() {
-  const originalError = ElMessage.error.bind(ElMessage)
-  ;(ElMessage as typeof ElMessage & { error: typeof ElMessage.error }).error = ((options?: MessageParamsWithType) => {
-    if (isEmptyMessage(options)) return noopMessageHandler()
-    return originalError(options)
-  }) as typeof ElMessage.error
+function bridgeMessageOptions(options?: MessageParamsWithType) {
+  if (options == null) return null
+  if (typeof options === 'string') return { message: options }
+  if (typeof options === 'object' && 'message' in options && typeof options.message === 'string') {
+    return {
+      message: options.message,
+      duration: options.duration,
+      onClose: options.onClose,
+    }
+  }
+  return null
+}
+
+function asMessageHandler(handler: NotifyHandler): MessageHandler {
+  return handler as MessageHandler
+}
+
+let toastMessageBridgeInstalled = false
+
+function installToastMessageBridge() {
+  if (toastMessageBridgeInstalled) return
+  toastMessageBridgeInstalled = true
+  const originals = {
+    success: ElMessage.success.bind(ElMessage),
+    info: ElMessage.info.bind(ElMessage),
+    warning: ElMessage.warning.bind(ElMessage),
+    error: ElMessage.error.bind(ElMessage),
+  }
+  const bridges = {
+    success: notifySuccess,
+    info: notifyInfo,
+    warning: notifyWarning,
+    error: notifyError,
+  }
+
+  for (const type of ['success', 'info', 'warning', 'error'] as const) {
+    ElMessage[type] = ((options?: MessageParamsWithType) => {
+      const normalized = bridgeMessageOptions(options)
+      if (!normalized) {
+        if (type === 'error' && options != null && String(options).trim() === '') return noopMessageHandler()
+        return originals[type](options)
+      }
+      if (!normalized.message.trim()) return noopMessageHandler()
+      return asMessageHandler(bridges[type](normalized))
+    }) as typeof ElMessage[typeof type]
+  }
 }
 
 export function setupElementPlus(app: App) {
-  installEmptyErrorMessageGuard()
+  installToastMessageBridge()
 
   // Register all Element Plus components
   const components = [

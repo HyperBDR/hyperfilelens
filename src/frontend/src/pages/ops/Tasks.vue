@@ -21,6 +21,7 @@ import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerW
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { apiErrorMessage } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
+import { notifyError, notifySuccess } from '../../lib/notify'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { formatTaskProgressBarPercent, formatTaskProgressPercent } from '../../lib/kopiaProgress'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
@@ -608,18 +609,30 @@ async function copyTaskUuid() {
   if (!activeTask.value?.task_uuid) return
   try {
     await copyTextToClipboard(activeTask.value.task_uuid)
-    ElMessage.success({ message: t('ops.task.msgCopied'), grouping: true })
+    notifySuccess({
+      message: t('ops.task.msgCopied'),
+      dedupeKey: `task-copy:${activeTask.value.task_uuid}`,
+    })
   } catch {
-    ElMessage.error({ message: t('ops.task.msgCopyFailed'), grouping: true })
+    notifyError({
+      message: t('ops.task.msgCopyFailed'),
+      dedupeKey: `task-copy-failed:${activeTask.value.task_uuid}`,
+    })
   }
 }
 
 async function copyPayload(value: unknown) {
   try {
     await copyTextToClipboard(formatJson(value))
-    ElMessage.success({ message: t('ops.task.msgCopiedPayload'), grouping: true })
+    notifySuccess({
+      message: t('ops.task.msgCopiedPayload'),
+      dedupeKey: `task-payload-copy:${activeTask.value?.task_uuid || 'unknown'}`,
+    })
   } catch {
-    ElMessage.error({ message: t('ops.task.msgCopyFailed'), grouping: true })
+    notifyError({
+      message: t('ops.task.msgCopyFailed'),
+      dedupeKey: `task-payload-copy-failed:${activeTask.value?.task_uuid || 'unknown'}`,
+    })
   }
 }
 

@@ -2,6 +2,7 @@ import { computed, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../lib/api'
+import { openErrorDetails } from '../lib/errors/details'
 import { aiProviderLabel } from '../lib/aiProviderDisplay'
 import { defaultAiModelDisplayName } from '../lib/aiModelDisplay'
 import {
@@ -312,13 +313,31 @@ export function useAiModelForm(editingUuid: Ref<string | null>) {
         (res as { message?: string }).message ||
         (res as { detail?: string }).detail ||
         (ok ? t('insight.aiSettings.connectivityOk') : t('insight.aiSettings.connectivityFail', { detail: '' }))
-      if (ok) ElMessage.success({ message: t('insight.aiSettings.connectivityOk'), grouping: true })
-      else ElMessage.error({ message: testDetail.value, grouping: true })
+      if (ok) {
+        ElMessage.success({ message: t('insight.aiSettings.connectivityOk'), grouping: true })
+      } else {
+        openErrorDetails({
+          error: res,
+          overrides: {
+            title: t('insight.aiSettings.connectivityFail', { detail: '' }),
+            summary: testDetail.value,
+            issue: testDetail.value,
+            rawDetail: res,
+          },
+        })
+      }
       return ok
     } catch (err) {
       testOk.value = false
       testDetail.value = apiErrorMessage(err, t('insight.aiSettings.connectivityFail', { detail: '' }))
-      ElMessage.error({ message: testDetail.value, grouping: true })
+      openErrorDetails({
+        error: err,
+        overrides: {
+          title: t('insight.aiSettings.connectivityFail', { detail: '' }),
+          summary: testDetail.value,
+          issue: testDetail.value,
+        },
+      })
       return false
     } finally {
       testing.value = false

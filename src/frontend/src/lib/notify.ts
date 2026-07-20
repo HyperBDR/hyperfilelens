@@ -1,70 +1,60 @@
-import { ElMessage } from 'element-plus'
-import type {
-  MessageHandler,
-  MessageOptionsWithType,
-  MessageParamsWithType,
-  MessageType,
-} from 'element-plus'
+import type { ErrorDetailsOverrides } from './errors/details'
+import { errorDetailsCopyText, openErrorDetails, toErrorDetails } from './errors/details'
+import { pushToast, type ToastOptions, type ToastType } from './toast/store'
 
-type NotifyType = Extract<MessageType, 'success' | 'warning' | 'error' | 'info'>
-type NotifyDefaults = Pick<MessageOptionsWithType, 'duration' | 'showClose' | 'offset' | 'grouping'>
-
-const DEFAULTS: Record<NotifyType, NotifyDefaults> = {
-  success: { duration: 2200, showClose: false, offset: 72, grouping: true },
-  info: { duration: 2600, showClose: false, offset: 72, grouping: true },
-  warning: { duration: 3600, showClose: true, offset: 72, grouping: true },
-  error: { duration: 5000, showClose: true, offset: 72, grouping: true },
+export type NotifyOptions = Omit<ToastOptions, 'type' | 'message' | 'details'> & {
+  message: string
+  error?: unknown
+  errorDetails?: ErrorDetailsOverrides
+  showDetails?: boolean
+  detailsPresentation?: 'toast' | 'dialog'
 }
 
-const MESSAGE_OPTION_KEYS = [
-  'appendTo',
-  'customClass',
-  'dangerouslyUseHTMLString',
-  'duration',
-  'grouping',
-  'icon',
-  'message',
-  'offset',
-  'onClose',
-  'placement',
-  'plain',
-  'repeatNum',
-  'showClose',
-  'zIndex',
-]
+export type NotifyInput = string | NotifyOptions
+export type NotifyHandler = { close: () => void }
 
-function isMessageOptions(value: MessageParamsWithType): value is MessageOptionsWithType {
-  return Boolean(
-    value
-      && typeof value === 'object'
-      && !Array.isArray(value)
-      && MESSAGE_OPTION_KEYS.some((key) => key in value),
-  )
-}
+function notify(type: ToastType, input: NotifyInput = ''): NotifyHandler {
+  const options: NotifyOptions = typeof input === 'string' ? { message: input } : input
+  const toastTitle = options.title?.trim() === options.message.trim() ? undefined : options.title
+  const details = options.showDetails && options.error !== undefined
+    ? toErrorDetails(options.error, {
+        title: options.title,
+        summary: options.message,
+        ...options.errorDetails,
+      })
+    : undefined
 
-function notify(type: NotifyType, options?: MessageParamsWithType): MessageHandler {
-  const defaults = DEFAULTS[type]
-  if (isMessageOptions(options)) {
-    return ElMessage[type]({ ...defaults, ...options, grouping: true })
+  if (details && options.detailsPresentation === 'dialog') {
+    openErrorDetails(details)
+    return { close: () => undefined }
   }
 
-  return ElMessage[type]({ ...defaults, message: options ?? '', grouping: true })
+  return pushToast({
+    type,
+    title: toastTitle,
+    message: options.message,
+    dedupeKey: options.dedupeKey,
+    duration: options.duration ?? (details ? 12000 : undefined),
+    copyText: options.copyText || (details ? errorDetailsCopyText(details) : undefined),
+    details,
+    onClose: options.onClose,
+  })
 }
 
-export function notifySuccess(options?: MessageParamsWithType): MessageHandler {
-  return notify('success', options)
+export function notifySuccess(input?: NotifyInput): NotifyHandler {
+  return notify('success', input)
 }
 
-export function notifyWarning(options?: MessageParamsWithType): MessageHandler {
-  return notify('warning', options)
+export function notifyWarning(input?: NotifyInput): NotifyHandler {
+  return notify('warning', input)
 }
 
-export function notifyError(options?: MessageParamsWithType): MessageHandler {
-  return notify('error', options)
+export function notifyError(input?: NotifyInput): NotifyHandler {
+  return notify('error', input)
 }
 
-export function notifyInfo(options?: MessageParamsWithType): MessageHandler {
-  return notify('info', options)
+export function notifyInfo(input?: NotifyInput): NotifyHandler {
+  return notify('info', input)
 }
 
 export { notify }

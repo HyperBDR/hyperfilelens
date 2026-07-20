@@ -37,6 +37,8 @@ import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, isAbortError } from '../../lib/api'
 import { formatAppDateTime } from '../../lib/dateTime'
 import { copyTextToClipboard } from '../../lib/clipboard'
+import { openErrorDetails } from '../../lib/errors/details'
+import { notifyInfo, notifySuccess } from '../../lib/notify'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { hasNasSourceNameConflict, resolveNasSubmitName } from '../../lib/nasSourceNaming'
@@ -563,12 +565,10 @@ async function onTest(row: SourceResource) {
   nasTestingId.value = row.id
   const startedAt = Date.now()
   let runningTitle = t('protection.sourceResources.testConnectionRunning')
-  let loadingMessage = ElMessage({
+  let loadingMessage = notifyInfo({
     message: runningTitle,
-    type: 'info',
     duration: 0,
-    showClose: false,
-  grouping: true,
+    dedupeKey: `source-connection-test:${row.id}`,
   })
   const controller = new AbortController()
   const timeoutId = window.setTimeout(() => controller.abort(), SOURCE_CONNECTION_TEST_TIMEOUT_MS)
@@ -584,12 +584,10 @@ async function onTest(row: SourceResource) {
       closeLoading()
       closedLoading = false
       runningTitle = t('protection.sourceResources.testConnectionRetrying')
-      loadingMessage = ElMessage({
+      loadingMessage = notifyInfo({
         message: runningTitle,
-        type: 'info',
         duration: 0,
-        showClose: false,
-      grouping: true,
+        dedupeKey: `source-connection-test:${row.id}`,
       })
       await sleep(2500)
       r = await testSourceConnection(row.id, { signal: controller.signal })
@@ -597,24 +595,25 @@ async function onTest(row: SourceResource) {
     await waitForMinTestFeedback(startedAt)
     closeLoading()
     if (r.success) {
-      showConnectionTestToast('success', t('protection.sourceResources.testOk'))
+      showConnectionTestSuccess(t('protection.sourceResources.testOk'), row.id)
     } else {
-      showConnectionTestToast('error', connectionTestFailureMessage(r))
+      showConnectionTestError(connectionTestFailureMessage(r), r.details ?? r)
     }
     void load()
   } catch (e) {
     await waitForMinTestFeedback(startedAt)
     closeLoading()
     if (isAbortError(e)) {
-      showConnectionTestToast('error', t('protection.sourceResources.testConnectionTimedOut'))
+      showConnectionTestError(t('protection.sourceResources.testConnectionTimedOut'))
     } else {
       const message = apiErrorMessage(e, t('protection.sourceResources.testFail'))
       const gatewayTimeout = /gateway time/i.test(message)
-      showConnectionTestToast(
-        'error',
+      showConnectionTestError(
         gatewayTimeout
           ? t('protection.sourceResources.testConnectionGatewayTimeout')
           : message,
+        undefined,
+        e,
       )
     }
   } finally {
@@ -863,14 +862,24 @@ async function waitForMinTestFeedback(startedAt: number) {
   if (remain > 0) await sleep(remain)
 }
 
-function showConnectionTestToast(type: 'success' | 'error', message: string) {
-  ElMessage({
-    type,
+function showConnectionTestSuccess(message: string, sourceId: number) {
+  notifySuccess({
     message,
     duration: SOURCE_CONNECTION_TEST_RESULT_TOAST_MS,
-    showClose: false,
-  grouping: true,
+    dedupeKey: `source-connection-test-result:success:${sourceId}`,
   })
+}
+
+function showConnectionTestError(message: string, rawDetail?: unknown, error?: unknown) {
+  const title = t('protection.sourceResources.testFail')
+  if (error !== undefined) {
+    openErrorDetails({
+      error,
+      overrides: { title, summary: message, issue: message, rawDetail },
+    })
+    return
+  }
+  openErrorDetails({ title, summary: message, issue: message, rawDetail })
 }
 const hostMoreActionsOpen = ref(false)
 const nasMoreActionsOpen = ref(false)

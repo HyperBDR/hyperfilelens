@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { ElConfigProvider } from 'element-plus'
 import enLocale from 'element-plus/dist/locale/en.mjs'
 import { installedLangPacks } from './lib/langPacks'
+import HflToastViewport from './components/feedback/HflToastViewport.vue'
+import HflErrorDetailsDialog from './components/feedback/HflErrorDetailsDialog.vue'
 
 const { locale } = useI18n()
 const elLocale = shallowRef(enLocale)
@@ -47,6 +49,8 @@ watch(
         </template>
       </Suspense>
     </RouterView>
+    <HflToastViewport />
+    <HflErrorDetailsDialog />
   </ElConfigProvider>
 </template>
 

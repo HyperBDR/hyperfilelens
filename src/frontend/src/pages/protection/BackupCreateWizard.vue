@@ -53,6 +53,7 @@ import {
 } from '../../lib/resourceIcons'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
+import { notifyError } from '../../lib/notify'
 import { logger } from '../../lib/logger'
 import {
   createBackupConfig,
@@ -201,12 +202,14 @@ function showBackupConfigCreateError(err: unknown, backupName: string, repositor
   const fallback = t('protection.backupsPage.createFailedWithName', { name: backupName })
   const message = apiErrorMessageI18n(err, t, fallback)
   if (!repositoryId || !isSmbMountNegotiationError(message)) {
-    ElMessage({
-      type: 'error',
+    notifyError({
+      title: t('protection.backupsPage.createFailed'),
       message,
       duration: 10000,
-      showClose: true,
-    grouping: true,
+      dedupeKey: `backup-config-create:${repositoryId || backupName}`,
+      error: err,
+      errorDetails: { issue: message },
+      showDetails: true,
     })
     return
   }
