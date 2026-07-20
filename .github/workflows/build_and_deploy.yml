@@ -6,19 +6,16 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 concurrency:
-  group: hyperfilelens-production
+  group: hyperfilelens-release
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 env:
-  REGISTRY: ${{ vars.REGISTRY }}
-  HFL_DEPLOY_PATH: ${{ vars.HFL_DEPLOY_PATH }}
-  HFL_PUBLIC_HOST: ${{ vars.HFL_PUBLIC_HOST }}
-  HFL_SSH_HOST: ${{ vars.HFL_SSH_HOST }}
-  HFL_SSH_PORT: ${{ vars.HFL_SSH_PORT }}
-  HFL_SSH_USER: ${{ vars.HFL_SSH_USER }}
+  REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE }}
+  REGISTRY_PREFIX: ${{ format('{0}/{1}', vars.REGISTRY_HOST, vars.REGISTRY_NAMESPACE) }}
 
 jobs:
   prepare:
@@ -50,8 +47,12 @@ jobs:
             echo "tag=$TAG"
             echo "commit=$GITHUB_SHA"
           } >> "$GITHUB_OUTPUT"
-          [[ "${REGISTRY}" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || {
-            echo "REGISTRY repository variable is missing or invalid" >&2
+          [[ "${REGISTRY_HOST}" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?$ ]] || {
+            echo "REGISTRY_HOST repository variable is missing or invalid" >&2
+            exit 1
+          }
+          [[ "${REGISTRY_NAMESPACE}" =~ ^[a-z0-9][a-z0-9._/-]*$ && "${REGISTRY_NAMESPACE}" != */ && "${REGISTRY_NAMESPACE}" != *//* ]] || {
+            echo "REGISTRY_NAMESPACE repository variable is missing or invalid" >&2
             exit 1
           }
 
@@ -186,7 +187,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
-          registry: docker.io
+          registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
@@ -203,7 +204,7 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ env.REGISTRY }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
+          tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
           build-args: |
             KOPIA_DEB=build/dependencies/kopia/kopia_linux_amd64.deb
             PIP_TIMEOUT=600
@@ -219,7 +220,7 @@ jobs:
       - name: Upload immutable image metadata
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_REF: ${{ env.REGISTRY }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
+          IMAGE_REF: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         shell: bash
         run: |
@@ -250,7 +251,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
-          registry: docker.io
+          registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
@@ -260,7 +261,7 @@ jobs:
         run: |
           ./release/ci/build-sourcelens-image.sh \
             "${{ matrix.component }}" \
-            "$REGISTRY" \
+            "$REGISTRY_PREFIX" \
             "${{ needs.prepare.outputs.version }}" \
             "_internal-sourcelens-${{ matrix.component }}.json"
 
@@ -345,7 +346,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
         with:
-          registry: docker.io
+          registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Download image metadata
@@ -376,7 +377,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
         with:
-          registry: docker.io
+          registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Download image metadata
@@ -409,7 +410,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
         with:
-          registry: docker.io
+          registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - run: ./release/ci/export-runtime-images.sh _internal-runtime-images.tar.gz
@@ -526,55 +527,41 @@ jobs:
             --jq '.assets[] | select(.name | startswith("_internal-")) | .id')
           gh release edit "${{ needs.prepare.outputs.tag }}" --draft=false --latest
 
-  deploy:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+  deploy-preprod:
     needs: [prepare, publish-release]
-    if: ${{ vars.HFL_AUTO_DEPLOY == 'true' }}
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate deployment configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ -n "$HFL_SSH_HOST" ]]
-          [[ -n "$HFL_SSH_USER" ]]
-          # HFL_SSH_PORT is supplied by the workflow-level env map.
-          # shellcheck disable=SC2153
-          [[ "$HFL_SSH_PORT" =~ ^[0-9]+$ ]]
-          [[ "$HFL_DEPLOY_PATH" == /opt/hyperfilelens ]]
-          [[ -n "$HFL_PUBLIC_HOST" ]]
-      - name: Install SSH credentials
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/hyperfilelens_deploy
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
-      - name: Download and deploy the complete release package on the host
-        shell: bash
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/hyperfilelens_deploy \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=20 \
-            -p "$HFL_SSH_PORT" \
-            "$HFL_SSH_USER@$HFL_SSH_HOST" \
-            bash -s -- \
-              --tag "${{ needs.prepare.outputs.tag }}" \
-              --public-host "$HFL_PUBLIC_HOST" \
-              --install-dir "$HFL_DEPLOY_PATH" \
-            < .github/scripts/remote-deploy.sh
-      - name: Post-deploy health checks
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -kfsS --retry 24 --retry-delay 5 "https://${HFL_PUBLIC_HOST}:10443/health/ready"
-          curl -kfsS --retry 12 --retry-delay 5 "https://${HFL_PUBLIC_HOST}:10444/" >/dev/null
-          curl -kfsS --retry 24 --retry-delay 5 "https://${HFL_PUBLIC_HOST}:10446/" >/dev/null
+    if: ${{ vars.PREPROD_DEPLOY_ENABLED == 'true' }}
+    uses: ./.github/workflows/deploy_target.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      public_host: ${{ vars.PREPROD_PUBLIC_HOST }}
+      ssh_host: ${{ vars.PREPROD_SSH_HOST }}
+      ssh_port: ${{ vars.PREPROD_SSH_PORT }}
+      ssh_user: ${{ vars.PREPROD_SSH_USER }}
+      ssh_known_hosts: ${{ vars.PREPROD_SSH_KNOWN_HOSTS }}
+      turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
+    secrets:
+      ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
+      turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}
+
+  deploy-prod:
+    needs: [prepare, publish-release, deploy-preprod]
+    if: >-
+      ${{
+        always() &&
+        vars.PROD_DEPLOY_ENABLED == 'true' &&
+        needs.prepare.result == 'success' &&
+        needs.publish-release.result == 'success' &&
+        (needs.deploy-preprod.result == 'success' || needs.deploy-preprod.result == 'skipped')
+      }}
+    uses: ./.github/workflows/deploy_target.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      public_host: ${{ vars.PROD_PUBLIC_HOST }}
+      ssh_host: ${{ vars.PROD_SSH_HOST }}
+      ssh_port: ${{ vars.PROD_SSH_PORT }}
+      ssh_user: ${{ vars.PROD_SSH_USER }}
+      ssh_known_hosts: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+      turnstile_site_key: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
+    secrets:
+      ssh_private_key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      turnstile_secret_key: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}

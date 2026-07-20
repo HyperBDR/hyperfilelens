@@ -2,7 +2,11 @@
 
 from .env import env_bool, env_csv, env_int, env_str
 
-HFL_REGISTRATION_ENABLED = env_bool("HFL_REGISTRATION_ENABLED", default=True)
+# Preserve an explicitly configured legacy value during upgrades.
+HFL_EMAIL_SIGNUP_ENABLED = env_bool(
+    "HFL_EMAIL_SIGNUP_ENABLED",
+    default=env_bool("HFL_REGISTRATION_ENABLED", default=False),
+)
 HFL_PLATFORM_OPS_ENABLED = env_bool("HFL_PLATFORM_OPS_ENABLED", default=True)
 HFL_SELF_SERVICE_PASSWORD_RESET = env_bool(
     "HFL_SELF_SERVICE_PASSWORD_RESET",

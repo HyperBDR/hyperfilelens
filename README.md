@@ -179,7 +179,8 @@ Common settings include:
 | `HFL_ADMIN_PORT` | `10444` | Platform Operations and Django Admin port |
 | `SOURCELENS_CONSOLE_PORT` | `10446` | SourceLens HTTPS console port |
 | `SOURCELENS_MODE` | `bundled` | Use the bundled or an external SourceLens deployment |
-| `HFL_REGISTRATION_ENABLED` | `true` | Enable public account registration |
+| `HFL_EMAIL_SIGNUP_ENABLED` | `false` | Enable public email/password sign-up |
+| `HFL_GOOGLE_OAUTH_ENABLED` | `false` | Enable Google OAuth sign-in when credentials are configured |
 | `VITE_ENABLE_DEMO_DATA` | `false` | Enable development-only demo records |
 
 Optional download and package mirrors can be set in `.env` or passed as CLI

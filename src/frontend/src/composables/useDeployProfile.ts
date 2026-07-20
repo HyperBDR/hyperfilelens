@@ -1,6 +1,6 @@
 export interface DeployProfile {
   site_role: 'tenant' | 'ops'
-  registration_enabled: boolean
+  email_signup_enabled: boolean
   platform_ops_enabled: boolean
   self_service_password_reset: boolean
   tenant_public_url: string

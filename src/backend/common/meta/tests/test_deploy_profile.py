@@ -1,12 +1,16 @@
+from unittest.mock import patch
+
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 
 @override_settings(
+    HFL_EMAIL_SIGNUP_ENABLED=False,
     HFL_PLATFORM_OPS_ENABLED=True,
     HFL_ADMIN_PORT=10444,
     FRONTEND_URL="https://127.0.0.1:10443",
 )
+@patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})
 class DeployProfileViewTest(TestCase):
     def setUp(self):
         from django.contrib.auth.models import User
@@ -33,6 +37,7 @@ class DeployProfileViewTest(TestCase):
         )
         self.assertFalse(response.data["admin_console_entry_visible"])
         self.assertFalse(response.data["platform_ops_access_allowed"])
+        self.assertFalse(response.data["email_signup_enabled"])
 
     def test_ops_listener_hides_tenant_registration(self):
         response = self.client.get(
@@ -40,7 +45,7 @@ class DeployProfileViewTest(TestCase):
             HTTP_X_HFL_SITE_ROLE="ops",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.data["registration_enabled"])
+        self.assertFalse(response.data["email_signup_enabled"])
 
     def test_staff_is_denied_platform_ops_on_tenant_listener(self):
         self.client.force_authenticate(user=self.staff)

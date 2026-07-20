@@ -103,7 +103,7 @@ export interface PlatformEmailSettings {
 }
 
 export interface PlatformIdentitySettings {
-  registration_enabled: boolean
+  email_signup_enabled: boolean
   self_service_password_reset: boolean
   platform_ops_enabled: boolean
   platform_ops_allowed_cidrs: string[]

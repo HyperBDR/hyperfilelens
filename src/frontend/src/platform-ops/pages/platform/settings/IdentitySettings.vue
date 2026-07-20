@@ -19,7 +19,7 @@ const busy = ref(false)
 const saving = ref(false)
 const meta = ref<PlatformIdentitySettings | null>(null)
 const form = reactive({
-  registration_enabled: true,
+  email_signup_enabled: false,
   self_service_password_reset: true,
   platform_ops_enabled: true,
   platform_ops_allowed_cidrs: '',
@@ -34,7 +34,7 @@ async function load() {
   try {
     const data = await fetchPlatformIdentitySettings()
     meta.value = data
-    form.registration_enabled = data.registration_enabled
+    form.email_signup_enabled = data.email_signup_enabled
     form.self_service_password_reset = data.self_service_password_reset
     form.platform_ops_enabled = data.platform_ops_enabled
     form.platform_ops_allowed_cidrs = (data.platform_ops_allowed_cidrs || []).join(', ')
@@ -53,7 +53,7 @@ async function save() {
   saving.value = true
   try {
     const body: Record<string, unknown> = {
-      registration_enabled: form.registration_enabled,
+      email_signup_enabled: form.email_signup_enabled,
       self_service_password_reset: form.self_service_password_reset,
       platform_ops_enabled: form.platform_ops_enabled,
       platform_ops_allowed_cidrs: form.platform_ops_allowed_cidrs,
@@ -80,8 +80,8 @@ onMounted(load)
   <ModulePage :menus="sideNav" body-fill>
     <div v-loading="busy" class="platform-settings">
       <el-form label-position="top" class="platform-settings__form">
-        <el-form-item :label="t('platformOps.settings.identity.registration')">
-          <el-switch v-model="form.registration_enabled" />
+        <el-form-item :label="t('platformOps.settings.identity.emailSignup')">
+          <el-switch v-model="form.email_signup_enabled" />
         </el-form-item>
         <el-form-item :label="t('platformOps.settings.identity.passwordReset')">
           <el-switch v-model="form.self_service_password_reset" />

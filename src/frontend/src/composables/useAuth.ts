@@ -359,7 +359,7 @@ export function setupAuthGuard() {
 
     if (to.path === '/register') {
       const profile = await fetchDeployProfile()
-      if (profile && !profile.registration_enabled) {
+      if (profile && !profile.email_signup_enabled) {
         next('/login')
         return
       }

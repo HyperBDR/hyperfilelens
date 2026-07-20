@@ -36,11 +36,12 @@ from apps.platform_ops.services.internal.runtime_settings import (
     KEY_EMAIL_USE_SSL,
     KEY_EMAIL_USE_TLS,
     KEY_IDENTITY_CAPTCHA_PROVIDER,
+    KEY_IDENTITY_EMAIL_SIGNUP,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
+    KEY_IDENTITY_GOOGLE_OAUTH,
     KEY_IDENTITY_OPS_CIDRS,
     KEY_IDENTITY_PASSWORD_RESET,
     KEY_IDENTITY_PLATFORM_OPS,
-    KEY_IDENTITY_REGISTRATION,
     KEY_IDENTITY_TURNSTILE_SITE,
     SECRET_KEY_AZURE,
     SECRET_KEY_EMAIL_PASSWORD,
@@ -51,6 +52,7 @@ from apps.platform_ops.services.internal.runtime_settings import (
     SECRET_KEY_OPENAI,
     SECRET_KEY_TURNSTILE,
     captcha_provider,
+    email_signup_enabled,
     email_connection_kwargs,
     gemini_api_key,
     get_source,
@@ -61,7 +63,6 @@ from apps.platform_ops.services.internal.runtime_settings import (
     openai_api_key,
     platform_ops_allowed_cidrs,
     platform_ops_enabled,
-    registration_enabled,
     secret_configured,
     self_service_password_reset_enabled,
     set_bool,
@@ -189,7 +190,7 @@ class PlatformOpsSettingsIdentityView(APIView):
     def get(self, request):
         return Response(
             {
-                "registration_enabled": registration_enabled(),
+                "email_signup_enabled": email_signup_enabled(),
                 "self_service_password_reset": self_service_password_reset_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
@@ -220,7 +221,8 @@ class PlatformOpsSettingsIdentityView(APIView):
     def patch(self, request):
         data = request.data or {}
         bool_map = {
-            "registration_enabled": KEY_IDENTITY_REGISTRATION,
+            "email_signup_enabled": KEY_IDENTITY_EMAIL_SIGNUP,
+            "google_oauth_enabled": KEY_IDENTITY_GOOGLE_OAUTH,
             "self_service_password_reset": KEY_IDENTITY_PASSWORD_RESET,
             "platform_ops_enabled": KEY_IDENTITY_PLATFORM_OPS,
         }
@@ -473,7 +475,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 "django_debug": deploy_profile_staff_payload().get("django_debug"),
                 "effective": {
                     "tenant_public_url": tenant_public_url(),
-                    "registration_enabled": registration_enabled(),
+                    "email_signup_enabled": email_signup_enabled(),
                     "self_service_password_reset": self_service_password_reset_enabled(),
                     "platform_ops_enabled": platform_ops_enabled(),
                     "captcha_provider": captcha_provider(),
@@ -483,7 +485,8 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                     "openai_configured": bool(openai_api_key()),
                 },
                 "sources": {
-                    "registration_enabled": get_source(KEY_IDENTITY_REGISTRATION),
+                    "email_signup_enabled": get_source(KEY_IDENTITY_EMAIL_SIGNUP),
+                    "google_oauth_enabled": get_source(KEY_IDENTITY_GOOGLE_OAUTH),
                     "captcha_provider": get_source(KEY_IDENTITY_CAPTCHA_PROVIDER),
                     "email_host": get_source(KEY_EMAIL_HOST),
                 },

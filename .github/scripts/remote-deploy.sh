@@ -6,6 +6,7 @@ REPOSITORY="HyperBDR/hyperfilelens"
 TAG=""
 INSTALL_DIR="/opt/hyperfilelens"
 PUBLIC_HOST=""
+RUNTIME_ENV_FILE=""
 
 usage() {
 	cat <<'USAGE'
@@ -13,6 +14,7 @@ Usage: remote-deploy.sh --tag vX.Y.Z --public-host HOST [options]
 
   --repository OWNER/REPO  Public GitHub repository (default: HyperBDR/hyperfilelens)
   --install-dir DIR        HFL install directory (default: /opt/hyperfilelens)
+  --runtime-env-file PATH  Root-only staged runtime configuration under /var/tmp
 USAGE
 }
 
@@ -22,6 +24,7 @@ while [[ $# -gt 0 ]]; do
 	--public-host) PUBLIC_HOST=${2:-}; shift 2 ;;
 	--repository) REPOSITORY=${2:-}; shift 2 ;;
 	--install-dir) INSTALL_DIR=${2:-}; shift 2 ;;
+	--runtime-env-file) RUNTIME_ENV_FILE=${2:-}; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) printf 'ERROR: unknown argument: %s\n' "$1" >&2; exit 2 ;;
 	esac
@@ -37,6 +40,17 @@ done
 	printf 'ERROR: --public-host is required\n' >&2
 	exit 2
 }
+if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
+	[[ "${RUNTIME_ENV_FILE}" =~ ^/var/tmp/hyperfilelens-runtime-[0-9]+\.env$ ]] || {
+		printf 'ERROR: invalid --runtime-env-file path\n' >&2
+		exit 2
+	}
+	[[ -f "${RUNTIME_ENV_FILE}" && ! -L "${RUNTIME_ENV_FILE}" ]] || {
+		printf 'ERROR: staged runtime configuration is missing or unsafe\n' >&2
+		exit 2
+	}
+	chmod 0600 "${RUNTIME_ENV_FILE}"
+fi
 command -v curl >/dev/null || { printf 'ERROR: curl is required\n' >&2; exit 1; }
 command -v python3 >/dev/null || { printf 'ERROR: python3 is required\n' >&2; exit 1; }
 command -v flock >/dev/null || { printf 'ERROR: flock is required\n' >&2; exit 1; }
@@ -48,7 +62,13 @@ if ! flock -n 9; then
 fi
 
 work="$(mktemp -d /var/tmp/hyperfilelens-deploy.XXXXXX)"
-trap 'rm -rf "${work}"' EXIT INT TERM
+cleanup() {
+	rm -rf "${work}"
+	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
+		rm -f -- "${RUNTIME_ENV_FILE}"
+	fi
+}
+trap cleanup EXIT INT TERM
 api="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
 printf '[deploy] Resolving published release %s\n' "${TAG}"
 curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "${api}" -o "${work}/release.json"
@@ -147,6 +167,56 @@ else
 	printf '[deploy] Installing HFL %s\n' "${TAG}"
 	HFL_PUBLIC_HOST="${PUBLIC_HOST}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 		bash "${package_root}/install.sh" install
+fi
+
+if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
+	printf '[deploy] Applying staged runtime configuration\n'
+	python3 - "${INSTALL_DIR}/.env" "${RUNTIME_ENV_FILE}" <<'PY'
+import os
+import pathlib
+import re
+import sys
+
+env_path = pathlib.Path(sys.argv[1])
+staged_path = pathlib.Path(sys.argv[2])
+allowed = {"CAPTCHA_PROVIDER", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"}
+values = {}
+for raw_line in staged_path.read_text(encoding="utf-8").splitlines():
+    if not raw_line or raw_line.startswith("#"):
+        continue
+    key, separator, value = raw_line.partition("=")
+    if not separator or key not in allowed or not value or re.search(r"[\r\n]", value):
+        raise SystemExit("invalid staged runtime configuration")
+    values[key] = value
+if set(values) != allowed or values["CAPTCHA_PROVIDER"] != "turnstile":
+    raise SystemExit("incomplete staged Turnstile configuration")
+
+lines = env_path.read_text(encoding="utf-8").splitlines()
+updated = []
+seen = set()
+for line in lines:
+    key = line.split("=", 1)[0] if "=" in line else ""
+    if key in values:
+        updated.append(f"{key}={values[key]}")
+        seen.add(key)
+    else:
+        updated.append(line)
+for key in ("CAPTCHA_PROVIDER", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
+    if key not in seen:
+        updated.append(f"{key}={values[key]}")
+
+temporary = env_path.with_name(f"{env_path.name}.turnstile.tmp")
+temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
+os.chmod(temporary, 0o600)
+os.replace(temporary, env_path)
+PY
+	rm -f -- "${RUNTIME_ENV_FILE}"
+	RUNTIME_ENV_FILE=""
+	printf '[deploy] Recreating HFL API with updated runtime configuration\n'
+	(
+		cd "${INSTALL_DIR}"
+		docker compose --env-file .env -f docker-compose.yml up -d --force-recreate api
+	)
 fi
 
 mkdir -p "${INSTALL_DIR}/packages"

@@ -135,13 +135,13 @@ export function usePlatformOpsSideNav() {
 
 export function usePlatformOpsAccess() {
   const ready = ref(false)
-  const registrationEnabled = ref(false)
+  const emailSignupEnabled = ref(false)
   const tenantPublicUrl = ref('')
 
   async function load() {
     const { fetchDeployProfile } = await import('../../composables/useDeployProfile')
     const profile = await fetchDeployProfile()
-    registrationEnabled.value = !!profile?.registration_enabled
+    emailSignupEnabled.value = !!profile?.email_signup_enabled
     tenantPublicUrl.value = profile?.tenant_public_url || ''
     ready.value = true
     return profile
@@ -153,7 +153,7 @@ export function usePlatformOpsAccess() {
 
   return {
     ready,
-    registrationEnabled,
+    emailSignupEnabled,
     tenantPublicUrl,
     load,
   }

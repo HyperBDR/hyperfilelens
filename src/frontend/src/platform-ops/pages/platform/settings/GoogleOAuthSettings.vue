@@ -18,6 +18,7 @@ const busy = ref(false)
 const saving = ref(false)
 const meta = ref<PlatformIdentitySettings | null>(null)
 const form = reactive({
+  google_oauth_enabled: false,
   google_client_id: '',
   google_client_secret: '',
 })
@@ -27,6 +28,7 @@ async function load() {
   try {
     const data = await fetchPlatformIdentitySettings()
     meta.value = data
+    form.google_oauth_enabled = data.google_oauth_enabled
     form.google_client_id = data.google_client_id || ''
     form.google_client_secret = ''
   } catch (err) {
@@ -40,6 +42,7 @@ async function save() {
   saving.value = true
   try {
     const body: Record<string, unknown> = {
+      google_oauth_enabled: form.google_oauth_enabled,
       google_client_id: form.google_client_id,
     }
     if (form.google_client_secret.trim()) body.google_client_secret = form.google_client_secret
@@ -68,6 +71,9 @@ onMounted(load)
 
       <div class="platform-settings__panel">
         <el-form label-position="top" class="platform-settings__form">
+          <el-form-item :label="t('platformOps.settings.identity.googleOAuthEnabled')">
+            <el-switch v-model="form.google_oauth_enabled" />
+          </el-form-item>
           <el-form-item :label="t('platformOps.settings.identity.googleClientId')">
             <el-input v-model="form.google_client_id" autocomplete="off" />
           </el-form-item>

@@ -1,5 +1,7 @@
 """Tests for Google OAuth login and social registration."""
 
+from unittest.mock import patch
+
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
 from django.urls import reverse
@@ -13,8 +15,10 @@ from apps.iam.services.registration_service import complete_social_user_registra
 @override_settings(
     GOOGLE_CLIENT_ID="test-client-id",
     GOOGLE_CLIENT_SECRET="test-client-secret",
+    HFL_GOOGLE_OAUTH_ENABLED=True,
     FRONTEND_URL="https://app.example.com",
 )
+@patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "true"})
 class GoogleOAuthConfigTests(APITestCase):
     def test_google_config_enabled(self):
         response = self.client.get(reverse("google_oauth_config"))
@@ -26,17 +30,30 @@ class GoogleOAuthConfigTests(APITestCase):
             "https://app.example.com/accounts/google/login/",
         )
 
+    @override_settings(GOOGLE_CLIENT_ID="", GOOGLE_CLIENT_SECRET="")
+    @patch.dict("os.environ", {"GOOGLE_CLIENT_ID": "", "GOOGLE_CLIENT_SECRET": ""})
+    def test_google_config_requires_credentials(self):
+        response = self.client.get(reverse("google_oauth_config"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["data"]["enabled"])
+
 
 @override_settings(
-    GOOGLE_CLIENT_ID="",
-    GOOGLE_CLIENT_SECRET="",
+    GOOGLE_CLIENT_ID="test-client-id",
+    GOOGLE_CLIENT_SECRET="test-client-secret",
+    HFL_GOOGLE_OAUTH_ENABLED=False,
     FRONTEND_URL="https://app.example.com",
 )
+@patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "false"})
 class GoogleOAuthDisabledTests(APITestCase):
     def test_google_config_disabled(self):
         response = self.client.get(reverse("google_oauth_config"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(response.data["data"]["enabled"])
+
+    def test_google_login_endpoint_is_forbidden(self):
+        response = self.client.get(reverse("google_login"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class SocialRegistrationServiceTests(APITestCase):
@@ -60,8 +77,12 @@ class SocialRegistrationServiceTests(APITestCase):
 
 
 @override_settings(
+    GOOGLE_CLIENT_ID="test-client-id",
+    GOOGLE_CLIENT_SECRET="test-client-secret",
+    HFL_GOOGLE_OAUTH_ENABLED=True,
     FRONTEND_URL="https://app.example.com",
 )
+@patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "true"})
 class GoogleOAuthCallbackTests(APITestCase):
     def test_oauth_callback_issues_cookies_and_redirects(self):
         user = User.objects.create_user(

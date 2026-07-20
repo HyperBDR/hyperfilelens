@@ -20,13 +20,14 @@ KEY_EMAIL_USE_SSL = "email.use_ssl"
 KEY_EMAIL_HOST_USER = "email.host_user"
 KEY_EMAIL_FROM = "email.from_email"
 
-KEY_IDENTITY_REGISTRATION = "identity.registration_enabled"
+KEY_IDENTITY_EMAIL_SIGNUP = "identity.email_signup_enabled"
 KEY_IDENTITY_PASSWORD_RESET = "identity.self_service_password_reset"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
 KEY_IDENTITY_CAPTCHA_PROVIDER = "identity.captcha_provider"
 KEY_IDENTITY_TURNSTILE_SITE = "identity.turnstile_site_key"
 KEY_IDENTITY_GOOGLE_CLIENT_ID = "identity.google_client_id"
+KEY_IDENTITY_GOOGLE_OAUTH = "identity.google_oauth_enabled"
 
 KEY_AI_OPENAI_BASE = "ai.openai_api_base"
 KEY_AI_AZURE_BASE = "ai.azure_openai_api_base"
@@ -257,12 +258,13 @@ def set_str_list(key: str, values: list[str], *, user: AbstractBaseUser | None =
 # --- Effective getters used by overlay consumers ---
 
 
-def registration_enabled() -> bool:
+def email_signup_enabled() -> bool:
+    """Return whether anonymous email/password account creation is allowed."""
     return get_bool(
-        KEY_IDENTITY_REGISTRATION,
-        env_name="HFL_REGISTRATION_ENABLED",
-        settings_attr="HFL_REGISTRATION_ENABLED",
-        default=True,
+        KEY_IDENTITY_EMAIL_SIGNUP,
+        env_name="HFL_EMAIL_SIGNUP_ENABLED",
+        settings_attr="HFL_EMAIL_SIGNUP_ENABLED",
+        default=False,
     )
 
 
@@ -331,7 +333,14 @@ def google_client_secret() -> str:
 
 
 def google_oauth_enabled() -> bool:
-    return bool(google_client_id() and google_client_secret())
+    """Return whether Google OAuth is explicitly enabled and configured."""
+    policy_enabled = get_bool(
+        KEY_IDENTITY_GOOGLE_OAUTH,
+        env_name="HFL_GOOGLE_OAUTH_ENABLED",
+        settings_attr="HFL_GOOGLE_OAUTH_ENABLED",
+        default=False,
+    )
+    return bool(policy_enabled and google_client_id() and google_client_secret())
 
 
 def email_backend() -> str:
