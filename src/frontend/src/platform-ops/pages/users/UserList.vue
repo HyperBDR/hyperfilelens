@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { RefreshCw, Search } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
 import HflPagination from '../../../components/HflPagination.vue'
@@ -20,7 +21,7 @@ import {
   listPlatformOpsUsers,
   type PlatformOpsUser,
 } from '../../lib/platformOpsUserApi'
-import { apiErrorMessage } from '../../../lib/api'
+import { apiErrorMessage, type ApiError } from '../../../lib/api'
 import { PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT, PLATFORM_OPS_TABLE_HEADER_STYLE } from '../../lib/tableUi'
 import { useListSearch } from '../../../composables/useListSearch'
 
@@ -53,12 +54,91 @@ const { appliedSearch, clearSearch } = useListSearch(search, () => {
 
 const createOpen = ref(false)
 const createBusy = ref(false)
+const createFormRef = ref<FormInstance | null>(null)
 const createForm = ref({
   email: '',
   password: '',
+  confirm_password: '',
   is_active: true,
-  is_staff: false,
 })
+const createFieldErrors = ref({
+  email: '',
+  password: '',
+})
+const supportedPasswordPattern = /^[A-Za-z\d.!"@#$%&'*():;\\+/=?^_`{|}~><-]+$/
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const createRules = computed<FormRules>(() => ({
+  email: [
+    {
+      validator: (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+        const email = String(value || '').trim()
+        if (!email) {
+          callback(new Error(t('platformOps.users.validateEmailRequired')))
+          return
+        }
+        if (!emailPattern.test(email)) {
+          callback(new Error(t('platformOps.users.validateEmailInvalid')))
+          return
+        }
+        callback()
+      },
+      trigger: ['blur', 'change'],
+    },
+  ],
+  password: [
+    {
+      validator: (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+        const password = String(value || '')
+        if (!password) {
+          callback(new Error(t('platformOps.users.validatePasswordRequired')))
+          return
+        }
+        const valid = password.length >= 8
+          && password.length <= 20
+          && supportedPasswordPattern.test(password)
+          && /[a-z]/.test(password)
+          && /[A-Z]/.test(password)
+          && /\d/.test(password)
+        callback(valid ? undefined : new Error(t('platformOps.users.validatePasswordFormat')))
+      },
+      trigger: ['blur', 'change'],
+    },
+  ],
+  confirm_password: [
+    {
+      validator: (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+        if (!value) {
+          callback(new Error(t('platformOps.users.validateConfirmPasswordRequired')))
+          return
+        }
+        callback(value === createForm.value.password
+          ? undefined
+          : new Error(t('platformOps.users.validateConfirmPasswordMismatch')))
+      },
+      trigger: ['blur', 'change'],
+    },
+  ],
+}))
+
+function clearCreateFieldError(field: 'email' | 'password') {
+  createFieldErrors.value[field] = ''
+}
+
+function applyCreateFieldErrors(error: unknown) {
+  const fields = (error as Partial<ApiError> | null)?.fields
+  if (!fields) return false
+
+  let applied = false
+  for (const field of ['email', 'password'] as const) {
+    const message = fields[field]?.[0]
+    if (message) {
+      createFieldErrors.value[field] = message
+      applied = true
+    }
+  }
+  return applied
+}
 
 async function load() {
   busy.value = true
@@ -80,24 +160,47 @@ async function load() {
   }
 }
 
-function openCreate() {
-  createForm.value = { email: '', password: '', is_active: true, is_staff: false }
+async function openCreate() {
+  createForm.value = { email: '', password: '', confirm_password: '', is_active: true }
+  createFieldErrors.value = { email: '', password: '' }
   createOpen.value = true
+  await nextTick()
+  createFormRef.value?.clearValidate()
 }
 
 async function submitCreate() {
+  if (createBusy.value) return
+  createFieldErrors.value = { email: '', password: '' }
+  const valid = await createFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+
   createBusy.value = true
   try {
-    const user = await createPlatformOpsUser(createForm.value)
+    const user = await createPlatformOpsUser({
+      email: createForm.value.email.trim(),
+      password: createForm.value.password,
+      is_active: createForm.value.is_active,
+    })
     createOpen.value = false
     ElMessage.success({ message: t('platformOps.users.createSuccess'), grouping: true })
     await load()
     router.push(`/platform-ops/users/${user.id}`)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('platformOps.users.createFailed')), grouping: true })
+    if (!applyCreateFieldErrors(err)) {
+      ElMessage.error({ message: apiErrorMessage(err, t('platformOps.users.createFailed')), grouping: true })
+    }
   } finally {
     createBusy.value = false
   }
+}
+
+function closeCreate(done?: () => void) {
+  if (createBusy.value) return
+  if (done) {
+    done()
+    return
+  }
+  createOpen.value = false
 }
 
 function goDetail(row: PlatformOpsUser) {
@@ -231,24 +334,92 @@ watch([currentPage, pageSize], load)
       </div>
     </div>
 
-    <el-dialog v-model="createOpen" :title="t('platformOps.users.createTitle')" width="480px">
-      <el-form label-width="120px" @submit.prevent="submitCreate">
-        <el-form-item :label="t('platformOps.users.fieldEmail')" required>
-          <el-input v-model="createForm.email" type="email" autocomplete="off" />
+    <el-dialog
+      v-model="createOpen"
+      :title="t('platformOps.users.createTitle')"
+      width="480px"
+      :before-close="closeCreate"
+      :close-on-click-modal="!createBusy"
+      :close-on-press-escape="!createBusy"
+      :show-close="!createBusy"
+    >
+      <el-alert
+        class="create-user-hint"
+        type="info"
+        :title="t('platformOps.users.createTenantHint')"
+        :closable="false"
+        show-icon
+      />
+      <el-form
+        ref="createFormRef"
+        :model="createForm"
+        :rules="createRules"
+        label-position="top"
+        @submit.prevent="submitCreate"
+      >
+        <el-form-item
+          prop="email"
+          :label="t('platformOps.users.fieldEmail')"
+          :error="createFieldErrors.email"
+        >
+          <el-input
+            v-model="createForm.email"
+            type="email"
+            autocomplete="off"
+            :disabled="createBusy"
+            @input="clearCreateFieldError('email')"
+          />
         </el-form-item>
-        <el-form-item :label="t('platformOps.users.fieldPassword')" required>
-          <el-input v-model="createForm.password" type="password" show-password autocomplete="new-password" />
+        <el-form-item
+          prop="password"
+          :label="t('platformOps.users.fieldInitialPassword')"
+          :error="createFieldErrors.password"
+        >
+          <el-input
+            v-model="createForm.password"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :disabled="createBusy"
+            @input="clearCreateFieldError('password')"
+          />
+          <div class="create-user-password-hint">
+            {{ t('platformOps.users.passwordRequirements') }}
+          </div>
+        </el-form-item>
+        <el-form-item
+          prop="confirm_password"
+          :label="t('platformOps.users.fieldConfirmPassword')"
+        >
+          <el-input
+            v-model="createForm.confirm_password"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :disabled="createBusy"
+          />
         </el-form-item>
         <el-form-item :label="t('platformOps.users.fieldActive')">
-          <el-switch v-model="createForm.is_active" />
-        </el-form-item>
-        <el-form-item :label="t('platformOps.users.fieldStaff')">
-          <el-switch v-model="createForm.is_staff" />
+          <el-switch
+            v-model="createForm.is_active"
+            :disabled="createBusy"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="createOpen = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="createBusy" @click="submitCreate">{{ t('common.confirm') }}</el-button>
+        <el-button
+          :disabled="createBusy"
+          @click="closeCreate()"
+        >
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="createBusy"
+          @click="submitCreate"
+        >
+          {{ t('common.confirm') }}
+        </el-button>
       </template>
     </el-dialog>
     <DangerConfirmDialog
@@ -267,3 +438,16 @@ watch([currentPage, pageSize], load)
     />
   </ModulePage>
 </template>
+
+<style scoped>
+.create-user-hint {
+  margin-bottom: 20px;
+}
+
+.create-user-password-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+</style>
