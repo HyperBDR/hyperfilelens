@@ -207,6 +207,14 @@ grep -F 'HFL_TENANT_PORT=11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'HFL_ADMIN_PORT=11444' "${ROOT}/.env.example" >/dev/null
 grep -F 'FRONTEND_URL=https://127.0.0.1:11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
+smoke_runner="${ROOT}/tools/dev/browser-smoke.sh"
+grep -F -- '--add-host host.docker.internal:host-gateway' "${smoke_runner}" >/dev/null
+grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
+grep -F 'host.docker.internal' "${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
+if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
+	printf 'ERROR: browser smoke must reach published ports through host-gateway\n' >&2
+	exit 1
+fi
 grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'mem_limit: 448m' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'name: hyperfilelens-sourcelens' \

@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 const require = createRequire('/smoke/package.json')
 const { chromium } = require('playwright')
 
+const smokeHost = process.env.SMOKE_HOST || 'host.docker.internal'
 const tenantPort = process.env.HFL_TENANT_PORT || '11443'
 const adminPort = process.env.HFL_ADMIN_PORT || '11444'
 const sourceLensPort = process.env.SOURCELENS_CONSOLE_PORT || '11445'
@@ -94,7 +95,7 @@ async function run() {
     const tenant = await browser.newContext({ ignoreHTTPSErrors: true })
     await waitForHflLogin(
       await tenant.newPage(),
-      `https://127.0.0.1:${tenantPort}`,
+      `https://${smokeHost}:${tenantPort}`,
       '/',
     )
     await tenant.close()
@@ -102,7 +103,7 @@ async function run() {
     const admin = await browser.newContext({ ignoreHTTPSErrors: true })
     await waitForHflLogin(
       await admin.newPage(),
-      `https://127.0.0.1:${adminPort}`,
+      `https://${smokeHost}:${adminPort}`,
       '/platform-ops',
     )
     await admin.close()
@@ -110,7 +111,7 @@ async function run() {
     const sourceLens = await browser.newContext({ ignoreHTTPSErrors: true })
     await waitForSourceLensLogin(
       await sourceLens.newPage(),
-      `https://127.0.0.1:${sourceLensPort}`,
+      `https://${smokeHost}:${sourceLensPort}`,
     )
     await sourceLens.close()
   } finally {
