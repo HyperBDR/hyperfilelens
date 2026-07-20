@@ -133,6 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/quality/check-english-source.py
+          python3 -m unittest tools/quality/test_check_english_source.py
           ./tools/quality/check-release-contracts.sh
           ./tools/quality/test-ci-release-assembly.sh
           git diff --check

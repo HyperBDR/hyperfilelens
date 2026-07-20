@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,32 +25,27 @@ CJK_PATTERN = re.compile(
     "\U00020000-\U0002fa1f"
     "]",
 )
-SKIPPED_DIRECTORY_NAMES = {
-    ".git",
-    ".agents",
-    ".codex",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "__pycache__",
-    "dist",
-    "node_modules",
-}
-SKIPPED_TOP_LEVEL_DIRECTORIES = {"build", "data"}
 
 
 def iter_public_files() -> Iterator[Path]:
-    """Yield public repository files while excluding runtime and generated trees."""
-    for path in REPOSITORY_ROOT.rglob("*"):
-        relative_path = path.relative_to(REPOSITORY_ROOT)
-        if (
-            relative_path.parts
-            and relative_path.parts[0] in SKIPPED_TOP_LEVEL_DIRECTORIES
-        ):
+    """Yield tracked files and untracked files that Git does not ignore."""
+    result = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    for raw_relative_path in result.stdout.split(b"\0"):
+        if not raw_relative_path:
             continue
-        if any(part in SKIPPED_DIRECTORY_NAMES for part in path.parts):
-            continue
+        path = REPOSITORY_ROOT / os.fsdecode(raw_relative_path)
         if path.is_file():
             yield path
 

@@ -293,6 +293,7 @@ The public repository requires English source, comments, and documentation:
 
 ```bash
 python3 tools/quality/check-english-source.py
+python3 -m unittest tools/quality/test_check_english_source.py
 ./tools/quality/check-release-contracts.sh
 ```
 
