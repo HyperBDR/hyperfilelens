@@ -182,6 +182,11 @@ if grep -E 'tomllib|extractall\([^)]*filter=' "${installer}" >/dev/null; then
 	printf 'ERROR: installer contains Python APIs unavailable on Ubuntu 20.04\n' >&2
 	exit 1
 fi
+
+release_verifier="${ROOT}/release/ci/verify-release.sh"
+grep -F 'smoke_host="${SMOKE_HOST:-host.docker.internal}"' "${release_verifier}" >/dev/null
+grep -F 'HFL_PUBLIC_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
+grep -F 'export SMOKE_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 fingerprint_body="$(sed -n '/^sourcelens_bundle_fingerprint()/,/^}/p' "${installer}")"

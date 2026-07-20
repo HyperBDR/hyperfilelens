@@ -64,7 +64,8 @@ available_kib="$(df -Pk / | awk 'NR == 2 {print $4}')"
 	exit 1
 }
 
-sudo env HFL_PUBLIC_HOST=127.0.0.1 HFL_SHOW_GENERATED_CREDENTIALS=0 \
+smoke_host="${SMOKE_HOST:-host.docker.internal}"
+sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 	bash "${pkg_root}/install.sh" install
 
 deadline=$((SECONDS + 600))
@@ -85,6 +86,7 @@ done
 export HFL_TENANT_PORT=11443
 export HFL_ADMIN_PORT=11444
 export SOURCELENS_CONSOLE_PORT=11445
+export SMOKE_HOST="${smoke_host}"
 export SEED_ADMIN_EMAIL
 export SEED_ADMIN_PASSWORD
 SEED_ADMIN_EMAIL="$(sed -n 's/^SEED_ADMIN_EMAIL=//p' /opt/hyperfilelens/.env | head -1)"
