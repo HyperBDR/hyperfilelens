@@ -63,7 +63,7 @@ quality, dependency, and Agent build scripts on the host.
 
 ### Release installation
 
-The current offline installer targets **Ubuntu 24.04 amd64**. The target should
+The offline installer targets **Ubuntu 20.04/24.04 amd64**. The target should
 have at least 4 CPU cores, 8 GB of memory, and adequate storage for application
 state, logs, metadata, and published artifacts.
 
@@ -92,11 +92,11 @@ Default endpoints:
 
 | Service | URL |
 | --- | --- |
-| Tenant console | `https://localhost:10443/` |
-| Platform Operations | `https://localhost:10444/` |
-| Django Admin | `https://localhost:10444/admin/` |
-| SourceLens console | `https://localhost:10446/` |
-| OpenAPI UI | `https://localhost:10443/swagger` |
+| Tenant console | `https://localhost:11443/` |
+| Platform Operations | `https://localhost:11444/` |
+| Django Admin | `https://localhost:11444/admin/` |
+| SourceLens console | `https://localhost:11445/` |
+| OpenAPI UI | `https://localhost:11443/swagger` |
 
 Default HFL development administrator:
 
@@ -178,9 +178,9 @@ Common settings include:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `HFL_TENANT_PORT` | `10443` | Tenant HTTPS console port |
-| `HFL_ADMIN_PORT` | `10444` | Platform Operations and Django Admin port |
-| `SOURCELENS_CONSOLE_PORT` | `10446` | SourceLens HTTPS console port |
+| `HFL_TENANT_PORT` | `11443` | Tenant HTTPS console port |
+| `HFL_ADMIN_PORT` | `11444` | Platform Operations and Django Admin port |
+| `SOURCELENS_CONSOLE_PORT` | `11445` | SourceLens HTTPS console port |
 | `SOURCELENS_MODE` | `bundled` | Use the bundled or an external SourceLens deployment |
 | `HFL_EMAIL_SIGNUP_ENABLED` | `false` | Enable public email/password sign-up |
 | `HFL_GOOGLE_OAUTH_ENABLED` | `false` | Enable Google OAuth sign-in when credentials are configured |
@@ -317,7 +317,7 @@ The generated archive is written to `build/release/dist/` and contains:
 - PostgreSQL and Redis runtime images
 - Optional bundled SourceLens images
 - Agent installers and enrollment bootstrap files
-- Ubuntu 24.04 amd64 Docker CE packages
+- Ubuntu 20.04/24.04 amd64 Docker CE packages
 - Runtime Compose, Nginx, installer, and license files
 
 Application source code is not copied into the release package. Installed

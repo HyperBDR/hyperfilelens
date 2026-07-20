@@ -5,8 +5,8 @@ set -euo pipefail
 
 ENV_FILE="${HFL_LENS_ENV_FILE:-/etc/hyperfilelens/lensnode.env}"
 COMPOSE_DIR="/etc/hyperfilelens/lensnode"
-COMPOSE_PROJECT="sourcelens"
-DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-sourcelens-lensnode:latest}"
+COMPOSE_PROJECT="hyperfilelens-gateway"
+DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-hyperfilelens-sourcelens-lensnode:latest}"
 
 hfl_now() {
 	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
@@ -34,8 +34,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 if [[ "${HFL_FORCE_SIDECAR_INSTALL:-0}" != "1" ]] && command -v docker >/dev/null 2>&1; then
-	if docker ps --format '{{.Names}}' 2>/dev/null | grep -Eq '^sourcelens[-_]lensnode[-_]1$'; then
-		hfl_ok "LensNode sidecar (sourcelens-lensnode-1) is already running."
+	if docker ps --format '{{.Names}}' 2>/dev/null | grep -Eq '^hyperfilelens-gateway[-_]lensnode[-_]1$'; then
+		hfl_ok "LensNode sidecar (hyperfilelens-gateway-lensnode-1) is already running."
 		printf '[%s] [INFO ] Set HFL_FORCE_SIDECAR_INSTALL=1 to force reinstall.\n' "$(hfl_now)"
 		exit 0
 	fi
@@ -105,6 +105,7 @@ resolve_lensnode_image() {
 	fi
 	if command -v docker >/dev/null 2>&1; then
 		for candidate in \
+			hyperfilelens-sourcelens-lensnode:latest \
 			sourcelens-lensnode:latest \
 			oneprocloud/sourcelens-lensnode:latest \
 			"${DEFAULT_LENSNODE_IMAGE}"; do
@@ -115,6 +116,29 @@ resolve_lensnode_image() {
 		done
 	fi
 	printf '%s' "${DEFAULT_LENSNODE_IMAGE}"
+}
+
+remove_owned_legacy_gateway_containers() {
+	local id project service working_dir config_files
+	local removed=0
+	while IFS= read -r id; do
+		[[ -n "${id}" ]] || continue
+		project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${id}" 2>/dev/null || true)"
+		service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${id}" 2>/dev/null || true)"
+		working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${id}" 2>/dev/null || true)"
+		config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${id}" 2>/dev/null || true)"
+		[[ "${project}" == "sourcelens" && "${service}" == "lensnode" ]] || continue
+		if [[ "${working_dir}" != "${COMPOSE_DIR}" \
+			&& ",${config_files}," != *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
+			continue
+		fi
+		hfl_step "Migrating owned legacy Gateway container ${id:0:12} from project sourcelens."
+		docker rm -f "${id}" >/dev/null
+		removed=1
+	done < <(docker ps -aq --no-trunc)
+	if [[ "${removed}" == "1" ]]; then
+		hfl_ok "Owned legacy Gateway container migration completed; unrelated SourceLens projects were not touched."
+	fi
 }
 
 install_docker_sidecar() {
@@ -152,23 +176,17 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_SSL_VERIFY: "${ssl_verify}"
     volumes:
       - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}
+    mem_limit: 320m
+    cpus: 0.50
 EOF
 	if docker compose version >/dev/null 2>&1; then
-		# Remove pre-normalization explicit container names during upgrades.
-		docker rm -f hfl-lensnode-sidecar hfl-gw-lensnode 2>/dev/null || true
+		remove_owned_legacy_gateway_containers
 		(
 			cd "${COMPOSE_DIR}"
 			docker compose -p "${COMPOSE_PROJECT}" up -d --pull never
 		)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		# Remove pre-normalization explicit container names during upgrades.
-		docker rm -f hfl-lensnode-sidecar hfl-gw-lensnode 2>/dev/null || true
-		(
-			cd "${COMPOSE_DIR}"
-			docker-compose -p "${COMPOSE_PROJECT}" up -d --pull never
-		)
 	else
-		hfl_fail "docker compose is required when using a LensNode container image." 3
+		hfl_fail "Docker Compose v2 is required when using a LensNode container image." 3
 	fi
 	hfl_ok "LensNode sidecar container started."
 }

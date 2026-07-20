@@ -36,6 +36,8 @@ services:
       redis:
         condition: service_healthy
     command: worker
+    mem_limit: 320m
+    cpus: 0.30
     healthcheck:
       test: ["CMD-SHELL", "celery -A common inspect ping -t 2 >/dev/null 2>&1 || exit 1"]
       interval: 5s
@@ -65,6 +67,8 @@ services:
       worker:
         condition: service_healthy
     command: scheduler
+    mem_limit: 128m
+    cpus: 0.10
     healthcheck:
       test:
         [
@@ -85,6 +89,7 @@ services:
     environment:
       TZ: UTC
       LOG_FILE: /var/log/hyperfilelens/api.log
+      API_WORKERS: "1"
     volumes:
       - ./data/lang-packs:/opt/backend/lang-packs:ro
       - ./data/media:/opt/backend/media
@@ -100,6 +105,8 @@ services:
       scheduler:
         condition: service_healthy
     command: api
+    mem_limit: 448m
+    cpus: 0.30
     healthcheck:
       test:
         [
@@ -116,7 +123,7 @@ services:
         max-file: "10"
 
   postgres:
-    image: postgres:17
+    image: hyperfilelens-postgres:17
     # Official PostgreSQL image; pin a distribution variant when required.
     env_file:
       - ./.env
@@ -140,9 +147,11 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
+    mem_limit: 320m
+    cpus: 0.15
 
   redis:
-    image: redis:alpine
+    image: hyperfilelens-redis:alpine
     volumes:
       - ./data/redis:/data
     healthcheck:
@@ -155,6 +164,8 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
+    mem_limit: 128m
+    cpus: 0.05
 
   nginx:
     image: hyperfilelens-frontend:${APP_VERSION:-latest}
@@ -169,8 +180,8 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${HFL_TENANT_BIND_ADDRESS:-0.0.0.0}:${HFL_TENANT_PORT:-10443}:443"
-      - "${HFL_ADMIN_BIND_ADDRESS:-0.0.0.0}:${HFL_ADMIN_PORT:-10444}:10444"
+      - "${HFL_TENANT_BIND_ADDRESS:-0.0.0.0}:${HFL_TENANT_PORT:-11443}:443"
+      - "${HFL_ADMIN_BIND_ADDRESS:-0.0.0.0}:${HFL_ADMIN_PORT:-11444}:10444"
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/nginx/snippets:/etc/nginx/snippets:ro
@@ -197,6 +208,8 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
+    mem_limit: 64m
+    cpus: 0.10
 
 networks:
   bridge:

@@ -15,6 +15,7 @@ output=$3
 
 # shellcheck source=../../tools/sourcelens/common.sh
 source "${ROOT}/tools/sourcelens/common.sh"
+export SOURCELENS_HFL_VERSION="${hfl_version}"
 sourcelens_load_config
 sourcelens_resolve_version
 
@@ -29,8 +30,8 @@ for component in backend frontend lensnode; do
 	ref="$(jq -r '.ref' "${metadata}")"
 	digest="$(jq -r '.digest' "${metadata}")"
 	docker pull --platform linux/amd64 "${ref%@*}@${digest}"
-	docker tag "${ref%@*}@${digest}" "sourcelens-${component}:${SOURCELENS_VERSION}"
-	docker tag "${ref%@*}@${digest}" "sourcelens-${component}:latest"
+	docker tag "${ref%@*}@${digest}" "$(sourcelens_distribution_image_ref "${component}")"
+	docker tag "${ref%@*}@${digest}" "$(sourcelens_distribution_image_ref "${component}" latest)"
 done
 
 BUILD_SOURCELENS=1 "${ROOT}/release/build-sourcelens.sh" \

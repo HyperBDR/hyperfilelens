@@ -17,7 +17,7 @@ SOURCELENS_DEV_DIR="${SOURCELENS_BUILD_DIR}/dev"
 SOURCELENS_DATA_DIR="${HFL_ROOT}/data/sourcelens"
 SOURCELENS_DEV_ENV_FILE="${SOURCELENS_DATA_DIR}/config/.env"
 SOURCELENS_BUILD_ENV_FILE="${HFL_ROOT}/tools/sourcelens/defaults.env"
-SOURCELENS_COMPOSE_PROJECT="${SOURCELENS_COMPOSE_PROJECT:-sourcelens}"
+SOURCELENS_COMPOSE_PROJECT="${SOURCELENS_COMPOSE_PROJECT:-hyperfilelens-sourcelens}"
 SOURCELENS_SHARED_NETWORK="hyperfilelens-bridge"
 
 SOURCELENS_COMPOSE=()
@@ -45,7 +45,7 @@ sourcelens_load_config() {
 	SOURCELENS_IMAGE_REGISTRY="${SOURCELENS_IMAGE_REGISTRY:-}"
 	SOURCELENS_IMAGE_REGISTRY="${SOURCELENS_IMAGE_REGISTRY%/}"
 	SOURCELENS_LENSNODE_IMAGE="${SOURCELENS_LENSNODE_IMAGE:-}"
-	SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_NGINX_HTTPS_PORT:-10446}"
+	SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_NGINX_HTTPS_PORT:-11445}"
 	SOURCELENS_CONSOLE_BIND_ADDRESS="${SOURCELENS_CONSOLE_BIND_ADDRESS:-0.0.0.0}"
 	SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT:-${SOURCELENS_NGINX_HTTPS_PORT}}"
 	SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-/opt/hyperfilelens/sourcelens}"
@@ -72,6 +72,11 @@ sourcelens_resolve_version() {
 	[[ "${SOURCELENS_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
 		|| sourcelens_die "invalid SourceLens release ref: ${SOURCELENS_GIT_REF} (expected vX.Y.Z)" 2
 	SOURCELENS_VERSION="${BASH_REMATCH[1]}"
+	if [[ "${SOURCELENS_HFL_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		SOURCELENS_DISTRIBUTION_TAG="${SOURCELENS_HFL_VERSION}-sl${SOURCELENS_VERSION}"
+	else
+		SOURCELENS_DISTRIBUTION_TAG="${SOURCELENS_VERSION}"
+	fi
 	if [[ -z "${SOURCELENS_LENSNODE_IMAGE}" ]]; then
 		SOURCELENS_LENSNODE_IMAGE="$(sourcelens_lensnode_image_ref)"
 	fi
@@ -250,10 +255,8 @@ sourcelens_ensure_compose() {
 	fi
 	if docker compose version >/dev/null 2>&1; then
 		SOURCELENS_COMPOSE=(docker compose)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		SOURCELENS_COMPOSE=(docker-compose)
 	else
-		sourcelens_die "docker compose not found"
+		sourcelens_die "Docker Compose v2 is required"
 	fi
 }
 
@@ -743,8 +746,8 @@ PY
 }
 
 sourcelens_distribution_image_ref() {
-	local component=$1 tag="${2:-${SOURCELENS_VERSION}}"
-	local repository="sourcelens-${component}"
+	local component=$1 tag="${2:-${SOURCELENS_DISTRIBUTION_TAG:-${SOURCELENS_VERSION}}}"
+	local repository="hyperfilelens-sourcelens-${component}"
 	if [[ -n "${SOURCELENS_IMAGE_REGISTRY}" ]]; then
 		printf '%s/%s:%s' "${SOURCELENS_IMAGE_REGISTRY}" "${repository}" "${tag}"
 	else
@@ -758,15 +761,15 @@ sourcelens_upstream_image_ref() {
 }
 
 sourcelens_backend_image_ref() {
-	sourcelens_distribution_image_ref backend "${1:-${SOURCELENS_VERSION}}"
+	sourcelens_distribution_image_ref backend "${1:-${SOURCELENS_DISTRIBUTION_TAG:-${SOURCELENS_VERSION}}}"
 }
 
 sourcelens_frontend_image_ref() {
-	sourcelens_distribution_image_ref frontend "${1:-${SOURCELENS_VERSION}}"
+	sourcelens_distribution_image_ref frontend "${1:-${SOURCELENS_DISTRIBUTION_TAG:-${SOURCELENS_VERSION}}}"
 }
 
 sourcelens_lensnode_image_ref() {
-	sourcelens_distribution_image_ref lensnode "${1:-${SOURCELENS_VERSION}}"
+	sourcelens_distribution_image_ref lensnode "${1:-${SOURCELENS_DISTRIBUTION_TAG:-${SOURCELENS_VERSION}}}"
 }
 
 sourcelens_app_images_ready() {
@@ -1212,6 +1215,27 @@ PY
 	sourcelens_write_runtime_compose "${dev_root}/docker-compose.yml"
 }
 
+sourcelens_migrate_legacy_dev_project() {
+	local id project working_dir config_files removed=0
+	while IFS= read -r id; do
+		[[ -n "${id}" ]] || continue
+		project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${id}" 2>/dev/null || true)"
+		working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${id}" 2>/dev/null || true)"
+		config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${id}" 2>/dev/null || true)"
+		[[ "${project}" == "sourcelens" ]] || continue
+		if [[ "${working_dir}" != "${SOURCELENS_DEV_DIR}" \
+			&& ",${config_files}," != *",${SOURCELENS_DEV_DIR}/docker-compose.yml,"* ]]; then
+			continue
+		fi
+		sourcelens_log "Migrating owned legacy SourceLens dev container ${id:0:12}"
+		docker rm -f "${id}" >/dev/null
+		removed=1
+	done < <(docker ps -aq --no-trunc)
+	if [[ "${removed}" == "1" ]]; then
+		sourcelens_log "Legacy dev project migration completed; unrelated SourceLens projects were not touched"
+	fi
+}
+
 sourcelens_dev_compose() {
 	sourcelens_ensure_compose
 	(
@@ -1254,7 +1278,7 @@ def read_key(name: str, default: str = "") -> str:
         return default
     return match.group(1).strip().strip('"').strip("'")
 
-frontend = read_key("FRONTEND_URL", "https://127.0.0.1:10443").rstrip("/")
+frontend = read_key("FRONTEND_URL", "https://127.0.0.1:11443").rstrip("/")
 no_proxy = [item.strip() for item in read_key("NO_PROXY").split(",") if item.strip()]
 if "sourcelens-nginx" not in no_proxy:
     no_proxy.append("sourcelens-nginx")

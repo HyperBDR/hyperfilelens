@@ -209,6 +209,7 @@ cmd_gateway() {
 }
 
 cmd_up() {
+	sourcelens_migrate_legacy_dev_project
 	cmd_prepare
 	sourcelens_ensure_shared_network
 	sourcelens_log "Starting SourceLens stack (project=${SOURCELENS_COMPOSE_PROJECT})"
@@ -221,6 +222,7 @@ cmd_up() {
 
 cmd_down() {
 	require_docker
+	sourcelens_migrate_legacy_dev_project
 	[[ -f "${SOURCELENS_DEV_DIR}/docker-compose.yml" ]] || {
 		sourcelens_log "SourceLens dev compose not found; nothing to stop"
 		return 0

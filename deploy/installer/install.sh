@@ -39,7 +39,6 @@ Options:
     --print-config         Print effective non-secret configuration and exit
 
   install:
-    --with-upgrade-docker   Upgrade host Docker when installed version is below package version (off by default)
     --with-sourcelens       Install bundled SourceLens (default when sourcelens/ is present)
     --hfl-only              Skip bundled SourceLens even when sourcelens/ is present
 
@@ -48,7 +47,6 @@ Options:
                             Backs up .env and data/ to a timestamped tar.gz under backup/ before upgrade
                             Extracts the new package to upgrade_tmp, merges keys from its .env.example into .env,
                             overwrites app files, loads images, and restarts; removes upgrade_tmp on success
-    --with-upgrade-docker   Upgrade host Docker if below new package version during upgrade (off by default)
     --with-sourcelens       Upgrade bundled SourceLens when sourcelens/ is present (default when present)
     --hfl-only              Skip SourceLens upgrade even when sourcelens/ is present
     --remove-sourcelens     Stop and remove installed SourceLens under the HFL install root
@@ -72,14 +70,12 @@ Options:
     Application files (install.sh, docker-compose.yml, images/, payload/, backup/, etc.)
     remain on disk. To remove them after uninstall, run manually, for example:
       sudo rm -rf ${INSTALL_DIR}
-    Host Docker CE (if installed from host/debs during install) is also not removed.
+    Host Docker CE installed from the bundled OS-specific archive is not removed.
 
 Examples:
   sudo ./install.sh
   sudo ./install.sh install
-  sudo ./install.sh install --with-upgrade-docker
   sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.1.0-<commit7>.tar.gz
-  sudo ./install.sh upgrade --from /path/to/new.tar.gz --with-upgrade-docker
   sudo ./install.sh uninstall
   sudo ./install.sh uninstall --purge-all
   sudo ./install.sh lang-pack install --file /path/to/hyperfilelens-lang-fr-0.1.0.tar.gz
@@ -246,19 +242,15 @@ run_as_root() {
 
 assert_host_os() {
 	local id version_id arch
-	[[ -f /etc/os-release ]] || die "missing /etc/os-release (Ubuntu 24.04 amd64 only)"
+	[[ -f /etc/os-release ]] || die "missing /etc/os-release (Ubuntu 20.04/24.04 amd64 only)"
 	# shellcheck disable=SC1091
 	source /etc/os-release
 	id="${ID:-}"
 	version_id="${VERSION_ID:-}"
 	arch="$(uname -m)"
-	[[ "${id}" == "ubuntu" && "${version_id}" == "24.04" ]] \
-		|| die "host must be Ubuntu 24.04 (current: ${id:-unknown} ${version_id:-unknown})"
+	[[ "${id}" == "ubuntu" && ( "${version_id}" == "20.04" || "${version_id}" == "24.04" ) ]] \
+		|| die "host must be Ubuntu 20.04 or 24.04 (current: ${id:-unknown} ${version_id:-unknown})"
 	[[ "${arch}" == "x86_64" ]] || die "host must be amd64/x86_64 (current: ${arch})"
-}
-
-host_debs_dir() {
-	printf '%s/host/debs' "$1"
 }
 
 docker_engine_version() {
@@ -270,10 +262,6 @@ docker_compose_version() {
 		docker compose version --short 2>/dev/null || docker compose version 2>/dev/null | awk '{print $NF}'
 		return 0
 	fi
-	if command -v docker-compose >/dev/null 2>&1; then
-		docker-compose version --short 2>/dev/null || true
-		return 0
-	fi
 	printf ''
 }
 
@@ -283,7 +271,7 @@ import sys
 
 def parse(v):
     parts = []
-    for chunk in v.replace("-", ".").split("."):
+    for chunk in v.lstrip("vV").replace("-", ".").split("."):
         num = ""
         for ch in chunk:
             if ch.isdigit():
@@ -310,6 +298,7 @@ docker_runtime_ready() {
 	docker_version_ge "${engine}" "${min_version}" || return 1
 	compose="$(docker_compose_version)"
 	[[ -n "${compose}" ]] || return 1
+	docker_version_ge "${compose}" "2.20.0" || return 1
 	return 0
 }
 
@@ -327,114 +316,24 @@ print(docker.get("min_engine_version") or "24.0.0")
 PY
 }
 
-manifest_pkg_engine_version() {
-	local root=$1
-	python3 - "${root}/MANIFEST.json" <<'PY'
-import json, pathlib, sys
-data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-print(((data.get("host_runtime") or {}).get("docker") or {}).get("engine_version") or "")
-PY
-}
-
-verify_host_debs() {
-	local root=$1 debs_dir
-	debs_dir="$(host_debs_dir "${root}")"
-	[[ -d "${debs_dir}" ]] || die "missing host/debs directory: ${debs_dir}"
-	python3 - "${root}/MANIFEST.json" "${debs_dir}" <<'PY'
-import hashlib, json, pathlib, sys
-manifest_path = pathlib.Path(sys.argv[1])
-debs_dir = pathlib.Path(sys.argv[2])
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-packages = ((manifest.get("host_runtime") or {}).get("docker") or {}).get("packages") or []
-if not packages:
-    raise SystemExit("MANIFEST host_runtime.docker.packages is empty")
-for entry in packages:
-    rel = entry.get("file", "")
-    expected = entry.get("sha256", "")
-    path = manifest_path.parent / rel
-    if not path.is_file():
-        raise SystemExit(f"missing host deb: {rel}")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    if expected and digest != expected:
-        raise SystemExit(f"sha256 mismatch for {rel}")
-deb_count = len(list(debs_dir.glob("*.deb")))
-if deb_count < 5:
-    raise SystemExit(f"too few debs under {debs_dir} ({deb_count})")
-print(f"verified {len(packages)} manifest entries, {deb_count} deb files")
-PY
-}
-
-install_host_debs() {
-	local root=$1 debs_dir
-	debs_dir="$(host_debs_dir "${root}")"
-	step "Verifying host/debs offline packages..."
-	verify_host_debs "${root}"
-	step "Installing Docker CE offline from ${debs_dir}..."
-	command -v apt-get >/dev/null 2>&1 || die "apt-get not found (Ubuntu 24.04 required)"
-	run_as_root env DEBIAN_FRONTEND=noninteractive \
-		apt-get install -y --no-install-recommends "${debs_dir}"/*.deb
-	if command -v systemctl >/dev/null 2>&1; then
-		run_as_root systemctl enable --now docker || true
-	fi
-	log "Docker CE installed (engine $(docker_engine_version), compose $(docker_compose_version))"
-}
-
 ensure_host_docker() {
-	local root=$1 with_upgrade=$2
-	local min_version cur_engine pkg_engine
+	local root=$1
+	local min_version installer
 	assert_host_os
 	require_root_or_sudo
 	min_version="$(manifest_min_engine_version)"
-
-	if ! docker_runtime_ready "${min_version}"; then
-		step "Docker not ready; installing offline..."
-		install_host_debs "${root}"
-		docker_runtime_ready "${min_version}" || die "Docker post-install self-check failed"
-		return 0
-	fi
-
-	cur_engine="$(docker_engine_version)"
-	log "Docker ready (engine ${cur_engine}, compose $(docker_compose_version))"
-
-	[[ "${with_upgrade}" -eq 1 ]] || return 0
-
-	pkg_engine="$(manifest_pkg_engine_version "${root}")"
-	[[ -n "${pkg_engine}" ]] || {
-		warn "MANIFEST has no engine_version; skipping Docker upgrade"
-		return 0
-	}
-	if [[ "${cur_engine}" == "${pkg_engine}" ]]; then
-		log "Docker already at ${cur_engine}; no upgrade needed"
-		return 0
-	fi
-	if docker_version_ge "${cur_engine}" "${pkg_engine}"; then
-		log "Docker ${cur_engine} >= package ${pkg_engine}; skipping upgrade"
-		return 0
-	fi
-	step "Upgrading Docker ${cur_engine} -> ${pkg_engine}..."
-	install_host_debs "${root}"
+	installer="${root}/payload/media/gateway-bootstrap/gateway-install-docker-ubuntu-amd64.sh"
+	[[ -x "${installer}" ]] || die "release package is missing the offline Docker installer"
+	run_as_root env \
+		HFL_GATEWAY_BOOTSTRAP_BASE="file://${root}/payload/media/gateway-bootstrap" \
+		HFL_INSECURE_TLS=0 HFL_DOCKER_MIN_ENGINE="${min_version}" \
+		bash "${installer}"
+	docker_runtime_ready "${min_version}" || die "Docker post-install self-check failed"
 }
 
 upgrade_host_docker_from_source() {
-	local target_root=$1 source_root=$2 with_upgrade=$3
-	if ! docker_runtime_ready "$(manifest_min_engine_version)"; then
-		step "Docker not ready; installing from new package..."
-		install_host_debs "${source_root}"
-		run_as_root rsync -a "${source_root}/host/debs/" "${target_root}/host/debs/" 2>/dev/null || true
-		return 0
-	fi
-	[[ "${with_upgrade}" -eq 1 ]] || return 0
-	local cur_engine pkg_engine
-	cur_engine="$(docker_engine_version)"
-	pkg_engine="$(manifest_pkg_engine_version "${source_root}")"
-	[[ -n "${pkg_engine}" ]] || return 0
-	if [[ "${cur_engine}" == "${pkg_engine}" ]] || docker_version_ge "${cur_engine}" "${pkg_engine}"; then
-		log "Docker version meets requirement (current ${cur_engine}); skipping host upgrade"
-		return 0
-	fi
-	step "Upgrading Docker ${cur_engine} -> ${pkg_engine}..."
-	run_as_root rsync -a "${source_root}/host/debs/" "${target_root}/host/debs/"
-	install_host_debs "${target_root}"
+	local source_root=$2
+	ensure_host_docker "${source_root}"
 }
 
 # --- Package layout ---
@@ -478,13 +377,8 @@ init_install_root() {
 require_docker() {
 	command -v docker >/dev/null 2>&1 || die "docker command not found"
 	docker info >/dev/null 2>&1 || die "cannot connect to Docker daemon"
-	if docker compose version >/dev/null 2>&1; then
-		COMPOSE=(docker compose)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		COMPOSE=(docker-compose)
-	else
-		die "docker compose not found"
-	fi
+	docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
+	COMPOSE=(docker compose)
 }
 
 compose_in_root() {
@@ -494,12 +388,76 @@ compose_in_root() {
 	)
 }
 
+container_owned_by_installation() {
+	local container_id=$1 project working_dir config_files expected_dir
+	project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${container_id}" 2>/dev/null || true)"
+	working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${container_id}" 2>/dev/null || true)"
+	config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${container_id}" 2>/dev/null || true)"
+	case "${project}" in
+	hyperfilelens) expected_dir="${ROOT}" ;;
+	hyperfilelens-sourcelens | sourcelens) expected_dir="${ROOT}/sourcelens" ;;
+	*) return 1 ;;
+	esac
+	[[ "${working_dir}" == "${expected_dir}" \
+		|| ",${config_files}," == *",${expected_dir}/docker-compose.yml,"* ]]
+}
+
 ensure_bridge_network() {
 	if docker network inspect "${HFL_BRIDGE_NETWORK}" >/dev/null 2>&1; then
+		local container_id project
+		while IFS= read -r container_id; do
+			[[ -n "${container_id}" ]] || continue
+			project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${container_id}" 2>/dev/null || true)"
+			container_owned_by_installation "${container_id}" \
+				|| die "network ${HFL_BRIDGE_NETWORK} is attached to non-HFL container ${container_id} (project ${project:-unknown})"
+		done < <(docker network inspect --format '{{range $id, $_ := .Containers}}{{println $id}}{{end}}' "${HFL_BRIDGE_NETWORK}")
 		return 0
 	fi
 	log "Creating shared bridge network ${HFL_BRIDGE_NETWORK}"
-	docker network create "${HFL_BRIDGE_NETWORK}" >/dev/null
+	docker network create --label com.hyperfilelens.managed=true "${HFL_BRIDGE_NETWORK}" >/dev/null
+}
+
+preflight_install_capacity() {
+	local cpu_count mem_total_kib mem_available_kib disk_available_bytes
+	local tenant_bind tenant_port admin_bind admin_port sourcelens_bind sourcelens_port
+	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
+	[[ "${cpu_count}" =~ ^[0-9]+$ && "${cpu_count}" -ge 2 ]] \
+		|| die "at least 2 CPU cores are required (detected ${cpu_count:-unknown})"
+	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
+	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)"
+	[[ "${mem_total_kib:-0}" -ge $((3500 * 1024)) ]] \
+		|| die "at least 4 GB RAM is required"
+	[[ "${mem_available_kib:-0}" -ge $((2500 * 1024)) ]] \
+		|| die "at least 2.5 GiB available memory is required before installation"
+	disk_available_bytes="$(df -PB1 "$(dirname "${INSTALL_DIR}")" | awk 'NR == 2 {print $4}')"
+	[[ "${disk_available_bytes:-0}" -ge $((20 * 1024 * 1024 * 1024)) ]] \
+		|| die "at least 20 GiB free disk space is required under $(dirname "${INSTALL_DIR}")"
+	tenant_bind="$(read_env_value HFL_TENANT_BIND_ADDRESS)"
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	admin_bind="$(read_env_value HFL_ADMIN_BIND_ADDRESS)"
+	admin_port="$(read_env_value HFL_ADMIN_PORT)"
+	sourcelens_bind="$(read_env_value SOURCELENS_CONSOLE_BIND_ADDRESS)"
+	sourcelens_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
+	python3 - \
+		"${tenant_bind:-0.0.0.0}" "${tenant_port:-11443}" \
+		"${admin_bind:-0.0.0.0}" "${admin_port:-11444}" \
+		"${sourcelens_bind:-0.0.0.0}" "${sourcelens_port:-11445}" <<'PY'
+import socket
+import sys
+
+arguments = iter(sys.argv[1:])
+for bind_address, raw_port in zip(arguments, arguments):
+    port = int(raw_port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        sock.bind((bind_address, port))
+    except OSError as exc:
+        raise SystemExit(f"host endpoint {bind_address}:{port} is unavailable: {exc}") from exc
+    finally:
+        sock.close()
+PY
+	ok "Host capacity and ports satisfy the 2 CPU / 4 GB installation profile"
 }
 
 read_version_from_dir() {
@@ -643,7 +601,7 @@ sub_key("SENTRY_ENVIRONMENT", "production")
 sub_key("HFL_EMAIL_SIGNUP_ENABLED", "false")
 sub_key("HFL_GOOGLE_OAUTH_ENABLED", "false")
 sub_key("HFL_PLATFORM_OPS_ENABLED", "true")
-tenant_port = "10443"
+tenant_port = "11443"
 frontend_url = f"https://{host}:{tenant_port}"
 sub_key("FRONTEND_URL", frontend_url)
 sub_key("DJANGO_ALLOWED_HOSTS", f"localhost,127.0.0.1,{host}")
@@ -688,7 +646,7 @@ wait_for_hfl_health() {
 	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || die "HFL_HEALTH_TIMEOUT_SECONDS must be positive"
 	local tenant_port
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
-	[[ -n "${tenant_port}" ]] || tenant_port=10443
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
 	local deadline=$((SECONDS + timeout_seconds))
 	local -a services=(postgres redis worker scheduler api nginx)
 	step "Waiting for HyperFileLens health checks (timeout ${timeout_seconds}s) ..."
@@ -730,7 +688,7 @@ wait_for_sourcelens_health() {
 	local timeout_seconds="${SOURCELENS_HEALTH_TIMEOUT_SECONDS:-600}"
 	local port
 	port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
-	[[ -n "${port}" ]] || port=10446
+	[[ -n "${port}" ]] || port=11445
 	step "Waiting for bundled SourceLens HTTPS health (timeout ${timeout_seconds}s) ..."
 	local deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
@@ -1028,7 +986,8 @@ read_env_value() {
 	local key=$1
 	local env_file="${ROOT}/.env"
 	[[ -f "${env_file}" ]] || return 0
-	grep -E "^${key}=" "${env_file}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "'
+	grep -E "^${key}=" "${env_file}" 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d ' "' || true
 }
 
 resolve_console_host() {
@@ -1067,15 +1026,15 @@ print_console_access_summary() {
 	tenant_bind="$(read_env_value HFL_TENANT_BIND_ADDRESS)"
 	[[ -n "${tenant_bind}" ]] || tenant_bind="0.0.0.0"
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
-	[[ -n "${tenant_port}" ]] || tenant_port="10443"
+	[[ -n "${tenant_port}" ]] || tenant_port="11443"
 	admin_bind="$(read_env_value HFL_ADMIN_BIND_ADDRESS)"
 	[[ -n "${admin_bind}" ]] || admin_bind="0.0.0.0"
 	admin_port="$(read_env_value HFL_ADMIN_PORT)"
-	[[ -n "${admin_port}" ]] || admin_port="10444"
+	[[ -n "${admin_port}" ]] || admin_port="11444"
 	sourcelens_console_bind="$(read_env_value SOURCELENS_CONSOLE_BIND_ADDRESS)"
 	[[ -n "${sourcelens_console_bind}" ]] || sourcelens_console_bind="0.0.0.0"
 	sourcelens_console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
-	[[ -n "${sourcelens_console_port}" ]] || sourcelens_console_port="10446"
+	[[ -n "${sourcelens_console_port}" ]] || sourcelens_console_port="11445"
 
 	log "Tenant URL: https://${host}:${tenant_port}/ (bind ${tenant_bind})"
 	log "Platform Operations URL: https://${host}:${admin_port}/ (bind ${admin_bind})"
@@ -1134,19 +1093,10 @@ sourcelens_compose() {
 		return 0
 	fi
 	require_docker
-	if docker compose version >/dev/null 2>&1; then
-		(
-			cd "${SOURCELENS_INSTALL_DIR}"
-			docker compose "$@"
-		)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		(
-			cd "${SOURCELENS_INSTALL_DIR}"
-			docker-compose "$@"
-		)
-	else
-		die "docker compose not found"
-	fi
+	(
+		cd "${SOURCELENS_INSTALL_DIR}"
+		docker compose "$@"
+	)
 }
 
 stop_bundled_sourcelens() {
@@ -1249,7 +1199,9 @@ PY
 			gateway-bootstrap-linux.sh
 			gateway-install-lensnode-sidecar.sh
 			gateway-lifecycle.sh
-			gateway-install-docker-ubuntu2404-amd64.sh
+			gateway-install-docker-ubuntu-amd64.sh
+			docker-debs-ubuntu2004-amd64.tar.gz
+			docker-debs-ubuntu2404-amd64.tar.gz
 			lensnode-image-linux-amd64.tar.gz
 		)
 		local name
@@ -1361,7 +1313,7 @@ sourcelens_bundle_changed() {
 	current="$(sourcelens_bundle_fingerprint "${ROOT}/sourcelens")"
 	target="$(sourcelens_bundle_fingerprint "${src_root}/sourcelens")"
 	if [[ "${current}" == "${target}" ]]; then
-		log "Bundled SourceLens is unchanged (${current:0:12}); keeping 10446 online"
+		log "Bundled SourceLens is unchanged (${current:0:12}); keeping 11445 online"
 		return 1
 	fi
 	log "Bundled SourceLens changed (${current:0:12} -> ${target:0:12})"
@@ -1378,7 +1330,7 @@ configure_lens_bridge_env() {
 	local host tenant_port
 	host="$(resolve_console_host)"
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
-	[[ -n "${tenant_port}" ]] || tenant_port="10443"
+	[[ -n "${tenant_port}" ]] || tenant_port="11443"
 	python3 - "${ROOT}/.env" "${host}" "${tenant_port}" <<'PY'
 import pathlib
 import re
@@ -1433,7 +1385,7 @@ install_bundled_sourcelens() {
 	console_bind="$(read_env_value SOURCELENS_CONSOLE_BIND_ADDRESS)"
 	[[ -n "${console_bind}" ]] || console_bind="0.0.0.0"
 	console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
-	[[ -n "${console_port}" ]] || console_port="10446"
+	[[ -n "${console_port}" ]] || console_port="11445"
 	stop_bundled_sourcelens
 	step "Installing bundled SourceLens ..."
 	SOURCELENS_INSTALL_DIR="${ROOT}/sourcelens" \
@@ -1468,11 +1420,9 @@ configured_sourcelens_mode() {
 # --- Commands ---
 
 cmd_install() {
-	local with_upgrade_docker=0
 	local sourcelens_mode=-1
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--with-upgrade-docker) with_upgrade_docker=1 ;;
 		--with-sourcelens) sourcelens_mode=1 ;;
 		--hfl-only) sourcelens_mode=0 ;;
 		*) die "unknown install option: $1" 2 ;;
@@ -1499,8 +1449,9 @@ cmd_install() {
 		return 0
 	fi
 
-	step "[1/6] Checking/installing Docker ..."
-	ensure_host_docker "${ROOT}" "${with_upgrade_docker}"
+	step "[1/6] Checking host capacity, ports, and Docker ..."
+	preflight_install_capacity
+	ensure_host_docker "${ROOT}"
 
 	step "[2/6] Preparing config and directories ..."
 	require_docker
@@ -1628,8 +1579,8 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
-import tomllib
 
 root = pathlib.Path(sys.argv[1])
 version_path = root / "VERSION"
@@ -1642,9 +1593,17 @@ elif manifest_path.is_file():
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     print(str(manifest["version"]).strip())
 elif pyproject_path.is_file():
-    with pyproject_path.open("rb") as pyproject_file:
-        pyproject = tomllib.load(pyproject_file)
-    print(str(pyproject["project"]["version"]).strip())
+    text = pyproject_path.read_text(encoding="utf-8")
+    project_match = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", text)
+    if project_match is None:
+        raise SystemExit("pyproject.toml has no [project] table")
+    version_match = re.search(
+        r'(?m)^\s*version\s*=\s*["\']([^"\']+)["\']\s*$',
+        project_match.group(1),
+    )
+    if version_match is None:
+        raise SystemExit("pyproject.toml [project] has no static version")
+    print(version_match.group(1).strip())
 else:
     raise SystemExit("cannot determine the HyperFileLens application version")
 PY
@@ -1749,7 +1708,8 @@ with tarfile.open(archive, mode="r:*") as package:
         total_size += member.size
     if total_size > 100 * 1024 * 1024:
         fail("archive expands beyond the 100 MiB limit")
-    package.extractall(destination, filter="data")
+    for member in members:
+        package.extract(member, destination)
 
 manifest_candidates = sorted(destination.glob("manifest.json"))
 manifest_candidates.extend(sorted(destination.glob("*/manifest.json")))
@@ -2084,7 +2044,7 @@ cmd_uninstall() {
 
 	log "Uninstall complete (services and images removed)"
 	log "Install directory kept: ${ROOT}"
-	log "  Remaining: install.sh, docker-compose.yml, deploy/, images/, payload/, backup/, host/, and other package files"
+	log "  Remaining: install.sh, docker-compose.yml, deploy/, images/, payload/, backup/, and other package files"
 	if [[ "${with_sourcelens}" -eq 0 ]] && sourcelens_installed; then
 		log "  SourceLens still installed at ${SOURCELENS_INSTALL_DIR} (use --with-sourcelens to remove)"
 	fi
@@ -2099,11 +2059,11 @@ cmd_uninstall() {
 	fi
 	log "To remove the install directory manually after you no longer need this copy:"
 	log "  sudo rm -rf ${ROOT}"
-	log "Host Docker CE (if installed from host/debs) is not removed by uninstall."
+	log "Host Docker CE (if installed from the bundled archive) is not removed by uninstall."
 }
 
 cmd_upgrade() {
-	local from="" with_upgrade_docker=0
+	local from=""
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
 	local src_root new_version cur_version upgrade_sourcelens=0
 	while [[ $# -gt 0 ]]; do
@@ -2113,7 +2073,6 @@ cmd_upgrade() {
 			from="${1:-}"
 			[[ -n "${from}" ]] || die "--from requires a path"
 			;;
-		--with-upgrade-docker) with_upgrade_docker=1 ;;
 		--with-sourcelens) sourcelens_mode=1 ;;
 		--hfl-only) sourcelens_mode=0 ;;
 		--remove-sourcelens) remove_sourcelens=1 ;;
@@ -2159,7 +2118,7 @@ cmd_upgrade() {
 	fi
 
 	step "[3/7] Checking/upgrading Docker ..."
-	upgrade_host_docker_from_source "${ROOT}" "${src_root}" "${with_upgrade_docker}"
+	upgrade_host_docker_from_source "${ROOT}" "${src_root}"
 	require_docker
 	ensure_bridge_network
 

@@ -54,6 +54,17 @@ fi
 command -v curl >/dev/null || { printf 'ERROR: curl is required\n' >&2; exit 1; }
 command -v python3 >/dev/null || { printf 'ERROR: python3 is required\n' >&2; exit 1; }
 command -v flock >/dev/null || { printf 'ERROR: flock is required\n' >&2; exit 1; }
+command -v docker >/dev/null || { printf 'ERROR: automated shared-host deployment requires existing Docker\n' >&2; exit 1; }
+docker info >/dev/null 2>&1 || { printf 'ERROR: existing Docker daemon is not reachable\n' >&2; exit 1; }
+docker compose version >/dev/null 2>&1 || { printf 'ERROR: Docker Compose v2 is required\n' >&2; exit 1; }
+
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "${ID:-}" == "ubuntu" && ( "${VERSION_ID:-}" == "20.04" || "${VERSION_ID:-}" == "24.04" ) ]] || {
+	printf 'ERROR: automated deployment supports Ubuntu 20.04 or 24.04 only\n' >&2
+	exit 1
+}
+[[ "$(uname -m)" == "x86_64" ]] || { printf 'ERROR: automated deployment requires amd64\n' >&2; exit 1; }
 
 exec 9>/var/lock/hyperfilelens-deploy.lock
 if ! flock -n 9; then
@@ -62,16 +73,166 @@ if ! flock -n 9; then
 fi
 
 work="$(mktemp -d /var/tmp/hyperfilelens-deploy.XXXXXX)"
+
+capture_unrelated_state() {
+	local output=$1 raw_dir
+	raw_dir="${output}.raw"
+	local -a ids=()
+	mkdir -p "${raw_dir}"
+	mapfile -t ids < <(docker ps -aq --no-trunc)
+	if ((${#ids[@]})); then
+		docker inspect "${ids[@]}" >"${raw_dir}/containers.json"
+	else
+		printf '[]\n' >"${raw_dir}/containers.json"
+	fi
+	mapfile -t ids < <(docker network ls -q --no-trunc)
+	if ((${#ids[@]})); then
+		docker network inspect "${ids[@]}" >"${raw_dir}/networks.json"
+	else
+		printf '[]\n' >"${raw_dir}/networks.json"
+	fi
+	mapfile -t ids < <(docker volume ls -q)
+	if ((${#ids[@]})); then
+		docker volume inspect "${ids[@]}" >"${raw_dir}/volumes.json"
+	else
+		printf '[]\n' >"${raw_dir}/volumes.json"
+	fi
+	python3 - "${raw_dir}" "${output}" "${INSTALL_DIR}" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+install_dir = os.path.realpath(sys.argv[3])
+sl_dir = os.path.join(install_dir, "sourcelens")
+
+
+def read(name):
+    return json.loads((source / name).read_text(encoding="utf-8"))
+
+
+def under(value, root):
+    if not value:
+        return False
+    value = os.path.realpath(value)
+    return value == root or value.startswith(root + os.sep)
+
+
+def owned_container(labels):
+    project = labels.get("com.docker.compose.project", "")
+    working_dir = labels.get("com.docker.compose.project.working_dir", "")
+    config_files = labels.get("com.docker.compose.project.config_files", "")
+    paths = [working_dir]
+    paths.extend(part.strip() for part in config_files.split(",") if part.strip())
+    if project == "hyperfilelens":
+        return any(under(path, install_dir) for path in paths)
+    if project in {"hyperfilelens-sourcelens", "sourcelens"}:
+        return any(under(path, sl_dir) for path in paths)
+    return False
+
+
+state = {"containers": {}, "networks": {}, "volumes": {}}
+owned_container_ids = set()
+owned_volume_names = set()
+for container in read("containers.json"):
+    labels = (container.get("Config") or {}).get("Labels") or {}
+    if owned_container(labels):
+        owned_container_ids.add(container.get("Id", ""))
+        for mount in container.get("Mounts") or []:
+            if mount.get("Type") == "volume" and mount.get("Name"):
+                owned_volume_names.add(mount["Name"])
+        continue
+    name = str(container.get("Name", "")).lstrip("/")
+    runtime = container.get("State") or {}
+    state["containers"][name] = {
+        "id": container.get("Id", ""),
+        "status": runtime.get("Status", ""),
+        "started_at": runtime.get("StartedAt", ""),
+    }
+
+owned_networks = {
+    "hyperfilelens-bridge",
+    "hyperfilelens_default",
+    "hyperfilelens-sourcelens_default",
+    "hyperfilelens-sourcelens_sourcelens_network",
+}
+for network in read("networks.json"):
+    name = str(network.get("Name", ""))
+    labels = network.get("Labels") or {}
+    project = labels.get("com.docker.compose.project", "")
+    attached = network.get("Containers") or {}
+    ownership_marker = name in owned_networks or labels.get("com.hyperfilelens.managed") == "true" or project in {
+        "hyperfilelens",
+        "hyperfilelens-sourcelens",
+    }
+    if ownership_marker and attached and set(attached).issubset(owned_container_ids):
+        continue
+    state["networks"][name] = {
+        "id": network.get("Id", ""),
+        "driver": network.get("Driver", ""),
+        "scope": network.get("Scope", ""),
+        "internal": network.get("Internal", False),
+        "attachable": network.get("Attachable", False),
+        "ingress": network.get("Ingress", False),
+        "ipam": network.get("IPAM") or {},
+        "options": network.get("Options") or {},
+        "labels": labels,
+        "containers": attached,
+    }
+
+for volume in read("volumes.json"):
+    name = str(volume.get("Name", ""))
+    labels = volume.get("Labels") or {}
+    project = labels.get("com.docker.compose.project", "")
+    if project in {"hyperfilelens", "hyperfilelens-sourcelens"} and name in owned_volume_names:
+        continue
+    state["volumes"][name] = {
+        "driver": volume.get("Driver", ""),
+        "mountpoint": volume.get("Mountpoint", ""),
+        "options": volume.get("Options") or {},
+        "labels": labels,
+        "scope": volume.get("Scope", ""),
+    }
+target.write_text(json.dumps(state, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+	rm -rf "${raw_dir}"
+}
+
+verify_unrelated_state() {
+	local before=$1 after=$2
+	capture_unrelated_state "${after}"
+	if ! cmp -s "${before}" "${after}"; then
+		printf 'ERROR: unrelated Docker containers, networks, or volumes changed during HFL deployment\n' >&2
+		diff -u "${before}" "${after}" >&2 || true
+		return 1
+	fi
+	printf '[deploy] Verified that unrelated Docker containers, networks, and volumes are unchanged\n'
+}
+
+capture_unrelated_state "${work}/unrelated-before.json"
+shared_host_guard_verified=0
 cleanup() {
+	local status=$?
+	trap - EXIT INT TERM
+	if [[ "${shared_host_guard_verified}" != "1" ]]; then
+		if ! verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
+			status=90
+		fi
+	fi
 	rm -rf "${work}"
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		rm -f -- "${RUNTIME_ENV_FILE}"
 	fi
+	exit "${status}"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 api="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
 printf '[deploy] Resolving published release %s\n' "${TAG}"
-curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "${api}" -o "${work}/release.json"
+curl -fsSL --retry 5 --connect-timeout 20 "${api}" -o "${work}/release.json"
 
 python3 - "${work}/release.json" "${work}/assets.tsv" "${TAG}" <<'PY'
 import json
@@ -90,7 +251,7 @@ selected = {}
 if "SHA256SUMS" not in assets:
     raise SystemExit("release has no SHA256SUMS")
 selected["SHA256SUMS"] = assets["SHA256SUMS"]
-prefix = re.escape(f"hyperfilelens-{tag.removeprefix('v')}-")
+prefix = re.escape(f"hyperfilelens-{tag[1:] if tag.startswith('v') else tag}-")
 full = sorted(name for name in assets if re.fullmatch(prefix + r"[0-9a-f]{7}\.tar\.gz", name))
 if len(full) == 1:
     selected[full[0]] = assets[full[0]]
@@ -127,7 +288,7 @@ fi
 while IFS=$'\t' read -r name url; do
 	[[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || { printf 'ERROR: unsafe asset name\n' >&2; exit 1; }
 	printf '[deploy] Downloading %s\n' "${name}"
-	curl -fL --retry 5 --retry-all-errors --connect-timeout 20 "${url}" -o "${work}/${name}"
+	curl -fL --retry 5 --connect-timeout 20 "${url}" -o "${work}/${name}"
 done <"${work}/assets.tsv"
 
 package="$(find "${work}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -print -quit)"
@@ -217,6 +378,13 @@ PY
 		cd "${INSTALL_DIR}"
 		docker compose --env-file .env -f docker-compose.yml up -d --force-recreate api
 	)
+fi
+
+if verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
+	shared_host_guard_verified=1
+else
+	shared_host_guard_verified=1
+	exit 90
 fi
 
 mkdir -p "${INSTALL_DIR}/packages"

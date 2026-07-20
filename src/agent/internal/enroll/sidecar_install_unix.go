@@ -17,9 +17,10 @@ const (
 	lensEnvFilePath            = "/etc/hyperfilelens/lensnode.env"
 	lensSidecarScript          = "gateway-install-lensnode-sidecar.sh"
 	lensnodeImageArchive       = "lensnode-image-linux-amd64.tar.gz"
-	gatewayDockerInstallScript = "gateway-install-docker-ubuntu2404-amd64.sh"
-	defaultLensnodeImage       = "sourcelens-lensnode:latest"
+	gatewayDockerInstallScript = "gateway-install-docker-ubuntu-amd64.sh"
+	defaultLensnodeImage       = "hyperfilelens-sourcelens-lensnode:latest"
 	gatewayMinDockerEngine     = "24.0.0"
+	gatewayMinDockerCompose    = "2.20.0"
 )
 
 // InstallLensSidecar writes LensNode credentials and runs the bundled sidecar install script.
@@ -63,15 +64,7 @@ func ensureGatewayDocker(ctx context.Context, cfg Config) error {
 		return nil
 	}
 	if _, err := exec.LookPath("docker"); err == nil {
-		_ = exec.CommandContext(ctx, "systemctl", "start", "docker").Run()
-		if dockerRuntimeReady() {
-			logOK(fmt.Sprintf("Using existing Docker (engine %s).", dockerEngineVersion()))
-			return nil
-		}
-		if os.Getenv("HFL_FORCE_DOCKER_INSTALL") != "1" {
-			return fmt.Errorf("docker is already installed on this host but is not usable; fix or start Docker, or set HFL_FORCE_DOCKER_INSTALL=1 to install from the console bundle")
-		}
-		logWarn("HFL_FORCE_DOCKER_INSTALL=1: installing Docker from offline bundle despite existing installation.")
+		return fmt.Errorf("docker is installed but does not meet the requirements (engine >= %s, Compose v2 >= %s, reachable daemon); HFL will not repair or replace it", gatewayMinDockerEngine, gatewayMinDockerCompose)
 	}
 	scriptPath, cleanup, err := downloadGatewayBootstrapScript(ctx, cfg, gatewayDockerInstallScript)
 	if err != nil {
@@ -85,6 +78,7 @@ func ensureGatewayDocker(ctx context.Context, cfg Config) error {
 		"HFL_GATEWAY_BOOTSTRAP_BASE="+strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")+"/media/gateway-bootstrap",
 		"HFL_INSECURE_TLS="+insecureTLSEnv(),
 		"HFL_DOCKER_MIN_ENGINE="+gatewayMinDockerEngine,
+		"HFL_COMPOSE_MIN_VERSION="+gatewayMinDockerCompose,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -108,12 +102,19 @@ func dockerRuntimeReady() bool {
 	if engine == "" || !dockerVersionGE(engine, gatewayMinDockerEngine) {
 		return false
 	}
-	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
-		if _, err := exec.LookPath("docker-compose"); err != nil {
-			return false
-		}
+	compose := strings.TrimSpace(dockerComposeVersion())
+	if compose == "" || !dockerVersionGE(compose, gatewayMinDockerCompose) {
+		return false
 	}
 	return true
+}
+
+func dockerComposeVersion() string {
+	out, err := exec.Command("docker", "compose", "version", "--short").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func dockerEngineVersion() string {
@@ -134,7 +135,7 @@ func lensSidecarHealthy() bool {
 		return false
 	}
 	cmd := exec.Command("docker", "ps",
-		"--filter", "name=sourcelens",
+		"--filter", "name=hyperfilelens-gateway",
 		"--filter", "status=running",
 		"--format", "{{.Names}}",
 	)
@@ -144,7 +145,7 @@ func lensSidecarHealthy() bool {
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		name := strings.TrimSpace(line)
-		if name == "sourcelens-lensnode-1" || name == "sourcelens_lensnode_1" {
+		if name == "hyperfilelens-gateway-lensnode-1" || name == "hyperfilelens-gateway_lensnode_1" {
 			return true
 		}
 	}
@@ -215,6 +216,7 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 	}
 	for _, ref := range []string{
 		defaultLensnodeImage,
+		"sourcelens-lensnode:latest",
 		"oneprocloud/sourcelens-lensnode:latest",
 	} {
 		if dockerImageExists(ref) {

@@ -212,8 +212,8 @@ services:
       ui:
         condition: service_healthy
     ports:
-      - "${HFL_TENANT_BIND_ADDRESS:-0.0.0.0}:${HFL_TENANT_PORT:-10443}:443"
-      - "${HFL_ADMIN_BIND_ADDRESS:-0.0.0.0}:${HFL_ADMIN_PORT:-10444}:10444"
+      - "${HFL_TENANT_BIND_ADDRESS:-0.0.0.0}:${HFL_TENANT_PORT:-11443}:443"
+      - "${HFL_ADMIN_BIND_ADDRESS:-0.0.0.0}:${HFL_ADMIN_PORT:-11444}:10444"
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/nginx/snippets:/etc/nginx/snippets:ro

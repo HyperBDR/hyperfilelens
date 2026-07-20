@@ -134,7 +134,9 @@ jobs:
           set -euo pipefail
           python3 tools/quality/check-english-source.py
           python3 -m unittest tools/quality/test_check_english_source.py
+          uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py
           ./tools/quality/check-release-contracts.sh
+          ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-ci-release-assembly.sh
           git diff --check
           while IFS= read -r script; do bash -n "$script"; done < <(find . -path './build' -prune -o -path './data' -prune -o -type f -name '*.sh' -print)
@@ -328,14 +330,27 @@ jobs:
     needs: [prepare, quality]
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu_release: "20.04"
+            asset: ubuntu2004
+          - ubuntu_release: "24.04"
+            asset: ubuntu2404
     steps:
       - uses: actions/checkout@v4
       - name: Build host dependency asset
-        run: ./release/ci/build-host-debs-asset.sh _internal-host-debs.tar.gz
+        run: >-
+          ./release/ci/build-host-debs-asset.sh
+          "${{ matrix.ubuntu_release }}"
+          "_internal-host-debs-${{ matrix.asset }}.tar.gz"
       - name: Upload host dependency asset
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-host-debs.tar.gz --clobber
+        run: >-
+          gh release upload "${{ needs.prepare.outputs.tag }}"
+          "_internal-host-debs-${{ matrix.asset }}.tar.gz" --clobber
 
   export-hfl-images:
     runs-on: ubuntu-24.04

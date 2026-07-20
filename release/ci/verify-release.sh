@@ -69,9 +69,9 @@ sudo env HFL_PUBLIC_HOST=127.0.0.1 HFL_SHOW_GENERATED_CREDENTIALS=0 \
 
 deadline=$((SECONDS + 600))
 while ((SECONDS < deadline)); do
-	if curl -kfsS https://127.0.0.1:10443/health/ready >/dev/null \
-		&& curl -kfsS https://127.0.0.1:10444/ >/dev/null \
-		&& curl -kfsS https://127.0.0.1:10446/ >/dev/null; then
+	if curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null \
+		&& curl -kfsS https://127.0.0.1:11444/ >/dev/null \
+		&& curl -kfsS https://127.0.0.1:11445/ >/dev/null; then
 		break
 	fi
 	sleep 5
@@ -82,9 +82,9 @@ done
 	exit 1
 }
 
-export HFL_TENANT_PORT=10443
-export HFL_ADMIN_PORT=10444
-export SOURCELENS_CONSOLE_PORT=10446
+export HFL_TENANT_PORT=11443
+export HFL_ADMIN_PORT=11444
+export SOURCELENS_CONSOLE_PORT=11445
 export SEED_ADMIN_EMAIL
 export SEED_ADMIN_PASSWORD
 SEED_ADMIN_EMAIL="$(sed -n 's/^SEED_ADMIN_EMAIL=//p' /opt/hyperfilelens/.env | head -1)"

@@ -106,6 +106,8 @@ grep -F 'gh release delete-asset' "${workflow}" >/dev/null
 grep -F -- '--repo "${GITHUB_REPOSITORY}"' "${workflow}" >/dev/null
 grep -F "awk '\$2 ~ /^hyperfilelens-.*\\.tar\\.gz\$/" "${workflow}" >/dev/null
 grep -F 'uv run python src/backend/manage.py test' "${workflow}" >/dev/null
+grep -F 'uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py' \
+	"${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
 if grep -F 'uv run pytest src/backend' "${workflow}" >/dev/null; then
@@ -119,6 +121,11 @@ grep -F 'target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${
 grep -F 'registry prefix must include host and namespace' \
 	"${sourcelens_image_builder}" >/dev/null
 
+agent_publisher="${ROOT}/tools/agent/publish.sh"
+grep -F 'all | standard | ubuntu2004 | ubuntu2404' "${agent_publisher}" >/dev/null
+grep -F 'for ubuntu_flavor in ubuntu2004 ubuntu2404' "${agent_publisher}" >/dev/null
+grep -F 'build/dependencies/docker/ubuntu-${ubuntu_release}/amd64' "${agent_publisher}" >/dev/null
+
 remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 [[ -x "${remote_deploy}" ]] || {
 	printf 'ERROR: remote deployment script is missing or not executable\n' >&2
@@ -131,6 +138,15 @@ if grep -E 'docker (pull|compose pull)' "${remote_deploy}" >/dev/null; then
 	printf 'ERROR: production deployment must consume the complete Release package\n' >&2
 	exit 1
 fi
+for incompatible in removeprefix retry-all-errors; do
+	if grep -F "${incompatible}" "${remote_deploy}" >/dev/null; then
+		printf 'ERROR: remote deployment uses Ubuntu 20.04-incompatible feature: %s\n' "${incompatible}" >&2
+		exit 1
+	fi
+done
+grep -F 'Verified that unrelated Docker containers, networks, and volumes are unchanged' "${remote_deploy}" >/dev/null
+grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy}" >/dev/null
+grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 
 installer="${ROOT}/deploy/installer/install.sh"
 grep -F 'PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"' "${installer}" >/dev/null
@@ -138,6 +154,14 @@ grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
 grep -F 'admin_pass="Hfl-0$(random_hex | cut -c1-14)!"' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
+grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
+grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
+grep -F 'docker-debs-ubuntu2004-amd64.tar.gz' "${installer}" >/dev/null
+grep -F 'docker-debs-ubuntu2404-amd64.tar.gz' "${installer}" >/dev/null
+if grep -E 'tomllib|extractall\([^)]*filter=' "${installer}" >/dev/null; then
+	printf 'ERROR: installer contains Python APIs unavailable on Ubuntu 20.04\n' >&2
+	exit 1
+fi
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 fingerprint_body="$(sed -n '/^sourcelens_bundle_fingerprint()/,/^}/p' "${installer}")"
@@ -149,6 +173,8 @@ fi
 
 for executable in \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
+	"${ROOT}/tools/quality/check-python38-runtime.py" \
+	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}"/release/ci/*.sh \
 	"${ROOT}/release/ci/write-sbom.py"; do
 	[[ -x "${executable}" ]] || {
@@ -156,5 +182,18 @@ for executable in \
 		exit 1
 	}
 done
+
+grep -F 'HFL_TENANT_PORT=11443' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_ADMIN_PORT=11444' "${ROOT}/.env.example" >/dev/null
+grep -F 'FRONTEND_URL=https://127.0.0.1:11443' "${ROOT}/.env.example" >/dev/null
+grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
+grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'mem_limit: 448m' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'name: hyperfilelens-sourcelens' \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+[[ -f "${ROOT}/.github/workflows/deploy_release.yml" ]] || {
+	printf 'ERROR: manual published-release deployment workflow is missing\n' >&2
+	exit 1
+}
 
 printf 'Release contract checks passed.\n'

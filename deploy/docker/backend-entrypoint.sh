@@ -138,7 +138,9 @@ case "${1:-api}" in
     wait_for_postgres
     run_migrations_and_register
     echo "[entrypoint] start celery worker"
-    exec celery -A common worker --loglevel=INFO -Q backend,node.lifecycle,node.ingest
+    exec celery -A common worker --loglevel=INFO \
+      --concurrency="${CELERY_WORKER_CONCURRENCY:-1}" \
+      -Q backend,node.lifecycle,node.ingest
     ;;
   worker-dev)
     run_worker_dev

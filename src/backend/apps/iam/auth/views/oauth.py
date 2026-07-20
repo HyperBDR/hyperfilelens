@@ -27,7 +27,7 @@ def is_google_oauth_enabled() -> bool:
 
 
 def absolute_google_login_url() -> str:
-    """Use tenant public URL so non-standard ports (e.g. :10443) are preserved behind nginx."""
+    """Use tenant public URL so non-standard ports (e.g. :11443) are preserved behind nginx."""
     from common.deploy.site import tenant_public_url
 
     path = google_login_url()

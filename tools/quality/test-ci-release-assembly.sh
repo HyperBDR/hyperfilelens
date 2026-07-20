@@ -33,8 +33,8 @@ tar -C "${hfl}" -czf "${input}/_internal-hfl-images.tar.gz" images metadata
 runtime="${fixtures}/runtime"
 make_gzip "${runtime}/images/01-postgres-17.tar.gz" postgres
 make_gzip "${runtime}/images/02-redis-alpine.tar.gz" redis
-make_metadata "${runtime}/metadata/postgres.json" postgres postgres:17 3
-make_metadata "${runtime}/metadata/redis.json" redis redis:alpine 4
+make_metadata "${runtime}/metadata/postgres.json" postgres hyperfilelens-postgres:17 3
+make_metadata "${runtime}/metadata/redis.json" redis hyperfilelens-redis:alpine 4
 tar -C "${runtime}" -czf "${input}/_internal-runtime-images.tar.gz" images metadata
 
 sl="${fixtures}/sourcelens"
@@ -62,27 +62,37 @@ cat >"${sl}/sourcelens/BUILD_INFO.json" <<'JSON'
   "patch_sha256": "fixture",
   "network": "hyperfilelens-bridge",
   "install_dir": "/opt/hyperfilelens/sourcelens",
-  "lensnode_image": "sourcelens-lensnode:latest",
+  "lensnode_image": "hyperfilelens-sourcelens-lensnode:latest",
   "images": {
-    "backend": {"ref": "sourcelens-backend:0.4.0", "upstream_ref": "example/backend:v0.4.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
-    "frontend": {"ref": "sourcelens-frontend:0.4.0", "upstream_ref": "example/frontend:v0.4.0", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
-    "lensnode": {"ref": "sourcelens-lensnode:0.4.0", "upstream_ref": "example/lensnode:v0.4.0", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
-    "nginx": {"ref": "nginx:stable-alpine", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"}
+    "backend": {"ref": "hyperfilelens-sourcelens-backend:1.2.3-sl0.4.0", "upstream_ref": "example/backend:v0.4.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+    "frontend": {"ref": "hyperfilelens-sourcelens-frontend:1.2.3-sl0.4.0", "upstream_ref": "example/frontend:v0.4.0", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+    "lensnode": {"ref": "hyperfilelens-sourcelens-lensnode:1.2.3-sl0.4.0", "upstream_ref": "example/lensnode:v0.4.0", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+    "nginx": {"ref": "hyperfilelens-sourcelens-nginx:stable-alpine", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"}
   }
 }
 JSON
 tar -C "${sl}" -czf "${input}/_internal-sourcelens-bundle.tar.gz" images sourcelens payload
 
-host="${fixtures}/host"
-mkdir -p "${host}/host/debs"
-printf 'synthetic deb\n' >"${host}/host/debs/fixture.deb"
-tar -C "${host}" -czf "${input}/_internal-host-debs.tar.gz" host
+for release_id in 2004 2404; do
+	host="${fixtures}/host-${release_id}"
+	mkdir -p "${host}/payload/media/gateway-bootstrap"
+	make_gzip \
+		"${host}/payload/media/gateway-bootstrap/docker-debs-ubuntu${release_id}-amd64.tar.gz" \
+		"synthetic ubuntu ${release_id} Docker deb bundle"
+	tar -C "${host}" -czf "${input}/_internal-host-debs-ubuntu${release_id}.tar.gz" payload
+done
 
 for asset in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
 	agent="${fixtures}/agent-${asset}"
 	mkdir -p "${agent}/payload/media/agent-releases/1.2.3" \
 		"${agent}/payload/media/enroll-bootstrap"
 	printf '%s\n' "${asset}" >"${agent}/payload/media/agent-releases/1.2.3/${asset}.fixture"
+	if [[ "${asset}" == "linux-amd64" ]]; then
+		printf 'ubuntu 20.04 fixture\n' \
+			>"${agent}/payload/media/agent-releases/1.2.3/hfl-agent-1.2.3-linux-amd64-ubuntu2004.tar.gz"
+		printf 'ubuntu 24.04 fixture\n' \
+			>"${agent}/payload/media/agent-releases/1.2.3/hfl-agent-1.2.3-linux-amd64-ubuntu2404.tar.gz"
+	fi
 	printf '%s\n' "${asset}" >"${agent}/payload/media/enroll-bootstrap/${asset}.fixture"
 	tar -C "${agent}" -czf "${input}/_internal-agent-${asset}.tar.gz" payload
 done
@@ -112,6 +122,8 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	archive="${first%.part-000}"
 	cat "${archive}.part-"* >"${archive}"
 	tar -tzf "${archive}" | grep -E '/sync-env\.py$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/hfl-agent-1\.2\.3-linux-amd64-ubuntu2004\.tar\.gz$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/hfl-agent-1\.2\.3-linux-amd64-ubuntu2404\.tar\.gz$' >/dev/null
 	"${ROOT}/release/ci/verify-release.sh" --archive "$(realpath "${archive}")"
 )
 

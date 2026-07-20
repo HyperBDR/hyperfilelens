@@ -141,6 +141,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -kfsS --retry 24 --retry-delay 5 "https://${APP_PUBLIC_HOST}:10443/health/ready"
-          curl -kfsS --retry 12 --retry-delay 5 "https://${APP_PUBLIC_HOST}:10444/" >/dev/null
-          curl -kfsS --retry 24 --retry-delay 5 "https://${APP_PUBLIC_HOST}:10446/" >/dev/null
+          curl -kfsS --retry 24 --retry-delay 5 "https://${APP_PUBLIC_HOST}:11443/health/ready"
+          curl -kfsS --retry 12 --retry-delay 5 "https://${APP_PUBLIC_HOST}:11444/" >/dev/null
+          curl -kfsS --retry 24 --retry-delay 5 "https://${APP_PUBLIC_HOST}:11445/" >/dev/null
