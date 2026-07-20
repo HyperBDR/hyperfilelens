@@ -67,6 +67,21 @@ export const en = {
       restoreAlreadyRunning: 'A restore task is already running for this source.',
     },
   },
+  feedback: {
+    toast: {
+      copy: 'Copy',
+      copied: 'Copied',
+      viewDetails: 'View details',
+      howToFix: 'How to fix',
+    },
+    errorDetails: {
+      issue: 'Issue',
+      reasons: 'Possible reasons',
+      resolutions: 'How to resolve',
+      technical: 'Technical details',
+      copy: 'Copy error details',
+    },
+  },
   account: {
     userMenuAria: 'User menu',
     roleSuperAdmin: 'Super Admin',

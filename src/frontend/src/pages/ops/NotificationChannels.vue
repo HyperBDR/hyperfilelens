@@ -29,6 +29,8 @@ import { getNotificationTypeIcon } from '../../composables/useNotificationTypeIc
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { booleanStatusTag, lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { apiErrorMessageI18n } from '../../lib/api'
+import { openErrorDetails } from '../../lib/errors/details'
+import { notifyError, notifySuccess } from '../../lib/notify'
 import {
   bulkDeleteChannels,
   bulkStateChannels,
@@ -458,9 +460,14 @@ async function executeDelete() {
     deleteDialogSource.value = null
     await fetchChannels()
   } catch (e: unknown) {
-    ElMessage.error({
-      message: apiErrorMessageI18n(e, t, t('ops.notification.deleteFailed')),
-      grouping: true,
+    const message = apiErrorMessageI18n(e, t, t('ops.notification.deleteFailed'))
+    notifyError({
+      title: t('ops.notification.deleteFailed'),
+      message,
+      dedupeKey: `notification-channel-delete:${state.row.id}`,
+      error: e,
+      errorDetails: { issue: message },
+      showDetails: true,
     })
   } finally {
     deleteDialogLoading.value = false
@@ -476,12 +483,29 @@ async function runTest(row: NotificationChannel) {
   try {
     const res = await testChannel(row.id)
     const ok = res.status === 'success'
-    if (ok) ElMessage.success({ message: t('ops.notification.testSuccess'), grouping: true })
-    else ElMessage.error({ message: res.error || t('ops.notification.testFailed'), grouping: true })
+    if (ok) {
+      notifySuccess({
+        message: t('ops.notification.testSuccess'),
+        dedupeKey: `notification-channel-test:${row.id}:success`,
+      })
+    } else {
+      const message = res.error || t('ops.notification.testFailed')
+      openErrorDetails({
+        title: t('ops.notification.testFailed'),
+        summary: message,
+        issue: message,
+        rawDetail: res,
+      })
+    }
   } catch (e: unknown) {
-    ElMessage.error({
-      message: apiErrorMessageI18n(e, t, t('ops.notification.testFailed')),
-      grouping: true,
+    const message = apiErrorMessageI18n(e, t, t('ops.notification.testFailed'))
+    openErrorDetails({
+      error: e,
+      overrides: {
+        title: t('ops.notification.testFailed'),
+        summary: message,
+        issue: message,
+      },
     })
   } finally {
     testing.value = false
