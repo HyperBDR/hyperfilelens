@@ -45,12 +45,15 @@ fi
 cache_dir="${ROOT}/build/cache/playwright-node-${version}"
 mkdir -p "${cache_dir}"
 source_lens_env="${SMOKE_SOURCELENS_ENV_FILE:-${ROOT}/data/sourcelens/config/.env}"
+smoke_host="${SMOKE_HOST:-host.docker.internal}"
 
-docker run --rm --network host \
+docker run --rm \
+	--add-host host.docker.internal:host-gateway \
 	-v "${ROOT}:/workspace:ro" \
 	-v "${cache_dir}:/smoke" \
 	-e PLAYWRIGHT_VERSION="${version}" \
 	-e DEV_OFFLINE="${offline}" \
+	-e SMOKE_HOST="${smoke_host}" \
 	-e HFL_TENANT_PORT="$(read_default HFL_TENANT_PORT 11443)" \
 	-e HFL_ADMIN_PORT="$(read_default HFL_ADMIN_PORT 11444)" \
 	-e SOURCELENS_CONSOLE_PORT="$(read_default SOURCELENS_CONSOLE_PORT 11445)" \
