@@ -37,20 +37,25 @@ async function waitForHflLogin(page, baseUrl, expectedPathPrefix) {
   await page.locator('input[autocomplete="email"]').fill(hflEmail)
   await page.locator('input[autocomplete="current-password"]').fill(hflPassword)
   const captchaImage = page.locator('.auth-captcha-field__image')
-  if (await captchaImage.isVisible()) {
-    const source = await captchaImage.getAttribute('src')
-    if (!source?.startsWith('data:image/svg+xml;base64,')) {
-      fail(`unexpected captcha image format at ${baseUrl}`)
-    }
-    const svg = Buffer.from(source.split(',', 2)[1], 'base64').toString('utf8')
-    const captcha = [...svg.matchAll(/<text[^>]*>([^<])<\/text>/g)]
-      .map(match => match[1])
-      .join('')
-    if (captcha.length !== 4) {
-      fail(`unable to read the development SVG captcha at ${baseUrl}`)
-    }
-    await page.locator('.auth-captcha-field__input input').fill(captcha)
+  try {
+    await captchaImage.waitFor({ state: 'visible', timeout: 30_000 })
+  } catch {
+    const captchaField = page.locator('.auth-captcha-field')
+    const details = await captchaField.innerText().catch(() => '')
+    fail(`image captcha did not become ready at ${baseUrl}: ${JSON.stringify(details)}`)
   }
+  const source = await captchaImage.getAttribute('src')
+  if (!source?.startsWith('data:image/svg+xml;base64,')) {
+    fail(`unexpected captcha image format at ${baseUrl}`)
+  }
+  const svg = Buffer.from(source.split(',', 2)[1], 'base64').toString('utf8')
+  const captcha = [...svg.matchAll(/<text[^>]*>([^<])<\/text>/g)]
+    .map(match => match[1])
+    .join('')
+  if (captcha.length !== 4) {
+    fail(`unable to read the development SVG captcha at ${baseUrl}`)
+  }
+  await page.locator('.auth-captcha-field__input input').fill(captcha)
   await page.locator('button.submit-btn').click()
   await page.waitForURL(url => !url.pathname.startsWith('/login'), { timeout: 60_000 })
   if (!page.url().includes(expectedPathPrefix)) {
