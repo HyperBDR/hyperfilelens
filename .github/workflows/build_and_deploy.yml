@@ -525,10 +525,13 @@ jobs:
           set -euo pipefail
           while IFS= read -r asset; do
             [[ -n "$asset" ]] || continue
-            gh release delete-asset "${{ needs.prepare.outputs.tag }}" "$asset" --yes
-          done < <(gh release view "${{ needs.prepare.outputs.tag }}" --json assets \
+            gh release delete-asset "${{ needs.prepare.outputs.tag }}" "$asset" \
+              --repo "${GITHUB_REPOSITORY}" --yes
+          done < <(gh release view "${{ needs.prepare.outputs.tag }}" \
+            --repo "${GITHUB_REPOSITORY}" --json assets \
             --jq '.assets[] | select(.name | startswith("_internal-")) | .name')
-          gh release edit "${{ needs.prepare.outputs.tag }}" --draft=false --latest
+          gh release edit "${{ needs.prepare.outputs.tag }}" \
+            --repo "${GITHUB_REPOSITORY}" --draft=false --latest
 
   deploy-preprod:
     needs: [prepare, publish-release]
