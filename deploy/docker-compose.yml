@@ -39,9 +39,13 @@ services:
     mem_limit: 320m
     cpus: 0.30
     healthcheck:
-      test: ["CMD-SHELL", "celery -A common inspect ping -t 2 >/dev/null 2>&1 || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "tr '\\0' ' ' </proc/1/cmdline | grep -Eq 'celery .*worker' && python -c \"import os,socket; pg_host=os.getenv('POSTGRES_HOST','postgres'); pg_port=int(os.getenv('POSTGRES_PORT','5432')); s=socket.socket(); s.settimeout(1); s.connect((pg_host,pg_port)); s.close(); s=socket.socket(); s.settimeout(1); s.connect(('redis',6379)); s.close()\"",
+        ]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 30
     logging:
       driver: "json-file"

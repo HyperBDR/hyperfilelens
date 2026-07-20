@@ -90,6 +90,8 @@ workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
 	exit 1
 }
 grep -F 'timeout-minutes: 120' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'Capture failed install diagnostics' "${workflow}" >/dev/null
+grep -F 'logs --no-color --tail 200' "${workflow}" >/dev/null
 if grep -F 'workflow_dispatch:' "${workflow}" >/dev/null; then
 	printf 'ERROR: release workflow must not allow manual dispatch\n' >&2
 	exit 1
@@ -121,6 +123,15 @@ grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
 if grep -F 'uv run pytest src/backend' "${workflow}" >/dev/null; then
 	printf 'ERROR: backend CI must initialize Django through manage.py\n' >&2
+	exit 1
+fi
+
+worker_healthcheck="$(sed -n '/^  worker:/,/^  scheduler:/p' "${ROOT}/deploy/docker-compose.yml")"
+grep -F "/proc/1/cmdline" <<<"${worker_healthcheck}" >/dev/null
+grep -F "s.connect((pg_host,pg_port))" <<<"${worker_healthcheck}" >/dev/null
+grep -F "s.connect(('redis',6379))" <<<"${worker_healthcheck}" >/dev/null
+if grep -F 'celery -A common inspect ping' <<<"${worker_healthcheck}" >/dev/null; then
+	printf 'ERROR: worker healthcheck must not start another Django/Celery process\n' >&2
 	exit 1
 fi
 

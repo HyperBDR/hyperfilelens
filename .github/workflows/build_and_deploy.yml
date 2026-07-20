@@ -524,6 +524,25 @@ jobs:
           echo "archive=$(realpath "$archive")" >> "$GITHUB_OUTPUT"
       - name: Full offline install and browser login smoke
         run: ./release/ci/verify-release.sh --archive "${{ steps.package.outputs.archive }}" --install
+      - name: Capture failed install diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          if [[ -f /opt/hyperfilelens/docker-compose.yml ]]; then
+            sudo docker compose -f /opt/hyperfilelens/docker-compose.yml \
+              --env-file /opt/hyperfilelens/.env ps -a
+            sudo docker compose -f /opt/hyperfilelens/docker-compose.yml \
+              --env-file /opt/hyperfilelens/.env logs --no-color --tail 200
+          fi
+          if [[ -f /opt/hyperfilelens/sourcelens/docker-compose.yml ]]; then
+            sudo docker compose -f /opt/hyperfilelens/sourcelens/docker-compose.yml \
+              --env-file /opt/hyperfilelens/data/sourcelens/config/.env ps -a
+            sudo docker compose -f /opt/hyperfilelens/sourcelens/docker-compose.yml \
+              --env-file /opt/hyperfilelens/data/sourcelens/config/.env logs --no-color --tail 200
+          fi
+          sudo docker system df
+          df -h
 
   publish-release:
     runs-on: ubuntu-24.04
