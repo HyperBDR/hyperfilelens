@@ -37,12 +37,22 @@ async function waitForHflLogin(page, baseUrl, expectedPathPrefix) {
   await page.locator('input[autocomplete="email"]').fill(hflEmail)
   await page.locator('input[autocomplete="current-password"]').fill(hflPassword)
   const captchaImage = page.locator('.auth-captcha-field__image')
-  try {
-    await captchaImage.waitFor({ state: 'visible', timeout: 30_000 })
-  } catch {
-    const captchaField = page.locator('.auth-captcha-field')
-    const details = await captchaField.innerText().catch(() => '')
-    fail(`image captcha did not become ready at ${baseUrl}: ${JSON.stringify(details)}`)
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await captchaImage.waitFor({ state: 'visible', timeout: attempt === 0 ? 15_000 : 30_000 })
+      break
+    } catch {
+      if (attempt === 0) {
+        const captchaRefresh = page.locator('.auth-captcha-field__image-button')
+        if (await captchaRefresh.isVisible()) {
+          await captchaRefresh.click()
+          continue
+        }
+      }
+      const captchaField = page.locator('.auth-captcha-field')
+      const details = await captchaField.innerText().catch(() => '')
+      fail(`image captcha did not become ready at ${baseUrl}: ${JSON.stringify(details)}`)
+    }
   }
   const source = await captchaImage.getAttribute('src')
   if (!source?.startsWith('data:image/svg+xml;base64,')) {
@@ -64,6 +74,29 @@ async function waitForHflLogin(page, baseUrl, expectedPathPrefix) {
   await page.waitForTimeout(1_000)
   if (requireHmr && !webSockets.some(url => url.includes('/__vite_hmr'))) {
     fail(`dedicated Vite HMR WebSocket was not observed at ${baseUrl}`)
+  }
+}
+
+async function waitForPlatformOps(page, baseUrl) {
+  const unauthorized = []
+  page.on('response', response => {
+    if (response.status() === 401) unauthorized.push(response.url())
+  })
+
+  await page.goto(`${baseUrl}/`, { waitUntil: 'domcontentloaded' })
+  try {
+    await page.waitForURL(url => url.pathname.startsWith('/platform-ops'), { timeout: 60_000 })
+    await page.locator('.platform-ops-shell').waitFor({ state: 'visible', timeout: 60_000 })
+  } catch {
+    const body = (await page.locator('body').innerText().catch(() => '')).slice(0, 1_500)
+    const cookies = await page.context().cookies().then(items => items.map(item => item.name))
+    fail(
+      `Platform Operations did not become ready at ${page.url()}; `
+      + `cookies=${JSON.stringify(cookies)} body=${JSON.stringify(body)}`,
+    )
+  }
+  if (unauthorized.length) {
+    fail(`authenticated Platform Operations returned 401 response(s): ${unauthorized.join(', ')}`)
   }
 }
 
@@ -97,21 +130,17 @@ async function waitForSourceLensLogin(page, baseUrl) {
 async function run() {
   const browser = await chromium.launch({ headless: true })
   try {
-    const tenant = await browser.newContext({ ignoreHTTPSErrors: true })
+    const hfl = await browser.newContext({ ignoreHTTPSErrors: true })
     await waitForHflLogin(
-      await tenant.newPage(),
+      await hfl.newPage(),
       `https://${smokeHost}:${tenantPort}`,
       '/',
     )
-    await tenant.close()
-
-    const admin = await browser.newContext({ ignoreHTTPSErrors: true })
-    await waitForHflLogin(
-      await admin.newPage(),
+    await waitForPlatformOps(
+      await hfl.newPage(),
       `https://${smokeHost}:${adminPort}`,
-      '/platform-ops',
     )
-    await admin.close()
+    await hfl.close()
 
     const sourceLens = await browser.newContext({ ignoreHTTPSErrors: true })
     await waitForSourceLensLogin(

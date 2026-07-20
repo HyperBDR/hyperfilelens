@@ -213,11 +213,15 @@ grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
 smoke_script="${ROOT}/tools/dev/browser-smoke.mjs"
 grep -F 'host.docker.internal' "${smoke_script}" >/dev/null
 grep -F 'captchaImage.waitFor' "${smoke_script}" >/dev/null
+grep -F 'captchaRefresh.click' "${smoke_script}" >/dev/null
+grep -F 'waitForPlatformOps' "${smoke_script}" >/dev/null
+grep -F 'const hfl = await browser.newContext' "${smoke_script}" >/dev/null
 if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 	printf 'ERROR: browser smoke must reach published ports through host-gateway\n' >&2
 	exit 1
 fi
 grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
 grep -F 'mem_limit: 448m' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'name: hyperfilelens-sourcelens' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
