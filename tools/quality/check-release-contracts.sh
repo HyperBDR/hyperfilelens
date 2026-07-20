@@ -103,6 +103,7 @@ grep -F 'repository: hyperfilelens-frontend' "${workflow}" >/dev/null
 grep -F '"$REGISTRY_PREFIX"' "${workflow}" >/dev/null
 grep -F "select(.name | startswith(\"_internal-\") | not)" "${workflow}" >/dev/null
 grep -F 'gh release delete-asset' "${workflow}" >/dev/null
+grep -F -- '--repo "${GITHUB_REPOSITORY}"' "${workflow}" >/dev/null
 grep -F "awk '\$2 ~ /^hyperfilelens-.*\\.tar\\.gz\$/" "${workflow}" >/dev/null
 grep -F 'uv run python src/backend/manage.py test' "${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
