@@ -273,7 +273,7 @@ KOPIA_VERSION="${OPT_KOPIA_VERSION:-${KOPIA_VERSION}}"
 MATRIX="${OPT_MATRIX:-${AGENT_MATRIX:-${DEFAULT_MATRIX}}}"
 AGENT_ARTIFACTS_DIR="${REPO_ROOT}/build/agent"
 WORK_ROOT="${AGENT_ARTIFACTS_DIR}/${AGENT_VERSION}"
-NAS_DEPS_ROOT="${REPO_ROOT}/build/dependencies/agent/ubuntu-24.04"
+NAS_DEPS_BASE="${REPO_ROOT}/build/dependencies/agent"
 GITHUB_DOWNLOAD_MIRROR="${OPT_GITHUB_DOWNLOAD_MIRROR:-${GITHUB_DOWNLOAD_MIRROR:-}}"
 GITHUB_TOKEN="${OPT_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 DOCKER_DOWNLOAD_MIRROR="${OPT_DOCKER_DOWNLOAD_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
@@ -328,7 +328,7 @@ force=${FORCE}
 force_pull=${FORCE_PULL}
 docker_pull_timeout_seconds=${DOCKER_PULL_TIMEOUT_SECONDS}
 kopia_output=${WORK_ROOT}
-nas_output=${NAS_DEPS_ROOT}
+nas_output=${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}
 CONFIG
 }
 
@@ -757,6 +757,7 @@ NAS_DOCKER_TIMEOUT=300
 NAS_DOCKER_TIMEOUT_ARM64=1800
 NAS_DEPS_MIN_DEBS=30
 NAS_IMAGE="ubuntu:24.04"
+NAS_UBUNTU_RELEASE="24.04"
 
 hfl_nas_docker_script() {
 	cat <<'NAS_SCRIPT'
@@ -876,6 +877,7 @@ write_nas_manifest() {
 	local arch=$2
 	command -v python3 >/dev/null 2>&1 || log_fail "python3 is required to write NAS dependency metadata" 2
 	ARCH_VALUE="${arch}" APT_SOURCE="${APT_MIRROR:-official}" IMAGE_SOURCE="${NAS_IMAGE}" \
+		UBUNTU_RELEASE_VALUE="${NAS_UBUNTU_RELEASE}" \
 		python3 - "${dest}" <<'PY'
 import hashlib
 import json
@@ -890,7 +892,7 @@ for path in sorted(root.glob("*.deb")):
     files[path.name] = f"sha256:{digest}"
 payload = {
     "schema": 1,
-    "ubuntu_release": "24.04",
+    "ubuntu_release": os.environ["UBUNTU_RELEASE_VALUE"],
     "arch": os.environ["ARCH_VALUE"],
     "container_image": os.environ["IMAGE_SOURCE"],
     "apt_source": os.environ["APT_SOURCE"],
@@ -936,12 +938,12 @@ normalize_docker_mirror_host() {
 
 pull_nas_image() {
 	local platform=$1
-	local mirror_host mirrored official="ubuntu:24.04"
+	local mirror_host mirrored official="ubuntu:${NAS_UBUNTU_RELEASE}"
 
 	mirror_host="$(normalize_docker_mirror_host "${DOCKER_DOWNLOAD_MIRROR:-}")"
 	mirrored=""
 	if [[ -n "${mirror_host}" ]]; then
-		mirrored="${mirror_host}/library/ubuntu:24.04"
+		mirrored="${mirror_host}/library/ubuntu:${NAS_UBUNTU_RELEASE}"
 	fi
 
 	if [[ "${FORCE_PULL}" -eq 0 ]]; then
@@ -984,7 +986,7 @@ pull_nas_image() {
 		return 0
 	fi
 
-	log_warn "Failed to pull ubuntu:24.04 for ${platform}"
+	log_warn "Failed to pull ubuntu:${NAS_UBUNTU_RELEASE} for ${platform}"
 	log_info "Optional mirror example: --docker-download-mirror docker.m.daocloud.io --apt-mirror https://mirrors.tuna.tsinghua.edu.cn"
 	return 1
 }
@@ -1001,7 +1003,10 @@ nas_image_matches_platform() {
 }
 
 fetch_nas_deps() {
-	local out_root="${NAS_DEPS_ROOT}"
+	local ubuntu_release=$1
+	NAS_UBUNTU_RELEASE="${ubuntu_release}"
+	NAS_IMAGE="ubuntu:${ubuntu_release}"
+	local out_root="${NAS_DEPS_BASE}/ubuntu-${ubuntu_release}"
 
 	fetch_arch_docker() {
 		local arch=$1
@@ -1143,7 +1148,7 @@ fetch_nas_deps() {
 		arches+=("${arch}")
 	done < <(resolve_nas_arches)
 
-	log_info "NAS dependency target architectures: ${arches[*]} (Docker ubuntu:24.04; host apt is not used)"
+	log_info "NAS dependency target architectures: ${arches[*]} (Docker ubuntu:${ubuntu_release}; host apt is not used)"
 
 	local -a failed_arches=() ok_arches=()
 	for arch in "${arches[@]}"; do
@@ -1182,5 +1187,7 @@ if [[ "${DO_KOPIA}" -eq 1 ]]; then
 	fetch_kopia
 fi
 if [[ "${DO_NAS}" -eq 1 ]]; then
-	fetch_nas_deps
+	for ubuntu_release in 20.04 24.04; do
+		fetch_nas_deps "${ubuntu_release}"
+	done
 fi

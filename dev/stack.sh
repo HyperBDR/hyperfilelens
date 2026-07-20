@@ -476,7 +476,7 @@ prepare_sourcelens_dev() {
 	export SOURCELENS_GIT_TIMEOUT_SECONDS SOURCELENS_GIT_RETRIES
 	export SOURCELENS_CONSOLE_BIND_ADDRESS SOURCELENS_CONSOLE_PORT SOURCELENS_NGINX_HTTPS_PORT
 	SOURCELENS_CONSOLE_BIND_ADDRESS="$(read_env_value_or SOURCELENS_CONSOLE_BIND_ADDRESS 0.0.0.0 "${ROOT}/.env")"
-	SOURCELENS_CONSOLE_PORT="$(read_env_value_or SOURCELENS_CONSOLE_PORT 10446 "${ROOT}/.env")"
+	SOURCELENS_CONSOLE_PORT="$(read_env_value_or SOURCELENS_CONSOLE_PORT 11445 "${ROOT}/.env")"
 	SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_CONSOLE_PORT}"
 	log "Preparing SourceLens ${mode} integration (force_build=${force})"
 	"${ROOT}/dev/sourcelens.sh" "${args[@]}"
@@ -581,11 +581,11 @@ print_urls() {
 	seed_org="$(read_env_value_or SEED_ORG_NAME HyperFileLens "${env_file}")"
 	sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${env_file}" | tr 'A-Z' 'a-z')"
 	tenant_bind="$(read_env_value_or HFL_TENANT_BIND_ADDRESS 0.0.0.0 "${env_file}")"
-	tenant_port="$(read_env_value_or HFL_TENANT_PORT 10443 "${env_file}")"
+	tenant_port="$(read_env_value_or HFL_TENANT_PORT 11443 "${env_file}")"
 	admin_bind="$(read_env_value_or HFL_ADMIN_BIND_ADDRESS 0.0.0.0 "${env_file}")"
-	admin_port="$(read_env_value_or HFL_ADMIN_PORT 10444 "${env_file}")"
+	admin_port="$(read_env_value_or HFL_ADMIN_PORT 11444 "${env_file}")"
 	sourcelens_console_bind="$(read_env_value_or SOURCELENS_CONSOLE_BIND_ADDRESS 0.0.0.0 "${env_file}")"
-	sourcelens_console_port="$(read_env_value_or SOURCELENS_CONSOLE_PORT 10446 "${env_file}")"
+	sourcelens_console_port="$(read_env_value_or SOURCELENS_CONSOLE_PORT 11445 "${env_file}")"
 	pg_user="$(read_env_value_or POSTGRES_USER postgres "${env_file}")"
 	pg_pass="$(read_env_value_or POSTGRES_PASSWORD postgres "${env_file}")"
 	pg_db="$(read_env_value_or POSTGRES_DB hyperfilelens "${env_file}")"

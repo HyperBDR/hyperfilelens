@@ -219,14 +219,11 @@ save_image_archives() {
 	save_image_archive "${archive}" "${lensnode_refs[@]}"
 	log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
 
-	if [[ -f "${IMAGES_DIR}/12-nginx-stable-alpine.tar.gz" ]] && gzip -t "${IMAGES_DIR}/12-nginx-stable-alpine.tar.gz" 2>/dev/null; then
-		log "Reusing existing ${IMAGES_DIR}/12-nginx-stable-alpine.tar.gz"
-	else
-		log "Saving nginx:stable-alpine..."
-		archive="${IMAGES_DIR}/12-nginx-stable-alpine.tar.gz"
-		save_image_archive "${archive}" nginx:stable-alpine
-		log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
-	fi
+	log "Saving hyperfilelens-sourcelens-nginx:stable-alpine..."
+	archive="${IMAGES_DIR}/12-nginx-stable-alpine.tar.gz"
+	docker tag nginx:stable-alpine hyperfilelens-sourcelens-nginx:stable-alpine
+	save_image_archive "${archive}" hyperfilelens-sourcelens-nginx:stable-alpine
+	log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
 }
 
 stage_runtime_tree() {
@@ -320,7 +317,7 @@ payload = {
         "backend": {"ref": backend_ref, "upstream_ref": upstream_backend_ref, "digest": backend_digest},
         "frontend": {"ref": frontend_ref, "upstream_ref": upstream_frontend_ref, "digest": frontend_digest},
         "lensnode": {"ref": lensnode_ref, "upstream_ref": upstream_lensnode_ref, "digest": lensnode_digest},
-        "nginx": {"ref": "nginx:stable-alpine", "digest": nginx_digest},
+        "nginx": {"ref": "hyperfilelens-sourcelens-nginx:stable-alpine", "digest": nginx_digest},
     },
 }
 out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

@@ -7,7 +7,7 @@ SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-/opt/hyperfilelens/sourcelens}
 SOURCELENS_DATA_DIR="${SOURCELENS_DATA_DIR:-/opt/hyperfilelens/data/sourcelens}"
 SOURCELENS_CONFIG_DIR="${SOURCELENS_CONFIG_DIR:-${SOURCELENS_DATA_DIR}/config}"
 SOURCELENS_TLS_CERT_DIR="${SOURCELENS_TLS_CERT_DIR:-}"
-SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_NGINX_HTTPS_PORT:-10446}"
+SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_NGINX_HTTPS_PORT:-11445}"
 SOURCELENS_CONSOLE_BIND_ADDRESS="${SOURCELENS_CONSOLE_BIND_ADDRESS:-0.0.0.0}"
 SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT:-${SOURCELENS_NGINX_HTTPS_PORT}}"
 HFL_BRIDGE_NETWORK="hyperfilelens-bridge"
@@ -315,19 +315,11 @@ PY
 compose_cmd() {
 	local root=$1
 	shift
-	if docker compose version >/dev/null 2>&1; then
-		(
-			cd "${root}"
-			docker compose -p sourcelens "$@"
-		)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		(
-			cd "${root}"
-			docker-compose -p sourcelens "$@"
-		)
-	else
-		die "docker compose not found"
-	fi
+	docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
+	(
+		cd "${root}"
+		docker compose -p hyperfilelens-sourcelens "$@"
+	)
 }
 
 ensure_bridge_network() {

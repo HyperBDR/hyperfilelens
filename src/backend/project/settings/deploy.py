@@ -9,7 +9,7 @@ HFL_SELF_SERVICE_PASSWORD_RESET = env_bool(
     default=True,
 )
 HFL_PLATFORM_OPS_ALLOWED_CIDRS = env_csv("HFL_PLATFORM_OPS_ALLOWED_CIDRS")
-HFL_ADMIN_PORT = env_int("HFL_ADMIN_PORT", 10444)
+HFL_ADMIN_PORT = env_int("HFL_ADMIN_PORT", 11444)
 
 # TLS certificate SAN hints for install.sh (optional).
 HFL_TLS_SAN_IP = env_str("HFL_TLS_SAN_IP", "")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download Docker CE debs (+ dependencies) for Ubuntu 24.04 amd64 offline host install.
+# Download Docker CE debs (+ dependencies) for a supported Ubuntu amd64 host.
 #
 # Usage:
 #   ./tools/dependencies/fetch-docker-ce-debs.sh
@@ -12,8 +12,10 @@ umask 022
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 VERSION_FILE="${ROOT}/tools/dependencies/versions/docker-ce.env"
-OUT_DIR="${ROOT}/build/dependencies/docker/ubuntu-24.04/amd64"
-DOCKER_IMAGE="ubuntu:24.04"
+UBUNTU_RELEASE="24.04"
+UBUNTU_CODENAME="noble"
+OUT_DIR=""
+DOCKER_IMAGE=""
 
 FORCE=0
 OPT_APT_MIRROR=""
@@ -36,10 +38,10 @@ usage() {
 	cat <<'USAGE'
 Usage: ./tools/dependencies/fetch-docker-ce-debs.sh [options]
 
-Download pinned Docker CE packages for Ubuntu 24.04 amd64 into:
-  build/dependencies/docker/ubuntu-24.04/amd64/
+Download pinned Docker CE packages for Ubuntu 20.04 or 24.04 amd64.
 
 Options:
+  --ubuntu-release VERSION  20.04 | 24.04 (default: 24.04)
   --apt-mirror URL           Ubuntu apt mirror (env: APT_MIRROR / BUILD_APT_MIRROR)
   --docker-apt-mirror URL    Docker CE apt base URL (env: DOCKER_APT_MIRROR / BUILD_DOCKER_APT_MIRROR)
   --docker-download-mirror URL  Docker Hub mirror for ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
@@ -60,6 +62,11 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+	--ubuntu-release)
+		require_value "$1" "${2:-}"
+		UBUNTU_RELEASE="$2"
+		shift 2
+		;;
 	--force)
 		FORCE=1
 		shift
@@ -102,6 +109,17 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+case "${UBUNTU_RELEASE}" in
+20.04)
+	UBUNTU_CODENAME="focal"
+	VERSION_FILE="${ROOT}/tools/dependencies/versions/docker-ce-ubuntu2004.env"
+	;;
+24.04) UBUNTU_CODENAME="noble" ;;
+*) die "unsupported Ubuntu release ${UBUNTU_RELEASE} (use 20.04 or 24.04)" 2 ;;
+esac
+OUT_DIR="${ROOT}/build/dependencies/docker/ubuntu-${UBUNTU_RELEASE}/amd64"
+DOCKER_IMAGE="ubuntu:${UBUNTU_RELEASE}"
+
 APT_MIRROR="${OPT_APT_MIRROR:-${APT_MIRROR:-${BUILD_APT_MIRROR:-}}}"
 DOCKER_APT_MIRROR="${OPT_DOCKER_APT_MIRROR:-${DOCKER_APT_MIRROR:-${BUILD_DOCKER_APT_MIRROR:-https://download.docker.com/linux/ubuntu}}}"
 DOCKER_DOWNLOAD_MIRROR="${OPT_DOCKER_DOWNLOAD_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
@@ -110,6 +128,17 @@ DOCKER_DOWNLOAD_MIRROR="${OPT_DOCKER_DOWNLOAD_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-
 
 # shellcheck disable=SC1090
 source "${VERSION_FILE}"
+
+pin_for_release() {
+	printf '%s' "$1" | sed -E \
+		"s/~ubuntu\.[0-9]+\.[0-9]+~[A-Za-z0-9]+$/~ubuntu.${UBUNTU_RELEASE}~${UBUNTU_CODENAME}/"
+}
+
+ENGINE_VERSION="$(pin_for_release "${ENGINE_VERSION}")"
+CLI_VERSION="$(pin_for_release "${CLI_VERSION}")"
+CONTAINERD_VERSION="$(pin_for_release "${CONTAINERD_VERSION}")"
+COMPOSE_PLUGIN_VERSION="$(pin_for_release "${COMPOSE_PLUGIN_VERSION}")"
+BUILDX_PLUGIN_VERSION="$(pin_for_release "${BUILDX_PLUGIN_VERSION}")"
 
 : "${ENGINE_VERSION:?ENGINE_VERSION missing in ${VERSION_FILE}}"
 : "${CLI_VERSION:?CLI_VERSION missing in ${VERSION_FILE}}"
@@ -133,6 +162,8 @@ cache_complete() {
 print_config() {
 	cat <<EOF
 output_dir=${OUT_DIR}
+ubuntu_release=${UBUNTU_RELEASE}
+ubuntu_codename=${UBUNTU_CODENAME}
 version_file=${VERSION_FILE}
 base_image=${DOCKER_IMAGE}
 engine_version=${ENGINE_VERSION}
@@ -163,13 +194,13 @@ if [[ "${FORCE}" -eq 0 ]] && cache_complete; then
 	exit 0
 fi
 
-command -v docker >/dev/null 2>&1 || die "docker not found (required to fetch host debs in ubuntu:24.04 container)" 2
+command -v docker >/dev/null 2>&1 || die "docker not found (required to fetch host debs in ${DOCKER_IMAGE} container)" 2
 docker info >/dev/null 2>&1 || die "docker daemon not reachable" 2
 command -v python3 >/dev/null 2>&1 || die "python3 not found" 2
 
 mkdir -p "$(dirname "${OUT_DIR}")"
 
-log "Fetching Docker CE debs (ubuntu 24.04 amd64)"
+log "Fetching Docker CE debs (ubuntu ${UBUNTU_RELEASE} amd64)"
 log "  engine=${ENGINE_VERSION}"
 log "  compose-plugin=${COMPOSE_PLUGIN_VERSION}"
 log "  docker-apt=${DOCKER_APT_MIRROR}"
@@ -263,7 +294,7 @@ if [[ "${gpg_ok}" -ne 1 ]]; then
   exit 1
 fi
 chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] ${docker_apt} noble stable" \
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] ${docker_apt} ${UBUNTU_CODENAME} stable" \
   > /etc/apt/sources.list.d/docker.list
 apt-get update -qq
 
@@ -333,10 +364,17 @@ if [[ -n "${DOCKER_DOWNLOAD_MIRROR}" ]]; then
 		docker pull "${DOCKER_IMAGE}"
 	fi
 fi
+if ! docker image inspect "${DOCKER_IMAGE}" >/dev/null 2>&1; then
+	command -v timeout >/dev/null 2>&1 || die "timeout is required to pull ${DOCKER_IMAGE}"
+	timeout --foreground 300s docker pull "${DOCKER_IMAGE}" \
+		|| die "timed out pulling ${DOCKER_IMAGE}"
+fi
 if ! docker run -d --init --name "${container_name}" --platform linux/amd64 \
+	--pull=never \
 	-e DEBIAN_FRONTEND=noninteractive \
 	-e APT_MIRROR="${APT_MIRROR}" \
 	-e DOCKER_APT_MIRROR="${DOCKER_APT_MIRROR}" \
+	-e UBUNTU_CODENAME="${UBUNTU_CODENAME}" \
 	-e ENGINE_VERSION="${ENGINE_VERSION}" \
 	-e CLI_VERSION="${CLI_VERSION}" \
 	-e CONTAINERD_VERSION="${CONTAINERD_VERSION}" \
@@ -371,7 +409,7 @@ if ! cache_complete "${staging_dir}"; then
 	die "host Docker CE deb fetch finished but the staged cache is incomplete"
 fi
 
-python3 - "${staging_dir}" "${VERSION_FILE}" <<'PY'
+python3 - "${staging_dir}" "${VERSION_FILE}" "${UBUNTU_RELEASE}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -379,6 +417,7 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 pins = pathlib.Path(sys.argv[2])
+ubuntu_release = sys.argv[3]
 packages = []
 def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
@@ -394,7 +433,7 @@ for path in sorted(root.glob("*.deb")):
         "sha256": sha256_file(path),
     })
 payload = {
-    "platform": "ubuntu-24.04-amd64",
+    "platform": f"ubuntu-{ubuntu_release}-amd64",
     "version_file": pins.name,
     "packages": packages,
 }

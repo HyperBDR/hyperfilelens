@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline Docker CE install for HyperFileLens Data Gateways (Ubuntu 24.04 amd64).
+# Offline Docker CE install for HyperFileLens Data Gateways (Ubuntu 20.04/24.04 amd64).
 # Bundled under /media/gateway-bootstrap/ and invoked by gateway-bootstrap-linux.sh.
 #
 # Host-safe policy: only install packages from the bundled .deb archive. Never run
@@ -8,8 +8,9 @@
 set -euo pipefail
 
 HFL_GATEWAY_BOOTSTRAP_BASE="${HFL_GATEWAY_BOOTSTRAP_BASE:-${HFL_API_BASE:-}/media/gateway-bootstrap}"
-DOCKER_DEBS_ARCHIVE="docker-debs-ubuntu2404-amd64.tar.gz"
+DOCKER_DEBS_ARCHIVE=""
 MIN_ENGINE_VERSION="${HFL_DOCKER_MIN_ENGINE:-24.0.0}"
+MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
 
 hfl_now() {
 	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
@@ -46,10 +47,6 @@ docker_compose_version() {
 		docker compose version --short 2>/dev/null || docker compose version 2>/dev/null | awk '{print $NF}'
 		return 0
 	fi
-	if command -v docker-compose >/dev/null 2>&1; then
-		docker-compose version --short 2>/dev/null || true
-		return 0
-	fi
 	printf ''
 }
 
@@ -57,7 +54,7 @@ docker_version_ge() {
 	local have="$1"
 	local want="$2"
 	[[ -n "${have}" && -n "${want}" ]] || return 1
-	dpkg --compare-versions "${have}" ge "${want}"
+	dpkg --compare-versions "${have#v}" ge "${want#v}"
 }
 
 docker_runtime_ready() {
@@ -70,6 +67,7 @@ docker_runtime_ready() {
 	docker_version_ge "${engine}" "${min_version}" || return 1
 	compose="$(docker_compose_version)"
 	[[ -n "${compose}" ]] || return 1
+	docker_version_ge "${compose}" "${MIN_COMPOSE_VERSION}" || return 1
 	return 0
 }
 
@@ -80,8 +78,13 @@ assert_host_os() {
 		. /etc/os-release
 	fi
 	arch="$(uname -m)"
-	[[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
-		|| hfl_fail "Docker offline install requires Ubuntu 24.04 (current: ${ID:-unknown} ${VERSION_ID:-unknown})." 4
+	[[ "${ID:-}" == "ubuntu" ]] \
+		|| hfl_fail "Docker offline install requires Ubuntu (current: ${ID:-unknown} ${VERSION_ID:-unknown})." 4
+	case "${VERSION_ID:-}" in
+	20.04) DOCKER_DEBS_ARCHIVE="docker-debs-ubuntu2004-amd64.tar.gz" ;;
+	24.04) DOCKER_DEBS_ARCHIVE="docker-debs-ubuntu2404-amd64.tar.gz" ;;
+	*) hfl_fail "Docker offline install supports Ubuntu 20.04 or 24.04 (current: ${VERSION_ID:-unknown})." 4 ;;
+	esac
 	[[ "${arch}" == "x86_64" || "${arch}" == "amd64" ]] \
 		|| hfl_fail "Docker offline install requires amd64 (current: ${arch})." 4
 }
@@ -106,20 +109,26 @@ if docker_runtime_ready "${MIN_ENGINE_VERSION}"; then
 fi
 
 if command -v docker >/dev/null 2>&1; then
-	if [[ "${HFL_FORCE_DOCKER_INSTALL:-0}" != "1" ]]; then
-		hfl_fail "Docker is already installed on this host but is not usable. Start or upgrade Docker on the host, or set HFL_FORCE_DOCKER_INSTALL=1 to install from the offline bundle." 3
-	fi
-	hfl_warn "HFL_FORCE_DOCKER_INSTALL=1: proceeding with offline Docker install."
+	hfl_fail "Docker is installed but does not meet the requirements (engine >= ${MIN_ENGINE_VERSION}, Compose v2 >= ${MIN_COMPOSE_VERSION}, reachable daemon). Fix Docker without using the HFL installer." 3
 fi
 
 assert_host_os
 
+if dpkg-query -W -f='${db:Status-Abbrev}\n' \
+	docker-ce docker-ce-cli docker-compose-plugin containerd.io 2>/dev/null \
+	| grep -q '^ii '; then
+	hfl_fail "Docker packages are partially installed even though the docker command is unavailable. Repair or remove the existing Docker installation first." 3
+fi
+if [[ -e /var/lib/docker || -e /run/docker.sock ]]; then
+	hfl_fail "Docker state exists even though the docker command is unavailable. Refusing to overwrite a partial installation." 3
+fi
+
 if command -v dpkg >/dev/null 2>&1; then
 	audit_out="$(dpkg --audit 2>/dev/null || true)"
 	if [[ -n "${audit_out}" ]]; then
-		hfl_warn "dpkg reports broken packages on this host (will not modify them automatically):"
+		hfl_warn "dpkg reports broken packages on this host:"
 		printf '%s\n' "${audit_out}" | sed 's/^/  /' >&2
-		hfl_warn "Fix host apt state yourself before re-running if Docker install fails."
+		hfl_fail "Repair the host package state before installing Docker." 3
 	fi
 fi
 
@@ -146,67 +155,54 @@ if [[ "${deb_count}" -lt 5 ]]; then
 	hfl_fail "Docker offline bundle is incomplete (${deb_count} debs)." 3
 fi
 
+python3 - "${work_dir}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest_path = root / "MANIFEST.json"
+if not manifest_path.is_file():
+    raise SystemExit("Docker offline bundle has no MANIFEST.json")
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+for package in manifest.get("packages", []):
+    path = root / package["file"]
+    if not path.is_file():
+        raise SystemExit(f"Docker offline bundle is missing {path.name}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != package.get("sha256"):
+        raise SystemExit(f"Docker offline package checksum mismatch: {path.name}")
+PY
+
 hfl_step "Installing Docker CE from offline packages (${deb_count} debs)."
 mapfile -t deb_files < <(find "${work_dir}" -name '*.deb' -type f | sort)
 
-# dpkg only — do not invoke apt-get on the host; apt may "correct dependencies" by
-# removing unrelated packages when the host dpkg database is already broken.
-ordered_debs=()
-for prefix in \
-	containerd.io \
-	docker-ce-cli \
-	docker-buildx-plugin \
-	docker-compose-plugin \
-	libip4tc2 libip6tc2 libxtables12 libmnl0 libnfnetlink0 \
-	libnetfilter-conntrack3 libnftnl11 libjansson4 libbsd0 libedit2 libnftables1 \
-	netbase iptables nftables \
-	docker-ce; do
-	for deb in "${deb_files[@]}"; do
-		deb_base="$(basename "${deb}")"
-		if [[ "${deb_base}" == "${prefix}_"* ]]; then
-			ordered_debs+=("${deb}")
-		fi
-	done
-done
-for deb in "${deb_files[@]}"; do
-	found=0
-	for seen in "${ordered_debs[@]}"; do
-		[[ "${deb}" == "${seen}" ]] && found=1 && break
-	done
-	[[ "${found}" -eq 0 ]] && ordered_debs+=("${deb}")
-done
-
-dpkg_log="${work_dir}/dpkg.log"
-dpkg_ok=0
-if run_quiet "${dpkg_log}" dpkg -i "${ordered_debs[@]}"; then
-	dpkg_ok=1
-else
-	hfl_warn "Bundled dpkg install reported dependency gaps; retrying with --force-depends."
-	if run_quiet "${dpkg_log}" dpkg --force-depends -i "${ordered_debs[@]}"; then
-		dpkg_ok=1
-	elif [[ "${HFL_VERBOSE:-0}" != "1" && -s "${dpkg_log}" ]]; then
-		tail -n 8 "${dpkg_log}" | sed 's/^/  /' >&2
-	fi
+command -v apt-get >/dev/null 2>&1 \
+	|| hfl_fail "apt-get is required for the verified offline Docker install." 2
+apt_plan="${work_dir}/apt-plan.log"
+if ! apt-get --simulate --no-download --no-install-recommends install "${deb_files[@]}" \
+	>"${apt_plan}" 2>&1; then
+	tail -n 12 "${apt_plan}" >&2 || true
+	hfl_fail "Docker offline package plan could not be resolved without downloads." 3
 fi
-
-if docker_runtime_ready "${MIN_ENGINE_VERSION}"; then
-	hfl_ok "Docker CE ready (engine $(docker_engine_version), compose $(docker_compose_version))."
-	exit 0
+if grep -Eq '^The following packages will be (REMOVED|upgraded):|^[1-9][0-9]* upgraded,' "${apt_plan}"; then
+	cat "${apt_plan}" >&2
+	hfl_fail "Docker offline install would upgrade or remove existing host packages." 3
 fi
-
-if [[ "${dpkg_ok}" -eq 0 ]]; then
-	hfl_fail "Docker offline package install failed without modifying unrelated host packages. Set HFL_VERBOSE=1 for full dpkg logs; repair host apt/dpkg state if needed, then re-run." 3
+apt_log="${work_dir}/apt-install.log"
+if ! run_quiet "${apt_log}" apt-get -y --no-download --no-install-recommends install "${deb_files[@]}"; then
+	[[ -s "${apt_log}" ]] && tail -n 12 "${apt_log}" >&2
+	hfl_fail "Docker offline package installation failed." 3
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-	systemctl enable docker >/dev/null 2>&1 || true
-	# iptables/nftables debs from the bundle can reset FORWARD policy; restart docker
-	# so it rebuilds bridge rules for custom networks (dev SourceLens / HFL stacks).
-	systemctl restart docker >/dev/null 2>&1 || systemctl start docker >/dev/null 2>&1 || true
+	systemctl enable --now docker >/dev/null 2>&1 \
+		|| hfl_fail "Docker was installed but its service could not be enabled and started." 5
 	sleep 2
 fi
 
 docker_runtime_ready "${MIN_ENGINE_VERSION}" \
-	|| hfl_fail "Docker post-install check failed (need engine >= ${MIN_ENGINE_VERSION} with compose plugin)." 5
+	|| hfl_fail "Docker post-install check failed (need engine >= ${MIN_ENGINE_VERSION} and Compose v2 >= ${MIN_COMPOSE_VERSION})." 5
 
 hfl_ok "Docker CE installed (engine $(docker_engine_version), compose $(docker_compose_version))."

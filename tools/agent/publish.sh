@@ -29,8 +29,8 @@ Options:
   --version VERSION                Release version (default: exact Git tag or 0.1.0; env: RELEASE_VERSION)
   --matrix MATRIX                  os:arch list (default: full matrix; env: AGENT_MATRIX)
   --commit COMMIT                  Full build commit (env: AGENT_COMMIT)
-  --bundle KIND                    all | standard | ubuntu2404 (env: AGENT_BUNDLE)
-  --ubuntu2404-arch ARCH           NAS deb arch when --bundle is all or ubuntu2404: amd64 | arm64 | all
+  --bundle KIND                    all | standard | ubuntu2004 | ubuntu2404 (env: AGENT_BUNDLE)
+  --ubuntu2404-arch ARCH           NAS deb arch for either Ubuntu bundle: amd64 | arm64 | all
                                    (env: AGENT_UBUNTU2404_ARCH; default: amd64)
   --force-fetch                    Re-download fetch-deps.sh inputs (--force)
   --pull                           Refresh the NAS Ubuntu image instead of using a matching local image
@@ -44,7 +44,7 @@ Fetch (passed to fetch-deps.sh):
   --kopia-version VERSION          Kopia version without v prefix (env: KOPIA_VERSION)
   --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN)
-  --docker-download-mirror URL     Docker Hub mirror for NAS ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
+  --docker-download-mirror URL     Docker Hub mirror for NAS Ubuntu images (env: DOCKER_DOWNLOAD_MIRROR)
   --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
 
@@ -59,6 +59,7 @@ Examples:
   ./tools/agent/publish.sh
   ./tools/agent/publish.sh --bundle standard
   ./tools/agent/publish.sh --bundle standard --version VERSION --matrix MATRIX --force-fetch --releases-dir DIR --github-download-mirror URL --github-token TOKEN
+  ./tools/agent/publish.sh --bundle ubuntu2004
   ./tools/agent/publish.sh --bundle ubuntu2404
   ./tools/agent/publish.sh --bundle ubuntu2404 --version VERSION --ubuntu2404-arch ARCH --force-fetch --releases-dir DIR --github-download-mirror URL --github-token TOKEN --docker-download-mirror URL --apt-mirror URL
   ./tools/agent/publish.sh --bundle all
@@ -227,9 +228,9 @@ if [[ -n "${OPT_BUNDLE}" ]]; then
 fi
 
 case "${BUNDLE}" in
-all | standard | ubuntu2404) ;;
+all | standard | ubuntu2004 | ubuntu2404) ;;
 *)
-	hfl_die "Invalid --bundle ${BUNDLE} (use all, standard, or ubuntu2404)" 2
+	hfl_die "Invalid --bundle ${BUNDLE} (use all, standard, ubuntu2004, or ubuntu2404)" 2
 	;;
 esac
 
@@ -256,7 +257,7 @@ ubuntu2404_matrix() {
 	esac
 }
 
-if [[ "${BUNDLE}" == "ubuntu2404" && -z "${OPT_MATRIX}" ]]; then
+if [[ ( "${BUNDLE}" == "ubuntu2004" || "${BUNDLE}" == "ubuntu2404" ) && -z "${OPT_MATRIX}" ]]; then
 	MATRIX="$(ubuntu2404_matrix)"
 fi
 
@@ -265,8 +266,7 @@ BOOTSTRAP_SCRIPTS=(agent-bootstrap-linux.sh agent-bootstrap-macos.sh agent-boots
 GATEWAY_BOOTSTRAP_LINUX_SCRIPT=gateway-bootstrap-linux.sh
 GATEWAY_SIDECAR_SCRIPT=gateway-install-lensnode-sidecar.sh
 GATEWAY_LIFECYCLE_SCRIPT=gateway-lifecycle.sh
-GATEWAY_DOCKER_INSTALL_SCRIPT=gateway-install-docker-ubuntu2404-amd64.sh
-GATEWAY_DOCKER_DEBS_ARCHIVE=docker-debs-ubuntu2404-amd64.tar.gz
+GATEWAY_DOCKER_INSTALL_SCRIPT=gateway-install-docker-ubuntu-amd64.sh
 GATEWAY_LENSNODE_IMAGE=lensnode-image-linux-amd64.tar.gz
 ENROLL_BOOTSTRAP_DIR="${RELEASES_DIR%/agent-releases}/enroll-bootstrap"
 GATEWAY_BOOTSTRAP_DIR="${RELEASES_DIR%/agent-releases}/gateway-bootstrap"
@@ -364,12 +364,12 @@ archive_ext_for() {
 	esac
 }
 
-ubuntu2404_archive_matches() {
-	local base=$1
+ubuntu_archive_matches() {
+	local base=$1 flavor=$2
 	case "${UBUNTU2404_ARCH}" in
 	all) return 0 ;;
 	amd64 | arm64)
-		[[ "${base}" == *"-linux-${UBUNTU2404_ARCH}-ubuntu2404.tar.gz" ]]
+		[[ "${base}" == *"-linux-${UBUNTU2404_ARCH}-${flavor}.tar.gz" ]]
 		;;
 	esac
 }
@@ -401,12 +401,13 @@ publish_archives() {
 
 	mkdir -p "${RELEASES_DIR}/${VERSION}"
 
-	if [[ "${BUNDLE}" == "ubuntu2404" ]]; then
+	if [[ "${BUNDLE}" == "ubuntu2004" || "${BUNDLE}" == "ubuntu2404" ]]; then
+		local flavor="${BUNDLE}"
 		shopt -s nullglob
-		for archive in "${BUILD_DIR}/${VERSION}/package"/hfl-agent-"${VERSION}"-*-ubuntu2404.tar.gz; do
+		for archive in "${BUILD_DIR}/${VERSION}/package"/hfl-agent-"${VERSION}"-*-"${flavor}".tar.gz; do
 			[[ -f "${archive}" ]] || continue
 			base="$(basename "${archive}")"
-			ubuntu2404_archive_matches "${base}" || continue
+			ubuntu_archive_matches "${base}" "${flavor}" || continue
 			dest="${RELEASES_DIR}/${VERSION}/${base}"
 			cp -f "${archive}" "${dest}"
 			chmod 644 "${dest}"
@@ -443,14 +444,17 @@ publish_archives() {
 			published=$((published + 1))
 
 			if [[ "${goos}" == "linux" ]]; then
-				archive="${BUILD_DIR}/${VERSION}/package/hfl-agent-${VERSION}-${goos}-${goarch}-ubuntu2404.tar.gz"
-				if [[ -f "${archive}" ]]; then
-					dest="${RELEASES_DIR}/${VERSION}/$(basename "${archive}")"
-					cp -f "${archive}" "${dest}"
-					chmod 644 "${dest}"
-					hfl_log_ok "Published $(basename "${dest}")"
-					published=$((published + 1))
-				fi
+				local ubuntu_flavor
+				for ubuntu_flavor in ubuntu2004 ubuntu2404; do
+					archive="${BUILD_DIR}/${VERSION}/package/hfl-agent-${VERSION}-${goos}-${goarch}-${ubuntu_flavor}.tar.gz"
+					if [[ -f "${archive}" ]]; then
+						dest="${RELEASES_DIR}/${VERSION}/$(basename "${archive}")"
+						cp -f "${archive}" "${dest}"
+						chmod 644 "${dest}"
+						hfl_log_ok "Published $(basename "${dest}")"
+						published=$((published + 1))
+					fi
+				done
 			fi
 		done
 	fi
@@ -505,24 +509,19 @@ publish_archives() {
 	cp -f "${docker_install_src}" "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}"
 	chmod 755 "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}"
 	hfl_log_ok "Published ${GATEWAY_DOCKER_INSTALL_SCRIPT}"
-	host_debs_candidates=(
-		"${ROOT}/build/dependencies/docker/ubuntu-24.04/amd64"
-		"${ROOT}/host/debs"
-	)
-	host_debs_dir=""
-	for candidate in "${host_debs_candidates[@]}"; do
-		if [[ -d "${candidate}" ]] && compgen -G "${candidate}/*.deb" >/dev/null; then
-			host_debs_dir="${candidate}"
-			break
+	local ubuntu_release release_id host_debs_dir docker_debs_archive
+	for ubuntu_release in 20.04 24.04; do
+		case "${ubuntu_release}" in 20.04) release_id=2004 ;; 24.04) release_id=2404 ;; esac
+		host_debs_dir="${ROOT}/build/dependencies/docker/ubuntu-${ubuntu_release}/amd64"
+		docker_debs_archive="docker-debs-ubuntu${release_id}-amd64.tar.gz"
+		if [[ -d "${host_debs_dir}" ]] && compgen -G "${host_debs_dir}/*.deb" >/dev/null; then
+			tar -czf "${GATEWAY_BOOTSTRAP_DIR}/${docker_debs_archive}" -C "${host_debs_dir}" .
+			chmod 644 "${GATEWAY_BOOTSTRAP_DIR}/${docker_debs_archive}"
+			hfl_log_ok "Published ${docker_debs_archive}"
+		else
+			hfl_log_skip "${docker_debs_archive}: cached debs not found; run tools/dependencies/fetch-docker-ce-debs.sh --ubuntu-release ${ubuntu_release}"
 		fi
 	done
-	if [[ -n "${host_debs_dir}" ]]; then
-		tar -czf "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_DEBS_ARCHIVE}" -C "${host_debs_dir}" .
-		chmod 644 "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_DEBS_ARCHIVE}"
-		hfl_log_ok "Published ${GATEWAY_DOCKER_DEBS_ARCHIVE}"
-	else
-		hfl_log_skip "${GATEWAY_DOCKER_DEBS_ARCHIVE}: host debs not found; run release/build.sh or tools/dependencies/fetch-docker-ce-debs.sh"
-	fi
 	lensnode_image_dest="${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_LENSNODE_IMAGE}"
 	if [[ -f "${lensnode_image_dest}" ]]; then
 		hfl_log_ok "${GATEWAY_LENSNODE_IMAGE} is already in place"
@@ -541,11 +540,11 @@ hfl_log_info "Matrix: ${MATRIX}"
 hfl_log_info "Commit: ${COMMIT}"
 hfl_log_info "Bundle: ${BUNDLE}"
 if [[ "${BUNDLE}" != "standard" ]]; then
-	hfl_log_info "Ubuntu 24.04 architecture: ${UBUNTU2404_ARCH}"
+	hfl_log_info "Ubuntu offline bundle architecture: ${UBUNTU2404_ARCH}"
 fi
 
 if [[ "${BUNDLE}" != "standard" ]] && matrix_has_linux; then
-	hfl_log_step "Fetching Ubuntu 24.04 NAS dependency debs"
+	hfl_log_step "Fetching Ubuntu 20.04/24.04 NAS dependency debs"
 	"${AGENT_DIR}/scripts/fetch-deps.sh" --nas-deps "${fetch_common_args[@]}" \
 		--version "${VERSION}" \
 		--matrix "${MATRIX}" \

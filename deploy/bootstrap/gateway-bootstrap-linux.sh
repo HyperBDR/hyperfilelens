@@ -63,6 +63,7 @@ hfl_curl_retry() {
 }
 
 MIN_ENGINE_VERSION="${HFL_DOCKER_MIN_ENGINE:-24.0.0}"
+MIN_COMPOSE_VERSION="${HFL_COMPOSE_MIN_VERSION:-2.20.0}"
 
 docker_engine_version() {
 	docker version --format '{{.Server.Version}}' 2>/dev/null || true
@@ -73,10 +74,6 @@ docker_compose_version() {
 		docker compose version --short 2>/dev/null || docker compose version 2>/dev/null | awk '{print $NF}'
 		return 0
 	fi
-	if command -v docker-compose >/dev/null 2>&1; then
-		docker-compose version --short 2>/dev/null || true
-		return 0
-	fi
 	printf ''
 }
 
@@ -84,7 +81,7 @@ docker_version_ge() {
 	local have="$1"
 	local want="$2"
 	[[ -n "${have}" && -n "${want}" ]] || return 1
-	dpkg --compare-versions "${have}" ge "${want}" 2>/dev/null
+	dpkg --compare-versions "${have#v}" ge "${want#v}" 2>/dev/null
 }
 
 docker_runtime_ready() {
@@ -97,14 +94,8 @@ docker_runtime_ready() {
 	docker_version_ge "${engine}" "${min_version}" || return 1
 	compose="$(docker_compose_version)"
 	[[ -n "${compose}" ]] || return 1
+	docker_version_ge "${compose}" "${MIN_COMPOSE_VERSION}" || return 1
 	return 0
-}
-
-try_start_docker() {
-	if command -v systemctl >/dev/null 2>&1; then
-		systemctl start docker >/dev/null 2>&1 || true
-		sleep 2
-	fi
 }
 
 docker_existing_not_ready_reason() {
@@ -125,7 +116,7 @@ docker_existing_not_ready_reason() {
 		return 0
 	fi
 	if [[ -z "${compose}" ]]; then
-		printf '%s' "Docker Compose is missing (install docker-compose-plugin or docker-compose)"
+		printf '%s' "Docker Compose v2 is missing or below ${MIN_COMPOSE_VERSION}"
 		return 0
 	fi
 	printf '%s' "Docker is installed but not ready"
@@ -138,22 +129,15 @@ ensure_docker_for_gateway() {
 		return 0
 	fi
 	if command -v docker >/dev/null 2>&1; then
-		try_start_docker
-		if docker_runtime_ready "${MIN_ENGINE_VERSION}"; then
-			hfl_ok "Using existing Docker (engine $(docker_engine_version), compose $(docker_compose_version))."
-			return 0
-		fi
-		if [[ "${HFL_FORCE_DOCKER_INSTALL:-0}" != "1" ]]; then
-			hfl_fail "$(docker_existing_not_ready_reason "${MIN_ENGINE_VERSION}"). Fix Docker on this host, or set HFL_FORCE_DOCKER_INSTALL=1 to install from the console offline bundle." 3
-		fi
-		hfl_warn "HFL_FORCE_DOCKER_INSTALL=1: installing Docker from offline bundle despite existing installation."
+		hfl_fail "$(docker_existing_not_ready_reason "${MIN_ENGINE_VERSION}"). HFL never repairs or replaces an existing Docker installation." 3
 	fi
 	hfl_step "Installing Docker CE from console offline bundle."
 	docker_script="${TMPDIR:-/tmp}/hfl-install-docker-$$"
-	curl "${CURL_TLS[@]}" -fsSL "${HFL_GATEWAY_BOOTSTRAP_BASE}/gateway-install-docker-ubuntu2404-amd64.sh" -o "${docker_script}"
+	curl "${CURL_TLS[@]}" -fsSL "${HFL_GATEWAY_BOOTSTRAP_BASE}/gateway-install-docker-ubuntu-amd64.sh" -o "${docker_script}"
 	chmod +x "${docker_script}"
 	HFL_GATEWAY_BOOTSTRAP_BASE="${HFL_GATEWAY_BOOTSTRAP_BASE}" HFL_API_BASE="${HFL_API_BASE}" \
-		HFL_INSECURE_TLS="${HFL_INSECURE_TLS}" HFL_DOCKER_MIN_ENGINE="${MIN_ENGINE_VERSION}" \
+	HFL_INSECURE_TLS="${HFL_INSECURE_TLS}" HFL_DOCKER_MIN_ENGINE="${MIN_ENGINE_VERSION}" \
+		HFL_COMPOSE_MIN_VERSION="${MIN_COMPOSE_VERSION}" \
 		bash "${docker_script}"
 	rm -f "${docker_script}"
 	docker_runtime_ready "${MIN_ENGINE_VERSION}" \

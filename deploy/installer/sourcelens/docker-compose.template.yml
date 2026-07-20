@@ -1,6 +1,6 @@
 # SourceLens runtime stack template shared by HyperFileLens development and release packaging.
 # tools/sourcelens/common.sh renders image references, ports, and optional embedded LensNode blocks.
-name: sourcelens
+name: hyperfilelens-sourcelens
 
 services:
   api:
@@ -9,8 +9,9 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env
-# HFL_EMBED_BACKEND_ENV_BEGIN
     environment:
+      API_WORKERS: "1"
+# HFL_EMBED_BACKEND_ENV_BEGIN
       LENSNODE_NAME: ${LENSNODE_NAME:-local-lensnode}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-change-me-lensnode-token}
       LENSNODE_WORKSPACE_PATH: /workspace
@@ -31,6 +32,8 @@ services:
       redis:
         condition: service_healthy
     command: gunicorn
+    mem_limit: 384m
+    cpus: 0.25
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -45,6 +48,8 @@ services:
     stop_grace_period: 120s
     env_file:
       - ./.env
+    environment:
+      CELERY_CONCURRENCY: "1"
     volumes:
       - ./data/logs/worker:/var/log/celery
       - ./data/storage:/opt/storage
@@ -55,6 +60,8 @@ services:
       api:
         condition: service_healthy
     command: celery
+    mem_limit: 384m
+    cpus: 0.30
 
   scheduler:
     image: __SOURCELENS_BACKEND_IMAGE__
@@ -71,6 +78,8 @@ services:
       api:
         condition: service_healthy
     command: celery-beat
+    mem_limit: 128m
+    cpus: 0.10
 
   ui:
     image: __SOURCELENS_FRONTEND_IMAGE__
@@ -82,6 +91,8 @@ services:
       sourcelens_network:
         aliases:
           - frontend
+    mem_limit: 64m
+    cpus: 0.05
 
 # HFL_EMBED_LENSNODE_SERVICE_BEGIN
   local-lensnode:
@@ -101,10 +112,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    mem_limit: 320m
+    cpus: 0.20
 # HFL_EMBED_LENSNODE_SERVICE_END
 
   nginx:
-    image: nginx:stable-alpine
+    image: hyperfilelens-sourcelens-nginx:stable-alpine
     pull_policy: never
     restart: unless-stopped
     volumes:
@@ -128,9 +141,11 @@ services:
         condition: service_healthy
       ui:
         condition: service_started
+    mem_limit: 64m
+    cpus: 0.05
 
   postgres:
-    image: postgres:17
+    image: hyperfilelens-postgres:17
     pull_policy: never
     restart: unless-stopped
     env_file:
@@ -161,9 +176,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    mem_limit: 320m
+    cpus: 0.20
 
   redis:
-    image: redis:alpine
+    image: hyperfilelens-redis:alpine
     pull_policy: never
     restart: unless-stopped
     command: redis-server
@@ -178,6 +195,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    mem_limit: 128m
+    cpus: 0.05
 
 networks:
   sourcelens_network:

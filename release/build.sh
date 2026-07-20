@@ -37,7 +37,6 @@ LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
 OPT_VERSION=""
-HOST_DEBS_CACHE="${ROOT}/build/dependencies/docker/ubuntu-24.04/amd64"
 SOURCELENS_BUILD_ENV="${ROOT}/tools/sourcelens/defaults.env"
 KOPIA_VERSION_ENV="${ROOT}/tools/dependencies/versions/kopia.env"
 
@@ -173,7 +172,7 @@ Version:
   --kopia-version VERSION            Kopia version without v prefix (default: version pin file)
 
   - Full agent bundle (all platforms)
-  - Host Docker CE debs for Ubuntu 24.04 amd64 (offline install)
+  - Host Docker CE debs for Ubuntu 20.04/24.04 amd64 (offline install)
   - Control-plane Docker images + postgres/redis
   - Image-only runtime package: images, payload/media, compose, and deploy config
 
@@ -433,8 +432,28 @@ fetch_host_docker_debs() {
 	local args=()
 	[[ -n "${MIRROR_APT}" ]] && args+=(--apt-mirror "${MIRROR_APT}")
 	[[ -n "${MIRROR_DOCKER_APT}" ]] && args+=(--docker-apt-mirror "${MIRROR_DOCKER_APT}")
-	log "Fetching host Docker CE debs (ubuntu 24.04 amd64)"
-	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" "${args[@]}"
+	local ubuntu_release
+	for ubuntu_release in 20.04 24.04; do
+		log "Fetching host Docker CE debs (ubuntu ${ubuntu_release} amd64)"
+		"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" \
+			--ubuntu-release "${ubuntu_release}" "${args[@]}"
+	done
+}
+
+stage_host_docker_bundles() {
+	local pkg_root=$1 ubuntu_release release_id source_dir destination
+	local gateway_dir="${pkg_root}/payload/media/gateway-bootstrap"
+	mkdir -p "${gateway_dir}"
+	for ubuntu_release in 20.04 24.04; do
+		case "${ubuntu_release}" in
+		20.04) release_id=2004 ;;
+		24.04) release_id=2404 ;;
+		esac
+		source_dir="${ROOT}/build/dependencies/docker/ubuntu-${ubuntu_release}/amd64"
+		destination="${gateway_dir}/docker-debs-ubuntu${release_id}-amd64.tar.gz"
+		[[ -d "${source_dir}" ]] || die "missing Docker deb cache ${source_dir}"
+		tar -C "${source_dir}" -czf "${destination}" .
+	done
 }
 
 publish_agent() {
@@ -470,6 +489,7 @@ build_sourcelens_bundle() {
 		args+=(--sourcelens-git-url "${SOURCELENS_GIT_URL}")
 	fi
 	APT_MIRROR="${MIRROR_APT:-}" \
+		SOURCELENS_HFL_VERSION="${HFL_VERSION}" \
 		GITHUB_TOKEN="${MIRROR_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}" \
 		PIP_INDEX_URL="${PIP_INDEX_URL:-${BUILD_PIP_INDEX_URL:-}}" \
 		PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-${BUILD_PIP_TRUSTED_HOST:-}}" \
@@ -665,14 +685,16 @@ save_images() {
 		"hyperfilelens-frontend:${HFL_VERSION}" hyperfilelens-frontend:latest
 	log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
 
-	log "Saving postgres:17..."
+	log "Saving hyperfilelens-postgres:17..."
 	archive="${images_dir}/01-postgres-17.tar.gz"
-	save_image_archive "${archive}" postgres:17
+	docker tag postgres:17 hyperfilelens-postgres:17
+	save_image_archive "${archive}" hyperfilelens-postgres:17
 	log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
 
-	log "Saving redis:alpine..."
+	log "Saving hyperfilelens-redis:alpine..."
 	archive="${images_dir}/02-redis-alpine.tar.gz"
-	save_image_archive "${archive}" redis:alpine
+	docker tag redis:alpine hyperfilelens-redis:alpine
+	save_image_archive "${archive}" hyperfilelens-redis:alpine
 	log "  wrote $(du -h "${archive}" | awk '{print $1}') ${archive##*/}"
 }
 
@@ -714,7 +736,6 @@ import sys
     build_info_path,
 ) = sys.argv[1:12]
 pkg_root = pathlib.Path(out_path).parent
-debs_dir = pkg_root / "host" / "debs"
 
 pins = {}
 for line in pathlib.Path(version_file).read_text(encoding="utf-8").splitlines():
@@ -737,13 +758,21 @@ def sha256_file(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-packages = []
-for deb in sorted(debs_dir.glob("*.deb")):
-    rel = deb.relative_to(pkg_root).as_posix()
-    packages.append(
+docker_bundles = []
+for ubuntu_release, release_id in (("20.04", "2004"), ("24.04", "2404")):
+    relative = pathlib.Path(
+        f"payload/media/gateway-bootstrap/docker-debs-ubuntu{release_id}-amd64.tar.gz"
+    )
+    archive = pkg_root / relative
+    if not archive.is_file():
+        raise SystemExit(f"missing Docker offline bundle: {relative}")
+    docker_bundles.append(
         {
-            "file": rel,
-            "sha256": sha256_file(deb),
+            "ubuntu_release": ubuntu_release,
+            "arch": "amd64",
+            "file": relative.as_posix(),
+            "size": archive.stat().st_size,
+            "sha256": sha256_file(archive),
         }
     )
 
@@ -761,13 +790,13 @@ images = [
     },
     {
         "file": "images/01-postgres-17.tar.gz",
-        "refs": ["postgres:17"],
+        "refs": ["hyperfilelens-postgres:17"],
         "digests": [postgres_d],
         "role": "shared",
     },
     {
         "file": "images/02-redis-alpine.tar.gz",
-        "refs": ["redis:alpine"],
+        "refs": ["hyperfilelens-redis:alpine"],
         "digests": [redis_d],
         "role": "shared",
     },
@@ -822,7 +851,7 @@ if build_info.is_file():
             },
             {
                 "file": "images/12-nginx-stable-alpine.tar.gz",
-                "refs": ["nginx:stable-alpine"],
+                "refs": ["hyperfilelens-sourcelens-nginx:stable-alpine"],
                 "digests": [info["images"]["nginx"]["digest"]],
                 "role": "sourcelens-nginx",
             },
@@ -842,14 +871,14 @@ manifest = {
     "git_commit": commit,
     "host_runtime": {
         "os_id": "ubuntu",
-        "os_version": "24.04",
+        "os_versions": ["20.04", "24.04"],
         "arch": "amd64",
         "docker": {
             "engine_version": display_engine_version(pins.get("ENGINE_VERSION", "")),
             "compose_plugin_version": display_engine_version(pins.get("COMPOSE_PLUGIN_VERSION", "")),
             "min_engine_version": pins.get("MIN_ENGINE_VERSION", "24.0.0"),
-            "debs_dir": "host/debs",
-            "packages": packages,
+            "min_compose_version": "2.20.0",
+            "bundles": docker_bundles,
         },
     },
     "sourcelens": sourcelens,
@@ -879,7 +908,9 @@ validate_release_publish_artifacts() {
 		gateway-bootstrap-linux.sh
 		gateway-install-lensnode-sidecar.sh
 		gateway-lifecycle.sh
-		gateway-install-docker-ubuntu2404-amd64.sh
+		gateway-install-docker-ubuntu-amd64.sh
+		docker-debs-ubuntu2004-amd64.tar.gz
+		docker-debs-ubuntu2404-amd64.tar.gz
 		lensnode-image-linux-amd64.tar.gz
 	)
 	local name
@@ -895,8 +926,8 @@ write_package_readme() {
 	cat > "${pkg_root}/README.md" <<EOF
 # HyperFileLens ${version}
 
-Release installation package for **Ubuntu 24.04 amd64** air-gap hosts.
-Includes offline Docker CE debs under \`host/debs/\` plus application container images.
+Release installation package for **Ubuntu 20.04/24.04 amd64** air-gap hosts.
+Includes OS-specific offline Docker CE archives plus application container images.
 When bundled, SourceLens runs from \`/opt/hyperfilelens/sourcelens\` on the private
 \`hyperfilelens-bridge\` Docker network. External Agent and LensNode traffic
 enters through the configured HyperFileLens Tenant HTTPS endpoint.
@@ -905,22 +936,23 @@ enters through the configured HyperFileLens Tenant HTTPS endpoint.
 
 ### Minimum (PoC / lab)
 
-- Ubuntu **24.04 amd64** (installer OS check)
+- Ubuntu **20.04 or 24.04 amd64**
 - 2 CPU cores · 4GB RAM · 100GB system disk
-- Docker Engine ≥ 24.0 with Compose plugin (or offline \`host/debs/\` on 24.04)
+- Docker Engine ≥ 24.0 with Compose v2 ≥ 2.20, or no existing Docker installation
 - The configured Tenant, Platform Operations, and bundled SourceLens Console host ports
 
 ### Recommended (production)
 
-- Ubuntu 22.04 / 24.04 amd64
+- Ubuntu 20.04 / 24.04 amd64
 - 4 CPU cores · 8GB–16GB RAM · 200GB+ SSD
 
 ### Notes
 
 - **amd64 only**; ARM64 is not supported for the control-plane host.
-- Bundled \`host/debs/\` Docker packages target Ubuntu 24.04 only.
-- If Docker ≥ 24.0 is already installed, \`install.sh\` skips bundled debs.
-- 4GB RAM may work for idle stacks; use 8GB+ for production workloads.
+- OS-specific Docker packages target Ubuntu 20.04 and 24.04 amd64.
+- Existing healthy Docker is reused; an existing but unsuitable installation causes a safe failure.
+- When Docker is absent, the installer uses the matching offline archive without network access.
+- The 2 CPU / 4GB profile is intended for light workloads; use 8GB+ for sustained production scans.
 
 ## Install
 
@@ -946,7 +978,6 @@ Change the default password after first login.
 
 \`\`\`bash
 sudo ./install.sh upgrade --from /path/to/hyperfilelens-<version>-<commit>.tar.gz
-sudo ./install.sh upgrade --from /path/to/new.tar.gz --with-upgrade-docker
 sudo ./install.sh upgrade --from /path/to/new.tar.gz --hfl-only
 sudo ./install.sh upgrade --from /path/to/new.tar.gz --remove-sourcelens
 \`\`\`
@@ -1011,7 +1042,7 @@ main() {
 	log "Fetching Kopia deb for backend image"
 	fetch_kopia_deb
 
-	log "Fetching host Docker CE debs (ubuntu 24.04 amd64)"
+	log "Fetching host Docker CE debs (ubuntu 20.04/24.04 amd64)"
 	fetch_host_docker_debs
 
 	log "Building control-plane Docker images"
@@ -1022,6 +1053,7 @@ main() {
 	build_sourcelens_bundle "${pkg_root}" "${images_dir}"
 
 	publish_agent "${pkg_root}"
+	stage_host_docker_bundles "${pkg_root}"
 
 	log "Pulling third-party runtime images"
 	local postgres_digest redis_digest backend_digest frontend_digest
@@ -1047,8 +1079,6 @@ main() {
 	mkdir -p "${pkg_root}/deploy/logrotate"
 	cp "${ROOT}/deploy/logrotate/hyperfilelens.conf" "${pkg_root}/deploy/logrotate/hyperfilelens.conf"
 
-	mkdir -p "${pkg_root}/host/debs"
-	rsync -a "${HOST_DEBS_CACHE}/" "${pkg_root}/host/debs/"
 	normalize_release_permissions "${pkg_root}"
 
 	local payload_sha
@@ -1070,7 +1100,7 @@ main() {
 	chmod 644 "${tar_path}"
 
 	log "Package sizes:"
-	du -sh "${pkg_root}/host/debs" "${images_dir}" "${pkg_root}/payload" "${tar_path}" || true
+	du -sh "${images_dir}" "${pkg_root}/payload" "${tar_path}" || true
 	log "Done: ${tar_path}"
 }
 

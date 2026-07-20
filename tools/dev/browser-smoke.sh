@@ -51,9 +51,9 @@ docker run --rm --network host \
 	-v "${cache_dir}:/smoke" \
 	-e PLAYWRIGHT_VERSION="${version}" \
 	-e DEV_OFFLINE="${offline}" \
-	-e HFL_TENANT_PORT="$(read_default HFL_TENANT_PORT 10443)" \
-	-e HFL_ADMIN_PORT="$(read_default HFL_ADMIN_PORT 10444)" \
-	-e SOURCELENS_CONSOLE_PORT="$(read_default SOURCELENS_CONSOLE_PORT 10446)" \
+	-e HFL_TENANT_PORT="$(read_default HFL_TENANT_PORT 11443)" \
+	-e HFL_ADMIN_PORT="$(read_default HFL_ADMIN_PORT 11444)" \
+	-e SOURCELENS_CONSOLE_PORT="$(read_default SOURCELENS_CONSOLE_PORT 11445)" \
 	-e SEED_ADMIN_EMAIL="$(read_default SEED_ADMIN_EMAIL admin@hyperfilelens.com)" \
 	-e SEED_ADMIN_PASSWORD="$(read_default SEED_ADMIN_PASSWORD 'Admin@123')" \
 	-e SOURCELENS_USER="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_USERNAME admin)" \

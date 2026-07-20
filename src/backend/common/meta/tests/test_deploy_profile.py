@@ -7,8 +7,8 @@ from rest_framework.test import APIClient
 @override_settings(
     HFL_EMAIL_SIGNUP_ENABLED=False,
     HFL_PLATFORM_OPS_ENABLED=True,
-    HFL_ADMIN_PORT=10444,
-    FRONTEND_URL="https://127.0.0.1:10443",
+    HFL_ADMIN_PORT=11444,
+    FRONTEND_URL="https://127.0.0.1:11443",
 )
 @patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})
 class DeployProfileViewTest(TestCase):
@@ -26,14 +26,14 @@ class DeployProfileViewTest(TestCase):
     def test_anonymous_profile(self):
         response = self.client.get(
             "/api/v1/meta/deploy-profile",
-            HTTP_HOST="127.0.0.1:10443",
+            HTTP_HOST="127.0.0.1:11443",
             HTTP_X_FORWARDED_PROTO="https",
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["site_role"], "tenant")
         self.assertEqual(
             response.data["admin_console_url"],
-            "https://127.0.0.1:10444",
+            "https://127.0.0.1:11444",
         )
         self.assertFalse(response.data["admin_console_entry_visible"])
         self.assertFalse(response.data["platform_ops_access_allowed"])

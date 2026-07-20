@@ -16,8 +16,8 @@ PURGE_ALL=0
 
 LENSNODE_IMAGE_ARCHIVE="lensnode-image-linux-amd64.tar.gz"
 SIDECAR_INSTALL_SCRIPT="gateway-install-lensnode-sidecar.sh"
-COMPOSE_PROJECT="sourcelens"
-DEFAULT_LENSNODE_IMAGE="sourcelens-lensnode:latest"
+COMPOSE_PROJECT="hyperfilelens-gateway"
+DEFAULT_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 
 hfl_now() {
 	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
@@ -42,7 +42,7 @@ usage() {
 Usage: gateway-lifecycle.sh <command> [options]
 
 Commands:
-  upgrade-sidecar       Reload LensNode image and restart sourcelens-lensnode-1
+  upgrade-sidecar       Reload LensNode image and restart hyperfilelens-gateway-lensnode-1
   uninstall-sidecar     Stop sidecar; use --purge-all to remove config, workspace, images
 
 Options:
@@ -93,10 +93,27 @@ ensure_docker_ready() {
 	docker info >/dev/null 2>&1 || hfl_fail "docker daemon not reachable" 3
 }
 
+remove_owned_legacy_gateway_containers() {
+	local id project service working_dir config_files
+	while IFS= read -r id; do
+		[[ -n "${id}" ]] || continue
+		project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${id}" 2>/dev/null || true)"
+		service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${id}" 2>/dev/null || true)"
+		working_dir="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "${id}" 2>/dev/null || true)"
+		config_files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "${id}" 2>/dev/null || true)"
+		[[ "${project}" == "sourcelens" && "${service}" == "lensnode" ]] || continue
+		if [[ "${working_dir}" != "${COMPOSE_DIR}" \
+			&& ",${config_files}," != *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
+			continue
+		fi
+		hfl_log "Removing owned legacy Gateway container ${id:0:12} from project sourcelens."
+		docker rm -f "${id}" >/dev/null
+	done < <(docker ps -aq --no-trunc)
+}
+
 compose_down_sidecar() {
+	remove_owned_legacy_gateway_containers
 	if [[ ! -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
-		# Remove pre-normalization explicit container names during upgrades.
-		docker rm -f hfl-gw-lensnode hfl-lensnode-sidecar 2>/dev/null || true
 		return 0
 	fi
 	if docker compose version >/dev/null 2>&1; then
@@ -104,14 +121,7 @@ compose_down_sidecar() {
 			cd "${COMPOSE_DIR}"
 			docker compose -p "${COMPOSE_PROJECT}" down || true
 		)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		(
-			cd "${COMPOSE_DIR}"
-			docker-compose -p "${COMPOSE_PROJECT}" down || true
-		)
 	fi
-	# Remove pre-normalization explicit container names during upgrades.
-	docker rm -f hfl-gw-lensnode hfl-lensnode-sidecar 2>/dev/null || true
 }
 
 download_bootstrap_file() {
@@ -175,19 +185,7 @@ cmd_upgrade_sidecar() {
 }
 
 remove_lensnode_images() {
-	local ref
-	for ref in \
-		"${DEFAULT_LENSNODE_IMAGE}" \
-		sourcelens-lensnode:latest \
-		oneprocloud/sourcelens-lensnode:latest; do
-		docker image rm -f "${ref}" 2>/dev/null || true
-	done
-	docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^oneprocloud/(lensnode|sourcelens-lensnode):' | while read -r ref; do
-		docker image rm -f "${ref}" 2>/dev/null || true
-	done
-	docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^sourcelens-lensnode:' | while read -r ref; do
-		docker image rm -f "${ref}" 2>/dev/null || true
-	done
+	docker image rm -f "${DEFAULT_LENSNODE_IMAGE}" 2>/dev/null || true
 }
 
 purge_sidecar_artifacts() {

@@ -55,7 +55,8 @@ required_bundles=(
 	_internal-hfl-images.tar.gz
 	_internal-runtime-images.tar.gz
 	_internal-sourcelens-bundle.tar.gz
-	_internal-host-debs.tar.gz
+	_internal-host-debs-ubuntu2004.tar.gz
+	_internal-host-debs-ubuntu2404.tar.gz
 )
 for bundle in "${required_bundles[@]}"; do
 	[[ -s "${input_dir}/${bundle}" ]] || die "missing CI bundle: ${bundle}"
@@ -88,17 +89,15 @@ for required in \
 	[[ -s "${pkg_root}/${required}" ]] || die "assembled package is missing ${required}"
 done
 
-# Ensure gateway bootstrap receives the same host Docker bundle as the offline
-# control-plane installer. The LensNode archive is already hard-linked by the
-# SourceLens bundling job when the filesystem supports it.
+# The control-plane installer and Data Gateways consume the same OS-specific
+# Docker archives under payload/media; do not duplicate their debs elsewhere.
 gateway_dir="${pkg_root}/payload/media/gateway-bootstrap"
 mkdir -p "${gateway_dir}"
-tar -C "${pkg_root}/host/debs" -czf "${gateway_dir}/docker-debs-ubuntu2404-amd64.tar.gz" .
 for script in \
 	gateway-bootstrap-linux.sh \
 	gateway-install-lensnode-sidecar.sh \
 	gateway-lifecycle.sh \
-	gateway-install-docker-ubuntu2404-amd64.sh; do
+	gateway-install-docker-ubuntu-amd64.sh; do
 	cp "${ROOT}/deploy/bootstrap/${script}" "${gateway_dir}/${script}"
 	chmod 755 "${gateway_dir}/${script}"
 done
@@ -137,6 +136,31 @@ validate_release_publish_artifacts "${pkg_root}"
 write_package_readme "${pkg_root}" "${version}"
 validate_release_security "${pkg_root}"
 
+python3 - "${pkg_root}" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+by_digest = {}
+for path in root.rglob("*"):
+    if not path.is_file() or path.stat().st_size < 10 * 1024 * 1024:
+        continue
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    by_digest.setdefault(digest.hexdigest(), []).append(path)
+
+for paths in by_digest.values():
+    if len(paths) < 2:
+        continue
+    inodes = {(path.stat().st_dev, path.stat().st_ino) for path in paths}
+    if len(inodes) > 1:
+        names = ", ".join(path.relative_to(root).as_posix() for path in paths)
+        raise SystemExit(f"duplicate large release content is not hard-linked: {names}")
+PY
+
 mkdir -p "${DIST_DIR}"
 find "${DIST_DIR}" -maxdepth 1 -type f -delete
 tar_path="${DIST_DIR}/${tar_basename}"
@@ -151,11 +175,17 @@ python3 "${SCRIPT_DIR}/write-sbom.py" \
 	--manifest "${pkg_root}/MANIFEST.json" \
 	--output "${DIST_DIR}/SBOM.spdx.json"
 
-max_single_bytes="${HFL_RELEASE_MAX_SINGLE_BYTES:-$((1900 * 1024 * 1024))}"
+warn_single_bytes="${HFL_RELEASE_WARN_SINGLE_BYTES:-1750000000}"
+max_single_bytes="${HFL_RELEASE_MAX_SINGLE_BYTES:-1900000000}"
 part_bytes="${HFL_RELEASE_PART_BYTES:-$((1024 * 1024 * 1024))}"
 [[ "${max_single_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_MAX_SINGLE_BYTES"
+[[ "${warn_single_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_WARN_SINGLE_BYTES"
 [[ "${part_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_PART_BYTES"
 tar_bytes="$(stat -c '%s' "${tar_path}")"
+if ((tar_bytes >= warn_single_bytes)); then
+	hfl_log_warn "Release package size ${tar_bytes} bytes exceeds the 1.75 GB warning budget"
+	find "${pkg_root}" -type f -printf '%s %P\n' | sort -nr | sed -n '1,20p' >&2
+fi
 if ((tar_bytes >= max_single_bytes)); then
 	log "Release exceeds the single-asset limit; creating split parts"
 	split -b "${part_bytes}" -d -a 3 "${tar_path}" "${tar_path}.part-"

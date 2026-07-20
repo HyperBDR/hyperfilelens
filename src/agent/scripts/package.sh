@@ -83,15 +83,16 @@ Purpose:
   does not compile source, fetch dependencies, or call another Agent script.
 
 Bundle kinds (default: all):
-  all                    Standard archives plus Linux Ubuntu 24.04 offline archives
+  all                    Standard archives plus Linux Ubuntu 20.04/24.04 offline archives
   standard               Standard archives only
+  ubuntu2004             Ubuntu 20.04 archives from existing standard archives
   ubuntu2404             Ubuntu 24.04 archives from existing standard archives
 
 Inputs:
   build/agent/<version>/BUILD_INFO.json
   build/agent/<version>/KOPIA_INFO.json
   build/agent/<version>/<os>/<arch>/hfl-agent-*
-  build/dependencies/agent/ubuntu-24.04/<arch>/MANIFEST.json
+  build/dependencies/agent/ubuntu-{20.04,24.04}/<arch>/MANIFEST.json
   src/agent/packaging/
 
 Outputs:
@@ -102,8 +103,8 @@ Options:
   --version VERSION          Release version (env: RELEASE_VERSION)
   --matrix MATRIX            Space-separated os:arch list (env: AGENT_MATRIX)
   --commit COMMIT            Full build commit (env: AGENT_COMMIT)
-  --bundle KIND              all | standard | ubuntu2404 (env: AGENT_BUNDLE)
-  --ubuntu2404-arch ARCH     amd64 | arm64 | all (env: AGENT_UBUNTU2404_ARCH)
+  --bundle KIND              all | standard | ubuntu2004 | ubuntu2404 (env: AGENT_BUNDLE)
+  --ubuntu2404-arch ARCH     amd64 | arm64 | all for both Ubuntu bundles (compatibility name)
   --log-file FILE            Append console output to FILE (env: AGENT_LOG_FILE)
   --verbose                  Enable detailed configuration logging (env: AGENT_VERBOSE=1)
   --print-config             Print resolved configuration without packaging
@@ -155,15 +156,16 @@ COMMIT="${OPT_COMMIT:-${AGENT_COMMIT:-$(resolve_commit_full "${REPO_ROOT}")}}"
 UBUNTU2404_ARCH="${OPT_UBUNTU2404_ARCH:-${AGENT_UBUNTU2404_ARCH:-}}"
 WORK_ROOT="${REPO_ROOT}/build/agent/${AGENT_VERSION}"
 PACKAGE_DIR="${WORK_ROOT}/package"
-NAS_DEPS_ROOT="${REPO_ROOT}/build/dependencies/agent/ubuntu-24.04"
+NAS_DEPS_BASE="${REPO_ROOT}/build/dependencies/agent"
 INSTALL_DIR="${AGENT_ROOT}/packaging/install"
 SYSTEMD_UNIT="${AGENT_ROOT}/packaging/systemd/hyperfilelens-agent.service"
 
 case "${BUNDLE}" in
-all) DO_STANDARD=1; DO_UBUNTU2404=1 ;;
-standard) DO_STANDARD=1; DO_UBUNTU2404=0 ;;
-ubuntu2404) DO_STANDARD=0; DO_UBUNTU2404=1 ;;
-*) log_fail "Invalid bundle ${BUNDLE}; use all, standard, or ubuntu2404" 2 ;;
+all) DO_STANDARD=1; UBUNTU_RELEASES="20.04 24.04" ;;
+standard) DO_STANDARD=1; UBUNTU_RELEASES="" ;;
+ubuntu2004) DO_STANDARD=0; UBUNTU_RELEASES="20.04" ;;
+ubuntu2404) DO_STANDARD=0; UBUNTU_RELEASES="24.04" ;;
+*) log_fail "Invalid bundle ${BUNDLE}; use all, standard, ubuntu2004, or ubuntu2404" 2 ;;
 esac
 
 validate_matrix() {
@@ -196,7 +198,7 @@ commit=${COMMIT}
 matrix=${MATRIX}
 ubuntu2404_arch=${UBUNTU2404_ARCH:-<from-matrix>}
 build_input=${WORK_ROOT}
-nas_input=${NAS_DEPS_ROOT}
+nas_input=${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}
 output=${PACKAGE_DIR}
 CONFIG
 }
@@ -211,9 +213,9 @@ package_archives() {
 	VERSION="${AGENT_VERSION}" MATRIX_VALUE="${MATRIX}" COMMIT_VALUE="${COMMIT}" \
 		BUNDLE_VALUE="${BUNDLE}" UBUNTU_ARCH_VALUE="${UBUNTU2404_ARCH}" \
 		WORK_ROOT_VALUE="${WORK_ROOT}" PACKAGE_DIR_VALUE="${PACKAGE_DIR}" \
-		NAS_ROOT_VALUE="${NAS_DEPS_ROOT}" INSTALL_DIR_VALUE="${INSTALL_DIR}" \
+		NAS_BASE_VALUE="${NAS_DEPS_BASE}" INSTALL_DIR_VALUE="${INSTALL_DIR}" \
 		SYSTEMD_UNIT_VALUE="${SYSTEMD_UNIT}" DO_STANDARD_VALUE="${DO_STANDARD}" \
-		DO_UBUNTU_VALUE="${DO_UBUNTU2404}" python3 - <<'PY'
+		UBUNTU_RELEASES_VALUE="${UBUNTU_RELEASES}" python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -233,11 +235,11 @@ bundle = os.environ["BUNDLE_VALUE"]
 ubuntu_arch = os.environ["UBUNTU_ARCH_VALUE"]
 work_root = Path(os.environ["WORK_ROOT_VALUE"])
 package_dir = Path(os.environ["PACKAGE_DIR_VALUE"])
-nas_root = Path(os.environ["NAS_ROOT_VALUE"])
+nas_base = Path(os.environ["NAS_BASE_VALUE"])
 install_dir = Path(os.environ["INSTALL_DIR_VALUE"])
 systemd_unit = Path(os.environ["SYSTEMD_UNIT_VALUE"])
 do_standard = os.environ["DO_STANDARD_VALUE"] == "1"
-do_ubuntu = os.environ["DO_UBUNTU_VALUE"] == "1"
+ubuntu_releases = os.environ["UBUNTU_RELEASES_VALUE"].split()
 
 
 class PrerequisiteError(RuntimeError):
@@ -315,8 +317,8 @@ def agent_binary_name(goos: str, goarch: str) -> str:
 
 def package_name(goos: str, goarch: str, flavor: str = "standard") -> str:
     name = f"hfl-agent-{version}-{goos}-{goarch}"
-    if flavor == "ubuntu2404":
-        name += "-ubuntu2404"
+    if flavor in {"ubuntu2004", "ubuntu2404"}:
+        name += f"-{flavor}"
     return name
 
 
@@ -476,10 +478,10 @@ def safe_extract_tar(archive_path: Path, destination: Path) -> Path:
     return destination / next(iter(roots))
 
 
-def validate_nas_manifest(arch: str) -> tuple[Path, dict]:
-    source = nas_root / arch
+def validate_nas_manifest(ubuntu_release: str, arch: str) -> tuple[Path, dict]:
+    source = nas_base / f"ubuntu-{ubuntu_release}" / arch
     manifest = read_json(source / "MANIFEST.json", "NAS dependency manifest")
-    if manifest.get("ubuntu_release") != "24.04" or manifest.get("arch") != arch:
+    if manifest.get("ubuntu_release") != ubuntu_release or manifest.get("arch") != arch:
         raise PrerequisiteError(f"NAS dependency manifest metadata mismatch for {arch}")
     expected = manifest.get("files")
     if not isinstance(expected, dict) or not expected:
@@ -499,14 +501,15 @@ def selected_ubuntu_arches() -> list[str]:
     return [ubuntu_arch] if ubuntu_arch in linux_arches else []
 
 
-def assemble_ubuntu(arch: str) -> None:
+def assemble_ubuntu(ubuntu_release: str, arch: str) -> None:
     base = package_dir / archive_name("linux", arch)
     if not base.is_file():
         raise PrerequisiteError(
             f"missing standard archive {base}; use --bundle all or package standard first"
         )
-    deps_source, deps_manifest = validate_nas_manifest(arch)
-    log("STEP ", f"Assembling Ubuntu 24.04 offline Agent archive for linux/{arch}")
+    deps_source, deps_manifest = validate_nas_manifest(ubuntu_release, arch)
+    flavor = "ubuntu" + ubuntu_release.replace(".", "")
+    log("STEP ", f"Assembling Ubuntu {ubuntu_release} offline Agent archive for linux/{arch}")
 
     with tempfile.TemporaryDirectory(prefix="hfl-ubuntu-package-") as temp:
         temp_path = Path(temp)
@@ -521,23 +524,23 @@ def assemble_ubuntu(arch: str) -> None:
         ):
             raise PrerequisiteError(f"standard package manifest mismatch in {base}")
 
-        destination = root / "deps" / "ubuntu2404" / arch
+        destination = root / "deps" / flavor / arch
         destination.mkdir(parents=True)
         for filename in sorted(deps_manifest["files"]):
             shutil.copy2(deps_source / filename, destination / filename)
 
-        target_name = package_name("linux", arch, "ubuntu2404")
+        target_name = package_name("linux", arch, flavor)
         target_root = root.with_name(target_name)
         root.rename(target_root)
-        manifest["bundle_flavor"] = "ubuntu2404"
+        manifest["bundle_flavor"] = flavor
         manifest["nas_deps"] = {
-            "ubuntu_release": "24.04",
+            "ubuntu_release": ubuntu_release,
             "arch": arch,
             "packages": ["nfs-common", "cifs-utils"],
-            "source_manifest": "build/dependencies/agent/ubuntu-24.04/" + arch + "/MANIFEST.json",
+            "source_manifest": f"build/dependencies/agent/ubuntu-{ubuntu_release}/{arch}/MANIFEST.json",
         }
         write_manifest(target_root, manifest)
-        output = package_dir / archive_name("linux", arch, "ubuntu2404")
+        output = package_dir / archive_name("linux", arch, flavor)
         write_archive(target_root, output, "linux")
     log(" OK  ", f"Wrote {output}")
 
@@ -548,16 +551,17 @@ try:
     if do_standard:
         for entry in matrix:
             assemble_standard(*entry.split(":", 1), kopia_info)
-    if do_ubuntu:
+    if ubuntu_releases:
         arches = selected_ubuntu_arches()
         if not arches:
-            if bundle == "ubuntu2404":
+            if bundle in {"ubuntu2004", "ubuntu2404"}:
                 raise PrerequisiteError(
                     f"no selected Linux architecture for Ubuntu bundle (matrix={' '.join(matrix)})"
                 )
-            log("SKIP ", "No Linux platform is selected; skipping Ubuntu 24.04 archives")
-        for arch in arches:
-            assemble_ubuntu(arch)
+            log("SKIP ", "No Linux platform is selected; skipping Ubuntu archives")
+        for ubuntu_release in ubuntu_releases:
+            for arch in arches:
+                assemble_ubuntu(ubuntu_release, arch)
 except PrerequisiteError as exc:
     log("FAIL ", str(exc))
     raise SystemExit(3) from exc
@@ -587,9 +591,9 @@ log_info "Version: ${AGENT_VERSION}"
 log_info "Commit: ${COMMIT}"
 log_info "Matrix: ${MATRIX}"
 if [[ "${VERBOSE}" -eq 1 ]]; then
-	log_info "Ubuntu 24.04 architecture: ${UBUNTU2404_ARCH:-from matrix}"
+	log_info "Ubuntu architecture: ${UBUNTU2404_ARCH:-from matrix}"
 	log_info "Build input: ${WORK_ROOT}"
-	log_info "NAS dependency input: ${NAS_DEPS_ROOT}"
+	log_info "NAS dependency input: ${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}"
 	log_info "Output: ${PACKAGE_DIR}"
 fi
 package_archives

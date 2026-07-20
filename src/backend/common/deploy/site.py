@@ -110,7 +110,7 @@ def admin_console_public_url(request: HttpRequest) -> str:
 
     forwarded_proto = str(request.META.get("HTTP_X_FORWARDED_PROTO") or "")
     scheme = forwarded_proto.split(",")[0].strip() or request.scheme or "https"
-    port = int(getattr(settings, "HFL_ADMIN_PORT", 10444))
+    port = int(getattr(settings, "HFL_ADMIN_PORT", 11444))
     default_port = 443 if scheme == "https" else 80
     netloc = hostname if port == default_port else f"{hostname}:{port}"
     return urlunsplit((scheme, netloc, "", "", ""))

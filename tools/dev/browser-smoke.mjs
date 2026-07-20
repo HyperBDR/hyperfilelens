@@ -6,9 +6,9 @@ import { createRequire } from 'node:module'
 const require = createRequire('/smoke/package.json')
 const { chromium } = require('playwright')
 
-const tenantPort = process.env.HFL_TENANT_PORT || '10443'
-const adminPort = process.env.HFL_ADMIN_PORT || '10444'
-const sourceLensPort = process.env.SOURCELENS_CONSOLE_PORT || '10446'
+const tenantPort = process.env.HFL_TENANT_PORT || '11443'
+const adminPort = process.env.HFL_ADMIN_PORT || '11444'
+const sourceLensPort = process.env.SOURCELENS_CONSOLE_PORT || '11445'
 const hflEmail = process.env.SEED_ADMIN_EMAIL || 'admin@hyperfilelens.com'
 const hflPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin@123'
 const sourceLensUser = process.env.SOURCELENS_USER || 'admin'

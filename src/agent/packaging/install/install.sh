@@ -763,7 +763,7 @@ warn_cifs_utf8_module_missing() {
 
 install_nas_deps() {
 	local role="${1:-}"
-	local arch deps_dir
+	local arch deps_dir ubuntu_release ubuntu_flavor
 
 	[[ "$(uname -s)" == "Linux" ]] || return 0
 	case "${role}" in
@@ -781,10 +781,29 @@ install_nas_deps() {
 		echo "ERROR: unsupported CPU arch for NAS dependency install" >&2
 		exit 2
 	}
-	deps_dir="${BUNDLE_ROOT}/deps/ubuntu2404/${arch}"
+	[[ -r /etc/os-release ]] || {
+		echo "ERROR: /etc/os-release is required to select NAS dependencies" >&2
+		exit 2
+	}
+	# shellcheck disable=SC1091
+	. /etc/os-release
+	[[ "${ID:-}" == "ubuntu" ]] || {
+		echo "ERROR: offline NAS dependencies support Ubuntu only" >&2
+		exit 2
+	}
+	ubuntu_release="${VERSION_ID:-}"
+	case "${ubuntu_release}" in
+	20.04) ubuntu_flavor=ubuntu2004 ;;
+	24.04) ubuntu_flavor=ubuntu2404 ;;
+	*)
+		echo "ERROR: offline NAS dependencies support Ubuntu 20.04 or 24.04 (current: ${ubuntu_release:-unknown})" >&2
+		exit 2
+		;;
+	esac
+	deps_dir="${BUNDLE_ROOT}/deps/${ubuntu_flavor}/${arch}"
 	if [[ ! -d "${deps_dir}" ]] || ! compgen -G "${deps_dir}/*.deb" >/dev/null; then
-		echo "ERROR: NAS mount helpers missing and bundle has no deps/ubuntu2404/${arch}/*.deb" >&2
-		echo "Use hfl-agent-*-linux-${arch}-ubuntu2404.tar.gz on Ubuntu 20.04+, or install nfs-common and cifs-utils manually (offline NAS debs target 24.04)." >&2
+		echo "ERROR: NAS mount helpers missing and bundle has no deps/${ubuntu_flavor}/${arch}/*.deb" >&2
+		echo "Use the hfl-agent archive matching Ubuntu ${ubuntu_release}, or install nfs-common and cifs-utils manually." >&2
 		exit 2
 	fi
 	if ! command -v dpkg >/dev/null 2>&1; then
@@ -792,14 +811,14 @@ install_nas_deps() {
 		exit 2
 	fi
 
-	log_ok "install NAS packages for role=${role} (offline ubuntu2404/${arch})"
+	log_ok "install NAS packages for role=${role} (offline ${ubuntu_flavor}/${arch})"
 	# Offline on standard 24.04 Server: most library debs are already satisfied; dpkg may warn on
 	# duplicates but should still install mount.nfs / mount.cifs helpers.
 	if ! dpkg -i "${deps_dir}"/*.deb; then
 		log_warn "dpkg reported errors (often already-installed libraries on standard Server); rechecking mount helpers..."
 	fi
 	if ! nas_mount_helpers_ready; then
-		log_fail "NAS mount helpers are still missing after installing bundled packages. Use Ubuntu 20.04+ with nfs-common/cifs-utils via apt, or Ubuntu 24.04 for offline bundled packages (${arch})." 2
+		log_fail "NAS mount helpers are still missing after installing the Ubuntu ${ubuntu_release} bundled packages (${arch})." 2
 	fi
 	log_ok "NAS mount helpers ready (mount.nfs / mount.cifs)"
 	warn_cifs_utf8_module_missing

@@ -1269,12 +1269,12 @@ export const en = {
     proxyDeployWarnTitle: 'Before You Install',
     proxyDeployWarnPrereq: [
       'Run on an Ubuntu 20.04 or newer Linux host as root or with sudo',
-      'Bidirectional access to the control plane on port 10443 is required',
+      'Bidirectional access to the control plane on port 11443 is required',
       'On remote hosts, replace 127.0.0.1 in the URL with your console address',
     ],
     proxyDeployWarnSectionFaq: 'Common issues',
     proxyDeployWarnFaq: [
-      'connection timeout / dial tcp: check port 10443 firewall, routing, and security groups',
+      'connection timeout / dial tcp: check port 11443 firewall, routing, and security groups',
       'Air-gapped or no outbound internet: ask your administrator for offline install guidance',
     ],
     pageTitleGateway: 'Add Data Gateway',
