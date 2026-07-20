@@ -975,9 +975,15 @@ watch(
             />
           </template>
         </el-table-column>
-        <el-table-column :label="t('ops.task.colType')" min-width="140">
+        <el-table-column
+          :label="t('ops.task.colType')"
+          min-width="190"
+        >
           <template #default="{ row }">
-            <TaskTypeLabel :type="row.task_type" />
+            <TaskTypeLabel
+              :type="row.task_type"
+              :operation-type="row.operation_type"
+            />
           </template>
         </el-table-column>
         <el-table-column :label="t('ops.task.colStatus')" min-width="120">
@@ -1002,19 +1008,28 @@ watch(
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="t('ops.task.colTrigger')" min-width="130">
+        <el-table-column
+          :label="t('ops.task.colTrigger')"
+          width="110"
+        >
           <template #default="{ row }">
             <el-tag type="info" size="small">
               {{ labelFor('triggerType', row.trigger_type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('ops.task.startedAt')" min-width="180">
+        <el-table-column
+          :label="t('ops.task.startedAt')"
+          width="165"
+        >
           <template #default="{ row }">
             <span class="hfl-table-cell-time">{{ formatTime(row.started_at || row.created_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('ops.task.finishedAt')" min-width="180">
+        <el-table-column
+          :label="t('ops.task.finishedAt')"
+          width="165"
+        >
           <template #default="{ row }">
             <span class="hfl-table-cell-time">{{ formatTime(row.finished_at) }}</span>
           </template>

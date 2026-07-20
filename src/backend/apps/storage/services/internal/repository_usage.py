@@ -443,22 +443,6 @@ def _is_unbound_nas_repository(repository: Repository) -> bool:
     )
 
 
-def direct_nas_repository_health(repository: Repository) -> str:
-    if not _is_unbound_nas_repository(repository):
-        return repository.health
-    if not _direct_nas_agent_config_groups(repository):
-        return Repository.Health.UNVERIFIED
-    if RepositoryUsageShard.objects.filter(
-        organization_id=repository.organization_id,
-        repository_id=repository.id,
-        usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
-        is_active=True,
-        status=RepositoryUsageShard.Status.SUCCESS,
-    ).exists():
-        return Repository.Health.ONLINE
-    return Repository.Health.OFFLINE
-
-
 def _direct_nas_agent_config_groups(repository: Repository) -> dict[int, list[int]]:
     backup_config_model = apps.get_model("protection", "BackupConfig")
     groups: dict[int, list[int]] = {}
@@ -717,8 +701,6 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
         repository.capacity_bytes = config_capacity
         capacity_changed = True
     estimated_usage_bytes, fs_capacity = collect_usage_candidates(repository)
-    health = direct_nas_repository_health(repository) if _is_unbound_nas_repository(repository) else repository.health
-
     capacity_bytes = int(repository.capacity_bytes or 0)
     if config_capacity <= 0 and fs_capacity and fs_capacity > 0 and capacity_bytes != fs_capacity:
         capacity_bytes = fs_capacity
@@ -732,18 +714,12 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
         repository.capacity_bytes = capacity_bytes
     if usage_changed:
         repository.estimated_usage_bytes = estimated_usage_bytes
-    health_changed = repository.health != health
-    if health_changed:
-        repository.health = health
-
     repository.last_checked_at = timezone.now()
     update_fields: list[str] = ["last_checked_at"]
     if capacity_changed:
         update_fields.append("capacity_bytes")
     if usage_changed:
         update_fields.append("estimated_usage_bytes")
-    if health_changed:
-        update_fields.append("health")
     update_fields.append("updated_at")
     if persist:
         repository.save(update_fields=update_fields)

@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import logging
+
 from celery import shared_task
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 
 from common.observability.celery_context import logged_celery_task
 
+from apps.storage.repositories.models import (
+    Repository,
+    RepositoryExecutionTarget,
+    RepositoryTask,
+)
+from apps.storage.services.internal.repository_health import probe_repository_health
 from apps.storage.services.internal.repository_usage import (
     sync_all_repositories,
     sync_organization_repositories,
 )
-from apps.storage.repositories.models import RepositoryExecutionTarget, RepositoryTask
 from apps.storage.services.internal.kopia_cli import KopiaCliError, run_maintenance
 from apps.storage.services.internal.repository_access import repository_payload_for_node
 from apps.storage.services.internal.repository_operations import (
@@ -21,6 +29,15 @@ from apps.storage.services.internal.repository_operations import (
 from apps.storage.services.internal.repository_secrets import scrub_secrets
 from apps.task.models import Task, TaskStep
 from apps.task.services.interface import start_task
+
+
+logger = logging.getLogger(__name__)
+
+_REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS = 300
+
+
+def _repository_health_lock(repository_id: int) -> str:
+    return f"storage:repository-health:repository:{int(repository_id)}"
 
 
 @shared_task(name="apps.storage.tasks.reconcile_storage_repositories")
@@ -59,6 +76,102 @@ def reconcile_storage_repositories(
         "snapshots_upserted": 0,
         "snapshots_marked_deleted": 0,
     }
+
+
+@shared_task(name="apps.storage.tasks.dispatch_repository_health_checks")
+@logged_celery_task(name="apps.storage.tasks.dispatch_repository_health_checks")
+def dispatch_repository_health_checks():
+    """Fan out one lightweight health task per eligible repository."""
+    repository_ids = list(
+        Repository.objects.filter(
+            status=Repository.Status.CREATED,
+            repo_type__in=[
+                Repository.Type.S3,
+                Repository.Type.NAS,
+                Repository.Type.PROXY_FS,
+            ],
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    dispatched = 0
+    for repository_id in repository_ids:
+        try:
+            check_storage_repository_health.apply_async(
+                kwargs={"repository_id": repository_id}
+            )
+            dispatched += 1
+        except Exception:
+            logger.exception(
+                "failed to enqueue repository health check repository_id=%s",
+                repository_id,
+            )
+    return {"dispatched": dispatched}
+
+
+@shared_task(name="apps.storage.tasks.check_storage_repository_health")
+@logged_celery_task(
+    name="apps.storage.tasks.check_storage_repository_health",
+    trace_keys=("repository_id",),
+)
+def check_storage_repository_health(*, repository_id: int):
+    """Run one health cycle and update only the repository health field."""
+    lock_key = _repository_health_lock(repository_id)
+    if not cache.add(lock_key, "1", timeout=_REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS):
+        return {"repository_id": repository_id, "status": "skipped", "locked": True}
+
+    try:
+        repository = (
+            Repository.objects.filter(
+                id=repository_id,
+                status=Repository.Status.CREATED,
+                repo_type__in=[
+                    Repository.Type.S3,
+                    Repository.Type.NAS,
+                    Repository.Type.PROXY_FS,
+                ],
+            )
+            .first()
+        )
+        if repository is None:
+            return {
+                "repository_id": repository_id,
+                "status": "skipped",
+                "eligible": False,
+            }
+        try:
+            health = probe_repository_health(repository)
+        except Exception as exc:
+            health = Repository.Health.OFFLINE
+            logger.warning(
+                "repository health check failed repository_id=%s error_type=%s",
+                repository_id,
+                type(exc).__name__,
+            )
+        current_scope = Repository.objects.filter(
+            pk=repository_id,
+            status=Repository.Status.CREATED,
+            repo_type=repository.repo_type,
+            bind_node_type=repository.bind_node_type,
+            bind_node_id=repository.bind_node_id,
+            updated_at=repository.updated_at,
+        )
+        if repository.health != health:
+            if not current_scope.update(health=health):
+                return {
+                    "repository_id": repository_id,
+                    "status": "skipped",
+                    "stale": True,
+                }
+        elif not current_scope.exists():
+            return {
+                "repository_id": repository_id,
+                "status": "skipped",
+                "stale": True,
+            }
+        return {"repository_id": repository_id, "status": health}
+    finally:
+        cache.delete(lock_key)
 
 
 @shared_task(name="apps.storage.tasks.schedule_repository_maintenance")

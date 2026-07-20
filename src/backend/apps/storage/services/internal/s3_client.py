@@ -113,6 +113,37 @@ def ensure_s3_bucket(
         raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
 
 
+def check_s3_bucket_readable(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> None:
+    """Check an existing S3 bucket without creating or modifying objects."""
+    if not str(bucket or "").strip():
+        raise S3ClientError("Bucket name is required.")
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        client.head_bucket(Bucket=bucket)
+    except (BotoCoreError, ClientError) as exc:
+        raise S3ClientError(
+            _error_message(f"Unable to access bucket {bucket}", exc)
+        ) from exc
+
+
 def verify_s3_bucket_rw(
     *,
     endpoint: str | None,

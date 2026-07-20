@@ -1427,6 +1427,7 @@ function offlineFlowSourcesFromIds(ids: string[]) {
 
 const step1Selection = ref<string[]>([])
 const step2TableRef = ref<InstanceType<typeof ElTable> | null>(null)
+const flowAdvancingToBackupConfig = ref(false)
 let syncingSourceSelection = false
 let syncingStep2Selection = false
 
@@ -1679,13 +1680,13 @@ function onStep2SelectionChange(rows: Array<{ id: string }>) {
   step1Selection.value = rows.map((row) => row.id)
 }
 
-async function syncStep2SourcesFromSelection() {
-  const picked = selectedSourceIds.value.filter(isBackupSelectableId)
+async function syncStep2SourcesFromSelection(picked: string[]) {
   rememberSelectableRows(
     backupSelectableRows.value.filter((row) => picked.includes(row.id)),
   )
   if (picked.length) {
     await setPipelineStep(picked, 2)
+    syncWizardCountsFromPipeline()
     await refreshBackupSourcePoolCount()
   }
   selectedSourceIds.value = []
@@ -1693,19 +1694,25 @@ async function syncStep2SourcesFromSelection() {
 }
 
 async function enterBackupConfigStep(requireSelection = false) {
-  if (requireSelection && flowMainStep.value === 0 && selectedSourceIds.value.length > 0) {
-    await syncStep2SourcesFromSelection()
-  }
-  if (
-    requireSelection
-    && selectedSourceIds.value.length === 0
-    && step2PendingCount.value === 0
-  ) {
+  if (flowAdvancingToBackupConfig.value) return
+  const picked = selectedSourceIds.value.filter(isBackupSelectableId)
+  if (requireSelection && flowMainStep.value === 0 && picked.length === 0) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectSourceFirst'), grouping: true })
     return
   }
-  flowMainStep.value = 1
-  syncFlowStepRoute(1)
+
+  flowAdvancingToBackupConfig.value = true
+  try {
+    if (requireSelection && flowMainStep.value === 0) {
+      await syncStep2SourcesFromSelection(picked)
+    }
+    flowMainStep.value = 1
+    syncFlowStepRoute(1)
+  } catch (err) {
+    showApiError(err)
+  } finally {
+    flowAdvancingToBackupConfig.value = false
+  }
 }
 
 function onGoToStep2() {
@@ -8319,7 +8326,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </ElButton>
             <ElButton
               type="primary"
-              :disabled="selectedSourceIds.length === 0"
+              :disabled="selectedSourceIds.length === 0 || flowAdvancingToBackupConfig"
+              :loading="flowAdvancingToBackupConfig"
               @click="onGoToStep2"
             >
               <ArrowRight :size="16" class="shrink-0" />

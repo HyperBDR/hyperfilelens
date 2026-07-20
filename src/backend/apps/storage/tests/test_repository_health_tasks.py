@@ -1,0 +1,487 @@
+from __future__ import annotations
+
+import os
+from datetime import timedelta
+from unittest import mock
+
+from django.core.exceptions import ImproperlyConfigured
+from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
+
+from apps.iam.models import Organization
+from apps.node.models import Node
+from apps.protection.models import BackupConfig
+from apps.source.constants import ResourceType
+from apps.source.models import SourceResource
+from apps.storage.conf import repository_health_interval_seconds
+from apps.storage.periodic_tasks import register_periodic_tasks
+from apps.storage.repositories.models import Repository
+from apps.storage.services.interface import check_repository
+from apps.storage.services.internal.nas_repository import (
+    check_proxy_nas_repository,
+    nas_agent_repository_subdir,
+)
+from apps.storage.services.internal.repository_health import (
+    probe_repository_health,
+    probe_unbound_nas_repository_health,
+)
+from apps.storage.tasks import (
+    check_storage_repository_health,
+    dispatch_repository_health_checks,
+)
+
+
+class RepositoryHealthConfigurationTests(SimpleTestCase):
+    def test_defaults_to_five_minutes(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS", None)
+            self.assertEqual(repository_health_interval_seconds(), 300)
+
+    def test_accepts_configured_interval(self):
+        with mock.patch.dict(
+            os.environ,
+            {"STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS": "600"},
+        ):
+            self.assertEqual(repository_health_interval_seconds(), 600)
+
+    def test_rejects_invalid_or_too_short_interval(self):
+        for value in ("invalid", "59", "0"):
+            with (
+                self.subTest(value=value),
+                mock.patch.dict(
+                    os.environ,
+                    {"STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS": value},
+                ),
+            ):
+                with self.assertRaises(ImproperlyConfigured):
+                    repository_health_interval_seconds()
+
+    @mock.patch("apps.storage.periodic_tasks.TASK_REGISTRY.add")
+    @mock.patch("apps.storage.periodic_tasks.maintenance_settings")
+    @mock.patch.dict(
+        os.environ,
+        {"STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS": "420"},
+    )
+    def test_periodic_dispatcher_uses_configured_interval(
+        self,
+        maintenance_settings,
+        registry_add,
+    ):
+        maintenance_settings.return_value = mock.Mock(
+            scan_interval=timedelta(seconds=60),
+            enabled=True,
+        )
+
+        register_periodic_tasks()
+
+        health_call = next(
+            call
+            for call in registry_add.call_args_list
+            if call.kwargs["name"] == "storage_dispatch_repository_health_checks"
+        )
+        self.assertEqual(
+            health_call.kwargs["schedule"].run_every,
+            timedelta(seconds=420),
+        )
+
+
+class RepositoryHealthTaskTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="health-task-org",
+            name="Health Task Org",
+        )
+
+    def _repository(self, name: str, repo_type: str, **kwargs) -> Repository:
+        return Repository.objects.create(
+            organization_id=self.organization.id,
+            name=name,
+            repo_type=repo_type,
+            status=kwargs.pop("status", Repository.Status.CREATED),
+            health=kwargs.pop("health", Repository.Health.ONLINE),
+            config=kwargs.pop("config", {}),
+            **kwargs,
+        )
+
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
+    def test_dispatches_all_supported_created_repositories(
+        self,
+        apply_async,
+    ):
+        s3 = self._repository("s3", Repository.Type.S3, s3_bucket="bucket")
+        local = self._repository(
+            "local",
+            Repository.Type.PROXY_FS,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=10,
+        )
+        bound_nas = self._repository(
+            "bound-nas",
+            Repository.Type.NAS,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=10,
+        )
+        direct_nas = self._repository("direct-nas", Repository.Type.NAS)
+        self._repository(
+            "failed-local",
+            Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATE_FAILED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=10,
+        )
+
+        result = dispatch_repository_health_checks.run()
+
+        self.assertEqual(result["dispatched"], 4)
+        dispatched_ids = {
+            call.kwargs["kwargs"]["repository_id"]
+            for call in apply_async.call_args_list
+        }
+        self.assertEqual(
+            dispatched_ids,
+            {s3.id, local.id, bound_nas.id, direct_nas.id},
+        )
+
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=False)
+    def test_repository_lock_skips_duplicate_check(self, _cache_add, cache_delete):
+        repository = self._repository("s3", Repository.Type.S3, s3_bucket="bucket")
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        self.assertTrue(result["locked"])
+        cache_delete.assert_not_called()
+
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    @mock.patch(
+        "apps.storage.tasks.probe_repository_health",
+        side_effect=RuntimeError("network down"),
+    )
+    def test_single_failure_immediately_marks_only_health_offline(
+        self,
+        _probe,
+        _cache_add,
+        cache_delete,
+    ):
+        checked_at = timezone.now() - timedelta(hours=1)
+        repository = self._repository(
+            "s3",
+            Repository.Type.S3,
+            s3_bucket="bucket",
+            last_checked_at=checked_at,
+            capacity_bytes=1000,
+            estimated_usage_bytes=250,
+        )
+        original_updated_at = repository.updated_at
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], Repository.Health.OFFLINE)
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(repository.last_checked_at, checked_at)
+        self.assertEqual(repository.updated_at, original_updated_at)
+        self.assertEqual(repository.capacity_bytes, 1000)
+        self.assertEqual(repository.estimated_usage_bytes, 250)
+        cache_delete.assert_called_once()
+
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    @mock.patch(
+        "apps.storage.tasks.probe_repository_health",
+        return_value=Repository.Health.ONLINE,
+    )
+    def test_success_changes_only_health(
+        self,
+        _probe,
+        _cache_add,
+        _cache_delete,
+    ):
+        checked_at = timezone.now() - timedelta(hours=1)
+        repository = self._repository(
+            "s3",
+            Repository.Type.S3,
+            health=Repository.Health.OFFLINE,
+            s3_bucket="bucket",
+            config={"endpoint": "https://s3.example.com"},
+            last_checked_at=checked_at,
+            capacity_bytes=1000,
+            estimated_usage_bytes=250,
+        )
+        original_updated_at = repository.updated_at
+        original_config = dict(repository.config)
+
+        result = check_storage_repository_health.run(repository_id=repository.id)
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], Repository.Health.ONLINE)
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertEqual(repository.last_checked_at, checked_at)
+        self.assertEqual(repository.updated_at, original_updated_at)
+        self.assertEqual(repository.config, original_config)
+        self.assertEqual(repository.capacity_bytes, 1000)
+        self.assertEqual(repository.estimated_usage_bytes, 250)
+
+
+class UnboundNASRepositoryHealthTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="direct-nas-health-org",
+            name="Direct NAS Health Org",
+        )
+        self.repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={
+                "server_address": "10.0.0.10",
+                "share_path": "/backup",
+                "kopia_password": "repo-pass",
+            },
+        )
+
+    def _node(self, name: str, *, role: str = Node.Role.AGENT, online: bool = True):
+        return Node.objects.create(
+            organization=self.organization,
+            name=name,
+            role=role,
+            status=Node.Status.ONLINE if online else Node.Status.OFFLINE,
+            ip_address="10.0.1.1",
+        )
+
+    def _agent_config(self, node: Node, *, name: str):
+        return BackupConfig.objects.create(
+            organization_id=self.organization.id,
+            name=name,
+            source_type="agent",
+            source_ref_id=node.id,
+            repository_id=self.repository.id,
+        )
+
+    def _nas_config(self, source: SourceResource, *, name: str):
+        return BackupConfig.objects.create(
+            organization_id=self.organization.id,
+            name=name,
+            source_type="nas",
+            source_ref_id=source.id,
+            repository_id=self.repository.id,
+        )
+
+    @staticmethod
+    def _agent_outcome(status: str):
+        return mock.Mock(
+            task=mock.Mock(id="node-task", status=status, last_error=""),
+            result={},
+            timed_out=False,
+            ok=status == "success",
+        )
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_without_associations_stays_unverified_without_agent_task(self, run_agent):
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.UNVERIFIED)
+        run_agent.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_agent_path_success_marks_repository_online(self, run_agent):
+        agent = self._node("agent-a")
+        self._agent_config(agent, name="agent-config")
+        run_agent.return_value = self._agent_outcome("success")
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        run_agent.assert_called_once()
+        call = run_agent.call_args.kwargs
+        self.assertEqual(call["node_id"], agent.id)
+        self.assertEqual(call["kind"], "repo.status")
+        self.assertTrue(call["payload"]["health_only"])
+        self.assertEqual(
+            call["payload"]["repository"]["subdir"],
+            nas_agent_repository_subdir(agent.id),
+        )
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_all_execution_paths_failed_marks_repository_offline(self, run_agent):
+        agent_a = self._node("agent-a")
+        agent_b = self._node("agent-b")
+        self._agent_config(agent_a, name="agent-config-a")
+        self._agent_config(agent_b, name="agent-config-b")
+        run_agent.side_effect = [
+            self._agent_outcome("failed"),
+            self._agent_outcome("failed"),
+        ]
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.OFFLINE)
+        self.assertEqual(run_agent.call_count, 2)
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_any_success_marks_repository_online(self, run_agent):
+        agent_a = self._node("agent-a")
+        agent_b = self._node("agent-b")
+        self._agent_config(agent_a, name="agent-config-a")
+        self._agent_config(agent_b, name="agent-config-b")
+        run_agent.side_effect = [
+            RuntimeError("agent request timed out"),
+            self._agent_outcome("success"),
+        ]
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        self.assertEqual(run_agent.call_count, 2)
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_nas_source_uses_its_bound_proxy(self, run_agent):
+        proxy = self._node("proxy-a", role=Node.Role.PROXY)
+        source = SourceResource.objects.create(
+            organization=self.organization,
+            name="nas-source",
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+        )
+        self._nas_config(source, name="nas-config")
+        run_agent.return_value = self._agent_outcome("success")
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        self.assertEqual(run_agent.call_args.kwargs["node_id"], proxy.id)
+        self.assertEqual(
+            run_agent.call_args.kwargs["payload"]["repository"]["subdir"],
+            nas_agent_repository_subdir(proxy.id),
+        )
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_sources_on_same_execution_node_are_deduplicated(self, run_agent):
+        proxy = self._node("proxy-a", role=Node.Role.PROXY)
+        source_a = SourceResource.objects.create(
+            organization=self.organization,
+            name="nas-source-a",
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+        )
+        source_b = SourceResource.objects.create(
+            organization=self.organization,
+            name="nas-source-b",
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+        )
+        self._nas_config(source_a, name="nas-config-a")
+        self._nas_config(source_b, name="nas-config-b")
+        run_agent.return_value = self._agent_outcome("success")
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        run_agent.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.repository_health.run_agent_task_sync")
+    def test_offline_execution_node_counts_as_unavailable(self, run_agent):
+        agent = self._node("agent-a", online=False)
+        self._agent_config(agent, name="agent-config")
+
+        health = probe_unbound_nas_repository_health(self.repository)
+
+        self.assertEqual(health, Repository.Health.OFFLINE)
+        run_agent.assert_not_called()
+
+
+class RepositoryHealthProbeTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            key="repository-health-probe-org",
+            name="Repository Health Probe Org",
+        )
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_health.check_proxy_nas_repository"
+    )
+    def test_bound_nas_probe_requests_health_only(self, check_proxy_nas):
+        repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="bound-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=10,
+        )
+
+        health = probe_repository_health(repository)
+
+        self.assertEqual(health, Repository.Health.ONLINE)
+        check_proxy_nas.assert_called_once_with(repository, health_only=True)
+
+    @mock.patch("apps.storage.services.internal.nas_repository.run_agent_task_sync")
+    def test_bound_nas_health_probe_does_not_sync_mount_path(self, run_agent):
+        proxy = Node.objects.create(
+            organization=self.organization,
+            name="proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="bound-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+            config={
+                "server_address": "10.0.0.10",
+                "share_path": "/backup",
+                "kopia_password": "repo-pass",
+            },
+        )
+        original_updated_at = repository.updated_at
+        original_config = dict(repository.config)
+        run_agent.return_value = mock.Mock(
+            task=mock.Mock(id="node-task", status="success", last_error=""),
+            result={"mount_point": "/new/mount/path"},
+            timed_out=False,
+            ok=True,
+        )
+
+        check_proxy_nas_repository(repository, health_only=True)
+
+        repository.refresh_from_db()
+        self.assertEqual(repository.config, original_config)
+        self.assertEqual(repository.updated_at, original_updated_at)
+        self.assertTrue(run_agent.call_args.kwargs["payload"]["health_only"])
+
+    @mock.patch("apps.storage.services.interface.sync_repository_usage")
+    @mock.patch(
+        "apps.storage.services.interface.probe_unbound_nas_repository_health",
+        return_value=Repository.Health.ONLINE,
+    )
+    def test_manual_unbound_nas_check_uses_direct_probe(
+        self,
+        direct_probe,
+        sync_usage,
+    ):
+        repository = Repository.objects.create(
+            organization_id=self.organization.id,
+            name="direct-nas",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+        )
+        sync_usage.side_effect = lambda value: value
+
+        checked = check_repository(repository=repository)
+
+        repository.refresh_from_db()
+        self.assertEqual(checked.health, Repository.Health.ONLINE)
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertIsNotNone(repository.last_checked_at)
+        direct_probe.assert_called_once_with(repository)
+        sync_usage.assert_called_once()

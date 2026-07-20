@@ -5,7 +5,11 @@ import { createI18n } from 'vue-i18n'
 import { describe, expect, it } from 'vitest'
 import TaskTypeLabel from './TaskTypeLabel.vue'
 
-function mountLabel(emphasis?: 'primary' | 'secondary') {
+function mountLabel(props: {
+  type?: string
+  operationType?: string
+  emphasis?: 'primary' | 'secondary'
+} = {}) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -14,7 +18,17 @@ function mountLabel(emphasis?: 'primary' | 'secondary') {
         ops: {
           task: {
             emptyMark: '—',
-            taskType: { backup: 'Backup' },
+            taskType: {
+              backup: 'Backup',
+              repository_operation: 'Repository Operation',
+            },
+            operationType: {
+              maintenanceQuick: 'Quick Maintenance',
+              maintenanceFull: 'Full Maintenance',
+              cleanupTarget: 'Physical Target Cleanup',
+              cleanupRepository: 'Logical Repository Cleanup',
+              check: 'Repository Check',
+            },
           },
         },
       },
@@ -22,7 +36,7 @@ function mountLabel(emphasis?: 'primary' | 'secondary') {
   })
 
   return mount(TaskTypeLabel, {
-    props: { type: 'backup', ...(emphasis ? { emphasis } : {}) },
+    props: { type: 'backup', ...props },
     global: { plugins: [i18n] },
   })
 }
@@ -36,8 +50,34 @@ describe('TaskTypeLabel', () => {
   })
 
   it('can be reduced to secondary emphasis in supporting contexts', () => {
-    const wrapper = mountLabel('secondary')
+    const wrapper = mountLabel({ emphasis: 'secondary' })
 
     expect(wrapper.get('.hfl-table-type-label').classes()).toContain('hfl-table-type-label--secondary')
+  })
+
+  it.each([
+    ['maintenance.quick', 'Quick Maintenance'],
+    ['maintenance.full', 'Full Maintenance'],
+    ['cleanup.target', 'Physical Target Cleanup'],
+    ['cleanup.repository', 'Logical Repository Cleanup'],
+    ['check', 'Repository Check'],
+  ])('shows repository operation %s as secondary text', (operationType, expected) => {
+    const wrapper = mountLabel({ type: 'repository_operation', operationType })
+
+    expect(wrapper.get('.hfl-table-type-label').text()).toBe('Repository Operation')
+    expect(wrapper.get('.hfl-task-type-stack__operation').text()).toBe(expected)
+  })
+
+  it('formats an unknown repository operation as a readable label', () => {
+    const wrapper = mountLabel({ type: 'repository_operation', operationType: 'repair.index' })
+
+    expect(wrapper.get('.hfl-task-type-stack__operation').text()).toBe('Repair Index')
+  })
+
+  it('keeps the type on one line when the operation is missing', () => {
+    const wrapper = mountLabel({ type: 'repository_operation' })
+
+    expect(wrapper.find('.hfl-task-type-stack').exists()).toBe(false)
+    expect(wrapper.text()).toBe('Repository Operation')
   })
 })

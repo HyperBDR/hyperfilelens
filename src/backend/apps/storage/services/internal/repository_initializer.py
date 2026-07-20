@@ -8,9 +8,12 @@ from apps.storage.services.internal.kopia_cli import (
     create_s3_repository,
     status as kopia_status,
 )
-from apps.storage.services.internal.repository_errors import RepositoryAlreadyExistsError
+from apps.storage.services.internal.repository_errors import (
+    RepositoryAlreadyExistsError,
+)
 from apps.storage.services.internal.s3_client import (
     S3ClientError,
+    check_s3_bucket_readable,
     ensure_s3_bucket,
     list_s3_buckets,
     verify_s3_bucket_rw,
@@ -102,7 +105,7 @@ def check_s3_repository(repository: Repository) -> None:
     config = repository.config or {}
     secrets_payload = resolve_repository_secrets(repository)
     try:
-        ensure_s3_bucket(
+        check_s3_bucket_readable(
             endpoint=str(config.get("endpoint") or ""),
             region=str(config.get("region") or ""),
             bucket=str(repository.s3_bucket or ""),

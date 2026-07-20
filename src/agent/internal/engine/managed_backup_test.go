@@ -177,6 +177,133 @@ func TestManagedRepositoryInitializeRejectsExistingWithoutConnect(t *testing.T) 
 	}
 }
 
+func TestManagedRepositoriesUseConfigScopedKopiaCaches(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s|%%s\\n' \"$KOPIA_CACHE_DIRECTORY\" \"$*\" >> %q\nexit 0\n",
+		commandLog,
+	)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &model.AgentConfig{DataDir: filepath.Join(tempDir, "data"), KopiaPath: kopiaPath}
+	engine := New(staticConfigProvider{cfg: cfg})
+
+	for _, repositoryID := range []int{41, 42} {
+		payload := ParsePayload(map[string]any{
+			"env": map[string]any{"KOPIA_CACHE_DIRECTORY": filepath.Join(tempDir, "shared-cache")},
+			"repository": map[string]any{
+				"id":             repositoryID,
+				"type":           "proxy_fs",
+				"path":           filepath.Join(tempDir, fmt.Sprintf("repository-%d", repositoryID)),
+				"kopia_password": fmt.Sprintf("repo-pass-%d", repositoryID),
+			},
+		})
+		status, result, message := engine.runManagedRepositoryInitialize(
+			context.Background(), ReporterSink{}, fmt.Sprintf("task-%d", repositoryID), payload,
+		)
+		if status != "success" {
+			t.Fatalf("repository %d initialize status=%q message=%q result=%#v", repositoryID, status, message, result)
+		}
+	}
+
+	raw, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caches := map[string]struct{}{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		cacheDir, _, ok := strings.Cut(line, "|")
+		if !ok || cacheDir == "" {
+			t.Fatalf("unexpected command log line %q", line)
+		}
+		if cacheDir == filepath.Join(tempDir, "shared-cache") {
+			t.Fatalf("managed repository honored unsafe shared cache override: %q", line)
+		}
+		caches[cacheDir] = struct{}{}
+	}
+	if len(caches) != 2 {
+		t.Fatalf("managed repositories used %d cache directories, want 2: %#v", len(caches), caches)
+	}
+	for cacheDir := range caches {
+		rel, err := filepath.Rel(managedRepositoryCacheRoot(cfg), cacheDir)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			t.Fatalf("cache directory %q is outside managed root", cacheDir)
+		}
+	}
+}
+
+func TestManagedRepositoryStatusHealthOnlyControlsUsageMetrics(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tests := []struct {
+		name             string
+		healthOnly       any
+		wantContentStats bool
+	}{
+		{name: "health only", healthOnly: true, wantContentStats: false},
+		{name: "explicit false", healthOnly: false, wantContentStats: true},
+		{name: "flag absent", wantContentStats: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			commandLog := filepath.Join(tempDir, "commands.log")
+			kopiaPath := filepath.Join(tempDir, "kopia")
+			script := fmt.Sprintf(
+				"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n",
+				commandLog,
+			)
+			if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+				DataDir:   filepath.Join(tempDir, "data"),
+				KopiaPath: kopiaPath,
+			}})
+			rawPayload := map[string]any{
+				"repository": map[string]any{
+					"id":             42,
+					"type":           "proxy_fs",
+					"path":           filepath.Join(tempDir, "repository"),
+					"kopia_password": "repo-pass",
+				},
+			}
+			if tt.healthOnly != nil {
+				rawPayload["health_only"] = tt.healthOnly
+			}
+
+			status, result, message := engine.runManagedRepositoryStatus(
+				context.Background(), ReporterSink{}, "task-1", ParsePayload(rawPayload),
+			)
+
+			if status != "success" {
+				t.Fatalf("status=%q message=%q result=%#v", status, message, result)
+			}
+			rawCommands, err := os.ReadFile(commandLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commands := string(rawCommands)
+			if !strings.Contains(commands, "repository connect filesystem") {
+				t.Fatalf("repository connect was not run: %q", commands)
+			}
+			if !strings.Contains(commands, "repository status") {
+				t.Fatalf("repository status was not run: %q", commands)
+			}
+			if got := strings.Contains(commands, "content stats"); got != tt.wantContentStats {
+				t.Fatalf("content stats present=%v, want %v: %q", got, tt.wantContentStats, commands)
+			}
+		})
+	}
+}
+
 func TestParseKopiaServerRepositorySpec(t *testing.T) {
 	spec, ok, err := parseRepositorySpec(map[string]any{
 		"id":                      42,

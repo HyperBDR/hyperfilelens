@@ -138,11 +138,16 @@ def initialize_proxy_nas_repository(repository: Repository):
     )
 
 
-def check_proxy_nas_repository(repository: Repository):
+def check_proxy_nas_repository(
+    repository: Repository,
+    *,
+    health_only: bool = False,
+):
     return _run_proxy_nas_repository_task(
         repository,
         kind="repo.status",
         log_scope="storage nas repo check",
+        health_only=health_only,
     )
 
 
@@ -151,6 +156,7 @@ def _run_proxy_nas_repository_task(
     *,
     kind: str,
     log_scope: str,
+    health_only: bool = False,
 ):
     node = validate_proxy_for_repository(repository)
     payload = {
@@ -160,6 +166,8 @@ def _run_proxy_nas_repository_task(
             node_id=node.id,
         )
     }
+    if health_only:
+        payload["health_only"] = True
     log_agent_dispatch(
         log_scope,
         node_id=node.id,
@@ -207,7 +215,8 @@ def _run_proxy_nas_repository_task(
             last_error=str(getattr(outcome.task, "last_error", "") or ""),
         )
         raise NASRepositoryError(message or "NAS repository initialization failed.")
-    sync_proxy_mount_path_from_repo_status(repository, outcome.result)
+    if not health_only:
+        sync_proxy_mount_path_from_repo_status(repository, outcome.result)
     logger.info(
         "%s ok repository_id=%s node_id=%s org_id=%s",
         log_scope,

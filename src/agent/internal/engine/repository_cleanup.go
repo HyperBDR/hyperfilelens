@@ -81,6 +81,12 @@ func (e *Engine) runManagedRepositoryCleanup(
 		return "failed", result, redactRepositoryCleanupPaths(err.Error(), filepath.Dir(configFile))
 	}
 	result["removed_config_file_count"] = removedConfigCount
+	cacheDir := managedRepositoryCacheDir(e.current(), configFile)
+	_, cacheExisted, err := deleteManagedRepositoryPath(ctx, cacheDir, managedRepositoryCacheRoot(e.current()))
+	if err != nil {
+		return "failed", result, redactRepositoryCleanupPaths(err.Error(), cacheDir)
+	}
+	result["repository_cache_existed"] = cacheExisted
 	if err := ctx.Err(); err != nil {
 		return "failed", result, "canceled"
 	}
@@ -133,8 +139,9 @@ func validateRepositoryCleanupPath(path string, allowedRoot string) (string, err
 		return "", fmt.Errorf("refusing to delete a filesystem root")
 	}
 
-	root := filepath.Clean(allowedRoot)
+	root := ""
 	if strings.TrimSpace(allowedRoot) != "" {
+		root = filepath.Clean(allowedRoot)
 		if !filepath.IsAbs(root) || filepath.Dir(root) == root {
 			return "", fmt.Errorf("invalid repository cleanup root")
 		}
