@@ -437,7 +437,7 @@ jobs:
 
   assemble-release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     needs:
       - prepare
       - build-agent
@@ -482,7 +482,7 @@ jobs:
 
   verify-release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     needs: [prepare, assemble-release]
     permissions:
       contents: write

@@ -81,6 +81,15 @@ workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
 	printf 'ERROR: tag release workflow is missing\n' >&2
 	exit 1
 }
+[[ "$(awk '/^  assemble-release:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "90" ]] || {
+	printf 'ERROR: release assembly timeout must cover large GitHub asset uploads\n' >&2
+	exit 1
+}
+[[ "$(awk '/^  verify-release:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "120" ]] || {
+	printf 'ERROR: release verification timeout must cover package download and offline install\n' >&2
+	exit 1
+}
+grep -F 'timeout-minutes: 120' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 if grep -F 'workflow_dispatch:' "${workflow}" >/dev/null; then
 	printf 'ERROR: release workflow must not allow manual dispatch\n' >&2
 	exit 1
