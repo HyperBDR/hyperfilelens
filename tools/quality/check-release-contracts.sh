@@ -210,7 +210,9 @@ grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
 smoke_runner="${ROOT}/tools/dev/browser-smoke.sh"
 grep -F -- '--add-host host.docker.internal:host-gateway' "${smoke_runner}" >/dev/null
 grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
-grep -F 'host.docker.internal' "${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
+smoke_script="${ROOT}/tools/dev/browser-smoke.mjs"
+grep -F 'host.docker.internal' "${smoke_script}" >/dev/null
+grep -F 'captchaImage.waitFor' "${smoke_script}" >/dev/null
 if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 	printf 'ERROR: browser smoke must reach published ports through host-gateway\n' >&2
 	exit 1
