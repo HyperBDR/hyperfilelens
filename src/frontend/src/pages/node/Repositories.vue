@@ -1327,6 +1327,15 @@ function repositoryTaskStatusType(status: string) {
   return 'info'
 }
 
+function enumDisplayLabel(value: string) {
+  return value
+    .trim()
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map(part => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(' ')
+}
+
 function repositoryTaskLabel(scope: 'operation' | 'status' | 'trigger', value?: string | null) {
   if (!value) return DETAIL_EMPTY
   const keys: Record<string, string> = {
@@ -1346,9 +1355,9 @@ function repositoryTaskLabel(scope: 'operation' | 'status' | 'trigger', value?: 
     'trigger:manual': 'repositoriesPage.taskTriggerManual',
   }
   const key = keys[`${scope}:${value}`] || ''
-  if (!key) return value
+  if (!key) return enumDisplayLabel(value)
   const translated = t(key)
-  return translated === key ? value : translated
+  return translated === key ? enumDisplayLabel(value) : translated
 }
 
 function repositoryTaskProgress(task: TaskRow) {
@@ -2505,7 +2514,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colStatus')"
-              width="112"
+              :width="activeTab === 'proxy_fs' ? 148 : 112"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
@@ -2601,7 +2610,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 'nas' || activeTab === 'proxy_fs'"
               :label="t('repositoriesPage.colSourceProxyIp')"
-              min-width="180"
+              :min-width="activeTab === 'proxy_fs' ? 144 : 180"
             >
               <template #header>
                 <span class="repo-table-header-with-tip">

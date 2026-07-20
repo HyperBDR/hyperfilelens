@@ -76,11 +76,16 @@ def initialize_proxy_fs_repository(repository: Repository):
     )
 
 
-def check_proxy_fs_repository(repository: Repository):
+def check_proxy_fs_repository(
+    repository: Repository,
+    *,
+    health_only: bool = False,
+):
     return _run_proxy_fs_repository_task(
         repository,
         kind="repo.status",
         log_scope="storage proxy_fs repo check",
+        health_only=health_only,
     )
 
 
@@ -89,6 +94,7 @@ def _run_proxy_fs_repository_task(
     *,
     kind: str,
     log_scope: str,
+    health_only: bool = False,
 ):
     """Run a strict initialize or connect-only probe on the bound Proxy."""
 
@@ -96,6 +102,8 @@ def _run_proxy_fs_repository_task(
     payload = {
         "repository": proxy_fs_repository_payload(repository),
     }
+    if health_only:
+        payload["health_only"] = True
     log_agent_dispatch(
         log_scope,
         node_id=node.id,

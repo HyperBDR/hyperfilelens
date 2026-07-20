@@ -34,6 +34,11 @@ from apps.protection.services.backup_source_snapshot import (
     set_source_snapshot_started,
 )
 from apps.protection.services.backup_runtime_policy import backup_runtime_policy_payload
+from apps.protection.services.progress.orchestrated_progress import (
+    BACKUP_LOGIC_END,
+    BACKUP_PREPARE_END,
+    BACKUP_TRANSFER_END,
+)
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.repository_access import resolve_repository_reader
 from apps.storage.services.internal.repository_usage import enqueue_repository_usage_refresh
@@ -1226,7 +1231,7 @@ def _finalize_backup_task(
             step_name="kopia_snapshot",
             status=TaskStep.Status.SUCCESS,
             progress=100,
-            task_progress=bt._KOPIA_TASK_END,
+            task_progress=BACKUP_TRANSFER_END,
         )
         bt._set_step_status(
             task=task,
@@ -1424,7 +1429,7 @@ def advance_backup(
             step_name="create_logic_snapshot",
             status=TaskStep.Status.RUNNING,
             progress=10,
-            task_progress=bt._LOGIC_TASK_END / 2,
+            task_progress=BACKUP_LOGIC_END / 2,
             current_step="create_logic_snapshot",
         )
         append_task_step_event(
@@ -1438,7 +1443,7 @@ def advance_backup(
             step_name="create_logic_snapshot",
             status=TaskStep.Status.SUCCESS,
             progress=100,
-            task_progress=bt._LOGIC_TASK_END,
+            task_progress=BACKUP_LOGIC_END,
         )
 
     kopia_step = bt._step(task, "kopia_snapshot")
@@ -1451,7 +1456,7 @@ def advance_backup(
             step_name="kopia_snapshot",
             status=TaskStep.Status.RUNNING,
             progress=0,
-            task_progress=bt._KOPIA_TASK_START,
+            task_progress=BACKUP_PREPARE_END,
             current_step="kopia_snapshot",
         )
 
@@ -1499,7 +1504,7 @@ def advance_backup(
             task_uuid=task.task_uuid,
             organization_id=organization_id,
             status=Task.Status.FAILED,
-            progress=bt._KOPIA_TASK_START,
+            progress=BACKUP_PREPARE_END,
             result_payload={"source_snapshot_id": source_snapshot.id},
             error_code=error_code,
             error_message=error_message,
@@ -1528,7 +1533,7 @@ def advance_backup(
             task_uuid=task.task_uuid,
             organization_id=organization_id,
             status=Task.Status.FAILED,
-            progress=bt._KOPIA_TASK_START,
+            progress=BACKUP_PREPARE_END,
             result_payload={"source_snapshot_id": source_snapshot.id},
             error_code=error_code,
             error_message=error_message,
@@ -1544,7 +1549,7 @@ def advance_backup(
             step_name="kopia_snapshot",
             status=TaskStep.Status.RUNNING,
             progress=0,
-            task_progress=bt._KOPIA_TASK_START,
+            task_progress=BACKUP_PREPARE_END,
             current_step="kopia_snapshot",
         )
         return {
@@ -1574,7 +1579,7 @@ def advance_backup(
             task_uuid=task.task_uuid,
             organization_id=organization_id,
             status=Task.Status.FAILED,
-            progress=bt._KOPIA_TASK_START,
+            progress=BACKUP_PREPARE_END,
             result_payload={"source_snapshot_id": source_snapshot.id},
             error_code=error_code,
             error_message=error_message,
@@ -1590,7 +1595,7 @@ def advance_backup(
             step_name="kopia_snapshot",
             status=TaskStep.Status.RUNNING,
             progress=0,
-            task_progress=bt._KOPIA_TASK_START,
+            task_progress=BACKUP_PREPARE_END,
             current_step="kopia_snapshot",
         )
         return {
@@ -2025,7 +2030,7 @@ def retry_backup_directory(
         step_name="kopia_snapshot",
         status=TaskStep.Status.RUNNING,
         progress=0,
-        task_progress=bt._KOPIA_TASK_START,
+        task_progress=BACKUP_PREPARE_END,
         current_step="kopia_snapshot",
     )
     return advance_backup(

@@ -4,10 +4,33 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
 )
+
+func TestManagedRepositoryCacheDirIsStableAndConfigScoped(t *testing.T) {
+	cfg := &model.AgentConfig{DataDir: t.TempDir()}
+	firstConfig := filepath.Join(cfg.DataDir, "kopia", "repositories", "repo-10.config")
+	secondConfig := filepath.Join(cfg.DataDir, "kopia", "repositories", "repo-11.config")
+
+	first := managedRepositoryCacheDir(cfg, firstConfig)
+	if repeated := managedRepositoryCacheDir(cfg, firstConfig); repeated != first {
+		t.Fatalf("repository cache directory is not stable: %q != %q", repeated, first)
+	}
+	second := managedRepositoryCacheDir(cfg, secondConfig)
+	if first == second {
+		t.Fatalf("different repository configs share cache directory %q", first)
+	}
+	root := managedRepositoryCacheRoot(cfg)
+	for _, cacheDir := range []string{first, second} {
+		rel, err := filepath.Rel(root, cacheDir)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			t.Fatalf("repository cache directory %q escapes root %q", cacheDir, root)
+		}
+	}
+}
 
 func TestEnsureKopiaProcessEnvUsesDataDirCache(t *testing.T) {
 	cfg := &model.AgentConfig{DataDir: t.TempDir()}

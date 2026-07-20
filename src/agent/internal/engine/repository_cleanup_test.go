@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hyperfilelens/agent/internal/model"
 )
 
 func TestDeleteManagedRepositoryPathRejectsTraversalAndRoot(t *testing.T) {
@@ -80,6 +82,58 @@ func TestRemoveRepositoryLocalStateReturnsCountWithoutPaths(t *testing.T) {
 	}
 	if removed != 2 {
 		t.Fatalf("removed config count = %d, want 2", removed)
+	}
+}
+
+func TestManagedRepositoryCleanupRemovesOnlyOwnedCache(t *testing.T) {
+	dataDir := t.TempDir()
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{DataDir: dataDir}})
+	physicalRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSpec := repositorySpec{ID: 71, Type: "proxy_fs", Path: filepath.Join(physicalRoot, "repo-71")}
+	secondSpec := repositorySpec{ID: 72, Type: "proxy_fs", Path: filepath.Join(physicalRoot, "repo-72")}
+	for _, spec := range []repositorySpec{firstSpec, secondSpec} {
+		if err := os.MkdirAll(spec.Path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		configFile := engine.repositoryConfigPath(spec)
+		if err := os.MkdirAll(filepath.Dir(configFile), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(configFile, []byte("config"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(managedRepositoryCacheDir(engine.current(), configFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	payload := ParsePayload(map[string]any{
+		"operation_type": "cleanup.repository",
+		"repository": map[string]any{
+			"id":   firstSpec.ID,
+			"type": firstSpec.Type,
+			"path": firstSpec.Path,
+		},
+	})
+	status, result, message := engine.runManagedRepositoryCleanup(
+		context.Background(), ReporterSink{}, "cleanup-71", payload,
+	)
+	if status != "success" {
+		t.Fatalf("cleanup status=%q message=%q result=%#v", status, message, result)
+	}
+	if result["repository_cache_existed"] != true {
+		t.Fatalf("cleanup did not report owned cache: %#v", result)
+	}
+	firstCache := managedRepositoryCacheDir(engine.current(), engine.repositoryConfigPath(firstSpec))
+	if _, err := os.Stat(firstCache); !os.IsNotExist(err) {
+		t.Fatalf("owned cache still exists: %v", err)
+	}
+	secondCache := managedRepositoryCacheDir(engine.current(), engine.repositoryConfigPath(secondSpec))
+	if _, err := os.Stat(secondCache); err != nil {
+		t.Fatalf("other repository cache was removed: %v", err)
 	}
 }
 

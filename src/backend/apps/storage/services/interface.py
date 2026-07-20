@@ -28,6 +28,9 @@ from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
     RepositoryAlreadyExistsError,
 )
+from apps.storage.services.internal.repository_health import (
+    probe_unbound_nas_repository_health,
+)
 from apps.storage.services.internal.repository_cleanup import (
     RepositoryCleanupBlocked,
     create_direct_nas_target_cleanup_task,
@@ -474,7 +477,7 @@ def check_repository(*, repository: Repository) -> Repository:
         repository.health = Repository.Health.ONLINE
     elif repository.repo_type == Repository.Type.NAS:
         if not repository.bind_node_type:
-            repository.health = Repository.Health.UNVERIFIED
+            repository.health = probe_unbound_nas_repository_health(repository)
         else:
             try:
                 check_proxy_nas_repository(repository)

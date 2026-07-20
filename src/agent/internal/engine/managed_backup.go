@@ -313,6 +313,11 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	for key, value := range p.Env {
 		env[key] = value
 	}
+	// A shared Kopia cache can retain an encrypted format blob from another
+	// repository. Creating a repository with a different password then writes
+	// the new format but fails to reopen it with "invalid repository password".
+	// Managed repositories must therefore own a cache scoped to their config.
+	env["KOPIA_CACHE_DIRECTORY"] = managedRepositoryCacheDir(e.current(), configFile)
 	var envErr error
 	env, envErr = ensureKopiaProcessEnv(e.current(), env)
 	if envErr != nil {
@@ -474,7 +479,8 @@ func (e *Engine) runManagedRepositoryStatus(
 	if spec.Path != "" {
 		result["repository_path"] = spec.Path
 	}
-	if configFile != "" {
+	healthOnly, _ := payloadBoolValue(p.Extra["health_only"])
+	if configFile != "" && !healthOnly {
 		if bin, err := e.kopiaBin(ctx); err == nil {
 			appendRepositoryUsageMetrics(ctx, bin, configFile, env, spec, result)
 		}

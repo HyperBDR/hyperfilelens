@@ -249,7 +249,7 @@ class RepositoryUsageTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 350)
         self.assertEqual(repo.capacity_bytes, 1000)
-        self.assertEqual(repo.health, Repository.Health.ONLINE)
+        self.assertEqual(repo.health, Repository.Health.UNVERIFIED)
         self.assertEqual(
             RepositoryUsageShard.objects.filter(repository_id=repo.id, is_active=True).count(),
             2,
@@ -291,7 +291,7 @@ class RepositoryUsageTests(TestCase):
 
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 128)
-        self.assertEqual(repo.health, Repository.Health.ONLINE)
+        self.assertEqual(repo.health, Repository.Health.UNVERIFIED)
         self.assertEqual(run_probe.call_count, 1)
         shard = RepositoryUsageShard.objects.get(repository_id=repo.id, node_id=agent.id)
         self.assertEqual(shard.source_config_count, 1)
@@ -351,12 +351,12 @@ class RepositoryUsageTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 512)
         self.assertEqual(repo.capacity_bytes, 4096)
-        self.assertEqual(repo.health, Repository.Health.OFFLINE)
+        self.assertEqual(repo.health, Repository.Health.UNVERIFIED)
         shard = RepositoryUsageShard.objects.get(repository_id=repo.id, node_id=agent.id)
         self.assertEqual(shard.status, RepositoryUsageShard.Status.FAILED)
         self.assertEqual(shard.estimated_usage_bytes, 512)
 
-    def test_unbound_nas_without_associated_sources_stays_unverified(self):
+    def test_unbound_nas_usage_sync_preserves_health_without_associated_sources(self):
         org = Organization.objects.create(key="usage-empty-org", name="Usage Empty Org")
         repo = Repository.objects.create(
             organization_id=org.id,
@@ -371,4 +371,4 @@ class RepositoryUsageTests(TestCase):
         sync_repository_usage(repo)
 
         repo.refresh_from_db()
-        self.assertEqual(repo.health, Repository.Health.UNVERIFIED)
+        self.assertEqual(repo.health, Repository.Health.OFFLINE)

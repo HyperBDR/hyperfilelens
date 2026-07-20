@@ -1,6 +1,10 @@
 from unittest import TestCase, mock
 
-from apps.storage.services.internal.s3_client import ensure_s3_bucket, list_s3_buckets
+from apps.storage.services.internal.s3_client import (
+    check_s3_bucket_readable,
+    ensure_s3_bucket,
+    list_s3_buckets,
+)
 from botocore.exceptions import ClientError
 
 
@@ -118,3 +122,24 @@ class EnsureS3BucketTests(TestCase):
             access_key_id="AK",
             secret_access_key="SK",
         )
+
+
+class CheckS3BucketReadableTests(TestCase):
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_uses_head_bucket_without_mutating_storage(self, client_factory):
+        client = mock.Mock()
+        client_factory.return_value = client
+
+        check_s3_bucket_readable(
+            endpoint="https://s3.example.com",
+            region="us-east-1",
+            bucket="backup-bucket",
+            access_key_id="AK",
+            secret_access_key="SK",
+        )
+
+        client.head_bucket.assert_called_once_with(Bucket="backup-bucket")
+        client.list_buckets.assert_not_called()
+        client.create_bucket.assert_not_called()
+        client.put_object.assert_not_called()
+        client.delete_object.assert_not_called()

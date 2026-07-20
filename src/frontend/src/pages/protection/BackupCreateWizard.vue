@@ -1024,6 +1024,7 @@ const filterPolicyAssignmentCheckedGroupKeys = ref<string[]>([])
 const recoveryPlanCheckedGroupKeys = ref<string[]>([])
 const batchPolicyId = ref('')
 const batchFilterIds = ref<string[]>([])
+const batchFilterSelectRef = ref<{ blur?: () => void }>()
 const batchCompression = ref<CompressionLevel | ''>('')
 type FilterPolicyBatchOperation = 'policy' | 'filter' | 'compression'
 const filterPolicyBatchDialogOpen = ref(false)
@@ -1093,6 +1094,13 @@ function hideOptionPopovers() {
 
 function handleOptionSelectVisibleChange(visible: boolean) {
   if (!visible) hideOptionPopovers()
+}
+
+function closeBatchFilterSelect() {
+  void nextTick(() => {
+    batchFilterSelectRef.value?.blur?.()
+    hideOptionPopovers()
+  })
 }
 
 const filteredPoliciesForPick = computed(() => {
@@ -5814,6 +5822,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   </el-select>
                   <el-select
                     v-else-if="activeFilterPolicyBatchOperation === 'filter'"
+                    ref="batchFilterSelectRef"
                     v-model="batchFilterIds"
                     multiple
                     filterable
@@ -5824,6 +5833,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                     :placeholder="t('protection.backupsPage.phBatchFilters')"
                     class="w-full file-filter-multi-select"
                     popper-class="create-policy-select-popper"
+                    @change="closeBatchFilterSelect"
                     @visible-change="handleOptionSelectVisibleChange"
                   >
                     <el-option

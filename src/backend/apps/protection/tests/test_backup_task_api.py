@@ -19,7 +19,11 @@ from apps.protection.models import (
 )
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.node.services.internal.agent_task import AgentTaskHandle
-from apps.protection.services.backup_orchestrator import _repository_public_host, cancel_backup
+from apps.protection.services.backup_orchestrator import (
+    _repository_public_host,
+    cancel_backup,
+    reconcile_backup_tasks,
+)
 from apps.protection.services.backup_task import (
     ExecutionTarget,
     _queue_backup_execution,
@@ -88,6 +92,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             path="/data/projects",
             display_name="projects",
             sort_order=0,
+            estimated_size_bytes=2048,
         )
         SourceBackupPipelineEntry.objects.create(
             organization=self.org,
@@ -389,7 +394,8 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.data["created_count"], 1)
         result = response.data["results"][0]
         self.assertEqual(result["status"], "created")
-        self.assertTrue(Task.objects.filter(resources__resource_id=proxy_repo.id).exists())
+        task = Task.objects.get(id=result["task_id"])
+        self.assertEqual(task.request_payload["repository_id"], proxy_repo.id)
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
     def test_start_backup_task_api_normalizes_legacy_api_trigger_to_manual(self, mock_queue):
@@ -454,7 +460,8 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.data["created_count"], 1)
         result = response.data["results"][0]
         self.assertEqual(result["status"], "created")
-        self.assertTrue(Task.objects.filter(resources__resource_id=proxy_repo.id).exists())
+        task = Task.objects.get(id=result["task_id"])
+        self.assertEqual(task.request_payload["repository_id"], proxy_repo.id)
         mock_queue.assert_called_once()
 
     @patch("apps.protection.services.backup_task._queue_backup_execution")
@@ -517,7 +524,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(response.data["created_count"], 0)
         self.assertEqual(response.data["results"][0]["status"], "conflict")
 
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_records_directory_snapshot_and_completes_task(self, mock_run_agent_task_async, mock_sync_repository_usage):
         mock_sync_repository_usage.return_value = {"queued": True, "task_id": "usage-refresh"}
@@ -687,7 +694,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_recovers_existing_successful_node_task(
         self,
@@ -733,7 +740,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_resumes_existing_running_node_task(
         self,
@@ -775,7 +782,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
         return_value=Node.Status.ONLINE,
     )
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_skips_existing_terminal_directory_result(
         self,
@@ -830,6 +837,42 @@ class ProtectionBackupTaskApiTests(TestCase):
             task_uuid=str(task.task_uuid),
             source_snapshot_id=snapshot.id,
         )
+
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Status.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_reconcile_backup_tasks_advances_pending_backup_idempotently(
+        self,
+        mock_run_agent_task_async,
+        _mock_node_online,
+    ):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-reconcile-pending-backup",
+        )
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id="")]
+        )
+
+        first_summary = reconcile_backup_tasks(limit=10)
+        second_summary = reconcile_backup_tasks(limit=10)
+
+        task.refresh_from_db()
+        logic_step = TaskStep.objects.get(task=task, step_name="create_logic_snapshot")
+        kopia_step = TaskStep.objects.get(task=task, step_name="kopia_snapshot")
+        directory = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
+        self.assertEqual(first_summary, {"candidates": 1, "advanced": 1})
+        self.assertEqual(second_summary, {"candidates": 1, "advanced": 1})
+        self.assertEqual(task.status, Task.Status.RUNNING)
+        self.assertIsNotNone(task.started_at)
+        self.assertEqual(logic_step.status, TaskStep.Status.SUCCESS)
+        self.assertEqual(float(logic_step.progress), 100)
+        self.assertEqual(kopia_step.status, TaskStep.Status.RUNNING)
+        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.RUNNING)
+        self.assertIsNotNone(directory.node_task_id)
+        self.assertEqual(snapshot.directories.count(), 1)
+        self.assertEqual(mock_run_agent_task_async.call_count, 1)
 
     def test_proxy_bound_nas_repository_payload_uses_storage_id_subdir(self):
         proxy = Node.objects.create(
@@ -1199,7 +1242,7 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(len(stop_calls), 1)
         self.assertEqual(stop_calls[0]["node_id"], proxy.id)
 
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_times_out_directory_and_finalizes_task(
         self,
@@ -1275,7 +1318,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_agent_failure_finalizes_task(
         self,
@@ -1347,7 +1390,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.protection.services.backup_task.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_partial_directory_failure_uses_success_weight(
         self,
