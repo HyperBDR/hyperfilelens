@@ -82,6 +82,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "repo_type",
             "status",
             "health",
+            "health_failures",
             "config",
             "credential_id",
             "credential_hint",

@@ -1227,10 +1227,6 @@ function taskDetailTitle(task?: TaskRow | null) {
   return task?.display_name || stepDisplayName(task?.current_step, task?.task_type) || t('protection.backupsPage.backupTaskDrawerTitle')
 }
 
-function taskCurrentStepLabel(task?: TaskRow | null) {
-  return task?.current_step ? stepDisplayName(task.current_step, task.task_type) : taskTypeLabel(task?.task_type)
-}
-
 function timelineIconClass(status?: string) {
   if (status === 'success') return 'dp-task-detail__timeline-icon--success'
   if (status === 'failed' || status === 'timeout') return 'dp-task-detail__timeline-icon--danger'
@@ -2886,7 +2882,7 @@ function onClosed() {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapId')" width="210" fixed>
+              <el-table-column :label="t('protection.backupDetail.colSnapId')" width="140" fixed>
                 <template #default="{ row }">
                   <button
                     type="button"
@@ -2897,7 +2893,7 @@ function onClosed() {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapStart')" width="124">
+              <el-table-column :label="t('protection.backupDetail.colSnapStart')" width="160">
                 <template #default="{ row }">
                   <span
                     class="hfl-table-cell-time snapshot-point-time"
@@ -2907,7 +2903,7 @@ function onClosed() {
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colSnapEnd')" width="124">
+              <el-table-column :label="t('protection.backupDetail.colSnapEnd')" width="160">
                 <template #default="{ row }">
                   <span
                     class="hfl-table-cell-time snapshot-point-time"
@@ -3542,7 +3538,7 @@ function onClosed() {
               class="restore-task-drawer-table dp-source-task-table hfl-list-table"
               :row-class-name="sourceTaskRowClassName"
             >
-              <el-table-column :label="t('ops.task.colName')" width="260" fixed>
+              <el-table-column :label="t('ops.task.colName')" width="275" fixed>
                 <template #default="{ row }">
                   <ResourceNameSummaryCell
                     :name="taskDetailTitle(row)"
@@ -3553,17 +3549,17 @@ function onClosed() {
                   />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskType')" width="130">
+              <el-table-column :label="t('protection.backupDetail.colTaskType')" width="205">
                 <template #default="{ row }">
                   <TaskTypeLabel :type="row.task_type" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colTaskStatus')" width="118">
+              <el-table-column :label="t('protection.backupDetail.colTaskStatus')" width="115">
                 <template #default="{ row }">
                   <TaskStatusTag :status="row.status" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowTaskColProgress')" min-width="150">
+              <el-table-column :label="t('protection.backupsPage.flowTaskColProgress')" min-width="165">
                 <template #default="{ row }">
                   <div class="hfl-task-list-progress">
                     <div class="hfl-task-list-progress__track">
@@ -3577,17 +3573,14 @@ function onClosed() {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowTaskColPhase')" min-width="150">
-                <template #default="{ row }">{{ taskCurrentStepLabel(row) }}</template>
-              </el-table-column>
-              <el-table-column :label="t('ops.task.colTrigger')" width="110">
+              <el-table-column :label="t('ops.task.colTrigger')" width="105">
                 <template #default="{ row }">
                   <el-tag type="info" size="small">
                     {{ taskTriggerLabel(row.trigger_type) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupDetail.colCreated')" min-width="170">
+              <el-table-column :label="t('protection.backupDetail.colCreated')" min-width="160">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time">{{ formatNullableTime(row.created_at) }}</span>
                 </template>

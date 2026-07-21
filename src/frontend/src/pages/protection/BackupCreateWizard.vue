@@ -1085,6 +1085,22 @@ const addFileFilterForm = ref<FileFilterRuleForm>(createEmptyFileFilterForm())
 const addPolicySaving = ref(false)
 const createPhase = ref<'form' | 'waiting' | 'done'>('form')
 const createBootstrapping = ref(true)
+const editorWaitingText = computed(() => {
+  if (createBootstrapping.value) {
+    return hasEditRequest.value
+      ? t('protection.backupsPage.loadingEditWizard')
+      : t('protection.backupsPage.loadingCreateWizard')
+  }
+  if (!hasEditRequest.value) return t('protection.backupsPage.waitingCreate')
+  if (activeEditSection.value === 'policy') return t('protection.backupsPage.waitingEditBackupPolicy')
+  if (activeEditSection.value === 'recovery-plan') return t('protection.backupsPage.waitingEditRestorePlan')
+  return t('protection.backupsPage.waitingEditBackupPaths')
+})
+const editorFailureText = computed(() =>
+  hasEditRequest.value
+    ? t('protection.backupsPage.editFailed')
+    : t('protection.backupsPage.createFailed'),
+)
 
 function hideOptionPopovers() {
   for (const popover of optionPopoverRefs.value) {
@@ -2779,7 +2795,7 @@ async function refreshWizardTargets() {
     const repos = await listAllStorageRepositories({ page_size: 10 })
     realTargets.value = repos.map(mapRepository)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('protection.backupsPage.createFailed')), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   } finally {
     targetsRefreshing.value = false
   }
@@ -2791,7 +2807,7 @@ async function refreshWizardPolicies() {
     const policies = await listBackupPolicies({ page: 1, page_size: 500 })
     realPolicies.value = policies.results.map(mapPolicy)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('protection.backupsPage.createFailed')), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   } finally {
     policiesRefreshing.value = false
   }
@@ -2803,7 +2819,7 @@ async function refreshWizardFilters() {
     const filters = await listFileFilterRules({ page: 1, page_size: 500 })
     realFilters.value = filters.results.map(mapFilter)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('protection.backupsPage.createFailed')), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   } finally {
     filtersRefreshing.value = false
   }
@@ -3017,7 +3033,7 @@ onMounted(async () => {
       loadWizardReferences(),
     ])
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('protection.backupsPage.createFailed')), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
     createBootstrapping.value = false
     closeCreate()
     return
@@ -3030,7 +3046,7 @@ onMounted(async () => {
       ElMessage.error({
         message: isInvalidCompressionLevelError(err)
           ? t('protection.backupsPage.compressionInvalidValue')
-          : apiErrorMessage(err, t('protection.backupsPage.createFailed')),
+          : apiErrorMessage(err, editorFailureText.value),
         grouping: true,
       })
       createBootstrapping.value = false
@@ -5206,11 +5222,18 @@ async function runEditBackupConfig() {
         await syncEditRecoveryPlans(config, backup, group)
       }
     }
+    const editedSourceIds = normalizeSourceIdList(editables.map(({ config }) =>
+      `${config.source_type}:${config.source_ref_id}`,
+    ))
     ElMessage.success({ message: t('protection.backupsPage.msgSaveEditDemo'), grouping: true })
+    if (props.embedded) {
+      emit('completed', editedSourceIds)
+      return
+    }
     closeCreate()
   } catch (err) {
     createPhase.value = 'form'
-    ElMessage.error({ message: apiErrorMessage(err, t('protection.backupsPage.createFailed')), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   }
 }
 
@@ -5325,7 +5348,7 @@ function preserveShallowestPathOrder(paths: string[]) {
       :title="editorTitle"
       :description="editorDescription"
       :aria-label="t('protection.backupsPage.createWizardAria')"
-      :waiting-text="createBootstrapping ? t('protection.backupsPage.loadingCreateWizard') : t('protection.backupsPage.waitingCreate')"
+      :waiting-text="editorWaitingText"
       :bootstrapping="createBootstrapping"
       :animated="!embedded"
       :result-title="t('protection.backupsPage.resultCreateTitle')"

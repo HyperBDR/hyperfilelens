@@ -131,6 +131,7 @@ type ApiRepository = {
   status: string
   config?: Record<string, unknown>
   health?: string
+  health_failures?: number
   credential_id?: number | null
   s3_platform?: string | null
   s3_bucket?: string | null

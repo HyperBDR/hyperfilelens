@@ -25,6 +25,7 @@ export type StorageRepository = {
   repo_type: StorageRepositoryType | string
   status: StorageRepositoryStatus | string
   health: StorageRepositoryHealth | string
+  health_failures?: number
   config?: Record<string, unknown>
   credential_id?: number | null
   s3_platform?: StorageRepositoryS3Platform | string | null
