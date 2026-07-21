@@ -1233,6 +1233,7 @@ uninstall_bundled_sourcelens() {
 tree_sha256() {
 	local dir=$1
 	(
+		export LC_ALL=C
 		cd "${dir}"
 		find . -type f ! -path './__pycache__/*' ! -name '*.pyc' -print0 \
 			| sort -z \

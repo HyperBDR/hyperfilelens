@@ -270,6 +270,7 @@ grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Post-deploy internal health checks' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
