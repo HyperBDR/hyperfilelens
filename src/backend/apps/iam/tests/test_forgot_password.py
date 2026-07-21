@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 from django.contrib.auth.models import User
 from django.core import mail
 from django.test import override_settings
@@ -13,14 +11,9 @@ from apps.iam.profile_models import Profile
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class ForgotPasswordApiTests(APITestCase):
     def _payload(self, email: str) -> dict:
-        return {
-            "email": email,
-            "id": "captcha_test",
-            "code": "abcd",
-        }
+        return {"email": email}
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_active_user_receives_reset_email(self, _mock_captcha):
+    def test_active_user_receives_reset_email(self):
         email = "active-reset@example.com"
         User.objects.create_user(
             username="active-reset",
@@ -41,8 +34,7 @@ class ForgotPasswordApiTests(APITestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("password reset", mail.outbox[0].subject.lower())
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_pending_registration_user_receives_registration_email(self, _mock_captcha):
+    def test_pending_registration_user_receives_registration_email(self):
         email = "pending-reset@example.com"
         user = User.objects.create_user(
             username="pending-reset",
@@ -64,8 +56,7 @@ class ForgotPasswordApiTests(APITestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("verification code", mail.outbox[0].subject.lower())
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_unknown_email_returns_not_registered_error(self, _mock_captcha):
+    def test_unknown_email_returns_not_registered_error(self):
         response = self.client.post(
             reverse("forgot_password"),
             self._payload("missing@example.com"),

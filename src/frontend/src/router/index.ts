@@ -8,10 +8,10 @@ import { beginRouteTransition, finishRouteTransition } from '../lib/routeTransit
 import { lazyRoute } from './lazyRoute'
 import { isDynamicImportFailure, reloadOnceForChunkLoadFailure } from './chunkLoadRecovery'
 
-import { prefetchAuthCaptcha } from '../composables/useCaptchaConfig'
+import { prefetchAuthTurnstile } from '../composables/useTurnstileConfig'
 
-const authCaptchaPrefetch = () => {
-  prefetchAuthCaptcha()
+const authTurnstilePrefetch = () => {
+  prefetchAuthTurnstile()
 }
 
 const fullscreenRouteMeta = { layout: 'fullscreen' } as const
@@ -62,8 +62,8 @@ const GlobalSearchPage = lazyRoute(() => import('../pages/Search.vue'))
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', component: LoginPage, beforeEnter: authCaptchaPrefetch },
-    { path: '/register', component: RegisterPage, beforeEnter: authCaptchaPrefetch },
+    { path: '/login', component: LoginPage, beforeEnter: authTurnstilePrefetch },
+    { path: '/register', component: RegisterPage, beforeEnter: authTurnstilePrefetch },
     { path: '/auth/oauth/callback', component: OAuthCallbackPage },
     { path: '/auth/oauth/error', component: OAuthErrorPage },
     {

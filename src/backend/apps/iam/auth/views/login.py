@@ -1,6 +1,4 @@
-"""
-Email login with captcha verification and HttpOnly Cookie authentication.
-"""
+"""Email login with optional Turnstile and HttpOnly cookie authentication."""
 
 import logging
 
@@ -23,11 +21,13 @@ from common.http.public_api import AnonymousPublicViewMixin
 from apps.iam.auth.authentication import OptionalJWTAuthenticationFromCookies
 from apps.iam.auth.serializers import UserDetailsSerializer
 from apps.iam.profile_models import Profile
-from apps.iam.services.human_verification import (
-    credentials_and_human_verification_present,
-    invalid_human_verification_fields,
-    missing_human_verification_fields,
-    verify_human_verification,
+from apps.iam.services.turnstile_verification import (
+    credentials_and_turnstile_present,
+    invalid_turnstile_fields,
+    missing_turnstile_fields,
+    turnstile_configured,
+    turnstile_enabled,
+    verify_turnstile_for_action,
 )
 from apps.iam.services.token_service import (
     blacklist_all_user_tokens,
@@ -155,7 +155,7 @@ def _is_pending_registration_user(user: User) -> bool:
 
 class EmailLoginView(AnonymousPublicViewMixin, APIView):
     """
-    Email + password + captcha login.
+    Email + password login with optional Turnstile verification.
     POST /api/v1/auth/email-login
 
     Returns tokens as HttpOnly cookies instead of JSON body.
@@ -163,17 +163,19 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
 
     @extend_schema(
         tags=["auth"],
-        summary="Email login with captcha",
+        summary="Email login",
         request={
             "application/json": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Captcha ID"},
                     "email": {"type": "string", "description": "User email"},
                     "password": {"type": "string", "description": "User password"},
-                    "code": {"type": "string", "description": "Captcha code"},
+                    "turnstile_token": {
+                        "type": "string",
+                        "description": "Required when Turnstile is enabled",
+                    },
                 },
-                "required": ["id", "email", "password", "code"],
+                "required": ["email", "password"],
             }
         },
         responses={200: OpenApiTypes.OBJECT},
@@ -196,11 +198,11 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
             request._force_auth_token = None
             request.auth_error = None
 
-        if not credentials_and_human_verification_present(
+        if not credentials_and_turnstile_present(
             request.data,
             ["email", "password"],
         ):
-            missing_fields = missing_human_verification_fields(request.data)
+            missing_fields = missing_turnstile_fields(request.data)
             return _build_error_response(
                 "VALIDATION_ERROR",
                 _("Missing required fields"),
@@ -209,6 +211,13 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
                     "email": [_("Required")] if not email else [],
                     "password": [_("Required")] if not password else [],
                 },
+            )
+
+        if turnstile_enabled() and not turnstile_configured():
+            return _build_error_response(
+                "TURNSTILE_MISCONFIGURED",
+                _("Human verification is temporarily unavailable"),
+                http_status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         user_obj = User.objects.filter(email=email).first()
@@ -226,11 +235,11 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
                 fields={"email": [_("Account is temporarily locked due to multiple failed login attempts. Please try again in 3 minutes.")]},
             )
 
-        if not verify_human_verification(request.data, request):
+        if not verify_turnstile_for_action(request.data, request, action="login"):
             return _build_error_response(
-                "CAPTCHA_INVALID",
-                _("Invalid or expired captcha"),
-                fields=invalid_human_verification_fields(),
+                "TURNSTILE_INVALID",
+                _("Invalid or expired human verification"),
+                fields=invalid_turnstile_fields(),
             )
 
         if not user_obj.check_password(password):

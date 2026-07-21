@@ -24,7 +24,6 @@ KEY_IDENTITY_EMAIL_SIGNUP = "identity.email_signup_enabled"
 KEY_IDENTITY_PASSWORD_RESET = "identity.self_service_password_reset"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
-KEY_IDENTITY_CAPTCHA_PROVIDER = "identity.captcha_provider"
 KEY_IDENTITY_TURNSTILE_SITE = "identity.turnstile_site_key"
 KEY_IDENTITY_GOOGLE_CLIENT_ID = "identity.google_client_id"
 KEY_IDENTITY_GOOGLE_OAUTH = "identity.google_oauth_enabled"
@@ -290,14 +289,9 @@ def platform_ops_allowed_cidrs() -> list[str]:
     return get_str_list(KEY_IDENTITY_OPS_CIDRS, settings_attr="HFL_PLATFORM_OPS_ALLOWED_CIDRS")
 
 
-def captcha_provider() -> str:
-    provider = get_str(
-        KEY_IDENTITY_CAPTCHA_PROVIDER,
-        env_name="CAPTCHA_PROVIDER",
-        settings_attr="CAPTCHA_PROVIDER",
-        default="image",
-    ).lower()
-    return "turnstile" if provider == "turnstile" else "image"
+def turnstile_enabled() -> bool:
+    """Return the deployment-controlled Turnstile feature flag."""
+    return bool(getattr(settings, "TURNSTILE_ENABLED", False))
 
 
 def turnstile_site_key() -> str:

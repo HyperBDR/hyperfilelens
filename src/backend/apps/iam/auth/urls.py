@@ -4,10 +4,6 @@ from rest_framework.permissions import AllowAny
 from dj_rest_auth.views import LoginView
 
 from apps.iam.auth.views import (
-    CaptchaConfigView,
-    CaptchaFallbackReportView,
-    CaptchaGenerateView,
-    CaptchaValidateView,
     ChangePasswordView,
     CustomUserDetailsView,
     EmailLoginView,
@@ -20,6 +16,7 @@ from apps.iam.auth.views import (
     GoogleOAuthConfigView,
     OrgSelectView,
     TokenRefreshView,
+    TurnstileConfigView,
     LogoutView,
 )
 
@@ -29,14 +26,7 @@ class CustomLoginView(LoginView):
 
 
 urlpatterns = [
-    path("api/v1/auth/captcha-config", CaptchaConfigView.as_view(), name="captcha_config"),
-    path(
-        "api/v1/auth/captcha-fallback-report",
-        CaptchaFallbackReportView.as_view(),
-        name="captcha_fallback_report",
-    ),
-    path("api/v1/auth/captcha", CaptchaGenerateView.as_view(), name="captcha_generate"),
-    path("api/v1/auth/captcha/validate", CaptchaValidateView.as_view(), name="captcha_validate"),
+    path("api/v1/auth/turnstile/config", TurnstileConfigView.as_view(), name="turnstile_config"),
     path("api/v1/auth/google/config", GoogleOAuthConfigView.as_view(), name="google_oauth_config"),
     path("api/v1/auth/email-login", EmailLoginView.as_view(), name="email_login"),
     path("api/v1/auth/org-select", OrgSelectView.as_view(), name="org_select"),

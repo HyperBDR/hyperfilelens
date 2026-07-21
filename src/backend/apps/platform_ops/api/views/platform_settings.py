@@ -35,7 +35,6 @@ from apps.platform_ops.services.internal.runtime_settings import (
     KEY_EMAIL_PORT,
     KEY_EMAIL_USE_SSL,
     KEY_EMAIL_USE_TLS,
-    KEY_IDENTITY_CAPTCHA_PROVIDER,
     KEY_IDENTITY_EMAIL_SIGNUP,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
@@ -51,7 +50,6 @@ from apps.platform_ops.services.internal.runtime_settings import (
     SECRET_KEY_LANGFUSE_SECRET,
     SECRET_KEY_OPENAI,
     SECRET_KEY_TURNSTILE,
-    captcha_provider,
     email_signup_enabled,
     email_connection_kwargs,
     gemini_api_key,
@@ -70,6 +68,7 @@ from apps.platform_ops.services.internal.runtime_settings import (
     set_value,
     sync_google_social_app,
     turnstile_site_key,
+    turnstile_enabled,
 )
 from apps.platform_ops.services.internal.runtime_settings import (
     azure_openai_api_base as runtime_azure_base,
@@ -194,7 +193,7 @@ class PlatformOpsSettingsIdentityView(APIView):
                 "self_service_password_reset": self_service_password_reset_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
-                "captcha_provider": captcha_provider(),
+                "turnstile_enabled": turnstile_enabled(),
                 "turnstile_site_key": turnstile_site_key(),
                 "turnstile_secret_configured": secret_configured(
                     SECRET_KEY_TURNSTILE,
@@ -234,9 +233,6 @@ class PlatformOpsSettingsIdentityView(APIView):
             if isinstance(cidrs, str):
                 cidrs = [part.strip() for part in cidrs.split(",") if part.strip()]
             set_str_list(KEY_IDENTITY_OPS_CIDRS, list(cidrs or []), user=request.user)
-        if "captcha_provider" in data:
-            provider = str(data["captcha_provider"] or "image").strip().lower()
-            set_value(key=KEY_IDENTITY_CAPTCHA_PROVIDER, value=provider, user=request.user)
         if "turnstile_site_key" in data:
             set_value(key=KEY_IDENTITY_TURNSTILE_SITE, value=str(data["turnstile_site_key"] or ""), user=request.user)
         if "turnstile_secret_key" in data and str(data["turnstile_secret_key"] or "").strip():
@@ -478,7 +474,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                     "email_signup_enabled": email_signup_enabled(),
                     "self_service_password_reset": self_service_password_reset_enabled(),
                     "platform_ops_enabled": platform_ops_enabled(),
-                    "captcha_provider": captcha_provider(),
+                    "turnstile_enabled": turnstile_enabled(),
                     "google_oauth_enabled": google_oauth_enabled(),
                     "email_host_configured": bool(cfg["host"]),
                     "email_password_configured": bool(cfg["password"]),
@@ -487,7 +483,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 "sources": {
                     "email_signup_enabled": get_source(KEY_IDENTITY_EMAIL_SIGNUP),
                     "google_oauth_enabled": get_source(KEY_IDENTITY_GOOGLE_OAUTH),
-                    "captcha_provider": get_source(KEY_IDENTITY_CAPTCHA_PROVIDER),
+                    "turnstile_enabled": "env",
                     "email_host": get_source(KEY_EMAIL_HOST),
                 },
                 "health": system_health_payload(),

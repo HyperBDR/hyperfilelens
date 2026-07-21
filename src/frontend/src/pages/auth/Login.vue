@@ -7,8 +7,8 @@ import { Mail, Lock, Globe, Eye, EyeOff } from 'lucide-vue-next'
 import { api } from '../../lib/api'
 import { useAuth, setStoredOrgKey, fetchCurrentUser } from '../../composables/useAuth'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
-import { useCaptchaConfig } from '../../composables/useCaptchaConfig'
-import AuthCaptchaField from '../../components/auth/AuthCaptchaField.vue'
+import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
+import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
@@ -28,19 +28,19 @@ const sessionNoticeDismissed = ref(false)
 
 const {
   turnstileSiteKey,
-  isCaptchaPending,
-  isTurnstile,
-  isImageCaptcha,
-  isCaptchaBlocked,
-  authCaptchaMountGeneration,
-  loadCaptchaConfig,
-  buildCaptchaPayload,
+  isTurnstilePending,
+  isTurnstileReady,
+  isTurnstileBlocked,
+  authTurnstileMountGeneration,
+  loadTurnstileConfig,
+  buildTurnstilePayload,
   blockTurnstile,
-} = useCaptchaConfig()
+} = useTurnstileConfig()
 
 const { setUser } = useAuth()
 const turnstileToken = ref('')
-const captchaFieldRef = ref<InstanceType<typeof AuthCaptchaField> | null>(null)
+const turnstileError = ref('')
+const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(null)
 const googleEnabled = ref(false)
 const googleLoginUrl = ref('/accounts/google/login/?process=login')
 const googleLoading = ref(false)
@@ -85,16 +85,6 @@ const formItems = reactive({
     errorMsg: '',
     showError: false,
   },
-  code: {
-    value: '',
-    required: true,
-    prop: 'code',
-    placeholder: '',
-    type: 'code' as const,
-    icon: 'code',
-    errorMsg: '',
-    showError: false,
-  },
 })
 
 const emailFromQuery = route.query.email
@@ -117,11 +107,6 @@ function dismissSessionNotice() {
 // Initialize placeholders from i18n
 formItems.email.placeholder = t('login.emailPh')
 formItems.password.placeholder = t('login.passwordPh')
-formItems.code.placeholder = t('login.captchaPh')
-
-const codeImg = ref('')
-const codeId = ref('')
-const codeLoading = ref(false)
 const submitLoading = ref(false)
 const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
@@ -176,12 +161,6 @@ function validatePasswordOnInput() {
   }
 }
 
-// Clear captcha error on input
-function clearCodeError() {
-  formItems.code.errorMsg = ''
-  formItems.code.showError = false
-}
-
 // Password strength calculation
 const passwordStrength = computed(() => {
   const pwd = formItems.password.value
@@ -199,54 +178,27 @@ const passwordStrength = computed(() => {
   return { level: 3, text: t('login.passwordStrong'), color: 'var(--color-success)' }
 })
 
-async function getCode() {
-  try {
-    codeLoading.value = true
-    const res = await api<{
-      code: string
-      data: {
-        id: string
-        image: string
-        expires_at: number
-      }
-    }>('/api/v1/auth/captcha')
-    if (res.code === '0000') {
-      codeImg.value = res.data.image
-      codeId.value = res.data.id
-    }
-    codeLoading.value = false
-  } catch {
-    codeLoading.value = false
-  }
-}
-
-function blockUnavailableTurnstile(reason: 'widget_error' | 'script_load_failed') {
-  if (!blockTurnstile(reason)) return
+function blockUnavailableTurnstile() {
+  blockTurnstile()
   turnstileToken.value = ''
-  formItems.code.errorMsg = ''
-  formItems.code.showError = false
-  void getCode()
+  turnstileError.value = t('login.captchaUnavailable')
 }
 
-function refreshCode() {
-  if (isCaptchaBlocked.value) {
-    formItems.code.errorMsg = ''
-    formItems.code.showError = false
-    void loadCaptchaConfig(true)
-    return
-  }
-  if (isTurnstile.value) {
-    turnstileToken.value = ''
-    captchaFieldRef.value?.reset()
-    return
-  }
-  getCode()
+async function retryTurnstile() {
+  turnstileToken.value = ''
+  turnstileError.value = ''
+  await loadTurnstileConfig(true)
+}
+
+function resetTurnstile() {
+  if (!isTurnstileReady.value) return
+  turnstileToken.value = ''
+  turnstileFieldRef.value?.reset()
 }
 
 function onTurnstileSuccess(token: string) {
   turnstileToken.value = token
-  formItems.code.errorMsg = ''
-  formItems.code.showError = false
+  turnstileError.value = ''
 }
 
 function onTurnstileExpire() {
@@ -254,11 +206,11 @@ function onTurnstileExpire() {
 }
 
 function onTurnstileError() {
-  blockUnavailableTurnstile('widget_error')
+  blockUnavailableTurnstile()
 }
 
 function onTurnstileLoadFailed() {
-  blockUnavailableTurnstile('script_load_failed')
+  blockUnavailableTurnstile()
 }
 
 function validateForm() {
@@ -284,30 +236,21 @@ function validateForm() {
     formItems.password.showError = false
   }
 
-  if (isCaptchaPending.value) {
-    formItems.code.errorMsg = t('login.captchaLoading')
-    formItems.code.showError = true
+  if (isTurnstilePending.value) {
+    turnstileError.value = t('login.captchaLoading')
     hasError = true
-  } else if (isCaptchaBlocked.value) {
-    formItems.code.errorMsg = t('login.captchaUnavailable')
-    formItems.code.showError = true
+  } else if (isTurnstileBlocked.value) {
+    turnstileError.value = t('login.captchaUnavailable')
     hasError = true
-  } else if (isTurnstile.value) {
+  } else if (isTurnstileReady.value) {
     if (!turnstileToken.value) {
-      formItems.code.errorMsg = t('login.captchaErrRequired')
-      formItems.code.showError = true
+      turnstileError.value = t('login.captchaErrRequired')
       hasError = true
     } else {
-      formItems.code.errorMsg = ''
-      formItems.code.showError = false
+      turnstileError.value = ''
     }
-  } else if (!formItems.code.value) {
-    formItems.code.errorMsg = t('login.captchaErrRequired')
-    formItems.code.showError = true
-    hasError = true
   } else {
-    formItems.code.errorMsg = ''
-    formItems.code.showError = false
+    turnstileError.value = ''
   }
 
   return !hasError
@@ -348,17 +291,13 @@ async function handleSubmit() {
   formItems.email.showError = false
   formItems.password.errorMsg = ''
   formItems.password.showError = false
-  formItems.code.errorMsg = ''
-  formItems.code.showError = false
+  turnstileError.value = ''
 
   try {
     const postData = {
       email: formItems.email.value,
       password: formItems.password.value,
-      ...buildCaptchaPayload(
-        { id: codeId.value, code: formItems.code.value },
-        turnstileToken.value,
-      ),
+      ...buildTurnstilePayload(turnstileToken.value),
     }
 
     const res = await api<{
@@ -426,7 +365,7 @@ async function handleSubmit() {
     if (fields && Object.keys(fields).length > 0) {
       handleFieldsError(fields)
     } else {
-      refreshCode()
+      resetTurnstile()
       ElMessage.error({ message: errObj.message || t('login.msgLoginFailed'), grouping: true })
     }
   } finally {
@@ -460,11 +399,11 @@ async function completeLoginWithOrg(orgKey: string) {
       const isSessionExpired = res.status === 401 || res.data?.code === '1001'
       if (isSessionExpired) {
         ElMessage.error({ message: t('login.sessionExpired'), grouping: true })
-        refreshCode()
+        resetTurnstile()
         return
       }
       ElMessage.error({ message: res.error?.message || res.data?.error?.message || t('login.msgLoginFailed'), grouping: true })
-      refreshCode()
+      resetTurnstile()
       return
     }
 
@@ -476,10 +415,10 @@ async function completeLoginWithOrg(orgKey: string) {
     const errObj = err as { message?: string; status?: number }
     if (errObj.status === 401) {
       ElMessage.error({ message: t('login.sessionExpired'), grouping: true })
-      refreshCode()
+      resetTurnstile()
     } else {
       ElMessage.error({ message: errObj.message || t('login.msgLoginFailed'), grouping: true })
-      refreshCode()
+      resetTurnstile()
     }
   }
 }
@@ -487,16 +426,16 @@ async function completeLoginWithOrg(orgKey: string) {
 function handleFieldsError(fields?: Record<string, string[]>) {
   if (!fields) return
 
-  if (fields.code) {
-    refreshCode()
-  } else if (fields.password && isTurnstile.value) {
+  if (fields.turnstile_token) {
+    resetTurnstile()
+  } else if (fields.password && isTurnstileReady.value) {
     // Turnstile tokens are single-use; refresh while the user corrects their password.
-    refreshCode()
+    resetTurnstile()
   }
 
   // Known error message translations
   const errorMessageMap: Record<string, string> = {
-    'Invalid or expired captcha': t('login.captchaInvalid'),
+    'Invalid or expired human verification': t('login.captchaInvalid'),
     'Incorrect password': t('login.passwordErrIncorrect'),
   }
 
@@ -515,9 +454,8 @@ function handleFieldsError(fields?: Record<string, string[]>) {
         formItems.password.errorMsg = message
         formItems.password.showError = true
         break
-      case 'code':
-        formItems.code.errorMsg = message
-        formItems.code.showError = true
+      case 'turnstile_token':
+        turnstileError.value = message
         break
       default:
         break
@@ -554,10 +492,9 @@ const cardTitle = computed(() => {
 
 const canSubmitLogin = computed(() => {
   if (submitLoading.value) return false
-  if (isCaptchaPending.value) return false
-  if (isCaptchaBlocked.value) return false
-  if (isTurnstile.value) return Boolean(turnstileToken.value)
-  if (isImageCaptcha.value) return Boolean(formItems.code.value)
+  if (isTurnstilePending.value) return false
+  if (isTurnstileBlocked.value) return false
+  if (isTurnstileReady.value) return Boolean(turnstileToken.value)
   return true
 })
 
@@ -565,7 +502,6 @@ function toggleLocale() {
   switchLocale()
   formItems.email.placeholder = t('login.emailPh')
   formItems.password.placeholder = t('login.passwordPh')
-  formItems.code.placeholder = t('login.captchaPh')
 }
 
 async function loadGoogleConfig() {
@@ -594,14 +530,10 @@ function startGoogleLogin() {
 
 onMounted(async () => {
   turnstileToken.value = ''
-  formItems.code.value = ''
   void loadGoogleConfig()
   const profile = await fetchDeployProfile()
   emailSignupEnabled.value = !!profile?.email_signup_enabled
-  await loadCaptchaConfig()
-  if (isImageCaptcha.value) {
-    await getCode()
-  }
+  await loadTurnstileConfig()
 })
 </script>
 
@@ -723,27 +655,19 @@ onMounted(async () => {
           <p v-if="formItems.password.showError" class="error-msg">{{ formItems.password.errorMsg }}</p>
         </div>
 
-        <!-- Captcha -->
-        <AuthCaptchaField
-          :key="authCaptchaMountGeneration"
-          ref="captchaFieldRef"
-          v-model="formItems.code.value"
-          :is-captcha-pending="isCaptchaPending"
-          :is-image-captcha="isImageCaptcha"
-          :is-turnstile="isTurnstile"
-          :is-captcha-blocked="isCaptchaBlocked"
+        <AuthTurnstileField
+          :key="authTurnstileMountGeneration"
+          ref="turnstileFieldRef"
+          :pending="isTurnstilePending"
+          :ready="isTurnstileReady"
+          :blocked="isTurnstileBlocked"
           :site-key="turnstileSiteKey"
-          :placeholder="formItems.code.placeholder"
+          action="login"
           :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
           :retry-label="t('login.captchaRetry')"
-          :code-img="codeImg"
-          :show-error="formItems.code.showError"
-          :error-message="formItems.code.errorMsg"
-          tabindex="3"
-          @clear-error="clearCodeError"
-          @refresh="refreshCode"
-          @enter="handleSubmit"
+          :error-message="turnstileError"
+          @retry="retryTurnstile"
           @success="onTurnstileSuccess"
           @expire="onTurnstileExpire"
           @error="onTurnstileError"

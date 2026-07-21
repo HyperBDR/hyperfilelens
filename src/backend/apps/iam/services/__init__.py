@@ -2,34 +2,22 @@
 IAM services.
 """
 
-from .captcha_service import (
-    CAPTCHA_EXPIRE_SECONDS,
-    generate_captcha_id,
-    generate_captcha_text,
-    generate_svg_captcha,
-    get_captcha_text,
-    save_captcha,
-    validate_captcha,
-)
-from .human_verification import (
-    get_captcha_provider,
-    is_turnstile_mode,
-    missing_human_verification_fields,
-    verify_human_verification,
+from .turnstile_verification import (
+    credentials_and_turnstile_present,
+    invalid_turnstile_fields,
+    missing_turnstile_fields,
+    turnstile_configured,
+    turnstile_enabled,
+    verify_turnstile_for_action,
 )
 from .verification_code_service import verify_email_verification_code
 
 __all__ = [
-    "CAPTCHA_EXPIRE_SECONDS",
-    "generate_captcha_id",
-    "generate_captcha_text",
-    "generate_svg_captcha",
-    "get_captcha_text",
-    "save_captcha",
-    "validate_captcha",
-    "get_captcha_provider",
-    "is_turnstile_mode",
-    "missing_human_verification_fields",
-    "verify_human_verification",
+    "credentials_and_turnstile_present",
+    "invalid_turnstile_fields",
+    "missing_turnstile_fields",
+    "turnstile_configured",
+    "turnstile_enabled",
+    "verify_turnstile_for_action",
     "verify_email_verification_code",
 ]

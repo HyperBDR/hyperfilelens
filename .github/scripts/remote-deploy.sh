@@ -340,7 +340,7 @@ import sys
 
 env_path = pathlib.Path(sys.argv[1])
 staged_path = pathlib.Path(sys.argv[2])
-allowed = {"CAPTCHA_PROVIDER", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"}
+allowed = {"TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"}
 values = {}
 for raw_line in staged_path.read_text(encoding="utf-8").splitlines():
     if not raw_line or raw_line.startswith("#"):
@@ -349,7 +349,7 @@ for raw_line in staged_path.read_text(encoding="utf-8").splitlines():
     if not separator or key not in allowed or not value or re.search(r"[\r\n]", value):
         raise SystemExit("invalid staged runtime configuration")
     values[key] = value
-if set(values) != allowed or values["CAPTCHA_PROVIDER"] != "turnstile":
+if set(values) != allowed or values["TURNSTILE_ENABLED"] != "true":
     raise SystemExit("incomplete staged Turnstile configuration")
 
 lines = env_path.read_text(encoding="utf-8").splitlines()
@@ -362,7 +362,7 @@ for line in lines:
         seen.add(key)
     else:
         updated.append(line)
-for key in ("CAPTCHA_PROVIDER", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
+for key in ("TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
     if key not in seen:
         updated.append(f"{key}={values[key]}")
 

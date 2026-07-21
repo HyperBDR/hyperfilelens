@@ -101,7 +101,8 @@ def _headless_frontend_urls(frontend_url: str) -> dict[str, str]:
 
 HEADLESS_FRONTEND_URLS = _headless_frontend_urls(FRONTEND_URL)
 
-# Human verification on login / password reset: ``image`` (SVG captcha) or ``turnstile``.
-CAPTCHA_PROVIDER = env_str("CAPTCHA_PROVIDER", "image").lower()
+# Turnstile is opt-in. Local and private deployments stay verification-free unless
+# the deployment explicitly enables it and supplies both keys.
+TURNSTILE_ENABLED = env_bool("TURNSTILE_ENABLED", default=False)
 TURNSTILE_SITE_KEY = env_str("TURNSTILE_SITE_KEY")
 TURNSTILE_SECRET_KEY = env_str("TURNSTILE_SECRET_KEY")

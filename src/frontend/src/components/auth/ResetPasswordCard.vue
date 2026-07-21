@@ -5,8 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Mail, Key, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-next'
 import { api } from '../../lib/api'
-import { useCaptchaConfig } from '../../composables/useCaptchaConfig'
-import AuthCaptchaField from './AuthCaptchaField.vue'
+import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
+import AuthTurnstileField from './AuthTurnstileField.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -27,18 +27,18 @@ const router = useRouter()
 
 const {
   turnstileSiteKey,
-  isCaptchaPending,
-  isTurnstile,
-  isImageCaptcha,
-  isCaptchaBlocked,
-  loadCaptchaConfig,
-  buildCaptchaPayload,
+  isTurnstilePending,
+  isTurnstileReady,
+  isTurnstileBlocked,
+  loadTurnstileConfig,
+  buildTurnstilePayload,
   blockTurnstile,
-} = useCaptchaConfig()
+} = useTurnstileConfig()
 
 const view = ref<'request' | 'reset'>('request')
 const turnstileToken = ref('')
-const captchaFieldRef = ref<InstanceType<typeof AuthCaptchaField> | null>(null)
+const turnstileError = ref('')
+const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(null)
 
 const formItems = reactive({
   email: {
@@ -46,15 +46,8 @@ const formItems = reactive({
     errorMsg: '',
     showError: false,
   },
-  captcha: {
-    value: '',
-    errorMsg: '',
-    showError: false,
-  },
 })
 
-const codeImg = ref('')
-const codeId = ref('')
 const submitLoading = ref(false)
 const resetLoading = ref(false)
 const resetSuccess = ref(false)
@@ -90,10 +83,9 @@ const maskedEmail = computed(() => maskEmail(savedEmail.value))
 
 const canSendResetCode = computed(() => {
   if (submitLoading.value) return false
-  if (isCaptchaPending.value) return false
-  if (isCaptchaBlocked.value) return false
-  if (isTurnstile.value) return Boolean(turnstileToken.value)
-  if (isImageCaptcha.value) return Boolean(formItems.captcha.value)
+  if (isTurnstilePending.value) return false
+  if (isTurnstileBlocked.value) return false
+  if (isTurnstileReady.value) return Boolean(turnstileToken.value)
   return true
 })
 
@@ -166,11 +158,6 @@ function validateEmailOnInput() {
   }
 }
 
-function clearCaptchaError() {
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
-}
-
 function clearResetError() {
   resetError.value = ''
 }
@@ -192,43 +179,27 @@ function startResendCooldown(seconds = 60) {
   }, 1000)
 }
 
-async function getCode() {
-  try {
-    const res = await api<AuthResponse<{ image?: string; id?: string }>>('/api/v1/auth/captcha')
-    codeImg.value = res.data?.image || ''
-    codeId.value = res.data?.id || ''
-  } catch {
-    // ignore
-  }
-}
-
-function blockUnavailableTurnstile(reason: 'widget_error' | 'script_load_failed') {
-  if (!blockTurnstile(reason)) return
+function blockUnavailableTurnstile() {
+  blockTurnstile()
   turnstileToken.value = ''
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
-  void getCode()
+  turnstileError.value = t('login.captchaUnavailable')
 }
 
-function refreshCode() {
-  if (isCaptchaBlocked.value) {
-    formItems.captcha.errorMsg = ''
-    formItems.captcha.showError = false
-    void loadCaptchaConfig(true)
-    return
-  }
-  if (isTurnstile.value) {
-    turnstileToken.value = ''
-    captchaFieldRef.value?.reset()
-    return
-  }
-  void getCode()
+async function retryTurnstile() {
+  turnstileToken.value = ''
+  turnstileError.value = ''
+  await loadTurnstileConfig(true)
+}
+
+function resetTurnstile() {
+  if (!isTurnstileReady.value) return
+  turnstileToken.value = ''
+  turnstileFieldRef.value?.reset()
 }
 
 function onTurnstileSuccess(token: string) {
   turnstileToken.value = token
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
+  turnstileError.value = ''
 }
 
 function onTurnstileExpire() {
@@ -236,11 +207,11 @@ function onTurnstileExpire() {
 }
 
 function onTurnstileError() {
-  blockUnavailableTurnstile('widget_error')
+  blockUnavailableTurnstile()
 }
 
 function onTurnstileLoadFailed() {
-  blockUnavailableTurnstile('script_load_failed')
+  blockUnavailableTurnstile()
 }
 
 function validateRequestForm() {
@@ -256,30 +227,21 @@ function validateRequestForm() {
     formItems.email.showError = false
   }
 
-  if (isCaptchaPending.value) {
-    formItems.captcha.errorMsg = t('login.captchaLoading')
-    formItems.captcha.showError = true
+  if (isTurnstilePending.value) {
+    turnstileError.value = t('login.captchaLoading')
     hasError = true
-  } else if (isCaptchaBlocked.value) {
-    formItems.captcha.errorMsg = t('login.captchaUnavailable')
-    formItems.captcha.showError = true
+  } else if (isTurnstileBlocked.value) {
+    turnstileError.value = t('login.captchaUnavailable')
     hasError = true
-  } else if (isTurnstile.value) {
+  } else if (isTurnstileReady.value) {
     if (!turnstileToken.value) {
-      formItems.captcha.errorMsg = t('findPwd.codeErrRequired')
-      formItems.captcha.showError = true
+      turnstileError.value = t('findPwd.codeErrRequired')
       hasError = true
     } else {
-      formItems.captcha.errorMsg = ''
-      formItems.captcha.showError = false
+      turnstileError.value = ''
     }
-  } else if (!formItems.captcha.value) {
-    formItems.captcha.errorMsg = t('findPwd.codeErrRequired')
-    formItems.captcha.showError = true
-    hasError = true
   } else {
-    formItems.captcha.errorMsg = ''
-    formItems.captcha.showError = false
+    turnstileError.value = ''
   }
 
   return !hasError
@@ -297,9 +259,6 @@ function switchToResetView() {
 function handleSendResetFieldsError(fields?: Record<string, string[]>, errorCode?: string) {
   if (!fields) return
 
-  if (fields.code) {
-    refreshCode()
-  }
   if (errorCode === 'EMAIL_NOT_REGISTERED') {
     emailNotRegistered.value = true
   }
@@ -307,9 +266,8 @@ function handleSendResetFieldsError(fields?: Record<string, string[]>, errorCode
     if (field === 'email') {
       formItems.email.errorMsg = msgs[0] || ''
       formItems.email.showError = true
-    } else if (field === 'code') {
-      formItems.captcha.errorMsg = msgs[0] || ''
-      formItems.captcha.showError = true
+    } else if (field === 'turnstile_token') {
+      turnstileError.value = msgs[0] || ''
     }
   }
 }
@@ -321,17 +279,13 @@ async function sendResetCode() {
   submitLoading.value = true
   formItems.email.errorMsg = ''
   formItems.email.showError = false
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
+  turnstileError.value = ''
   emailNotRegistered.value = false
 
   try {
     const postData = {
       email: formItems.email.value.trim().toLowerCase(),
-      ...buildCaptchaPayload(
-        { id: codeId.value, code: formItems.captcha.value },
-        turnstileToken.value,
-      ),
+      ...buildTurnstilePayload(turnstileToken.value),
     }
 
     const res = await api<AuthResponse<{ pending_registration?: boolean }>>('/api/v1/auth/forgot-password', {
@@ -357,7 +311,6 @@ async function sendResetCode() {
       ElMessage.error({ message: res.error?.message || t('findPwd.sendFailed'), grouping: true })
     }
   } catch (err: unknown) {
-    refreshCode()
     const errObj = err as {
       message?: string
       errorCode?: string
@@ -369,6 +322,7 @@ async function sendResetCode() {
       ElMessage.error({ message: errObj.message || t('findPwd.sendFailed'), grouping: true })
     }
   } finally {
+    resetTurnstile()
     submitLoading.value = false
   }
 }
@@ -378,7 +332,6 @@ function handleResend() {
   view.value = 'request'
   emit('update:step', 'request')
   formItems.email.value = savedEmail.value
-  refreshCode()
 }
 
 function goRegister() {
@@ -446,10 +399,7 @@ async function handleUpdatePassword() {
 
 onMounted(async () => {
   emit('update:step', view.value)
-  await loadCaptchaConfig()
-  if (isImageCaptcha.value) {
-    await getCode()
-  }
+  await loadTurnstileConfig()
 })
 
 onUnmounted(() => {
@@ -486,25 +436,18 @@ onUnmounted(() => {
           </p>
         </div>
 
-        <AuthCaptchaField
-          ref="captchaFieldRef"
-          v-model="formItems.captcha.value"
-          :is-captcha-pending="isCaptchaPending"
-          :is-image-captcha="isImageCaptcha"
-          :is-turnstile="isTurnstile"
-          :is-captcha-blocked="isCaptchaBlocked"
+        <AuthTurnstileField
+          ref="turnstileFieldRef"
+          :pending="isTurnstilePending"
+          :ready="isTurnstileReady"
+          :blocked="isTurnstileBlocked"
           :site-key="turnstileSiteKey"
-          :placeholder="t('findPwd.captchaPh')"
+          action="forgot_password"
           :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
           :retry-label="t('login.captchaRetry')"
-          :code-img="codeImg"
-          :show-error="formItems.captcha.showError"
-          :error-message="formItems.captcha.errorMsg"
-          tabindex="2"
-          @clear-error="clearCaptchaError"
-          @refresh="refreshCode"
-          @enter="sendResetCode"
+          :error-message="turnstileError"
+          @retry="retryTurnstile"
           @success="onTurnstileSuccess"
           @expire="onTurnstileExpire"
           @error="onTurnstileError"

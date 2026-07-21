@@ -90,6 +90,15 @@ workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
 	exit 1
 }
 grep -F 'timeout-minutes: 120' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${workflow}" >/dev/null
+grep -F '"TURNSTILE_ENABLED=$TURNSTILE_ENABLED"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+if git -C "${ROOT}" grep -n 'CAPTCHA_PROVIDER' -- . \
+	':!tools/config/sync_env.py' \
+	':!tools/quality/check-release-contracts.sh'; then
+	printf 'ERROR: CAPTCHA_PROVIDER must not remain in runtime or deployment configuration\n' >&2
+	exit 1
+fi
 grep -F 'Capture failed install diagnostics' "${workflow}" >/dev/null
 grep -F 'logs --no-color --tail 200' "${workflow}" >/dev/null
 if grep -F 'workflow_dispatch:' "${workflow}" >/dev/null; then
@@ -270,8 +279,11 @@ grep -F -- '--add-host host.docker.internal:host-gateway' "${smoke_runner}" >/de
 grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
 smoke_script="${ROOT}/tools/dev/browser-smoke.mjs"
 grep -F 'host.docker.internal' "${smoke_script}" >/dev/null
-grep -F 'captchaImage.waitFor' "${smoke_script}" >/dev/null
-grep -F 'captchaRefresh.click' "${smoke_script}" >/dev/null
+grep -F "submit.waitFor({ state: 'visible'" "${smoke_script}" >/dev/null
+if grep -F 'captchaImage' "${smoke_script}" >/dev/null; then
+	printf 'ERROR: local browser smoke must not depend on image captcha\n' >&2
+	exit 1
+fi
 grep -F 'waitForPlatformOps' "${smoke_script}" >/dev/null
 grep -F 'const hfl = await browser.newContext' "${smoke_script}" >/dev/null
 grep -F "allowedHosts: ['host.docker.internal']" "${ROOT}/src/frontend/vite.config.ts" >/dev/null
