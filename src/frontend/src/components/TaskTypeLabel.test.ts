@@ -25,8 +25,8 @@ function mountLabel(props: {
             operationType: {
               maintenanceQuick: 'Quick Maintenance',
               maintenanceFull: 'Full Maintenance',
-              cleanupTarget: 'Physical Target Cleanup',
-              cleanupRepository: 'Logical Repository Cleanup',
+              cleanupTarget: 'Delete Subrepository',
+              cleanupRepository: 'Delete Repository',
               check: 'Repository Check',
             },
           },
@@ -58,8 +58,8 @@ describe('TaskTypeLabel', () => {
   it.each([
     ['maintenance.quick', 'Quick Maintenance'],
     ['maintenance.full', 'Full Maintenance'],
-    ['cleanup.target', 'Physical Target Cleanup'],
-    ['cleanup.repository', 'Logical Repository Cleanup'],
+    ['cleanup.target', 'Delete Subrepository'],
+    ['cleanup.repository', 'Delete Repository'],
     ['check', 'Repository Check'],
   ])('shows repository operation %s as secondary text', (operationType, expected) => {
     const wrapper = mountLabel({ type: 'repository_operation', operationType })

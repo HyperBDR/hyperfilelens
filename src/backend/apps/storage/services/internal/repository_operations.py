@@ -18,6 +18,9 @@ from apps.storage.repositories.models import (
     RepositoryTask,
     RepositoryUsageShard,
 )
+from apps.storage.services.internal.repository_task_naming import (
+    repository_operation_display_name,
+)
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import append_task_event, complete_task, create_task, start_task
 
@@ -174,7 +177,11 @@ def create_repository_operation_task(
     task = create_task(
         organization_id=target.organization_id,
         task_type=Task.Type.REPOSITORY_OPERATION,
-        display_name=f"{operation_label} · {target.repository.name}",
+        display_name=repository_operation_display_name(
+            action_label=operation_label,
+            repository=target.repository,
+            target=target,
+        ),
         trigger_type=trigger_type,
         request_payload={
             "repository_id": target.repository_id,

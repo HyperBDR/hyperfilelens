@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+from unittest import mock
+
+from django.core.cache import cache
+from django.test import TestCase
+from django.utils import timezone
+
+from apps.iam.models import Organization
+from apps.node.models import Node, NodeTask
+from apps.node.models.base import NodeRole
+from apps.storage.repositories.models import Repository, RepositoryTask
+from apps.storage.services.internal.repository_cleanup import (
+    create_repository_cleanup_task,
+    run_repository_cleanup_task,
+)
+from apps.storage.services.internal.repository_operations import (
+    create_repository_operation_task,
+    discover_repository_execution_targets,
+    set_task_step,
+)
+from apps.storage.tasks import (
+    execute_repository_operation,
+    reconcile_repository_operations,
+)
+from apps.task.models import Task, TaskStep
+from apps.task.services.interface import start_task
+from apps.task.services.recovery import CONTROL_PLANE_RESTART_INTERRUPTED
+
+
+class RepositoryOperationRecoveryTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.org = Organization.objects.create(
+            key="repository-operation-recovery",
+            name="Repository Operation Recovery",
+        )
+        self.node = Node.objects.create(
+            organization=self.org,
+            name="recovery-proxy",
+            role=NodeRole.PROXY,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.0.50",
+            metadata={
+                "inventory": {
+                    "capabilities": [
+                        "repository_operation_v1",
+                        "repository_cleanup_v1",
+                    ]
+                }
+            },
+        )
+        self.repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="recovery-repository",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=self.node.id,
+            config={"proxy_node_dir": "/data/recovery-repository"},
+        )
+        discover_repository_execution_targets()
+
+    def _maintenance_task(self) -> RepositoryTask:
+        return create_repository_operation_task(
+            target_id=self.repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+
+    def _start_maintenance(self, repository_task: RepositoryTask) -> None:
+        start_task(
+            task_uuid=repository_task.task.task_uuid,
+            organization_id=self.org.id,
+        )
+        set_task_step(
+            repository_task.task,
+            "run_repository_operation",
+            status=TaskStep.Status.RUNNING,
+            progress=25,
+        )
+
+    @mock.patch("apps.storage.tasks.sync_organization_repositories")
+    @mock.patch(
+        "apps.storage.services.internal.repository_agent_operation.run_agent_task_async"
+    )
+    def test_recovers_successful_agent_child_by_correlation_without_redispatch(
+        self,
+        run_agent_task_async,
+        sync_repositories,
+    ):
+        repository_task = self._maintenance_task()
+        self._start_maintenance(repository_task)
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            correlation_type="repository_operation",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.SUCCESS,
+            result={"operation_type": "maintenance.quick", "maintenance": {"exit_code": 0}},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+
+        repository_task.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(repository_task.remote_task_id, node_task.id)
+        self.assertEqual(repository_task.task.status, Task.Status.SUCCESS)
+        self.assertTrue(
+            repository_task.task.events.filter(
+                message="Control-plane recovery decision: resume"
+            ).exists()
+        )
+        run_agent_task_async.assert_not_called()
+        sync_repositories.assert_called_once()
+
+    def test_active_agent_child_keeps_parent_running(self):
+        repository_task = self._maintenance_task()
+        self._start_maintenance(repository_task)
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            correlation_type="repository_operation",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+
+        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+
+        repository_task.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(repository_task.remote_task_id, node_task.id)
+        self.assertEqual(repository_task.task.status, Task.Status.RUNNING)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_agent_operation.run_agent_task_async"
+    )
+    def test_unknown_maintenance_state_fails_without_redispatch_or_replacement(
+        self,
+        run_agent_task_async,
+    ):
+        repository_task = self._maintenance_task()
+        self._start_maintenance(repository_task)
+
+        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        repository_task.execution_target.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            CONTROL_PLANE_RESTART_INTERRUPTED,
+        )
+        self.assertIsNone(repository_task.execution_target.active_task_id)
+        self.assertFalse(hasattr(repository_task.task, "replacement_task"))
+        run_agent_task_async.assert_not_called()
+
+    def test_failed_agent_child_fails_parent_and_releases_target(self):
+        repository_task = self._maintenance_task()
+        self._start_maintenance(repository_task)
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            correlation_type="repository_operation",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.FAILED,
+            last_error="agent maintenance failed",
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        repository_task.execution_target.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            "REPOSITORY_OPERATION_FAILED",
+        )
+        self.assertEqual(
+            repository_task.task.error_message,
+            "agent maintenance failed",
+        )
+        self.assertIsNone(repository_task.execution_target.active_task_id)
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_reconciler_queues_only_active_agent_operations(self, apply_async):
+        active = self._maintenance_task()
+
+        result = reconcile_repository_operations.run(limit=10)
+
+        self.assertEqual(result["repository_task_ids"], [active.id])
+        apply_async.assert_called_once_with(kwargs={"repository_task_id": active.id})
+
+    def test_uncertain_cleanup_fails_original_and_creates_replacement(self):
+        repository_task = create_repository_cleanup_task(
+            repository=self.repository,
+            dispatch=False,
+        )
+        start_task(
+            task_uuid=repository_task.task.task_uuid,
+            organization_id=self.org.id,
+        )
+        set_task_step(
+            repository_task.task,
+            "delete_physical_repository",
+            status=TaskStep.Status.RUNNING,
+            progress=40,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        replacement = repository_task.task.replacement_task
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            CONTROL_PLANE_RESTART_INTERRUPTED,
+        )
+        self.assertEqual(replacement.status, Task.Status.PENDING)
+        self.assertEqual(replacement.trigger_type, Task.TriggerType.RETRY)
+        self.assertEqual(replacement.recovery_attempt, 1)
+        self.assertEqual(replacement.repository_operation.operation_type, repository_task.operation_type)
+
+        repeated = run_repository_cleanup_task(repository_task_id=repository_task.id)
+        self.assertEqual(repeated["status"], Task.Status.FAILED)
+        self.assertEqual(Task.objects.filter(replaces_task=repository_task.task).count(), 1)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_agent_operation.run_agent_task_async"
+    )
+    def test_cleanup_resumes_metadata_after_recovered_successful_child(
+        self,
+        run_agent_task_async,
+    ):
+        repository_task = create_repository_cleanup_task(
+            repository=self.repository,
+            dispatch=False,
+        )
+        start_task(
+            task_uuid=repository_task.task.task_uuid,
+            organization_id=self.org.id,
+        )
+        set_task_step(
+            repository_task.task,
+            "delete_physical_repository",
+            status=TaskStep.Status.RUNNING,
+            progress=40,
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            correlation_type="repository_cleanup",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.SUCCESS,
+            result={"deleted": True},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(repository_task.remote_task_id, node_task.id)
+        self.assertEqual(repository_task.task.status, Task.Status.SUCCESS)
+        run_agent_task_async.assert_not_called()
+
+    def test_cleanup_stops_replacing_after_maximum_attempts(self):
+        repository_task = create_repository_cleanup_task(
+            repository=self.repository,
+            dispatch=False,
+        )
+        repository_task.task.recovery_attempt = 3
+        repository_task.task.save(update_fields=["recovery_attempt", "updated_at"])
+        start_task(
+            task_uuid=repository_task.task.task_uuid,
+            organization_id=self.org.id,
+        )
+        set_task_step(
+            repository_task.task,
+            "delete_physical_repository",
+            status=TaskStep.Status.RUNNING,
+            progress=40,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["replacement_task_uuid"], None)
+        self.assertFalse(hasattr(repository_task.task, "replacement_task"))

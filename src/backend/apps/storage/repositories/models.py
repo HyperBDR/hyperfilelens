@@ -291,8 +291,8 @@ class RepositoryTask(models.Model):
     class OperationType(models.TextChoices):
         MAINTENANCE_QUICK = "maintenance.quick", "Quick maintenance"
         MAINTENANCE_FULL = "maintenance.full", "Full maintenance"
-        CLEANUP_TARGET = "cleanup.target", "Physical target cleanup"
-        CLEANUP_REPOSITORY = "cleanup.repository", "Repository lifecycle cleanup"
+        CLEANUP_TARGET = "cleanup.target", "Delete subrepository"
+        CLEANUP_REPOSITORY = "cleanup.repository", "Delete repository"
         CHECK = "check", "Check"
 
     task = models.OneToOneField(

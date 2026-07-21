@@ -25,6 +25,7 @@ import SnapshotStatusTag from '../../components/SnapshotStatusTag.vue'
 import { apiErrorMessage } from '../../lib/api'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { useDrawerScrollReset } from '../../composables/useDrawerScrollReset'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import {
   useProtectionDemoStore,
@@ -308,6 +309,7 @@ type DemoTask = {
   detail: string
 }
 const activeTask = ref<DemoTask | null>(null)
+const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 
 function taskPayload(task: TaskRow): Record<string, unknown> {
   return task.request_payload && typeof task.request_payload === 'object'
@@ -402,6 +404,7 @@ function openTaskDrawer(row: DemoTask) {
 
 function onTaskDrawerOpened() {
   bindDrawerResize()
+  resetDrawerScroll()
 }
 
 function onTaskDrawerClosed() {
@@ -1284,7 +1287,7 @@ function closeDeleteSnapshotDialog() {
     <template #header>
       <span class="snapshot-drawer-title">{{ t('protection.backupDetail.drawerTaskTitle', { id: activeTask?.id || '' }) }}</span>
     </template>
-    <div v-if="activeTask" class="snapshot-drawer-body">
+    <div v-if="activeTask" ref="drawerScrollAnchorRef" class="snapshot-drawer-body">
       <el-descriptions :column="1" border>
         <el-descriptions-item :label="t('protection.backupDetail.labelTaskId')">{{ activeTask.id }}</el-descriptions-item>
         <el-descriptions-item :label="t('protection.backupDetail.labelTaskType')">{{ activeTask.type }}</el-descriptions-item>

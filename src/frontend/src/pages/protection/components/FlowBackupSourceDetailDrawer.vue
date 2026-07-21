@@ -82,6 +82,7 @@ import {
   buildStopConfirmItemFromTask,
 } from '../../../lib/protectionStopConfirm'
 import { useProtectionStopConfirmDialog } from '../../../composables/useProtectionStopConfirmDialog'
+import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
 import TaskProgressCell from './TaskProgressCell.vue'
 import ResourceNameSummaryCell from '../../../components/ResourceNameSummaryCell.vue'
@@ -307,6 +308,7 @@ const restoreRecordPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE, 
 const taskPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE })
 const taskDetailOpen = ref(false)
 const activeTask = ref<TaskRow | null>(null)
+const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const activeTaskLoading = ref(false)
 const activeBackupSnapshot = ref<BackupSourceSnapshot | null>(null)
 const backupTaskActionBusy = ref(false)
@@ -1349,6 +1351,7 @@ function onTaskDetailTabChange(name: string | number) {
 
 function openTaskDetail(task: TaskRow) {
   activeTask.value = task
+  resetDrawerScroll()
   taskDetailEvents.value = task.recent_events || []
   activeTaskDetailTab.value = 'steps'
   taskDetailOpen.value = true
@@ -1932,7 +1935,8 @@ async function loadOverviewForSource() {
 async function loadSnapshotsForSource() {
   const endpoint = sourceEndpoint.value
   sourceSnapshotRows.value = []
-  snapshotDetails.value = new Map()
+  // Tab activation refreshes the list while its controlled expansion state is retained.
+  // Keep loaded details too, so a retained expanded row never falls back to an empty summary row.
   sourceSnapshotsError.value = ''
   if (!endpoint) {
     snapshotPagination.count = 0
@@ -2208,6 +2212,7 @@ watch(
   () => {
     selectedSnapshotId.value = null
     expandedSnapshotRowKeys.value = []
+    snapshotDetails.value = new Map()
     resetSnapshotBrowser()
     if (props.modelValue && activeTab.value === 'snapshots') void loadSnapshotsForSource()
   },
@@ -2284,6 +2289,7 @@ function onClosed() {
   sourceDetail.value = null
   sourceDetailError.value = ''
   selectedSnapshotId.value = null
+  expandedSnapshotRowKeys.value = []
   sourceSnapshotRows.value = []
   sourceSnapshotsError.value = ''
   snapshotPagination.page = 1
@@ -3644,6 +3650,7 @@ function onClosed() {
     class="dp-task-detail-drawer"
     :size="taskDetailDrawerSize"
     :z-index="3200"
+    @opened="resetDrawerScroll"
     @closed="onTaskDetailClosed"
   >
     <template #header>
@@ -3698,7 +3705,7 @@ function onClosed() {
       </div>
     </template>
 
-    <div v-if="activeTask" v-loading="activeTaskLoading" class="dp-task-detail__body">
+    <div v-if="activeTask" ref="drawerScrollAnchorRef" v-loading="activeTaskLoading" class="dp-task-detail__body">
       <section class="dp-task-detail__hero">
         <div class="dp-task-detail__hero-section-title">{{ t('protection.backupsPage.flowSourceDetailBasicData') }}</div>
         <div class="dp-task-detail__hero-grid">

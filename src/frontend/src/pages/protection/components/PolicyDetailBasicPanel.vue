@@ -102,7 +102,7 @@ watch(
 </script>
 
 <template>
-  <div v-loading="loading" class="policy-detail-basic-panel">
+  <div v-loading="loading" class="policy-detail-basic-panel policy-detail-overview">
     <section class="hfl-detail-section">
       <h4 class="hfl-detail-section__title">{{ t('protection.policiesPage.sectionPolicyInfo') }}</h4>
       <div class="hfl-detail-grid">

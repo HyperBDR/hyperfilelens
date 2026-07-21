@@ -4,11 +4,11 @@ import { useI18n } from 'vue-i18n'
 import {
   flowSourceConnectionPrimary,
   flowSourceConnectionSecondary,
+  type FlowSourceConnectionRow,
 } from '../../../lib/flowSourceDisplay'
-import type { FlowSourceRow } from '../composables/useFlowSourceAggregate'
 
 const props = defineProps<{
-  row: FlowSourceRow
+  row: FlowSourceConnectionRow
 }>()
 
 const { t } = useI18n()

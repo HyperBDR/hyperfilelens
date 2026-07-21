@@ -31,6 +31,15 @@ def register_periodic_tasks():
         enabled=True,
     )
     TASK_REGISTRY.add(
+        name="storage_reconcile_repository_operations",
+        task="apps.storage.tasks.reconcile_repository_operations",
+        schedule=schedule(settings.scan_interval),
+        args=(),
+        kwargs={"limit": 100},
+        queue=None,
+        enabled=True,
+    )
+    TASK_REGISTRY.add(
         name="storage_dispatch_repository_health_checks",
         task="apps.storage.tasks.dispatch_repository_health_checks",
         schedule=schedule(repository_health_interval_seconds()),

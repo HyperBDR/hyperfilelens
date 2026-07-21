@@ -1,6 +1,11 @@
 import { formatNodeBytes } from './nodeInventoryDisplay'
 import type { FlowSourceRow } from '../pages/protection/composables/useFlowSourceAggregate'
 
+export type FlowSourceConnectionRow = Pick<
+  FlowSourceRow,
+  'type' | 'hostname' | 'nodeName' | 'nodeIp' | 'name'
+>
+
 export type FlowReadyStatus = {
   label: string
   tag: 'success' | 'danger' | 'warning' | 'info' | 'neutral'
@@ -35,14 +40,14 @@ export function flowSourceProtocolLabel(
   return row.protocol === 'smb' ? labels.protocolSmb : labels.protocolNfs
 }
 
-export function flowSourceConnectionPrimary(row: FlowSourceRow) {
+export function flowSourceConnectionPrimary(row: FlowSourceConnectionRow) {
   if (row.type === 'nas') {
     return (row.nodeName || '').trim() || '—'
   }
   return (row.hostname || '').trim() || (row.nodeName || '').trim() || (row.name || '').trim() || '—'
 }
 
-export function flowSourceConnectionSecondary(row: FlowSourceRow) {
+export function flowSourceConnectionSecondary(row: FlowSourceConnectionRow) {
   return (row.nodeIp || '').trim() || '—'
 }
 

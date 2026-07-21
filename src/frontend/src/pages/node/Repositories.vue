@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, RefreshCw, Search, Filter, ChevronDown, Check, Pencil, Trash2, Copy, HardDrive, Unlink, X } from 'lucide-vue-next'
+import { Plus, RefreshCw, Search, Filter, ChevronDown, Pencil, Trash2, Copy, HardDrive, Folder, Unlink } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import type { ElTable } from 'element-plus'
 import { api, apiErrorMessage } from '../../lib/api'
@@ -33,10 +33,8 @@ import {
   listStorageRepositoryTasks,
   deleteStorageRepository,
   preflightStorageRepositoryCleanup,
-  repairStorageRepository,
   type StorageRepositoryCleanupPreflight,
   type StorageRepositoryAssociatedSource,
-  type StorageRepositoryRepairPayload,
 } from '../../lib/storageRepositoryApi'
 import type { TaskRow } from '../../lib/taskApi'
 import type { ApiNode } from '../../types/node'
@@ -44,6 +42,7 @@ import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformB
 import HflHelpTip from '../../components/HflHelpTip.vue'
 import DangerConfirmDialog, { type DangerConfirmItem } from '../../components/DangerConfirmDialog.vue'
 import TaskDetailDrawer from '../protection/components/TaskDetailDrawer.vue'
+import FlowSourceConnectionCell from '../protection/components/FlowSourceConnectionCell.vue'
 
 export type RepoKind = 's3' | 'nas' | 'proxy_fs'
 
@@ -600,46 +599,6 @@ const repositoryTaskDetailDrawerSize = computed(() => {
   return `${Math.min(referenceWidth, viewportWidth)}px`
 })
 
-type NasEditableField = 'name' | 'mountOptions' | 'smbUsername' | 'smbDomain' | 'quotaGb' | 'quotaAlertEnabled' | 'quotaAlertThreshold'
-
-type NasDetailDraft = {
-  name: string
-  mountOptions: string
-  smbUsername: string
-  smbDomain: string
-  quotaGb: string
-  quotaAlertEnabled: boolean
-  quotaAlertThreshold: string
-}
-
-const nasDetailDraft = ref<NasDetailDraft | null>(null)
-const nasEditingFields = ref<Set<NasEditableField>>(new Set())
-
-type S3EditableField = 'name' | 'region' | 'accessKeyId' | 'urlStyle' | 'useTls' | 'quotaGb' | 'quotaAlertEnabled' | 'quotaAlertThreshold'
-type S3DetailDraft = {
-  name: string
-  region: string
-  accessKeyId: string
-  urlStyle: string
-  useTls: boolean
-  quotaGb: string
-  quotaAlertEnabled: boolean
-  quotaAlertThreshold: string
-}
-const s3DetailDraft = ref<S3DetailDraft | null>(null)
-const s3EditingFields = ref<Set<S3EditableField>>(new Set())
-
-type ProxyFsEditableField = 'name' | 'proxyNodeDir' | 'capacityGb' | 'quotaAlertEnabled' | 'quotaAlertThreshold'
-type ProxyFsDetailDraft = {
-  name: string
-  proxyNodeDir: string
-  capacityGb: string
-  quotaAlertEnabled: boolean
-  quotaAlertThreshold: string
-}
-const proxyFsDetailDraft = ref<ProxyFsDetailDraft | null>(null)
-const proxyFsEditingFields = ref<Set<ProxyFsEditableField>>(new Set())
-
 let mounted = false
 
 const repositoryTableLoading = computed(() => busy.value || !repositoryListLoaded.value)
@@ -932,197 +891,6 @@ const selectedEditableRow = computed(() => {
 })
 const canEditSelectedRow = computed(() => selectedEditableRow.value !== null)
 
-function buildNasDetailDraft(row: RepositoryRow): NasDetailDraft {
-  return {
-    name: row.name,
-    mountOptions: row.config.nfs_options || '',
-    smbUsername: row.config.smb_username || '',
-    smbDomain: row.config.smb_domain || '',
-    quotaGb: String(row.config.quota_gb ?? 0),
-    quotaAlertEnabled: Boolean(row.config.quota_alert_enabled),
-    quotaAlertThreshold: String(row.config.quota_alert_threshold ?? 0),
-  }
-}
-
-function initNasDetailDraft(row: RepositoryRow) {
-  nasDetailDraft.value = buildNasDetailDraft(row)
-  nasEditingFields.value = new Set()
-}
-
-function resetNasDetailDraft() {
-  nasDetailDraft.value = null
-  nasEditingFields.value = new Set()
-}
-
-function isNasFieldEditing(field: NasEditableField) {
-  return nasEditingFields.value.has(field)
-}
-
-function beginNasFieldEdit(field: NasEditableField) {
-  if (!nasDetailDraft.value) return
-  nasEditingFields.value = new Set([...nasEditingFields.value, field])
-}
-
-function cancelNasFieldEdit(field: NasEditableField) {
-  const row = detailRow.value
-  const draft = nasDetailDraft.value
-  if (!row || row.kind !== 'nas' || !draft) return
-  const original = buildNasDetailDraft(row)
-  draft[field] = original[field] as never
-  const next = new Set(nasEditingFields.value)
-  next.delete(field)
-  nasEditingFields.value = next
-}
-
-const hasNasDetailChanges = computed(() => {
-  const row = detailRow.value
-  const draft = nasDetailDraft.value
-  if (!row || row.kind !== 'nas' || !draft || nasEditingFields.value.size === 0) return false
-  const original = buildNasDetailDraft(row)
-  for (const field of nasEditingFields.value) {
-    if (field === 'quotaAlertEnabled') {
-      if (draft.quotaAlertEnabled !== original.quotaAlertEnabled) return true
-      continue
-    }
-    if (draft[field].trim() !== original[field].trim()) return true
-  }
-  return false
-})
-
-function buildS3DetailDraft(row: RepositoryRow): S3DetailDraft {
-  return {
-    name: row.name,
-    region: row.config.region || '',
-    accessKeyId: row.config.access_key_id || '',
-    urlStyle: row.config.s3_url_style || 'virtual_hosted',
-    useTls: row.config.use_tls !== false,
-    quotaGb: String(row.config.quota_gb ?? 0),
-    quotaAlertEnabled: Boolean(row.config.quota_alert_enabled),
-    quotaAlertThreshold: String(row.config.quota_alert_threshold ?? 0),
-  }
-}
-
-function initS3DetailDraft(row: RepositoryRow) {
-  s3DetailDraft.value = buildS3DetailDraft(row)
-  s3EditingFields.value = new Set()
-}
-
-function resetS3DetailDraft() {
-  s3DetailDraft.value = null
-  s3EditingFields.value = new Set()
-}
-
-function isS3FieldEditing(field: S3EditableField) {
-  return s3EditingFields.value.has(field)
-}
-
-function beginS3FieldEdit(field: S3EditableField) {
-  if (!s3DetailDraft.value) return
-  s3EditingFields.value = new Set([...s3EditingFields.value, field])
-}
-
-function cancelS3FieldEdit(field: S3EditableField) {
-  const row = detailRow.value
-  const draft = s3DetailDraft.value
-  if (!row || row.kind !== 's3' || !draft) return
-  const original = buildS3DetailDraft(row)
-  draft[field] = original[field] as never
-  const next = new Set(s3EditingFields.value)
-  next.delete(field)
-  s3EditingFields.value = next
-}
-
-const hasS3DetailChanges = computed(() => {
-  const row = detailRow.value
-  const draft = s3DetailDraft.value
-  if (!row || row.kind !== 's3' || !draft || s3EditingFields.value.size === 0) return false
-  const original = buildS3DetailDraft(row)
-  for (const field of s3EditingFields.value) {
-    if (field === 'useTls' || field === 'quotaAlertEnabled') {
-      if (draft[field] !== original[field]) return true
-      continue
-    }
-    const key = field === 'region' ? 'region'
-      : field === 'accessKeyId' ? 'accessKeyId'
-        : field === 'urlStyle' ? 'urlStyle'
-          : field === 'quotaGb' ? 'quotaGb'
-            : field === 'quotaAlertThreshold' ? 'quotaAlertThreshold'
-              : 'name'
-    if (draft[key].trim() !== original[key].trim()) return true
-  }
-  return false
-})
-
-function buildProxyFsDetailDraft(row: RepositoryRow): ProxyFsDetailDraft {
-  return {
-    name: row.name,
-    proxyNodeDir: row.config.proxy_node_dir || row.location || '',
-    capacityGb: row.capacity_bytes > 0 ? String(Math.round((row.capacity_bytes / 1024 ** 3) * 10) / 10) : '0',
-    quotaAlertEnabled: Boolean(row.config.quota_alert_enabled),
-    quotaAlertThreshold: String(row.config.quota_alert_threshold ?? 0),
-  }
-}
-
-function initProxyFsDetailDraft(row: RepositoryRow) {
-  proxyFsDetailDraft.value = buildProxyFsDetailDraft(row)
-  proxyFsEditingFields.value = new Set()
-}
-
-function resetProxyFsDetailDraft() {
-  proxyFsDetailDraft.value = null
-  proxyFsEditingFields.value = new Set()
-}
-
-function isProxyFsFieldEditing(field: ProxyFsEditableField) {
-  return proxyFsEditingFields.value.has(field)
-}
-
-function beginProxyFsFieldEdit(field: ProxyFsEditableField) {
-  if (!proxyFsDetailDraft.value) return
-  proxyFsEditingFields.value = new Set([...proxyFsEditingFields.value, field])
-}
-
-function cancelProxyFsFieldEdit(field: ProxyFsEditableField) {
-  const row = detailRow.value
-  const draft = proxyFsDetailDraft.value
-  if (!row || row.kind !== 'proxy_fs' || !draft) return
-  const original = buildProxyFsDetailDraft(row)
-  draft[field] = original[field] as never
-  const next = new Set(proxyFsEditingFields.value)
-  next.delete(field)
-  proxyFsEditingFields.value = next
-}
-
-const hasProxyFsDetailChanges = computed(() => {
-  const row = detailRow.value
-  const draft = proxyFsDetailDraft.value
-  if (!row || row.kind !== 'proxy_fs' || !draft || proxyFsEditingFields.value.size === 0) return false
-  const original = buildProxyFsDetailDraft(row)
-  for (const field of proxyFsEditingFields.value) {
-    if (field === 'quotaAlertEnabled') {
-      if (draft.quotaAlertEnabled !== original.quotaAlertEnabled) return true
-      continue
-    }
-    const key = field === 'proxyNodeDir' ? 'proxyNodeDir'
-      : field === 'capacityGb' ? 'capacityGb'
-        : field === 'quotaAlertThreshold' ? 'quotaAlertThreshold'
-          : 'name'
-    if (draft[key].trim() !== original[key].trim()) return true
-  }
-  return false
-})
-
-
-function parseQuotaGbDraft(value: string) {
-  const quotaGb = Number(value.trim())
-  return Number.isFinite(quotaGb) && quotaGb >= 0 ? quotaGb : null
-}
-
-function parseQuotaThresholdDraft(value: string) {
-  const threshold = Number(value.trim())
-  return Number.isFinite(threshold) && threshold >= 1 && threshold <= 100 ? threshold : null
-}
-
 const createdAtColumnMinWidth = 190
 
 const pagedRows = computed(() => {
@@ -1157,12 +925,6 @@ function openDetail(row: RepositoryRow) {
   detailActiveTab.value = 'basic'
   resetAssociatedSources()
   resetRepositoryTasks()
-  resetNasDetailDraft()
-  resetS3DetailDraft()
-  resetProxyFsDetailDraft()
-  if (row.kind === 'nas') initNasDetailDraft(row)
-  else if (row.kind === 's3') initS3DetailDraft(row)
-  else if (row.kind === 'proxy_fs') initProxyFsDetailDraft(row)
   drawerDetailOpen.value = true
   nextTick(() => {
     requestAnimationFrame(() => updateDrawerWidth())
@@ -1175,9 +937,6 @@ function onDrawerOpened() {
 
 function onDrawerClosed() {
   unbindDrawerResize()
-  resetNasDetailDraft()
-  resetS3DetailDraft()
-  resetProxyFsDetailDraft()
   detailActiveTab.value = 'basic'
   resetAssociatedSources()
   resetRepositoryTasks()
@@ -1486,17 +1245,25 @@ function associatedSourceStatusLabel(status?: string) {
   return t('repositoriesPage.associatedSourceUnknown')
 }
 
-function associatedSourceConnectionSecondary(row: StorageRepositoryAssociatedSource) {
-  const parts = [row.node_name, row.node_ip].filter(Boolean)
-  return parts.length ? parts.join(' · ') : '—'
-}
-
 function isDirectNasAssociatedSources(row = detailRow.value) {
   return Boolean(row && row.kind === 'nas' && !hasBoundProxy(row))
 }
 
 function associatedSourceProtocol(row: StorageRepositoryAssociatedSource): NasProtocol {
   return row.protocol === 'smb' ? 'smb' : 'nfs'
+}
+
+function associatedSourceTraitLabel(row: StorageRepositoryAssociatedSource) {
+  if (row.source_kind === 'nas') {
+    const protocol = String(row.protocol || '').trim().toLowerCase()
+    if (protocol === 'smb' || protocol === 'nfs') return protocolLabel(protocol)
+    return DETAIL_EMPTY
+  }
+  const platform = String(row.platform || '').trim().toLowerCase()
+  if (platform === 'windows') return t('protection.sourceResources.osPlatformWindows')
+  if (platform === 'macos') return t('protection.sourceResources.osPlatformMacos')
+  if (platform === 'linux') return t('protection.sourceResources.osPlatformLinux')
+  return DETAIL_EMPTY
 }
 
 function associatedSourceHealthLabel(row: StorageRepositoryAssociatedSource) {
@@ -1515,46 +1282,19 @@ function associatedSourceCheckedAt(row: StorageRepositoryAssociatedSource) {
   return formatLastCheckedAt(row.last_checked_at || row.last_success_checked_at || null)
 }
 
-function associatedNasMountSource(row: StorageRepositoryAssociatedSource) {
-  const raw = String(row.nas_location || row.connection_uri || '').trim()
-  if (!raw) return DETAIL_EMPTY
-  if (raw.startsWith('smb://')) return `//${raw.slice('smb://'.length).replace(/^\/+/, '')}`
-  if (raw.startsWith('nfs://')) {
-    const rest = raw.slice('nfs://'.length).replace(/^\/+/, '')
-    const slashIndex = rest.indexOf('/')
-    if (slashIndex < 0) return `${rest}:`
-    const host = rest.slice(0, slashIndex)
-    const exportPath = rest.slice(slashIndex)
-    return host ? `${host}:${exportPath}` : raw
-  }
-  return raw
-}
-
 function associatedNasMountTarget(row: StorageRepositoryAssociatedSource) {
   return String(row.repository_mount_point || row.mount_point || '').trim() || DETAIL_EMPTY
 }
 
-function associatedSourceHostLabel(row: StorageRepositoryAssociatedSource) {
-  return formatNodeDisplay(row.hostname || row.node_name || row.source_name, row.node_ip || '') ||
-    row.hostname ||
-    row.node_name ||
-    row.source_name ||
-    DETAIL_EMPTY
-}
-
-function associatedSourceProxyLabel(repository: RepositoryRow | null) {
-  if (!repository) return DETAIL_EMPTY
-  if (repository.kind === 'nas') return boundProxyNodeLabel(repository) || DETAIL_EMPTY
-  if (repository.kind === 'proxy_fs') return proxyNodeLabel(repository) || DETAIL_EMPTY
-  return DETAIL_EMPTY
-}
-
-function associatedSourceHostProxyLabel(row: StorageRepositoryAssociatedSource) {
-  const repository = detailRow.value
-  if (!repository) return DETAIL_EMPTY
-  if (repository.kind === 'nas' && hasBoundProxy(repository)) return associatedSourceProxyLabel(repository)
-  if (repository.kind === 'proxy_fs') return associatedSourceProxyLabel(repository)
-  return associatedSourceHostLabel(row)
+function associatedSourceEndpointRow(row: StorageRepositoryAssociatedSource) {
+  const type = row.source_kind === 'nas' ? 'nas' : 'host'
+  return {
+    type,
+    name: row.source_name,
+    hostname: row.hostname || '',
+    nodeName: row.node_name || '',
+    nodeIp: row.node_ip || '',
+  }
 }
 
 function repoLocationPrimary(row: RepositoryRow) {
@@ -1813,265 +1553,6 @@ function goRepairNas(row: RepositoryRow) {
   drawerDetailOpen.value = false
   router.push({ path: `/node/repositories/nas/${row.id}/repair` })
 }
-
-async function saveS3DetailChanges() {
-  const row = detailRow.value
-  const draft = s3DetailDraft.value
-  if (!row || row.kind !== 's3' || !draft || !hasS3DetailChanges.value) {
-    ElMessage.warning({ message: t('repositoriesPage.noChangesToSave'), grouping: true })
-    return
-  }
-
-  const original = buildS3DetailDraft(row)
-  const patchBody: Record<string, unknown> = {}
-  const configPatch: Record<string, unknown> = {}
-
-  if (isS3FieldEditing('name') && draft.name.trim() !== original.name.trim()) {
-    const name = draft.name.trim()
-    if (!name) {
-      ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
-      return
-    }
-    patchBody.name = name
-  }
-  if (isS3FieldEditing('region') && draft.region.trim() !== original.region.trim()) {
-    configPatch.region = draft.region.trim() || undefined
-  }
-  if (isS3FieldEditing('accessKeyId') && draft.accessKeyId.trim() !== original.accessKeyId.trim()) {
-    if (!draft.accessKeyId.trim()) {
-      ElMessage.warning({ message: t('repositoriesPage.errKeys'), grouping: true })
-      return
-    }
-    configPatch.access_key_id = draft.accessKeyId.trim()
-  }
-  if (isS3FieldEditing('urlStyle') && draft.urlStyle !== original.urlStyle) {
-    configPatch.s3_url_style = draft.urlStyle === 'path' ? 'path' : 'virtual_hosted'
-  }
-  if (isS3FieldEditing('useTls') && draft.useTls !== original.useTls) {
-    configPatch.use_tls = draft.useTls
-  }
-  if (isS3FieldEditing('quotaGb') && draft.quotaGb.trim() !== original.quotaGb.trim()) {
-    const quotaGb = parseQuotaGbDraft(draft.quotaGb)
-    if (quotaGb == null) {
-      ElMessage.warning({ message: t('repositoriesPage.errQuota'), grouping: true })
-      return
-    }
-    configPatch.quota_gb = quotaGb
-  }
-  if (isS3FieldEditing('quotaAlertEnabled') && draft.quotaAlertEnabled !== original.quotaAlertEnabled) {
-    configPatch.quota_alert_enabled = draft.quotaAlertEnabled
-  }
-  if (isS3FieldEditing('quotaAlertThreshold') && draft.quotaAlertThreshold.trim() !== original.quotaAlertThreshold.trim()) {
-    const threshold = parseQuotaThresholdDraft(draft.quotaAlertThreshold)
-    if (threshold == null) {
-      ElMessage.warning({ message: t('repositoriesPage.editS3Repo.errQuotaAlertThreshold'), grouping: true })
-      return
-    }
-    configPatch.quota_alert_threshold = threshold
-  }
-
-  if (Object.keys(configPatch).length) patchBody.config = configPatch
-  if (!patchBody.name && !patchBody.config) {
-    ElMessage.warning({ message: t('repositoriesPage.noChangesToSave'), grouping: true })
-    return
-  }
-
-  busy.value = true
-  try {
-    await api(`/api/v1/storage/repositories/${row.id}/`, {
-      method: 'PATCH',
-      body: JSON.stringify(patchBody),
-    })
-    await load()
-    const updated = rows.value.find((item) => item.id === row.id)
-    if (updated) {
-      detailRow.value = updated
-      initS3DetailDraft(updated)
-    }
-    ElMessage.success({ message: t('repositoriesPage.msgUpdated'), grouping: true })
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function saveProxyFsDetailChanges() {
-  const row = detailRow.value
-  const draft = proxyFsDetailDraft.value
-  if (!row || row.kind !== 'proxy_fs' || !draft || !hasProxyFsDetailChanges.value) {
-    ElMessage.warning({ message: t('repositoriesPage.noChangesToSave'), grouping: true })
-    return
-  }
-
-  const original = buildProxyFsDetailDraft(row)
-  const patchBody: Record<string, unknown> = {}
-  const configPatch: Record<string, unknown> = {}
-
-  if (isProxyFsFieldEditing('name') && draft.name.trim() !== original.name.trim()) {
-    const name = draft.name.trim()
-    if (!name) {
-      ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
-      return
-    }
-    patchBody.name = name
-  }
-  if (isProxyFsFieldEditing('proxyNodeDir') && draft.proxyNodeDir.trim() !== original.proxyNodeDir.trim()) {
-    const path = draft.proxyNodeDir.trim()
-    if (!path) {
-      ElMessage.warning({ message: t('repositoriesPage.errPath'), grouping: true })
-      return
-    }
-    configPatch.proxy_node_dir = path
-  }
-  if (isProxyFsFieldEditing('capacityGb') && draft.capacityGb.trim() !== original.capacityGb.trim()) {
-    const quotaGb = Number(draft.capacityGb.trim())
-    if (!Number.isFinite(quotaGb) || quotaGb < 0) {
-      ElMessage.warning({ message: t('repositoriesPage.errQuota'), grouping: true })
-      return
-    }
-    configPatch.quota_gb = quotaGb
-  }
-  if (isProxyFsFieldEditing('quotaAlertEnabled') && draft.quotaAlertEnabled !== original.quotaAlertEnabled) {
-    configPatch.quota_alert_enabled = draft.quotaAlertEnabled
-  }
-  if (isProxyFsFieldEditing('quotaAlertThreshold') && draft.quotaAlertThreshold.trim() !== original.quotaAlertThreshold.trim()) {
-    const threshold = parseQuotaThresholdDraft(draft.quotaAlertThreshold)
-    if (threshold == null) {
-      ElMessage.warning({ message: t('repositoriesPage.editProxyFsRepo.errQuotaAlertThreshold'), grouping: true })
-      return
-    }
-    configPatch.quota_alert_threshold = threshold
-  }
-
-  if (Object.keys(configPatch).length) patchBody.config = configPatch
-  if (!patchBody.name && !patchBody.config) {
-    ElMessage.warning({ message: t('repositoriesPage.noChangesToSave'), grouping: true })
-    return
-  }
-
-  busy.value = true
-  try {
-    await api(`/api/v1/storage/repositories/${row.id}/`, {
-      method: 'PATCH',
-      body: JSON.stringify(patchBody),
-    })
-    await load()
-    const updated = rows.value.find((item) => item.id === row.id)
-    if (updated) {
-      detailRow.value = updated
-      initProxyFsDetailDraft(updated)
-    }
-    ElMessage.success({ message: t('repositoriesPage.msgUpdated'), grouping: true })
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function saveRepoDetailChanges() {
-  const row = detailRow.value
-  if (!row) return
-  if (row.kind === 'nas') await saveNasDetailChanges()
-  else if (row.kind === 's3') await saveS3DetailChanges()
-  else if (row.kind === 'proxy_fs') await saveProxyFsDetailChanges()
-}
-
-async function saveNasDetailChanges() {
-  const row = detailRow.value
-  const draft = nasDetailDraft.value
-  if (!row || row.kind !== 'nas' || !draft) return
-  if (!hasNasDetailChanges.value) {
-    ElMessage.warning({ message: t('repositoriesPage.noChangesToSave'), grouping: true })
-    return
-  }
-
-  const original = buildNasDetailDraft(row)
-  const payload: StorageRepositoryRepairPayload = {}
-  const configPatch: Record<string, string | number | boolean> = {}
-
-  if (isNasFieldEditing('name') && draft.name.trim() !== original.name.trim()) {
-    const name = draft.name.trim()
-    if (!name) {
-      ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
-      return
-    }
-    payload.name = name
-  }
-
-  if (isNasFieldEditing('mountOptions')) {
-    const mountOptions = draft.mountOptions.trim()
-    if (mountOptions !== original.mountOptions.trim()) {
-      configPatch.mount_options = mountOptions
-    }
-  }
-
-  if (row.protocol === 'smb') {
-    if (isNasFieldEditing('smbUsername')) {
-      const smbUsername = draft.smbUsername.trim()
-      if (smbUsername !== original.smbUsername.trim()) {
-        if (!smbUsername) {
-          ElMessage.warning({ message: t('repositoriesPage.errSmbUsername'), grouping: true })
-          return
-        }
-        configPatch.smb_username = smbUsername
-      }
-    }
-    if (isNasFieldEditing('smbDomain')) {
-      const smbDomain = draft.smbDomain.trim()
-      if (smbDomain !== original.smbDomain.trim()) {
-        configPatch.smb_domain = smbDomain
-      }
-    }
-  }
-
-  if (isNasFieldEditing('quotaGb') && draft.quotaGb.trim() !== original.quotaGb.trim()) {
-    const quotaGb = parseQuotaGbDraft(draft.quotaGb)
-    if (quotaGb == null) {
-      ElMessage.warning({ message: t('repositoriesPage.errQuota'), grouping: true })
-      return
-    }
-    configPatch.quota_gb = quotaGb
-  }
-  if (isNasFieldEditing('quotaAlertEnabled') && draft.quotaAlertEnabled !== original.quotaAlertEnabled) {
-    configPatch.quota_alert_enabled = draft.quotaAlertEnabled
-  }
-  if (isNasFieldEditing('quotaAlertThreshold') && draft.quotaAlertThreshold.trim() !== original.quotaAlertThreshold.trim()) {
-    const threshold = parseQuotaThresholdDraft(draft.quotaAlertThreshold)
-    if (threshold == null) {
-      ElMessage.warning({ message: t('repositoriesPage.editNasRepo.errQuotaAlertThreshold'), grouping: true })
-      return
-    }
-    configPatch.quota_alert_threshold = threshold
-  }
-
-  if (Object.keys(configPatch).length) {
-    payload.config = configPatch
-  }
-
-  if (!payload.name && !payload.config) {
-    ElMessage.warning({ message: t('repositoriesPage.noChangesToSave'), grouping: true })
-    return
-  }
-
-  busy.value = true
-  try {
-    await repairStorageRepository(row.id, payload)
-    await load()
-    const updated = rows.value.find((item) => item.id === row.id)
-    if (updated) {
-      detailRow.value = updated
-      initNasDetailDraft(updated)
-    }
-    ElMessage.success({ message: t('repositoriesPage.msgUpdated'), grouping: true })
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    busy.value = false
-  }
-}
-
 
 function validateForm(kind: RepoKind): boolean {
   if (kind === 's3') {
@@ -2774,28 +2255,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldRepoName') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable repo-detail__inline-value">
-                      <ElInput
-                        v-if="s3DetailDraft && isS3FieldEditing('name')"
-                        v-model="s3DetailDraft.name"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else class="hfl-detail-row__text">{{ detailRow.name }}</span>
-                      <ElTag :type="healthTagType(detailRow.health)" size="small">
-                        {{ repoHealthLabel(detailRow.health) }}
-                      </ElTag>
-                      <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
-                        {{ repoLifecycleLabel(detailRow.status) }}
-                      </ElTag>
-                      <span v-if="isS3FieldEditing('name')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelS3FieldEdit('name')"><X :size="14" /></ElButton>
+                    <span class="hfl-detail-row__value repo-detail__inline-value">
+                      <span class="repo-detail__name-summary">
+                        <span class="hfl-detail-row__text">{{ detailRow.name }}</span>
+                        <span class="repo-detail__name-summary-tags">
+                          <ElTag :type="healthTagType(detailRow.health)" size="small">
+                            {{ repoHealthLabel(detailRow.health) }}
+                          </ElTag>
+                          <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
+                            {{ repoLifecycleLabel(detailRow.status) }}
+                          </ElTag>
+                        </span>
                       </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('name')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -2856,37 +2327,16 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldRegion') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                      <ElInput
-                        v-if="s3DetailDraft && isS3FieldEditing('region')"
-                        v-model="s3DetailDraft.region"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else class="hfl-detail-row__text">{{ detailRow.config.region || DETAIL_EMPTY }}</span>
-                      <span v-if="isS3FieldEditing('region')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelS3FieldEdit('region')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('region')">
-                        <Pencil :size="13" />
-                      </ElButton>
+                    <span class="hfl-detail-row__value">
+                      <span class="hfl-detail-row__text">{{ detailRow.config.region || DETAIL_EMPTY }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldAccessKey') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
-                      <ElInput
-                        v-if="s3DetailDraft && isS3FieldEditing('accessKeyId')"
-                        v-model="s3DetailDraft.accessKeyId"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else class="hfl-detail-row__text">{{ detailRow.config.access_key_id || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__text">{{ detailRow.config.access_key_id || DETAIL_EMPTY }}</span>
                       <ElButton
-                        v-if="detailRow.config.access_key_id && !isS3FieldEditing('accessKeyId')"
+                        v-if="detailRow.config.access_key_id"
                         text
                         circle
                         size="small"
@@ -2896,13 +2346,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                       >
                         <Copy :size="13" />
                       </ElButton>
-                      <span v-if="isS3FieldEditing('accessKeyId')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelS3FieldEdit('accessKeyId')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('accessKeyId')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -2911,45 +2354,19 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldS3UrlStyle') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                      <ElSelect
-                        v-if="s3DetailDraft && isS3FieldEditing('urlStyle')"
-                        v-model="s3DetailDraft.urlStyle"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      >
-                        <ElOption value="virtual_hosted" :label="s3UrlStyleLabel('virtual_hosted')" />
-                        <ElOption value="path" :label="s3UrlStyleLabel('path')" />
-                      </ElSelect>
-                      <span v-else class="hfl-detail-row__text">
+                    <span class="hfl-detail-row__value">
+                      <span class="hfl-detail-row__text">
                         {{ s3UrlStyleLabel(detailRow.config.s3_url_style) }}
                       </span>
-                      <span v-if="isS3FieldEditing('urlStyle')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelS3FieldEdit('urlStyle')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('urlStyle')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldUseTls') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                      <ElSwitch v-if="s3DetailDraft && isS3FieldEditing('useTls')" v-model="s3DetailDraft.useTls" :disabled="busy" />
+                    <span class="hfl-detail-row__value">
                       <HflBooleanStatusTag
-                        v-else
                         :value="detailRow.config.use_tls !== false"
                         :label="tlsConnectionLabel(detailRow.config.use_tls)"
                       />
-                      <span v-if="isS3FieldEditing('useTls')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelS3FieldEdit('useTls')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('useTls')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                   <div class="hfl-detail-row hfl-detail-row--full">
@@ -2993,59 +2410,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuota') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                      <ElInput
-                        v-if="s3DetailDraft && isS3FieldEditing('quotaGb')"
-                        v-model="s3DetailDraft.quotaGb"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else>{{ s3QuotaLimitLabel(detailRow) }}</span>
-                      <span v-if="isS3FieldEditing('quotaGb')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelS3FieldEdit('quotaGb')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('quotaGb')">
-                        <Pencil :size="13" />
-                      </ElButton>
-                    </span>
+                    <span class="hfl-detail-row__value">{{ s3QuotaLimitLabel(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuotaAlert') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable repo-detail__tag-group">
-                      <ElSwitch v-if="s3DetailDraft && isS3FieldEditing('quotaAlertEnabled')" v-model="s3DetailDraft.quotaAlertEnabled" :disabled="busy" />
+                    <span class="hfl-detail-row__value repo-detail__tag-group">
                       <HflBooleanStatusTag
-                        v-else
                         :value="quotaMonitoringEnabled(detailRow)"
                         :label="quotaMonitoringLabel(detailRow)"
                       />
-                      <ElInput
-                        v-if="s3DetailDraft && isS3FieldEditing('quotaAlertThreshold')"
-                        v-model="s3DetailDraft.quotaAlertThreshold"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <ElTag v-else-if="quotaMonitoringThresholdLabel(detailRow)" type="info" size="small" effect="plain">
+                      <ElTag v-if="quotaMonitoringThresholdLabel(detailRow)" type="info" size="small" effect="plain">
                         {{ quotaMonitoringThresholdLabel(detailRow) }}
                       </ElTag>
-                      <span v-if="isS3FieldEditing('quotaAlertEnabled') || isS3FieldEditing('quotaAlertThreshold')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton
-                          text
-                          circle
-                          size="small"
-                          :title="t('common.cancel')"
-                          :disabled="busy"
-                          @click="cancelS3FieldEdit('quotaAlertEnabled'); cancelS3FieldEdit('quotaAlertThreshold')"
-                        >
-                          <X :size="14" />
-                        </ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginS3FieldEdit('quotaAlertEnabled'); beginS3FieldEdit('quotaAlertThreshold')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                 </div>
@@ -3058,28 +2434,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldName') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable repo-detail__inline-value">
-                      <ElInput
-                        v-if="nasDetailDraft && isNasFieldEditing('name')"
-                        v-model="nasDetailDraft.name"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else class="hfl-detail-row__text">{{ detailRow.name }}</span>
-                      <ElTag :type="healthTagType(detailRow.health)" size="small">
-                        {{ repoHealthLabel(detailRow.health) }}
-                      </ElTag>
-                      <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
-                        {{ repoLifecycleLabel(detailRow.status) }}
-                      </ElTag>
-                      <span v-if="isNasFieldEditing('name')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelNasFieldEdit('name')"><X :size="14" /></ElButton>
+                    <span class="hfl-detail-row__value repo-detail__inline-value">
+                      <span class="repo-detail__name-summary">
+                        <span class="hfl-detail-row__text">{{ detailRow.name }}</span>
+                        <span class="repo-detail__name-summary-tags">
+                          <ElTag :type="healthTagType(detailRow.health)" size="small">
+                            {{ repoHealthLabel(detailRow.health) }}
+                          </ElTag>
+                          <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
+                            {{ repoLifecycleLabel(detailRow.status) }}
+                          </ElTag>
+                        </span>
                       </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginNasFieldEdit('name')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -3132,64 +2498,16 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <template v-if="detailRow.protocol === 'smb'">
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldSmbUsername') }}</span>
-                      <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                        <ElInput
-                          v-if="nasDetailDraft && isNasFieldEditing('smbUsername')"
-                          v-model="nasDetailDraft.smbUsername"
-                          size="small"
-                          class="hfl-detail-inline-edit__input"
-                          :disabled="busy"
-                        />
-                        <span v-else>{{ detailRow.config.smb_username || DETAIL_EMPTY }}</span>
-                        <span v-if="isNasFieldEditing('smbUsername')" class="hfl-detail-inline-edit__actions">
-                          <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                          <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelNasFieldEdit('smbUsername')"><X :size="14" /></ElButton>
-                        </span>
-                        <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginNasFieldEdit('smbUsername')">
-                          <Pencil :size="13" />
-                        </ElButton>
-                      </span>
+                      <span class="hfl-detail-row__value">{{ detailRow.config.smb_username || DETAIL_EMPTY }}</span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldSmbDomain') }}</span>
-                      <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                        <ElInput
-                          v-if="nasDetailDraft && isNasFieldEditing('smbDomain')"
-                          v-model="nasDetailDraft.smbDomain"
-                          size="small"
-                          class="hfl-detail-inline-edit__input"
-                          :disabled="busy"
-                        />
-                        <span v-else>{{ detailRow.config.smb_domain || DETAIL_EMPTY }}</span>
-                        <span v-if="isNasFieldEditing('smbDomain')" class="hfl-detail-inline-edit__actions">
-                          <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                          <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelNasFieldEdit('smbDomain')"><X :size="14" /></ElButton>
-                        </span>
-                        <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginNasFieldEdit('smbDomain')">
-                          <Pencil :size="13" />
-                        </ElButton>
-                      </span>
+                      <span class="hfl-detail-row__value">{{ detailRow.config.smb_domain || DETAIL_EMPTY }}</span>
                     </div>
                   </template>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('addNasRepo.fieldMountOptions') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
-                      <ElInput
-                        v-if="nasDetailDraft && isNasFieldEditing('mountOptions')"
-                        v-model="nasDetailDraft.mountOptions"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else>{{ detailRow.config.nfs_options || DETAIL_EMPTY }}</span>
-                      <span v-if="isNasFieldEditing('mountOptions')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelNasFieldEdit('mountOptions')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginNasFieldEdit('mountOptions')">
-                        <Pencil :size="13" />
-                      </ElButton>
-                    </span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ detailRow.config.nfs_options || DETAIL_EMPTY }}</span>
                   </div>
                 </div>
               </section>
@@ -3254,59 +2572,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuota') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                      <ElInput
-                        v-if="nasDetailDraft && isNasFieldEditing('quotaGb')"
-                        v-model="nasDetailDraft.quotaGb"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else>{{ storageLimitLabel(detailRow) }}</span>
-                      <span v-if="isNasFieldEditing('quotaGb')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelNasFieldEdit('quotaGb')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginNasFieldEdit('quotaGb')">
-                        <Pencil :size="13" />
-                      </ElButton>
-                    </span>
+                    <span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuotaAlert') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable repo-detail__tag-group">
-                      <ElSwitch v-if="nasDetailDraft && isNasFieldEditing('quotaAlertEnabled')" v-model="nasDetailDraft.quotaAlertEnabled" :disabled="busy" />
+                    <span class="hfl-detail-row__value repo-detail__tag-group">
                       <HflBooleanStatusTag
-                        v-else
                         :value="quotaMonitoringEnabled(detailRow)"
                         :label="quotaMonitoringLabel(detailRow)"
                       />
-                      <ElInput
-                        v-if="nasDetailDraft && isNasFieldEditing('quotaAlertThreshold')"
-                        v-model="nasDetailDraft.quotaAlertThreshold"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <ElTag v-else-if="quotaMonitoringThresholdLabel(detailRow)" type="info" size="small" effect="plain">
+                      <ElTag v-if="quotaMonitoringThresholdLabel(detailRow)" type="info" size="small" effect="plain">
                         {{ quotaMonitoringThresholdLabel(detailRow) }}
                       </ElTag>
-                      <span v-if="isNasFieldEditing('quotaAlertEnabled') || isNasFieldEditing('quotaAlertThreshold')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton
-                          text
-                          circle
-                          size="small"
-                          :title="t('common.cancel')"
-                          :disabled="busy"
-                          @click="cancelNasFieldEdit('quotaAlertEnabled'); cancelNasFieldEdit('quotaAlertThreshold')"
-                        >
-                          <X :size="14" />
-                        </ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginNasFieldEdit('quotaAlertEnabled'); beginNasFieldEdit('quotaAlertThreshold')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                 </div>
@@ -3319,28 +2596,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldName') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable repo-detail__inline-value">
-                      <ElInput
-                        v-if="proxyFsDetailDraft && isProxyFsFieldEditing('name')"
-                        v-model="proxyFsDetailDraft.name"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else class="hfl-detail-row__text">{{ detailRow.name }}</span>
-                      <ElTag :type="healthTagType(detailRow.health)" size="small">
-                        {{ repoHealthLabel(detailRow.health) }}
-                      </ElTag>
-                      <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
-                        {{ repoLifecycleLabel(detailRow.status) }}
-                      </ElTag>
-                      <span v-if="isProxyFsFieldEditing('name')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelProxyFsFieldEdit('name')"><X :size="14" /></ElButton>
+                    <span class="hfl-detail-row__value repo-detail__inline-value">
+                      <span class="repo-detail__name-summary">
+                        <span class="hfl-detail-row__text">{{ detailRow.name }}</span>
+                        <span class="repo-detail__name-summary-tags">
+                          <ElTag :type="healthTagType(detailRow.health)" size="small">
+                            {{ repoHealthLabel(detailRow.health) }}
+                          </ElTag>
+                          <ElTag :type="lifecycleTagType(detailRow.status)" size="small">
+                            {{ repoLifecycleLabel(detailRow.status) }}
+                          </ElTag>
+                        </span>
                       </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginProxyFsFieldEdit('name')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -3376,23 +2643,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldProxyNodeDir') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
-                      <ElInput
-                        v-if="proxyFsDetailDraft && isProxyFsFieldEditing('proxyNodeDir')"
-                        v-model="proxyFsDetailDraft.proxyNodeDir"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else>{{ localDiskRepositoryPath(detailRow) }}</span>
-                      <span v-if="isProxyFsFieldEditing('proxyNodeDir')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelProxyFsFieldEdit('proxyNodeDir')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginProxyFsFieldEdit('proxyNodeDir')">
-                        <Pencil :size="13" />
-                      </ElButton>
-                    </span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ localDiskRepositoryPath(detailRow) }}</span>
                   </div>
                 </div>
               </section>
@@ -3431,59 +2682,18 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldQuota') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                      <ElInput
-                        v-if="proxyFsDetailDraft && isProxyFsFieldEditing('capacityGb')"
-                        v-model="proxyFsDetailDraft.capacityGb"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <span v-else>{{ storageLimitLabel(detailRow) }}</span>
-                      <span v-if="isProxyFsFieldEditing('capacityGb')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton text circle size="small" :title="t('common.cancel')" :disabled="busy" @click="cancelProxyFsFieldEdit('capacityGb')"><X :size="14" /></ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginProxyFsFieldEdit('capacityGb')">
-                        <Pencil :size="13" />
-                      </ElButton>
-                    </span>
+                    <span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldQuotaAlert') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--editable repo-detail__tag-group">
-                      <ElSwitch v-if="proxyFsDetailDraft && isProxyFsFieldEditing('quotaAlertEnabled')" v-model="proxyFsDetailDraft.quotaAlertEnabled" :disabled="busy" />
+                    <span class="hfl-detail-row__value repo-detail__tag-group">
                       <HflBooleanStatusTag
-                        v-else
                         :value="quotaMonitoringEnabled(detailRow)"
                         :label="quotaMonitoringLabel(detailRow)"
                       />
-                      <ElInput
-                        v-if="proxyFsDetailDraft && isProxyFsFieldEditing('quotaAlertThreshold')"
-                        v-model="proxyFsDetailDraft.quotaAlertThreshold"
-                        size="small"
-                        class="hfl-detail-inline-edit__input"
-                        :disabled="busy"
-                      />
-                      <ElTag v-else-if="quotaMonitoringThresholdLabel(detailRow)" type="info" size="small" effect="plain">
+                      <ElTag v-if="quotaMonitoringThresholdLabel(detailRow)" type="info" size="small" effect="plain">
                         {{ quotaMonitoringThresholdLabel(detailRow) }}
                       </ElTag>
-                      <span v-if="isProxyFsFieldEditing('quotaAlertEnabled') || isProxyFsFieldEditing('quotaAlertThreshold')" class="hfl-detail-inline-edit__actions">
-                        <ElButton text circle size="small" :title="t('common.save')" :disabled="busy" @click="saveRepoDetailChanges"><Check :size="14" /></ElButton>
-                        <ElButton
-                          text
-                          circle
-                          size="small"
-                          :title="t('common.cancel')"
-                          :disabled="busy"
-                          @click="cancelProxyFsFieldEdit('quotaAlertEnabled'); cancelProxyFsFieldEdit('quotaAlertThreshold')"
-                        >
-                          <X :size="14" />
-                        </ElButton>
-                      </span>
-                      <ElButton v-else text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" :disabled="busy" @click="beginProxyFsFieldEdit('quotaAlertEnabled'); beginProxyFsFieldEdit('quotaAlertThreshold')">
-                        <Pencil :size="13" />
-                      </ElButton>
                     </span>
                   </div>
                 </div>
@@ -3502,25 +2712,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 :empty-text="t('repositoriesPage.associatedSourcesEmpty')"
                 class="hfl-list-table repo-associated-sources__table"
               >
-                <ElTableColumn :label="t('repositoriesPage.associatedSourceColSource')" min-width="260">
+                <ElTableColumn
+                  :label="t('repositoriesPage.associatedSourceColSource')"
+                  :min-width="isDirectNasAssociatedSources() ? 198 : 260"
+                >
                   <template #default="{ row }">
                     <div class="repo-associated-source-cell">
-                      <span class="repo-associated-source-cell__icon">
-                        <AgentPlatformBrandIcon
-                          v-if="row.source_kind !== 'nas'"
-                          :os="associatedSourcePlatform(row)"
-                        />
-                        <component
-                          v-else
-                          :is="nasMountProtocolIcon(associatedSourceProtocol(row))"
-                          :size="16"
-                          stroke-width="2.25"
-                        />
-                      </span>
                       <div class="repo-associated-source-cell__body">
                         <div class="repo-associated-source-cell__head">
                           <span class="repo-associated-source-cell__name">{{ row.source_name }}</span>
-                          <ElTag size="small" effect="plain">{{ associatedSourceTypeLabel(row) }}</ElTag>
+                        </div>
+                        <div class="repo-associated-source-cell__meta">
                           <ElTag
                             v-if="isDirectNasAssociatedSources()"
                             size="small"
@@ -3528,50 +2730,79 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                           >
                             {{ associatedSourceStatusLabel(row.status) }}
                           </ElTag>
-                        </div>
-                        <div
-                          v-if="isDirectNasAssociatedSources()"
-                          class="repo-associated-source-cell__line repo-associated-source-cell__line--muted"
-                        >
-                          {{ associatedSourceConnectionSecondary(row) }}
+                          <ElTag
+                            size="small"
+                            effect="plain"
+                          >
+                            {{ associatedSourceTypeLabel(row) }}
+                          </ElTag>
+                          <ElTooltip
+                            v-if="associatedSourceTraitLabel(row) !== DETAIL_EMPTY"
+                            :content="associatedSourceTraitLabel(row)"
+                            placement="top"
+                          >
+                            <span
+                              v-if="row.source_kind !== 'nas'"
+                              class="source-os-cell__icon-wrap repo-associated-source-cell__trait-icon"
+                            >
+                              <AgentPlatformBrandIcon :os="associatedSourcePlatform(row)" />
+                            </span>
+                            <span
+                              v-else
+                              class="repo-protocol-pill repo-protocol-pill--icon-only repo-associated-source-cell__trait-icon"
+                              :class="`repo-protocol-pill--${associatedSourceProtocol(row)}`"
+                            >
+                              <component
+                                :is="nasMountProtocolIcon(associatedSourceProtocol(row))"
+                                :size="12"
+                                stroke-width="2.25"
+                              />
+                            </span>
+                          </ElTooltip>
+                          <span v-else class="repo-associated-source-cell__trait-empty">
+                            {{ DETAIL_EMPTY }}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </template>
                 </ElTableColumn>
                 <ElTableColumn
-                  v-if="isDirectNasAssociatedSources()"
-                  :label="t('repositoriesPage.associatedSourceColMount')"
-                  min-width="320"
+                  :label="t('repositoriesPage.associatedSourceColEndpoint')"
+                  :min-width="isDirectNasAssociatedSources() ? 180 : 220"
                 >
                   <template #default="{ row }">
-                    <div class="repo-associated-mount-cell repo-associated-mount-cell--mapping">
-                      <span class="repo-associated-mount-cell__source hfl-table-mono">
-                        <template v-if="associatedNasMountSource(row) !== DETAIL_EMPTY">
-                          {{ associatedNasMountSource(row) }}
-                        </template>
-                        <template v-else>{{ DETAIL_EMPTY }}</template>
-                      </span>
-                      <span class="repo-associated-mount-cell__mounted-to">{{ t('repositoriesPage.detailMountedTo') }}</span>
-                      <span class="repo-associated-mount-cell__target hfl-table-mono">
-                        {{ associatedNasMountTarget(row) }}
-                      </span>
-                    </div>
+                    <FlowSourceConnectionCell :row="associatedSourceEndpointRow(row)" />
                   </template>
                 </ElTableColumn>
                 <ElTableColumn
-                  v-else
-                  :label="t('repositoriesPage.associatedSourceColHostProxy')"
-                  min-width="220"
+                  v-if="isDirectNasAssociatedSources()"
+                  :label="t('repositoriesPage.associatedSourceColMountPoint')"
+                  min-width="441"
                 >
                   <template #default="{ row }">
-                    <span>{{ associatedSourceHostProxyLabel(row) }}</span>
+                    <div class="repo-associated-mount-point-cell">
+                      <Folder
+                        :size="16"
+                        :stroke-width="2"
+                        class="repo-associated-mount-point-cell__icon"
+                      />
+                      <ElTooltip
+                        :content="associatedNasMountTarget(row)"
+                        :disabled="associatedNasMountTarget(row) === DETAIL_EMPTY"
+                        placement="top-start"
+                      >
+                        <span class="repo-associated-mount-point-cell__path hfl-table-mono">
+                          {{ associatedNasMountTarget(row) }}
+                        </span>
+                      </ElTooltip>
+                    </div>
                   </template>
                 </ElTableColumn>
                 <ElTableColumn
                   v-if="isDirectNasAssociatedSources()"
                   :label="t('repositoriesPage.associatedSourceColNasConnectivity')"
-                  min-width="190"
+                  min-width="171"
                 >
                   <template #default="{ row }">
                     <div class="repo-associated-health-cell">
@@ -3948,6 +3179,22 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
   gap: 8px;
 }
 
+.repo-detail__name-summary {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 180px;
+  align-items: start;
+  gap: 5px;
+}
+
+.repo-detail__name-summary-tags {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .repo-detail__tag-group {
   display: inline-flex;
   min-width: 0;
@@ -4100,23 +3347,8 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 .repo-associated-source-cell {
   display: grid;
   min-width: 0;
-  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 9px;
-}
-
-.repo-associated-source-cell__icon {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-primary);
-}
-
-.repo-associated-source-cell__icon .agent-platform-brand-icon {
-  width: 22px;
-  height: 22px;
 }
 
 .repo-associated-source-cell__body {
@@ -4133,6 +3365,13 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
   gap: 6px;
 }
 
+.repo-associated-source-cell__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
 .repo-associated-source-cell__name {
   min-width: 0;
   overflow: hidden;
@@ -4144,73 +3383,41 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
   white-space: nowrap;
 }
 
-.repo-associated-source-cell__line {
-  min-width: 0;
-  overflow: hidden;
-  color: rgb(51 65 85);
+.repo-associated-source-cell__trait-icon {
+  flex: 0 0 auto;
+}
+
+.repo-associated-source-cell__trait-empty {
+  color: rgb(100 116 139);
   font-size: 12px;
   line-height: 17px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.repo-associated-source-cell__line--muted {
-  color: rgb(100 116 139);
-}
-
-.repo-associated-mount-cell {
-  display: grid;
+.repo-associated-mount-point-cell {
+  display: flex;
   min-width: 0;
-  gap: 5px;
+  align-items: flex-start;
+  gap: 7px;
 }
 
-.repo-associated-mount-cell--mapping {
-  gap: 6px;
+.repo-associated-mount-point-cell__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: rgb(217 119 6);
 }
 
-.repo-associated-mount-cell__location,
-.repo-associated-mount-cell__subdir,
-.repo-associated-mount-cell__source,
-.repo-associated-mount-cell__target {
+.repo-associated-mount-point-cell__path {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
   color: rgb(30 41 59);
   font-size: 12px;
-  line-height: 17px;
+  line-height: 18px;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.repo-associated-mount-cell__subdir {
-  color: rgb(100 116 139);
-}
-
-.repo-associated-mount-cell__source,
-.repo-associated-mount-cell__target {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  min-height: 24px;
-  align-items: center;
-  padding: 2px 8px;
-  border: 1px solid var(--color-success-border);
-  border-radius: 6px;
-  background: var(--color-success-light);
-  color: var(--color-success);
-}
-
-.repo-associated-mount-cell__source {
-  border-color: var(--color-info-border);
-  background: var(--color-info-light);
-  color: var(--color-info);
-}
-
-.repo-associated-mount-cell__mounted-to {
-  color: var(--color-text-secondary);
-  font-family: var(--font-sans, Inter, ui-sans-serif, system-ui, sans-serif);
-  font-size: 12px;
-  line-height: 17px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .repo-associated-health-cell {
