@@ -48,6 +48,7 @@ def main() -> None:
         }
     ]
     relationships = []
+    files = []
     for index, image in enumerate(manifest.get("images", []), start=1):
         image_id = f"SPDXRef-ContainerImage-{index}"
         refs = image.get("refs") or []
@@ -84,6 +85,32 @@ def main() -> None:
             }
         )
 
+    default_tls = (manifest.get("artifacts") or {}).get("default_tls") or {}
+    for role, artifact in sorted(default_tls.items()):
+        file_id = "SPDXRef-File-DefaultTLS-" + role.replace("_", "-")
+        files.append(
+            {
+                "SPDXID": file_id,
+                "fileName": str(artifact["file"]),
+                "checksums": [
+                    {
+                        "algorithm": "SHA256",
+                        "checksumValue": str(artifact["sha256"]),
+                    }
+                ],
+                "licenseConcluded": "NOASSERTION",
+                "copyrightText": "NOASSERTION",
+                "comment": "Repository-pinned HyperFileLens default TLS " + role,
+            }
+        )
+        relationships.append(
+            {
+                "spdxElementId": "SPDXRef-Package-HyperFileLens",
+                "relationshipType": "CONTAINS",
+                "relatedSpdxElement": file_id,
+            }
+        )
+
     document = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
@@ -102,6 +129,7 @@ def main() -> None:
         },
         "documentDescribes": ["SPDXRef-Package-HyperFileLens"],
         "packages": packages,
+        "files": files,
         "relationships": relationships,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

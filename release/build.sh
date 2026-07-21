@@ -66,14 +66,46 @@ normalize_release_permissions() {
 	if [[ -d "${pkg_root}/payload/media/enroll-bootstrap" ]]; then
 		find "${pkg_root}/payload/media/enroll-bootstrap" -type f -exec chmod 755 {} +
 	fi
+	if [[ -f "${pkg_root}/deploy/nginx/certs/tls.key" ]]; then
+		chmod 600 "${pkg_root}/deploy/nginx/certs/tls.key"
+	fi
 }
 
 validate_release_security() {
 	local pkg_root=$1 bad=""
+	local cert_dir="${pkg_root}/deploy/nginx/certs"
+	local allowed_key="${cert_dir}/tls.key"
 	bad="$(find "${pkg_root}" \
 		\( -name '.env' -o -name '*.key' -o -name '*.pem' -o -name '*.p12' \
-		-o -name '*.pfx' -o -name 'id_rsa' \) -print -quit)"
+		-o -name '*.pfx' -o -name 'id_rsa' \) ! -path "${allowed_key}" -print -quit)"
 	[[ -z "${bad}" ]] || die "release package contains forbidden secret material: ${bad#${pkg_root}/}"
+	while IFS= read -r candidate; do
+		[[ "${candidate}" == "${allowed_key}" ]] && continue
+		bad="${candidate}"
+		break
+	done < <(
+		find "${pkg_root}" -type f -size -2M -exec \
+			grep -IlE -- '-----BEGIN ([A-Z0-9]+ )?PRIVATE KEY-----' {} + 2>/dev/null || true
+	)
+	[[ -z "${bad}" ]] \
+		|| die "release package contains an unapproved private key: ${bad#${pkg_root}/}"
+	for required in tls.crt tls.key root-ca.crt SHA256SUMS README.md; do
+		[[ -s "${cert_dir}/${required}" ]] \
+			|| die "release package is missing deploy/nginx/certs/${required}"
+	done
+	(
+		cd "${cert_dir}"
+		sha256sum --strict --check SHA256SUMS >/dev/null
+	) || die "release default TLS checksum validation failed"
+	[[ "$(stat -c '%a' "${allowed_key}")" == "600" ]] \
+		|| die "release default TLS private key must have mode 0600"
+	openssl verify -CAfile "${cert_dir}/root-ca.crt" "${cert_dir}/tls.crt" >/dev/null 2>&1 \
+		|| die "release default TLS certificate chain validation failed"
+	local cert_pub key_pub
+	cert_pub="$(openssl x509 -in "${cert_dir}/tls.crt" -pubkey -noout | sha256sum | cut -d' ' -f1)"
+	key_pub="$(openssl pkey -in "${allowed_key}" -pubout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	[[ "${cert_pub}" == "${key_pub}" ]] \
+		|| die "release default TLS certificate and key do not match"
 	for public_dir in \
 		"${pkg_root}/payload/media/agent-releases" \
 		"${pkg_root}/payload/media/enroll-bootstrap" \
@@ -84,6 +116,14 @@ validate_release_security() {
 			|| die "release download is not readable by the nginx worker: ${bad#${pkg_root}/}"
 	done
 	log "Release secret and download permission validation passed"
+}
+
+stage_default_tls_bundle() {
+	local pkg_root=$1
+	local source_dir="${ROOT}/deploy/nginx/certs"
+	local target_dir="${pkg_root}/deploy/nginx/certs"
+	mkdir -p "${target_dir}"
+	rsync -a --delete "${source_dir}/" "${target_dir}/"
 }
 
 require_value() {
@@ -864,6 +904,21 @@ for image in images:
         raise SystemExit(f"missing image archive: {image['file']}")
     image["sha256"] = sha256_file(archive)
 
+tls_artifacts = {}
+for role, relative in (
+    ("server_certificate", "deploy/nginx/certs/tls.crt"),
+    ("server_private_key", "deploy/nginx/certs/tls.key"),
+    ("root_ca", "deploy/nginx/certs/root-ca.crt"),
+):
+    path = pkg_root / relative
+    if not path.is_file():
+        raise SystemExit(f"missing default TLS artifact: {relative}")
+    tls_artifacts[role] = {
+        "file": relative,
+        "size": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+
 manifest = {
     "product": "hyperfilelens",
     "version": version,
@@ -886,6 +941,7 @@ manifest = {
     "artifacts": {
         "payload_tree_sha256": payload_sha,
         "agent_version": version,
+        "default_tls": tls_artifacts,
     },
 }
 pathlib.Path(out_path).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -967,12 +1023,17 @@ Set \`SOURCELENS_MODE=external\` and \`LENS_BASE_URL=https://sourcelens.example.
 
 The installer prints the effective Tenant, Platform Operations, Django Admin, and bundled SourceLens Console URLs from the six host-publishing settings in \`.env\`.
 
-After \`install\`, the script prints the console URL and generated admin credentials from \`.env\`:
+After \`install\`, the script prints the console URL and fixed initial login credentials from \`.env\`:
 
-- \`SEED_ADMIN_EMAIL\` comes from the template and \`SEED_ADMIN_PASSWORD\` is generated during installation
+- HFL defaults to \`admin@hyperfilelens.com\` / \`Admin@123\`
+- bundled SourceLens defaults to \`admin\` / \`adminpassword\`
 - \`SEED_INITIAL_DATA=1\` enables first-run seeding via the worker service
 
-Change the default password after first login.
+Passwords changed in either database are not reset by upgrades. Change the public defaults after first login unless external access controls provide the required protection.
+
+The package includes the repository-pinned TLS identity under \`deploy/nginx/certs/\`.
+Install \`root-ca.crt\` into a client trust store to remove warnings for covered local names.
+Existing complete \`tls.crt\` / \`tls.key\` pairs are preserved during upgrade; an incomplete pair stops the upgrade before services are changed.
 
 ## Upgrade
 
@@ -1071,6 +1132,7 @@ main() {
 	cp "${ROOT}/deploy/docker-compose.yml" "${pkg_root}/docker-compose.yml"
 	cp "${ROOT}/.env.example" "${pkg_root}/.env.example"
 	cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
+	stage_default_tls_bundle "${pkg_root}"
 	cp "${ROOT}/deploy/nginx/default.conf" "${pkg_root}/deploy/nginx/default.conf"
 	mkdir -p "${pkg_root}/deploy/nginx/snippets"
 	rsync -a "${ROOT}/deploy/nginx/snippets/" "${pkg_root}/deploy/nginx/snippets/"
@@ -1098,6 +1160,12 @@ main() {
 	tar_create_gz "${tar_tmp}" "${STAGING_BASE}" "${pkg_name}"
 	mv -f "${tar_tmp}" "${tar_path}"
 	chmod 644 "${tar_path}"
+	cp "${ROOT}/deploy/nginx/certs/root-ca.crt" "${DIST_DIR}/hyperfilelens-root-ca.crt"
+	chmod 644 "${DIST_DIR}/hyperfilelens-root-ca.crt"
+	(
+		cd "${DIST_DIR}"
+		sha256sum "$(basename "${tar_path}")" hyperfilelens-root-ca.crt >SHA256SUMS
+	)
 
 	log "Package sizes:"
 	du -sh "${images_dir}" "${pkg_root}/payload" "${tar_path}" || true

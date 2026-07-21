@@ -38,7 +38,7 @@ class Command(BaseCommand):
         admin_password = str(opts["admin_password"])
 
         User = get_user_model()
-        user, _created = User.objects.get_or_create(
+        user, created = User.objects.get_or_create(
             username=admin_email,
             defaults={
                 "email": admin_email,
@@ -50,7 +50,8 @@ class Command(BaseCommand):
         user.email = admin_email
         user.is_active = True
         apply_platform_staff(user, True)
-        user.set_password(admin_password)
+        if created:
+            user.set_password(admin_password)
         user.save()
 
         Profile.objects.update_or_create(

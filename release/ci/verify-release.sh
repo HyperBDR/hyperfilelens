@@ -45,8 +45,28 @@ for image in manifest.get("images", []):
     digest = checksum.hexdigest()
     if digest != image.get("sha256"):
         raise SystemExit(f"image checksum mismatch: {image['file']}")
-print(f"verified {len(manifest.get('images', []))} image archives")
+tls_artifacts = (manifest.get("artifacts") or {}).get("default_tls") or {}
+for artifact in tls_artifacts.values():
+    path = root / artifact["file"]
+    if not path.is_file():
+        raise SystemExit(f"missing default TLS artifact: {artifact['file']}")
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    if checksum != artifact.get("sha256"):
+        raise SystemExit(f"default TLS checksum mismatch: {artifact['file']}")
+if len(tls_artifacts) != 3:
+    raise SystemExit("release manifest must describe three default TLS artifacts")
+print(
+    f"verified {len(manifest.get('images', []))} image archives "
+    f"and {len(tls_artifacts)} default TLS artifacts"
+)
 PY
+
+(
+	cd "${pkg_root}/deploy/nginx/certs"
+	sha256sum --strict --check SHA256SUMS
+)
+openssl verify -CAfile "${pkg_root}/deploy/nginx/certs/root-ca.crt" \
+	"${pkg_root}/deploy/nginx/certs/tls.crt" >/dev/null
 
 while IFS= read -r image_archive; do
 	gzip -t "${image_archive}"

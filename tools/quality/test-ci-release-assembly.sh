@@ -116,12 +116,19 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	fi
 	jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length) == 7' \
 		SBOM.spdx.json >/dev/null
+	jq -e '(.files | length) == 3' SBOM.spdx.json >/dev/null
 	sha256sum -c SHA256SUMS
+	[[ -s hyperfilelens-root-ca.crt ]]
 	first="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
 	[[ -n "${first}" ]]
 	archive="${first%.part-000}"
 	cat "${archive}.part-"* >"${archive}"
 	tar -tzf "${archive}" | grep -E '/sync-env\.py$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.crt$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.key$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/root-ca\.crt$' >/dev/null
+	key_mode="$(tar -tvzf "${archive}" | awk '$NF ~ /\/deploy\/nginx\/certs\/tls\.key$/ {mode=$1} END {print mode}')"
+	[[ "${key_mode}" == "-rw-------" ]]
 	tar -tzf "${archive}" | grep -E '/hfl-agent-1\.2\.3-linux-amd64-ubuntu2004\.tar\.gz$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/hfl-agent-1\.2\.3-linux-amd64-ubuntu2404\.tar\.gz$' >/dev/null
 	"${ROOT}/release/ci/verify-release.sh" --archive "$(realpath "${archive}")"

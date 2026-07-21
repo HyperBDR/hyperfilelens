@@ -70,7 +70,7 @@ Commands:
 
 Prepare (up / restart) always includes:
   .env (create from .env.example if missing)
-  TLS certs (self-signed if missing)
+  Repository-pinned default TLS certificates
   Kopia .deb for the backend development dependency image
   backend source bind mount with automatic API/worker/scheduler restart
   frontend source bind mount with Vite HMR and persistent node_modules
@@ -262,11 +262,14 @@ ensure_env_file() {
 	local sync_script="${ROOT}/tools/config/sync_env.py"
 	[[ -f "${example}" ]] || die ".env.example not found"
 	if [[ -f "${env_file}" ]]; then
+		chmod 600 "${env_file}"
 		[[ -f "${sync_script}" ]] || die "environment sync script not found"
 		python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
+		chmod 600 "${env_file}"
 		log ".env exists; missing keys synchronized"
 	else
 		cp "${example}" "${env_file}"
+		chmod 600 "${env_file}"
 		log "Created .env from .env.example"
 	fi
 }
@@ -274,19 +277,17 @@ ensure_env_file() {
 ensure_tls_certs() {
 	local cert="${ROOT}/deploy/nginx/certs/tls.crt"
 	local key="${ROOT}/deploy/nginx/certs/tls.key"
-	mkdir -p "${ROOT}/deploy/nginx/certs"
-	if [[ -s "${cert}" && -s "${key}" ]]; then
-		log "TLS certificates present"
-		return 0
-	fi
-	command -v openssl >/dev/null 2>&1 || die "openssl required for dev TLS certificates"
-	log "Generating self-signed TLS certificate"
-	openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-		-keyout "${key}" \
-		-out "${cert}" \
-		-subj "/CN=localhost" \
-		-addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1" 2>/dev/null
+	[[ -s "${cert}" && -s "${key}" ]] \
+		|| die "repository-pinned TLS certificate and key are required under deploy/nginx/certs"
+	command -v openssl >/dev/null 2>&1 || die "openssl required to validate dev TLS certificates"
+	local cert_pub key_pub
+	cert_pub="$(openssl x509 -in "${cert}" -pubkey -noout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	key_pub="$(openssl pkey -in "${key}" -pubout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	[[ -n "${cert_pub}" && "${cert_pub}" == "${key_pub}" ]] \
+		|| die "repository-pinned TLS certificate and key do not match"
+	chmod 644 "${cert}"
 	chmod 600 "${key}"
+	log "Repository-pinned TLS certificates validated"
 }
 
 ensure_data_dirs() {
