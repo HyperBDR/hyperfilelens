@@ -5,9 +5,11 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import AppLogoMark from '../../components/AppLogoMark.vue'
+import Sidebar from '../../components/Sidebar.vue'
 import { useTheme } from '../../composables/useTheme'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { applyThemeVars } from '../composables/applyThemeVars'
+import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
 import '../styles/platform-ops-ui.css'
 
 const { t } = useI18n()
@@ -16,6 +18,8 @@ const { theme } = useTheme()
 
 const tenantUrl = ref('')
 const themeVersion = ref(0)
+const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
+const fallbackMenuItems = usePlatformOpsSideNav()
 
 const routeSkeletonShowsCards = computed(() => route.path.startsWith('/platform-ops/monitoring'))
 
@@ -45,6 +49,18 @@ function goTenantConsole() {
   if (!tenantUrl.value) return
   window.location.assign(tenantUrl.value)
 }
+
+function toggleFallbackSidebar() {
+  fallbackSidebarCollapsed.value = !fallbackSidebarCollapsed.value
+  localStorage.setItem('sidebar-collapsed', String(fallbackSidebarCollapsed.value))
+}
+
+watch(
+  () => route.path,
+  () => {
+    fallbackSidebarCollapsed.value = localStorage.getItem('sidebar-collapsed') === 'true'
+  },
+)
 </script>
 
 <template>
@@ -71,41 +87,55 @@ function goTenantConsole() {
         <Suspense :key="route.path" timeout="0">
           <component :is="Component" />
           <template #fallback>
-            <div class="platform-ops-main__route-fallback" role="status" aria-label="Loading">
-              <div
-                class="platform-ops-route-skeleton"
-                :class="{ 'platform-ops-route-skeleton--with-cards': routeSkeletonShowsCards }"
-                aria-hidden="true"
-              >
-                <div class="platform-ops-route-skeleton__header">
-                  <span class="platform-ops-route-skeleton__title"></span>
-                  <div class="platform-ops-route-skeleton__actions">
-                    <span></span>
-                    <span></span>
+            <div
+              class="platform-ops-main__route-fallback"
+              :class="{ 'platform-ops-main__route-fallback--collapsed': fallbackSidebarCollapsed }"
+              role="status"
+              aria-label="Loading"
+            >
+              <div class="platform-ops-main__route-fallback-side">
+                <Sidebar
+                  :collapsed="fallbackSidebarCollapsed"
+                  :menus="fallbackMenuItems"
+                  @toggle="toggleFallbackSidebar"
+                />
+              </div>
+              <section class="platform-ops-main__route-fallback-content">
+                <div
+                  class="platform-ops-route-skeleton"
+                  :class="{ 'platform-ops-route-skeleton--with-cards': routeSkeletonShowsCards }"
+                  aria-hidden="true"
+                >
+                  <div class="platform-ops-route-skeleton__header">
+                    <span class="platform-ops-route-skeleton__title"></span>
+                    <div class="platform-ops-route-skeleton__actions">
+                      <span></span>
+                      <span></span>
+                    </div>
                   </div>
-                </div>
-                <div v-if="routeSkeletonShowsCards" class="platform-ops-route-skeleton__cards">
-                  <span v-for="idx in 4" :key="`ops-card-${idx}`" class="platform-ops-route-skeleton__card">
-                    <i></i>
-                    <b></b>
-                    <em></em>
-                  </span>
-                </div>
-                <div class="platform-ops-route-skeleton__panel">
-                  <div class="platform-ops-route-skeleton__toolbar">
-                    <span></span>
-                    <i></i>
-                  </div>
-                  <div class="platform-ops-route-skeleton__rows">
-                    <span v-for="idx in 8" :key="`ops-row-${idx}`">
+                  <div v-if="routeSkeletonShowsCards" class="platform-ops-route-skeleton__cards">
+                    <span v-for="idx in 4" :key="`ops-card-${idx}`" class="platform-ops-route-skeleton__card">
                       <i></i>
-                      <i></i>
-                      <i></i>
-                      <i></i>
+                      <b></b>
+                      <em></em>
                     </span>
                   </div>
+                  <div class="platform-ops-route-skeleton__panel">
+                    <div class="platform-ops-route-skeleton__toolbar">
+                      <span></span>
+                      <i></i>
+                    </div>
+                    <div class="platform-ops-route-skeleton__rows">
+                      <span v-for="idx in 8" :key="`ops-row-${idx}`">
+                        <i></i>
+                        <i></i>
+                        <i></i>
+                        <i></i>
+                      </span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </section>
             </div>
           </template>
         </Suspense>
@@ -179,10 +209,30 @@ function goTenantConsole() {
 }
 
 .platform-ops-main__route-fallback {
+  display: grid;
+  grid-template-columns: 238px minmax(0, 1fr);
+  min-height: calc(100vh - var(--topnav-height, 52px));
+  background: var(--content-bg, #f4f4f7);
+}
+
+.platform-ops-main__route-fallback--collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+.platform-ops-main__route-fallback-side {
+  position: sticky;
+  top: var(--topnav-height, 52px);
+  display: flex;
+  height: calc(100vh - var(--topnav-height, 52px));
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.platform-ops-main__route-fallback-content {
   display: block;
+  min-width: 0;
   min-height: calc(100vh - var(--topnav-height, 52px));
   padding: 20px 24px 28px;
-  background: var(--content-bg, #f4f4f7);
   overflow: hidden;
 }
 
