@@ -14,7 +14,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DEFAULT_TIMEOUT=${PIP_TIMEOUT} \
     TZ=UTC \
     VIRTUAL_ENV=/opt/venv \
@@ -24,8 +23,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/opt/venv/bin:${PATH}"
 
 RUN if [ -n "${APT_MIRROR}" ]; then \
+      apt-get update && \
+      apt-get install -y --no-install-recommends ca-certificates && \
       sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR%/}/ubuntu/|g" /etc/apt/sources.list && \
       sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR%/}/ubuntu/|g" /etc/apt/sources.list ; \
+      if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
+        sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR%/}/ubuntu/|g; s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR%/}/ubuntu/|g" \
+          /etc/apt/sources.list.d/ubuntu.sources ; \
+      fi ; \
     fi \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -61,12 +66,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
  && pip --version \
  && PIP_CACHE_DIR=/root/.cache/pip pip install --retries 15 --timeout "${PIP_TIMEOUT}" "uv==0.10.2" \
  && cd /tmp/backend-project \
- && if [ -n "${PIP_INDEX_URL}" ]; then export UV_DEFAULT_INDEX="${PIP_INDEX_URL}"; fi \
- && if [ -n "${PIP_TRUSTED_HOST}" ]; then export UV_INSECURE_HOST="${PIP_TRUSTED_HOST}"; fi \
- && uv sync --locked --no-dev --no-install-project --inexact \
+ && uv export --quiet --locked --no-dev --no-emit-project --output-file /tmp/runtime-requirements.txt \
+ && PIP_CACHE_DIR=/root/.cache/pip pip install --retries 15 --timeout "${PIP_TIMEOUT}" --require-hashes -r /tmp/runtime-requirements.txt \
  && uv export --quiet --locked --only-group dev --no-emit-project --output-file /tmp/dev-requirements.txt \
  && pip uninstall -y uv \
- && rm -rf /tmp/backend-project
+ && rm -rf /tmp/backend-project /tmp/runtime-requirements.txt
 
 # Local development keeps dependencies in the image and bind-mounts src/backend.
 # watchfiles restarts API, worker, and scheduler processes after Python changes.

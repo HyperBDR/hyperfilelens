@@ -112,7 +112,14 @@ Examples:
   ./dev/stack.sh down
   ./dev/stack.sh restart
   ./dev/stack.sh restart --force
-  ./dev/stack.sh up --github-download-mirror https://ghfast.top --docker-download-mirror docker.m.daocloud.io --apt-mirror https://mirrors.tuna.tsinghua.edu.cn
+  ./dev/stack.sh up \
+    --github-download-mirror https://ghfast.top \
+    --docker-download-mirror docker.m.daocloud.io \
+    --apt-mirror https://mirrors.tuna.tsinghua.edu.cn \
+    --go-proxy https://goproxy.cn,direct \
+    --go-sumdb sum.golang.google.cn \
+    --pip-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    --npm-registry https://registry.npmmirror.com
 USAGE
 }
 

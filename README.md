@@ -193,10 +193,16 @@ options. For example:
 ./dev/stack.sh up \
   --github-download-mirror https://ghfast.top \
   --docker-download-mirror docker.m.daocloud.io \
-  --apt-mirror https://mirrors.tuna.tsinghua.edu.cn
+  --apt-mirror https://mirrors.tuna.tsinghua.edu.cn \
+  --go-proxy https://goproxy.cn,direct \
+  --go-sumdb sum.golang.google.cn \
+  --pip-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  --npm-registry https://registry.npmmirror.com
 ```
 
 Third-party mirrors are examples only and are never enabled automatically.
+The backend keeps `uv.lock` as the single dependency lock and uses the selected
+Python index only to download hash-verified packages exported from that lock.
 
 ## SourceLens Integration
 
