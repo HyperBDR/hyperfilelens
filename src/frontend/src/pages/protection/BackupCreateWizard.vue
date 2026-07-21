@@ -11735,30 +11735,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-height: 0;
   overflow-y: auto;
   padding: 18px 22px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar) {
-  width: 6px;
-  height: 6px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-track),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb) {
-  background: rgba(89, 89, 89, 0.3);
-  border-radius: 4px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover) {
-  background: rgba(89, 89, 89, 0.5);
 }
 
 :global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__footer),
@@ -11928,30 +11904,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 24px 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar) {
-  width: 6px;
-  height: 6px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-track),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb) {
-  background: rgba(89, 89, 89, 0.3);
-  border-radius: 4px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover) {
-  background: rgba(89, 89, 89, 0.5);
 }
 
 :global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__footer),

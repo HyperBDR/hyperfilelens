@@ -204,31 +204,11 @@ watch(
 }
 
 :global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar) {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
   width: 130px;
 }
 
 :global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar + .el-picker-panel__body) {
   margin-left: 130px;
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar) {
-  width: 6px;
-  height: 6px;
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar-thumb) {
-  border-radius: 4px;
-  background: rgba(89, 89, 89, 0.3);
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar-thumb:hover) {
-  background: rgba(89, 89, 89, 0.5);
 }
 
 :global(.hfl-date-time-range-picker__popper .el-picker-panel__footer) {

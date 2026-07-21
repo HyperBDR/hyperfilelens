@@ -1051,111 +1051,26 @@ a:hover {
 /* ============================================
    Scrollbar (matching Element Plus el-scrollbar__bar style)
    ============================================ */
-html,
-body,
-.scrollbar,
-.page-body,
-.el-scrollbar__wrap,
-.el-table__body-wrapper,
-.el-select-dropdown__wrap,
-.el-cascader-menu,
-.el-dialog__body,
-.el-drawer__body,
-.el-drawer *,
-.el-popover,
-.hfl-filter-rules-popover__content,
-.hfl-filter-rules-popover__lines,
-.create-filter-rules-preview,
-.hfl-dir-tree,
-.create-table-info-popover--dirs,
-.dp-added-dir-list {
+* {
   scrollbar-width: thin;
   scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
 }
 
-html::-webkit-scrollbar,
-body::-webkit-scrollbar,
-.scrollbar::-webkit-scrollbar,
-.page-body::-webkit-scrollbar,
-.el-scrollbar__wrap::-webkit-scrollbar,
-.el-table__body-wrapper::-webkit-scrollbar,
-.el-select-dropdown__wrap::-webkit-scrollbar,
-.el-cascader-menu::-webkit-scrollbar,
-.el-dialog__body::-webkit-scrollbar,
-.el-drawer__body::-webkit-scrollbar,
-.el-drawer *::-webkit-scrollbar,
-.el-popover::-webkit-scrollbar,
-.hfl-filter-rules-popover__content::-webkit-scrollbar,
-.hfl-filter-rules-popover__lines::-webkit-scrollbar,
-.create-filter-rules-preview::-webkit-scrollbar,
-.hfl-dir-tree::-webkit-scrollbar,
-.create-table-info-popover--dirs::-webkit-scrollbar,
-.dp-added-dir-list::-webkit-scrollbar {
+*::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-html::-webkit-scrollbar-track,
-body::-webkit-scrollbar-track,
-.scrollbar::-webkit-scrollbar-track,
-.page-body::-webkit-scrollbar-track,
-.el-scrollbar__wrap::-webkit-scrollbar-track,
-.el-table__body-wrapper::-webkit-scrollbar-track,
-.el-select-dropdown__wrap::-webkit-scrollbar-track,
-.el-cascader-menu::-webkit-scrollbar-track,
-.el-dialog__body::-webkit-scrollbar-track,
-.el-drawer__body::-webkit-scrollbar-track,
-.el-drawer *::-webkit-scrollbar-track,
-.el-popover::-webkit-scrollbar-track,
-.hfl-filter-rules-popover__content::-webkit-scrollbar-track,
-.hfl-filter-rules-popover__lines::-webkit-scrollbar-track,
-.create-filter-rules-preview::-webkit-scrollbar-track,
-.hfl-dir-tree::-webkit-scrollbar-track,
-.create-table-info-popover--dirs::-webkit-scrollbar-track,
-.dp-added-dir-list::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
 
-html::-webkit-scrollbar-thumb,
-body::-webkit-scrollbar-thumb,
-.scrollbar::-webkit-scrollbar-thumb,
-.page-body::-webkit-scrollbar-thumb,
-.el-scrollbar__wrap::-webkit-scrollbar-thumb,
-.el-table__body-wrapper::-webkit-scrollbar-thumb,
-.el-select-dropdown__wrap::-webkit-scrollbar-thumb,
-.el-cascader-menu::-webkit-scrollbar-thumb,
-.el-dialog__body::-webkit-scrollbar-thumb,
-.el-drawer__body::-webkit-scrollbar-thumb,
-.el-drawer *::-webkit-scrollbar-thumb,
-.el-popover::-webkit-scrollbar-thumb,
-.hfl-filter-rules-popover__content::-webkit-scrollbar-thumb,
-.hfl-filter-rules-popover__lines::-webkit-scrollbar-thumb,
-.create-filter-rules-preview::-webkit-scrollbar-thumb,
-.hfl-dir-tree::-webkit-scrollbar-thumb,
-.create-table-info-popover--dirs::-webkit-scrollbar-thumb,
-.dp-added-dir-list::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background: rgba(89, 89, 89, 0.3);
   border-radius: 4px;
 }
 
-html::-webkit-scrollbar-thumb:hover,
-body::-webkit-scrollbar-thumb:hover,
-.scrollbar::-webkit-scrollbar-thumb:hover,
-.page-body::-webkit-scrollbar-thumb:hover,
-.el-scrollbar__wrap::-webkit-scrollbar-thumb:hover,
-.el-table__body-wrapper::-webkit-scrollbar-thumb:hover,
-.el-select-dropdown__wrap::-webkit-scrollbar-thumb:hover,
-.el-cascader-menu::-webkit-scrollbar-thumb:hover,
-.el-dialog__body::-webkit-scrollbar-thumb:hover,
-.el-drawer__body::-webkit-scrollbar-thumb:hover,
-.el-drawer *::-webkit-scrollbar-thumb:hover,
-.el-popover::-webkit-scrollbar-thumb:hover,
-.hfl-filter-rules-popover__content::-webkit-scrollbar-thumb:hover,
-.hfl-filter-rules-popover__lines::-webkit-scrollbar-thumb:hover,
-.create-filter-rules-preview::-webkit-scrollbar-thumb:hover,
-.hfl-dir-tree::-webkit-scrollbar-thumb:hover,
-.create-table-info-popover--dirs::-webkit-scrollbar-thumb:hover,
-.dp-added-dir-list::-webkit-scrollbar-thumb:hover {
+*::-webkit-scrollbar-thumb:hover {
   background: rgba(89, 89, 89, 0.5);
 }
 

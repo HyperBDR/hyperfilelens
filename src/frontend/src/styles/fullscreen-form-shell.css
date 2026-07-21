@@ -88,39 +88,6 @@
   background: #f2f3f5;
 }
 
-/* Shared gray scrollbar, matching Element Plus scrollbar density. */
-.fullscreen-form-page::-webkit-scrollbar,
-.fullscreen-form-main::-webkit-scrollbar,
-.fullscreen-form-scroll::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.fullscreen-form-page::-webkit-scrollbar-track,
-.fullscreen-form-main::-webkit-scrollbar-track,
-.fullscreen-form-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.fullscreen-form-page::-webkit-scrollbar-thumb,
-.fullscreen-form-main::-webkit-scrollbar-thumb,
-.fullscreen-form-scroll::-webkit-scrollbar-thumb {
-  border-radius: 4px;
-  background: #c9cdd4;
-}
-
-.fullscreen-form-page::-webkit-scrollbar-thumb:hover,
-.fullscreen-form-main::-webkit-scrollbar-thumb:hover,
-.fullscreen-form-scroll::-webkit-scrollbar-thumb:hover {
-  background: #86909c;
-}
-
-.fullscreen-form-main,
-.fullscreen-form-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: #c9cdd4 transparent;
-}
-
 .fullscreen-form-header {
   position: relative;
   z-index: 1;
