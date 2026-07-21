@@ -450,6 +450,20 @@ def ensure_lensnode_for_gateway(
         if update_fields:
             link.save(update_fields=[*update_fields, "updated_at"])
 
+    if is_platform and not link.is_platform_default:
+        from apps.node.services.internal.local_platform_gateway import (
+            is_local_platform_gateway_metadata,
+        )
+
+        has_platform_default = LensGatewayLink.objects.filter(
+            organization=org,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            is_platform_default=True,
+        ).exclude(pk=link.pk).exists()
+        if is_local_platform_gateway_metadata(gateway.metadata) and not has_platform_default:
+            link.is_platform_default = True
+            link.save(update_fields=["is_platform_default", "updated_at"])
+
     if link.sl_lensnode_uuid:
         return link
 

@@ -166,6 +166,9 @@ services:
   lensnode:
     image: ${image}
     restart: unless-stopped
+    labels:
+      com.hyperfilelens.managed: "true"
+      com.hyperfilelens.component: "gateway-lensnode"
 ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_NAME: ${LENSNODE_NAME}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN}

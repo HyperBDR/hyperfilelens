@@ -37,6 +37,11 @@ on:
         description: Require Turnstile on the SaaS deployment target
         required: true
         type: boolean
+      platform_gateway_auto_deploy:
+        description: Automatically deploy an HFL-managed local platform Gateway
+        required: false
+        default: false
+        type: boolean
     secrets:
       ssh_private_key:
         description: SSH private key for the deployment target
@@ -84,8 +89,9 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
 
-      - name: Stage Turnstile runtime configuration
+      - name: Stage runtime configuration
         env:
+          HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ inputs.platform_gateway_auto_deploy }}
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
           TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
@@ -96,6 +102,7 @@ jobs:
           trap 'rm -f -- "$runtime_env"' EXIT
           umask 077
           printf '%s\n' \
+            "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=$HFL_PLATFORM_GATEWAY_AUTO_DEPLOY" \
             "TURNSTILE_ENABLED=$TURNSTILE_ENABLED" \
             "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \
             "TURNSTILE_SECRET_KEY=$TURNSTILE_SECRET_KEY" \

@@ -269,6 +269,10 @@ grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy
 grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
+grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/null
+grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Post-deploy internal health checks' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -282,6 +286,7 @@ if grep -F 'APP_PUBLIC_HOST' "${ROOT}/.github/workflows/deploy_target.yml" >/dev
 fi
 
 installer="${ROOT}/deploy/installer/install.sh"
+grep -F 'platform-gateway ensure' "${installer}" >/dev/null
 materialize_body="$(sed -n '/^materialize_to_install_dir()/,/^}/p' "${installer}")"
 grep -F -- '--checksum' <<<"${materialize_body}" >/dev/null
 grep -F -- '--delete' <<<"${materialize_body}" >/dev/null

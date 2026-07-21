@@ -134,6 +134,11 @@ def owned_container(labels):
         return any(under(path, install_dir) for path in paths)
     if project in {"hyperfilelens-sourcelens", "sourcelens"}:
         return any(under(path, sl_dir) for path in paths)
+    if project == "hyperfilelens-gateway":
+        return (
+            labels.get("com.hyperfilelens.managed") == "true"
+            and labels.get("com.hyperfilelens.component") == "gateway-lensnode"
+        )
     return False
 
 
@@ -170,6 +175,7 @@ for network in read("networks.json"):
     ownership_marker = name in owned_networks or labels.get("com.hyperfilelens.managed") == "true" or project in {
         "hyperfilelens",
         "hyperfilelens-sourcelens",
+        "hyperfilelens-gateway",
     }
     if ownership_marker and attached and set(attached).issubset(owned_container_ids):
         continue
@@ -335,7 +341,7 @@ else
 fi
 
 if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
-	printf '[deploy] Applying optional public URL and Turnstile configuration\n'
+	printf '[deploy] Applying optional public URL and runtime feature configuration\n'
 	env_backup="${work}/env-before-optional-config"
 	cp -p "${INSTALL_DIR}/.env" "${env_backup}"
 	python3 - "${INSTALL_DIR}/.env" "${RUNTIME_ENV_FILE}" "${PUBLIC_URL}" "${DIRECT_HOST}" <<'PY'
@@ -349,7 +355,12 @@ env_path = pathlib.Path(sys.argv[1])
 staged_path = pathlib.Path(sys.argv[2])
 public_url = sys.argv[3].strip()
 direct_host = sys.argv[4].strip()
-allowed = {"TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"}
+allowed = {
+    "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
+    "TURNSTILE_ENABLED",
+    "TURNSTILE_SITE_KEY",
+    "TURNSTILE_SECRET_KEY",
+}
 values = {}
 for raw_line in staged_path.read_text(encoding="utf-8").splitlines():
     if not raw_line or raw_line.startswith("#"):
@@ -368,6 +379,12 @@ for line in lines:
         current[key] = value
 
 updates = {}
+platform_gateway_auto_deploy = values.get("HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", "").lower()
+if platform_gateway_auto_deploy in {"true", "false"}:
+    updates["HFL_PLATFORM_GATEWAY_AUTO_DEPLOY"] = platform_gateway_auto_deploy
+else:
+    print("[deploy] WARNING: invalid platform Gateway auto-deploy value; preserving installed value")
+
 turnstile_enabled = values.get("TURNSTILE_ENABLED", "").lower()
 if turnstile_enabled in {"true", "false"}:
     updates["TURNSTILE_ENABLED"] = turnstile_enabled
@@ -486,6 +503,8 @@ PY
 			|| { printf 'ERROR: failed to restore healthy HFL services after optional configuration rollback\n' >&2; exit 1; }
 	fi
 fi
+
+bash "${INSTALL_DIR}/install.sh" platform-gateway ensure
 
 if verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
 	shared_host_guard_verified=1
