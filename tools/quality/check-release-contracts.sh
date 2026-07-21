@@ -135,6 +135,20 @@ if grep -F 'celery -A common inspect ping' <<<"${worker_healthcheck}" >/dev/null
 	exit 1
 fi
 
+backend_dockerfile="${ROOT}/deploy/docker/backend.Dockerfile"
+grep -F '/etc/apt/sources.list.d/ubuntu.sources' "${backend_dockerfile}" >/dev/null
+grep -F 'uv export --quiet --locked --no-dev --no-emit-project --output-file /tmp/runtime-requirements.txt' \
+	"${backend_dockerfile}" >/dev/null
+grep -F -- '--require-hashes -r /tmp/runtime-requirements.txt' "${backend_dockerfile}" >/dev/null
+if grep -F 'UV_DEFAULT_INDEX' "${backend_dockerfile}" >/dev/null; then
+	printf 'ERROR: backend build must not bind the official uv.lock to a download mirror\n' >&2
+	exit 1
+fi
+if grep -F 'PIP_NO_CACHE_DIR' "${backend_dockerfile}" >/dev/null; then
+	printf 'ERROR: backend build must not disable its BuildKit-managed pip cache\n' >&2
+	exit 1
+fi
+
 sourcelens_image_builder="${ROOT}/release/ci/build-sourcelens-image.sh"
 grep -F 'target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"' \
 	"${sourcelens_image_builder}" >/dev/null
