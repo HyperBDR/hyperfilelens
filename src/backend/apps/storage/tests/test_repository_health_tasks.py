@@ -28,6 +28,7 @@ from apps.storage.services.internal.repository_health import (
 from apps.storage.tasks import (
     check_storage_repository_health,
     dispatch_repository_health_checks,
+    enqueue_startup_repository_health_checks,
 )
 
 
@@ -162,17 +163,19 @@ class RepositoryHealthTaskTests(TestCase):
         self.assertTrue(result["locked"])
         cache_delete.assert_not_called()
 
+    @mock.patch("apps.storage.tasks.check_storage_repository_health.apply_async")
     @mock.patch("apps.storage.tasks.cache.delete")
     @mock.patch("apps.storage.tasks.cache.add", return_value=True)
     @mock.patch(
         "apps.storage.tasks.probe_repository_health",
         side_effect=RuntimeError("network down"),
     )
-    def test_single_failure_immediately_marks_only_health_offline(
+    def test_single_failure_keeps_health_and_schedules_one_retry(
         self,
         _probe,
         _cache_add,
         cache_delete,
+        apply_async,
     ):
         checked_at = timezone.now() - timedelta(hours=1)
         repository = self._repository(
@@ -188,13 +191,44 @@ class RepositoryHealthTaskTests(TestCase):
         result = check_storage_repository_health.run(repository_id=repository.id)
 
         repository.refresh_from_db()
-        self.assertEqual(result["status"], Repository.Health.OFFLINE)
-        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(result["status"], Repository.Health.ONLINE)
+        self.assertTrue(result["retry_scheduled"])
+        self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertEqual(repository.health_failures, 1)
         self.assertEqual(repository.last_checked_at, checked_at)
         self.assertEqual(repository.updated_at, original_updated_at)
         self.assertEqual(repository.capacity_bytes, 1000)
         self.assertEqual(repository.estimated_usage_bytes, 250)
         cache_delete.assert_called_once()
+        apply_async.assert_called_once_with(
+            kwargs={"repository_id": repository.id, "retry_attempt": 1},
+            countdown=30,
+        )
+
+    @mock.patch("apps.storage.tasks.cache.delete")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=True)
+    @mock.patch(
+        "apps.storage.tasks.probe_repository_health",
+        side_effect=RuntimeError("network down"),
+    )
+    def test_retry_failure_marks_repository_offline(self, _probe, _cache_add, _cache_delete):
+        repository = self._repository(
+            "s3",
+            Repository.Type.S3,
+            s3_bucket="bucket",
+            health=Repository.Health.ONLINE,
+            health_failures=1,
+        )
+
+        result = check_storage_repository_health.run(
+            repository_id=repository.id,
+            retry_attempt=1,
+        )
+
+        repository.refresh_from_db()
+        self.assertEqual(result["status"], Repository.Health.OFFLINE)
+        self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        self.assertEqual(repository.health_failures, 2)
 
     @mock.patch("apps.storage.tasks.cache.delete")
     @mock.patch("apps.storage.tasks.cache.add", return_value=True)
@@ -227,11 +261,26 @@ class RepositoryHealthTaskTests(TestCase):
         repository.refresh_from_db()
         self.assertEqual(result["status"], Repository.Health.ONLINE)
         self.assertEqual(repository.health, Repository.Health.ONLINE)
+        self.assertEqual(repository.health_failures, 0)
         self.assertEqual(repository.last_checked_at, checked_at)
         self.assertEqual(repository.updated_at, original_updated_at)
         self.assertEqual(repository.config, original_config)
         self.assertEqual(repository.capacity_bytes, 1000)
         self.assertEqual(repository.estimated_usage_bytes, 250)
+
+    @mock.patch("apps.storage.tasks.dispatch_repository_health_checks.apply_async")
+    def test_worker_ready_enqueues_startup_health_dispatch(self, apply_async):
+        enqueue_startup_repository_health_checks()
+
+        apply_async.assert_called_once_with(kwargs={"startup": True})
+
+    @mock.patch("apps.storage.tasks.cache.add", return_value=False)
+    def test_duplicate_startup_dispatch_is_skipped(self, cache_add):
+        result = dispatch_repository_health_checks.run(startup=True)
+
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(result["skipped"], "duplicate_startup")
+        cache_add.assert_called_once()
 
 
 class UnboundNASRepositoryHealthTests(TestCase):

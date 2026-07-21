@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from celery import shared_task
+from celery.signals import worker_ready
 from django.core.cache import cache
 
 from common.observability.celery_context import logged_celery_task
@@ -45,11 +46,23 @@ from apps.task.services.recovery import (
 logger = logging.getLogger(__name__)
 
 _REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS = 300
+_REPOSITORY_HEALTH_STARTUP_DISPATCH_LOCK_TIMEOUT_SECONDS = 600
+_REPOSITORY_HEALTH_RETRY_DELAY_SECONDS = 30
 _REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS = 600
 
 
 def _repository_health_lock(repository_id: int) -> str:
     return f"storage:repository-health:repository:{int(repository_id)}"
+
+
+def _repository_health_startup_dispatch_lock() -> str:
+    return "storage:repository-health:startup-dispatch"
+
+
+@worker_ready.connect
+def enqueue_startup_repository_health_checks(sender=None, **_kwargs) -> None:
+    """Schedule one health sweep when a Celery worker becomes ready."""
+    dispatch_repository_health_checks.apply_async(kwargs={"startup": True})
 
 
 @shared_task(name="apps.storage.tasks.reconcile_storage_repositories")
@@ -92,8 +105,15 @@ def reconcile_storage_repositories(
 
 @shared_task(name="apps.storage.tasks.dispatch_repository_health_checks")
 @logged_celery_task(name="apps.storage.tasks.dispatch_repository_health_checks")
-def dispatch_repository_health_checks():
+def dispatch_repository_health_checks(*, startup: bool = False):
     """Fan out one lightweight health task per eligible repository."""
+    if startup and not cache.add(
+        _repository_health_startup_dispatch_lock(),
+        "1",
+        timeout=_REPOSITORY_HEALTH_STARTUP_DISPATCH_LOCK_TIMEOUT_SECONDS,
+    ):
+        return {"dispatched": 0, "startup": True, "skipped": "duplicate_startup"}
+
     repository_ids = list(
         Repository.objects.filter(
             status=Repository.Status.CREATED,
@@ -118,7 +138,7 @@ def dispatch_repository_health_checks():
                 "failed to enqueue repository health check repository_id=%s",
                 repository_id,
             )
-    return {"dispatched": dispatched}
+    return {"dispatched": dispatched, "startup": startup}
 
 
 @shared_task(name="apps.storage.tasks.check_storage_repository_health")
@@ -126,8 +146,8 @@ def dispatch_repository_health_checks():
     name="apps.storage.tasks.check_storage_repository_health",
     trace_keys=("repository_id",),
 )
-def check_storage_repository_health(*, repository_id: int):
-    """Run one health cycle and update only the repository health field."""
+def check_storage_repository_health(*, repository_id: int, retry_attempt: int = 0):
+    """Probe one repository; two consecutive failures confirm it as offline."""
     lock_key = _repository_health_lock(repository_id)
     if not cache.add(lock_key, "1", timeout=_REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS):
         return {"repository_id": repository_id, "status": "skipped", "locked": True}
@@ -154,11 +174,15 @@ def check_storage_repository_health(*, repository_id: int):
         try:
             health = probe_repository_health(repository)
         except Exception as exc:
-            health = Repository.Health.OFFLINE
             logger.warning(
-                "repository health check failed repository_id=%s error_type=%s",
+                "repository health check failed repository_id=%s retry_attempt=%s error_type=%s",
                 repository_id,
+                retry_attempt,
                 type(exc).__name__,
+            )
+            return _record_repository_health_failure(
+                repository=repository,
+                retry_attempt=retry_attempt,
             )
         current_scope = Repository.objects.filter(
             pk=repository_id,
@@ -168,8 +192,8 @@ def check_storage_repository_health(*, repository_id: int):
             bind_node_id=repository.bind_node_id,
             updated_at=repository.updated_at,
         )
-        if repository.health != health:
-            if not current_scope.update(health=health):
+        if repository.health != health or repository.health_failures:
+            if not current_scope.update(health=health, health_failures=0):
                 return {
                     "repository_id": repository_id,
                     "status": "skipped",
@@ -184,6 +208,39 @@ def check_storage_repository_health(*, repository_id: int):
         return {"repository_id": repository_id, "status": health}
     finally:
         cache.delete(lock_key)
+
+
+def _record_repository_health_failure(*, repository: Repository, retry_attempt: int) -> dict:
+    """Persist a failed probe and retry it once before declaring the target offline."""
+    failure_count = min(int(repository.health_failures or 0) + 1, 2)
+    health = Repository.Health.OFFLINE if failure_count >= 2 else repository.health
+    current_scope = Repository.objects.filter(
+        pk=repository.id,
+        status=Repository.Status.CREATED,
+        repo_type=repository.repo_type,
+        bind_node_type=repository.bind_node_type,
+        bind_node_id=repository.bind_node_id,
+        updated_at=repository.updated_at,
+    )
+    if not current_scope.update(health=health, health_failures=failure_count):
+        return {"repository_id": repository.id, "status": "skipped", "stale": True}
+
+    if failure_count == 1 and retry_attempt == 0:
+        check_storage_repository_health.apply_async(
+            kwargs={"repository_id": repository.id, "retry_attempt": 1},
+            countdown=_REPOSITORY_HEALTH_RETRY_DELAY_SECONDS,
+        )
+        return {
+            "repository_id": repository.id,
+            "status": repository.health,
+            "health_failures": failure_count,
+            "retry_scheduled": True,
+        }
+    return {
+        "repository_id": repository.id,
+        "status": health,
+        "health_failures": failure_count,
+    }
 
 
 @shared_task(name="apps.storage.tasks.schedule_repository_maintenance")

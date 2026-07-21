@@ -128,7 +128,7 @@ import { cancelProtectionRestoreTask } from '../../lib/protectionRestoreTaskApi'
 import {
   type ProtectionStopConfirmItem,
 } from '../../lib/protectionStopConfirm'
-import { listTasks, type TaskRow } from '../../lib/taskApi'
+import { getTask, listTasks, type TaskRow } from '../../lib/taskApi'
 import {
   createRestoreRecord,
   browseRestoreSnapshotDirectory,
@@ -267,7 +267,11 @@ const wizardActiveRemovalNodeIds = computed(() => new Set(
 
 function reconcileWizardPendingOps() {
   sourcePendingOps.reconcileWithCatalog(
-    new Set(backupSelectableRows.value.map((row) => row.id)),
+    new Set([
+      ...backupSelectableRows.value,
+      ...step2SelectableRows.value,
+      ...step3SelectableRows.value,
+    ].map((row) => row.id)),
     wizardActiveRemovalNodeIds.value,
   )
 }
@@ -1775,12 +1779,12 @@ function closeCreate() {
   setupDrEditSection.value = undefined
 }
 
-async function loadStep3SelectableWithPageClamp() {
-  await loadStep3Selectable()
+async function loadStep3SelectableWithPageClamp(signal?: AbortSignal) {
+  await loadStep3Selectable({ signal })
   const maxPage = Math.max(1, Math.ceil(step3SelectableCount.value / flowStep2Pager.pageSize) || 1)
   if (flowStep2Pager.page <= maxPage) return
   flowStep2Pager.page = maxPage
-  await loadStep3Selectable()
+  await loadStep3Selectable({ signal })
 }
 
 function latestStep3SourceRow(sourceId: string) {
@@ -1794,19 +1798,23 @@ async function refreshStep3AfterMoreAction(options: {
   preserveSelection?: boolean
   closeMissingDetail?: boolean
 } = {}) {
+  const scope = flowStepScope(2)
+  const signal = pageRequests.nextSignal(scope)
+  const refreshSeq = ++step3ActionRefreshSeq
   const activeSourceId = activeFlowSource.value?.id || ''
   const selectedSourceIds = options.preserveSelection === false
     ? []
     : step3SourceSelection.value.map((row) => row.id)
   const showLoading = flowMainStep.value === 2
+  step3ActionRefreshInFlight = true
   if (showLoading) setFlowStepDataLoading(2, true)
   try {
-    await Promise.all([
-      refreshPipelineStep2PlusIds(),
-      refreshPipelineStep3Ids(),
-    ])
-    await loadStep3SelectableWithPageClamp()
-    await refreshBackupConfigs()
+    await refreshPipelineStep2PlusIds(signal)
+    if (!pageRequests.isCurrentSignal(scope, signal)) return []
+    await loadStep3SelectableWithPageClamp(signal)
+    if (!pageRequests.isCurrentSignal(scope, signal)) return []
+    await refreshBackupConfigs(signal)
+    if (!pageRequests.isCurrentSignal(scope, signal)) return []
 
     if (activeSourceId) {
       const latestActiveSource = latestStep3SourceRow(activeSourceId)
@@ -1830,8 +1838,13 @@ async function refreshStep3AfterMoreAction(options: {
     layoutFlowTables()
     const requestedFocusIds = normalizeSourceIdList(options.focusIds || [])
     return requestedFocusIds.filter((id) => sourceHasBackupConfig(id))
+  } catch (err) {
+    if (pageRequests.isAbortError(err)) return []
+    throw err
   } finally {
+    pageRequests.releaseSignal(scope, signal)
     if (showLoading) setFlowStepDataLoading(2, false)
+    if (refreshSeq === step3ActionRefreshSeq) step3ActionRefreshInFlight = false
   }
 }
 
@@ -2404,6 +2417,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopStep3AutoRefresh()
+  stopUnregisterTaskPolls()
   cancelFlowStepRequests(0)
   cancelFlowStepRequests(1)
   cancelFlowStepRequests(2)
@@ -3752,6 +3766,8 @@ const STEP3_REFRESH_ACTIVE_MS = 2000
 let step3RefreshTimer: number | null = null
 let step3RefreshInFlight = false
 let step3RefreshIntervalMs = STEP3_REFRESH_IDLE_MS
+let step3ActionRefreshInFlight = false
+let step3ActionRefreshSeq = 0
 
 function hasRunningStep3Tasks() {
   return step3SourceList.value.some((row) =>
@@ -3782,7 +3798,7 @@ function ensureStep3AutoRefreshInterval() {
 }
 
 async function refreshStep3SourceList() {
-  if (flowMainStep.value !== 2 || step3RefreshInFlight) return
+  if (flowMainStep.value !== 2 || step3RefreshInFlight || step3ActionRefreshInFlight) return
   const scope = flowStepScope(2)
   const signal = pageRequests.nextSignal(scope)
   const hasResetRows = step3SourceList.value.some((row) => Boolean(sourceResetState(row.id)))
@@ -3868,6 +3884,7 @@ function openRestoreTaskDetail(row: DemoFlowTask) {
 }
 
 async function refreshTaskLists() {
+  if (flowMainStep.value === 2 && step3ActionRefreshInFlight) return
   flowRefreshing.value = true
   const step = flowMainStep.value
   const scope = flowStepScope(2)
@@ -3879,7 +3896,6 @@ async function refreshTaskLists() {
     } else {
       await refreshFlowStepData()
     }
-    ElMessage.success({ message: t('protection.backupsPage.flowActionRefreshList'), grouping: true })
   } catch (err) {
     showApiError(err)
   } finally {
@@ -4285,6 +4301,99 @@ const backupSourceDeleteIds = ref<string[]>([])
 const backupSourceDeleteRows = ref<BackupSourceDeleteDisplayRow[]>([])
 const backupSourceDeleteShowSnapshots = ref(false)
 const backupSourceDeleteRetryAfterFailure = ref(false)
+const UNREGISTER_TASK_POLL_MS = 2000
+const UNREGISTER_TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000
+const unregisterTaskPollTimers = new Set<number>()
+let unregisterTaskPollingStopped = false
+
+function unregisterTaskPendingRemovals(task: TaskRow) {
+  const payload = task.result_payload && typeof task.result_payload === 'object'
+    ? task.result_payload as Record<string, unknown>
+    : {}
+  const raw = Array.isArray(payload.pending_removals) ? payload.pending_removals : []
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const entry = item as Record<string, unknown>
+    const sourceId = String(entry.source_id || '')
+    const nodeId = Number(entry.node_id || 0)
+    return sourceId && nodeId > 0 ? [{ source_id: sourceId, node_id: nodeId }] : []
+  })
+}
+
+function scheduleUnregisterTaskPoll(callback: () => void) {
+  if (unregisterTaskPollingStopped) return
+  const timer = window.setTimeout(() => {
+    unregisterTaskPollTimers.delete(timer)
+    if (unregisterTaskPollingStopped) return
+    callback()
+  }, UNREGISTER_TASK_POLL_MS)
+  unregisterTaskPollTimers.add(timer)
+}
+
+function stopUnregisterTaskPolls() {
+  unregisterTaskPollingStopped = true
+  for (const timer of unregisterTaskPollTimers) window.clearTimeout(timer)
+  unregisterTaskPollTimers.clear()
+}
+
+function monitorPendingUnregister(sourceIds: string[], taskUuids: string[]) {
+  const pairs = taskUuids
+    .map((taskUuid, index) => ({ taskUuid, sourceId: sourceIds[index] || '' }))
+    .filter((item) => item.taskUuid && item.sourceId)
+  if (!pairs.length) return
+  const startedAt = Date.now()
+
+  const poll = async () => {
+    if (unregisterTaskPollingStopped) return
+    let tasks: TaskRow[]
+    try {
+      tasks = await Promise.all(pairs.map(({ taskUuid }) => getTask(taskUuid)))
+    } catch {
+      if (unregisterTaskPollingStopped) return
+      if (Date.now() - startedAt < UNREGISTER_TASK_POLL_TIMEOUT_MS) {
+        scheduleUnregisterTaskPoll(() => { void poll() })
+        return
+      }
+      sourcePendingOps.mark(sourceIds, { kind: 'delete_failed' }, flowRowsForSourceIds(sourceIds))
+      ElMessage.error({ message: t('protection.backupsPage.msgDeleteSourceFailed'), grouping: true })
+      return
+    }
+
+    if (unregisterTaskPollingStopped) return
+
+    const terminalStatuses = new Set(['success', 'failed', 'cancelled', 'timeout'])
+    if (tasks.some((task) => !terminalStatuses.has(String(task.status || '').toLowerCase()))) {
+      if (Date.now() - startedAt < UNREGISTER_TASK_POLL_TIMEOUT_MS) {
+        scheduleUnregisterTaskPoll(() => { void poll() })
+        return
+      }
+    }
+
+    const failedSourceIds = pairs.flatMap((pair, index) =>
+      String(tasks[index]?.status || '').toLowerCase() === 'success' ? [] : [pair.sourceId],
+    )
+    const pendingRemovals = tasks.flatMap(unregisterTaskPendingRemovals)
+    const pendingRemovalIds = new Set(pendingRemovals.map((item) => item.source_id))
+    const completedSourceIds = sourceIds.filter((id) => !failedSourceIds.includes(id))
+    sourcePendingOps.clear(completedSourceIds.filter((id) => !pendingRemovalIds.has(id)))
+    sourcePendingOps.transitionToRemoving(pendingRemovals)
+    if (failedSourceIds.length) {
+      sourcePendingOps.mark(failedSourceIds, { kind: 'delete_failed' }, flowRowsForSourceIds(failedSourceIds))
+      ElMessage.error({ message: t('protection.backupsPage.msgDeleteSourceFailed'), grouping: true })
+    }
+    try {
+      await Promise.all([
+        loadBackupSelectable({ silent: true }),
+        refreshStep3AfterMoreAction({ preserveSelection: false }),
+      ])
+    } catch (err) {
+      if (!pageRequests.isAbortError(err)) showApiError(err)
+    }
+  }
+
+  void poll()
+}
+
 function affectedBackupIdsForSources(sourceIds: string[]): Set<string> {
   const ids = new Set<string>()
   for (const sourceId of sourceIds) {
@@ -4503,6 +4612,9 @@ async function onBackupSourcesDeleted(payload: {
         ])
         if (flowMainStep.value === 0) void loadBackupSelectable()
       }
+      const taskUuids = (payload.task_uuids?.length ? payload.task_uuids : [payload.task_uuid || ''])
+        .filter((taskUuid): taskUuid is string => Boolean(taskUuid))
+      monitorPendingUnregister(Array.from(idSet), taskUuids)
       ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
     } catch (err) {
       sourcePendingOps.clear(Array.from(idSet))

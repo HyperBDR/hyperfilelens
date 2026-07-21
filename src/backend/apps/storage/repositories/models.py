@@ -113,6 +113,7 @@ class Repository(models.Model):
         default=Health.OFFLINE,
         db_index=True,
     )
+    health_failures = models.PositiveSmallIntegerField(default=0)
     config = models.JSONField(default=dict, blank=True)
     credential_id = models.BigIntegerField(blank=True, null=True)
     capacity_bytes = models.BigIntegerField(default=0)
