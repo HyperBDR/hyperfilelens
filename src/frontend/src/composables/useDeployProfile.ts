@@ -30,7 +30,7 @@ function parseDeployProfilePayload(raw: unknown): DeployProfile | null {
 
 export async function fetchDeployProfile(force = false): Promise<DeployProfile | null> {
   if (!force && cachedProfile) return cachedProfile
-  if (!force && inflight) return inflight
+  if (inflight) return inflight
 
   inflight = (async () => {
     try {
@@ -55,6 +55,15 @@ export function getCachedDeployProfile(): DeployProfile | null {
 
 export function clearDeployProfileCache(): void {
   cachedProfile = null
+}
+
+export function shouldForceDeployProfileRefresh(
+  toPath: string,
+  fromPath: string,
+  requiresPlatformOps = false,
+): boolean {
+  const targetsPlatformOps = toPath.startsWith('/platform-ops') || requiresPlatformOps
+  return targetsPlatformOps && !fromPath.startsWith('/platform-ops')
 }
 
 /** Post-login redirect: ops site staff → /platform-ops/users, else tenant home. */
