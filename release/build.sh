@@ -55,7 +55,7 @@ normalize_release_permissions() {
 	local pkg_root=$1
 	find "${pkg_root}" -type d -exec chmod 755 {} +
 	find "${pkg_root}" -type f -exec chmod 644 {} +
-	chmod 755 "${pkg_root}/install.sh"
+	chmod 755 "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py"
 	if [[ -d "${pkg_root}/sourcelens" ]]; then
 		chmod 755 "${pkg_root}/sourcelens/install.sh" \
 			"${pkg_root}/sourcelens/patch-env-runtime.py"
@@ -1138,7 +1138,8 @@ main() {
 	mkdir -p "${pkg_root}/deploy/nginx/snippets"
 	rsync -a "${ROOT}/deploy/nginx/snippets/" "${pkg_root}/deploy/nginx/snippets/"
 	cp "${ROOT}/deploy/installer/install.sh" "${pkg_root}/install.sh"
-	chmod +x "${pkg_root}/install.sh"
+	cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"
+	chmod +x "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py"
 	mkdir -p "${pkg_root}/deploy/logrotate"
 	cp "${ROOT}/deploy/logrotate/hyperfilelens.conf" "${pkg_root}/deploy/logrotate/hyperfilelens.conf"
 

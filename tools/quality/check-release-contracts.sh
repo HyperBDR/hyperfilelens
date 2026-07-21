@@ -248,12 +248,15 @@ remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 	exit 1
 }
 grep -F 'browser_download_url' "${remote_deploy}" >/dev/null
-grep -F 'bash "${INSTALL_DIR}/install.sh" upgrade --from "${package_root}" --yes' \
+grep -F 'bash "${package_root}/install.sh" "${install_args[@]}"' \
 	"${remote_deploy}" >/dev/null
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
-grep -F 'optional configuration was not healthy; restoring previous .env' \
-	"${remote_deploy}" >/dev/null
+grep -F -- '--runtime-env-file "${RUNTIME_ENV_FILE}"' "${remote_deploy}" >/dev/null
+if grep -F -- '--force-recreate' "${remote_deploy}" >/dev/null; then
+	printf 'ERROR: production deployment must apply runtime configuration before startup\n' >&2
+	exit 1
+fi
 if grep -E 'docker (pull|compose pull)' "${remote_deploy}" >/dev/null; then
 	printf 'ERROR: production deployment must consume the complete Release package\n' >&2
 	exit 1
@@ -300,6 +303,7 @@ grep -F 'validate_default_tls_bundle "${src_root}/deploy/nginx/certs"' "${instal
 grep -F 'sync_default_tls_bundle "${from_root}/deploy/nginx/certs"' "${installer}" >/dev/null
 grep -F 'Preserving existing TLS certificate directory' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
+grep -F 'apply_runtime_configuration' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
@@ -317,6 +321,8 @@ grep -F 'export SMOKE_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'SEED_ADMIN_EMAIL="$(sudo sed' "${release_verifier}" >/dev/null
 grep -F 'sudo env \' "${release_verifier}" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
+	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
+grep -F 'cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'stage_default_tls_bundle "${pkg_root}"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null

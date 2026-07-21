@@ -14,6 +14,8 @@ VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
 SESSION_STARTED=0
 PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"
+PUBLIC_URL="${HFL_PUBLIC_URL:-}"
+RUNTIME_ENV_FILE="${HFL_RUNTIME_ENV_FILE:-}"
 SHOW_GENERATED_CREDENTIALS="${HFL_SHOW_GENERATED_CREDENTIALS:-auto}"
 
 usage() {
@@ -42,6 +44,9 @@ Options:
   install:
     --with-sourcelens       Install bundled SourceLens (default when sourcelens/ is present)
     --hfl-only              Skip bundled SourceLens even when sourcelens/ is present
+    --direct-host HOST      Direct listener host or IP used for local access URLs
+    --public-url URL        Optional canonical browser origin; invalid values only warn
+    --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
 
   upgrade:
     --from PATH             Path to new package directory or hyperfilelens-*.tar.gz (required)
@@ -53,6 +58,9 @@ Options:
     --remove-sourcelens     Stop and remove installed SourceLens under the HFL install root
     --purge-sourcelens-data Remove SourceLens data/ (with --remove-sourcelens or uninstall --with-sourcelens)
     --yes                   Non-interactive: continue when target version equals installed version
+    --direct-host HOST      Direct listener host or IP used for local access URLs
+    --public-url URL        Optional canonical browser origin; invalid values only warn
+    --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
 
   uninstall:
     --with-sourcelens       Stop SourceLens stack and remove its application images
@@ -147,6 +155,8 @@ sourcelens_install_dir=${SOURCELENS_INSTALL_DIR}
 upgrade_tmp=${UPGRADE_TMP}
 bridge_network=${HFL_BRIDGE_NETWORK}
 public_host=${PUBLIC_HOST:-<auto>}
+public_url=${PUBLIC_URL:-<none>}
+runtime_env_file=$([[ -n "${RUNTIME_ENV_FILE}" ]] && printf '<provided>' || printf '<none>')
 show_generated_credentials=${SHOW_GENERATED_CREDENTIALS}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
@@ -389,6 +399,12 @@ init_install_root() {
 	local source
 	source="$(resolve_source_root)"
 	materialize_to_install_dir "${source}"
+	ROOT="${INSTALL_DIR}"
+	safe_assert_package_root "${ROOT}"
+}
+
+init_existing_install_root() {
+	INSTALL_DIR="$(safe_normalize_dir "${INSTALL_DIR}")"
 	ROOT="${INSTALL_DIR}"
 	safe_assert_package_root "${ROOT}"
 }
@@ -693,6 +709,18 @@ PY
 	log ".env created (fixed login credentials, generated internal secrets, DJANGO_DEBUG=false)"
 }
 
+apply_runtime_configuration() {
+	local helper="${ROOT}/apply-runtime-config.py"
+	local -a args=(--env-file "${ROOT}/.env" --direct-host "${PUBLIC_HOST}" --public-url "${PUBLIC_URL}")
+	[[ -f "${helper}" ]] || die "missing runtime configuration helper: ${helper}"
+	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
+		args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
+	fi
+	step "Applying final runtime configuration before service startup ..."
+	python3 "${helper}" "${args[@]}"
+	chmod 600 "${ROOT}/.env"
+}
+
 preflight_package_layout() {
 	step "Checking release package layout..."
 	[[ -f "${ROOT}/MANIFEST.json" ]] || die "missing MANIFEST.json"
@@ -965,6 +993,7 @@ apply_upgrade_files() {
 	cp "${from_root}/MANIFEST.json" "${ROOT}/MANIFEST.json"
 	[[ -f "${from_root}/.env.example" ]] && cp "${from_root}/.env.example" "${ROOT}/.env.example"
 	[[ -f "${from_root}/sync-env.py" ]] && cp "${from_root}/sync-env.py" "${ROOT}/sync-env.py" && chmod +x "${ROOT}/sync-env.py"
+	[[ -f "${from_root}/apply-runtime-config.py" ]] && cp "${from_root}/apply-runtime-config.py" "${ROOT}/apply-runtime-config.py" && chmod +x "${ROOT}/apply-runtime-config.py"
 	[[ -f "${from_root}/LICENSE" ]] && cp "${from_root}/LICENSE" "${ROOT}/LICENSE"
 	[[ -f "${from_root}/install.sh" ]] && cp "${from_root}/install.sh" "${ROOT}/install.sh" && chmod +x "${ROOT}/install.sh"
 	if [[ -d "${from_root}/host" ]]; then
@@ -1599,6 +1628,9 @@ cmd_install() {
 		case "$1" in
 		--with-sourcelens) sourcelens_mode=1 ;;
 		--hfl-only) sourcelens_mode=0 ;;
+		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
+		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
+		--runtime-env-file) [[ $# -ge 2 && -n "${2:-}" ]] || die "--runtime-env-file requires a path" 2; RUNTIME_ENV_FILE="$2"; shift ;;
 		*) die "unknown install option: $1" 2 ;;
 		esac
 		shift
@@ -1631,6 +1663,7 @@ cmd_install() {
 	require_docker
 	ensure_bridge_network
 	ensure_env_file
+	apply_runtime_configuration
 	ensure_tls_certs
 	ensure_data_dirs
 	sync_runtime_media
@@ -2264,13 +2297,16 @@ cmd_upgrade() {
 		--remove-sourcelens) remove_sourcelens=1 ;;
 		--purge-sourcelens-data) purge_sourcelens_data=1 ;;
 		--yes) UPGRADE_YES=1 ;;
+		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
+		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
+		--runtime-env-file) [[ $# -ge 2 && -n "${2:-}" ]] || die "--runtime-env-file requires a path" 2; RUNTIME_ENV_FILE="$2"; shift ;;
 		*) die "unknown upgrade option: $1" 2 ;;
 		esac
 		shift
 	done
 	[[ -n "${from}" ]] || die "upgrade requires --from <directory-or.tar.gz>"
 
-	init_install_root
+	init_existing_install_root
 	preflight_package_layout
 	cur_version="$(read_version)"
 	log "======== HyperFileLens upgrade ${cur_version} ========"
@@ -2335,6 +2371,7 @@ cmd_upgrade() {
 	sync_env_from_example "${src_root}/.env.example"
 	apply_upgrade_files "${src_root}" "${remove_sourcelens}"
 	update_env_versions "${new_version}"
+	apply_runtime_configuration
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 
 	if [[ "${remove_sourcelens}" -eq 1 && "${purge_sourcelens_data}" -eq 1 ]]; then
