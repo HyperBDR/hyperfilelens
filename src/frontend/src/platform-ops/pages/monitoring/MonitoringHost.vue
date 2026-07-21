@@ -62,7 +62,6 @@ const {
           <button
             type="button"
             class="platform-host-monitor__host-btn"
-            :title="hostEntityTooltip"
             :disabled="loading"
             @click.stop="showEntityDropdown = !showEntityDropdown"
           >
@@ -70,7 +69,12 @@ const {
             <span class="platform-host-monitor__host-btn-main">
               <span class="platform-host-monitor__host-text">
                 <span class="platform-host-monitor__host-label">{{ t('platformOps.monitoring.hostTarget') }}</span>
-                <span class="platform-host-monitor__host-name">{{ hostEntityLabel }}</span>
+                <span
+                  v-overflow-title="hostEntityTooltip"
+                  class="platform-host-monitor__host-name"
+                >
+                  {{ hostEntityLabel }}
+                </span>
               </span>
               <span
                 v-if="selectedHost"
@@ -247,11 +251,12 @@ const {
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 6px;
 }
 
 .platform-host-monitor__host-label {
+  flex-shrink: 0;
   font-size: 11px;
   line-height: 1.2;
   color: var(--color-text-secondary, #86909c);
@@ -259,12 +264,15 @@ const {
 }
 
 .platform-host-monitor__host-name {
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
   color: var(--color-text-title, #1d2129);
   text-align: left;
-  word-break: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .platform-host-monitor__host-status {
