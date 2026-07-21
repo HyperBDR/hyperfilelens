@@ -59,7 +59,7 @@ def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
             sl_lensnode_uuid__isnull=False,
         )
         .select_related("gateway")
-        .order_by("created_at", "id")
+        .order_by("-is_platform_default", "created_at", "id")
     )
 
 

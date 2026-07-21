@@ -42,6 +42,7 @@ from apps.node.services.internal.node_naming import (
     resolve_registration_node_name,
     uniquify_node_name,
 )
+from apps.node.services.internal.local_platform_gateway import registration_metadata
 from apps.node.exceptions import NodeLifecycleError
 from apps.node.services.internal.agent_uninstall import ProxyHasBoundResources
 from apps.node.services.internal.bindings import collect_proxy_bindings
@@ -311,7 +312,10 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 role=payload["role"],
                 version=payload.get("version", ""),
                 os_name=payload.get("os_name", ""),
-                metadata=payload.get("metadata") or {},
+                metadata=registration_metadata(
+                    payload.get("metadata"),
+                    token_note=token_row.note,
+                ),
                 last_seen_at=timezone.now(),
                 ip_address=client_ip,
             )
@@ -343,7 +347,10 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
             node.version = payload.get("version", node.version)
             node.os_name = payload.get("os_name", node.os_name)
             if "metadata" in payload:
-                node.metadata = payload.get("metadata") or {}
+                node.metadata = registration_metadata(
+                    payload.get("metadata"),
+                    existing_metadata=node.metadata,
+                )
             if client_ip:
                 node.ip_address = client_ip
             node.save()

@@ -28,6 +28,7 @@ Commands:
   stop          docker compose down
   restart       stop then start
   status        Show version and compose service status
+  platform-gateway Ensure the configured installer-managed platform Gateway
   upgrade       In-place upgrade from another release package directory or .tar.gz
   uninstall     Stop and remove Docker containers and app images (does not remove the install dir; see uninstall options)
   lang-pack     Install, list, or remove optional runtime language packs
@@ -65,6 +66,9 @@ Options:
     install --file PATH     Validate and atomically install a language-pack .tar.gz
     list                    List installed language packs
     remove PACK_ID          Remove an installed language pack
+
+  platform-gateway:
+    ensure                  Deploy or repair the local platform Gateway when enabled
 
     Uninstall never removes the install directory itself (${INSTALL_DIR} by default).
     Application files (install.sh, docker-compose.yml, images/, payload/, backup/, etc.)
@@ -1059,6 +1063,17 @@ read_env_value() {
 		| head -1 | cut -d= -f2- | tr -d ' "' || true
 }
 
+read_env_boolean() {
+	local key=$1 default_value=${2:-false} raw
+	raw="$(read_env_value "${key}" | tr '[:upper:]' '[:lower:]')"
+	[[ -n "${raw}" ]] || raw="${default_value}"
+	case "${raw}" in
+	1 | true | yes | on) printf 'true' ;;
+	0 | false | no | off) printf 'false' ;;
+	*) return 2 ;;
+	esac
+}
+
 resolve_console_host() {
 	local frontend_url host
 	frontend_url="$(read_env_value FRONTEND_URL)"
@@ -1491,6 +1506,91 @@ configured_sourcelens_mode() {
 	esac
 }
 
+platform_gateway_auto_deploy_enabled() {
+	local enabled
+	enabled="$(read_env_boolean HFL_PLATFORM_GATEWAY_AUTO_DEPLOY false)" \
+		|| die "invalid HFL_PLATFORM_GATEWAY_AUTO_DEPLOY value (use true or false)"
+	[[ "${enabled}" == "true" ]]
+}
+
+read_agent_env_value() {
+	local key=$1 env_file="/var/lib/hyperfilelens-agent/agent.env"
+	[[ -f "${env_file}" ]] || return 0
+	grep -E "^${key}=" "${env_file}" 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+ensure_local_platform_gateway() {
+	if ! platform_gateway_auto_deploy_enabled; then
+		skip "Local platform Gateway auto-deploy is disabled"
+		return 0
+	fi
+
+	require_root_or_sudo
+	require_docker
+	[[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] \
+		|| die "local platform Gateway auto-deploy requires Linux amd64/x86_64"
+	local helper="${ROOT}/data/media/enroll-bootstrap/hfl-enroll-linux-amd64"
+	[[ -x "${helper}" ]] \
+		|| die "local platform Gateway enrollment helper is missing: ${helper}"
+
+	step "Ensuring installer-managed local platform Gateway"
+	local command_output parsed org_key token api_base wss_url managed_node_ids
+	command_output="$(
+		compose_in_root exec -T api \
+			python manage.py ensure_local_platform_gateway_enrollment
+	)" || die "failed to issue local platform Gateway enrollment credentials"
+	parsed="$(
+		printf '%s\n' "${command_output}" | python3 -c '
+import json
+import sys
+
+prefix = "HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT="
+matches = [line[len(prefix):] for line in sys.stdin.read().splitlines() if line.startswith(prefix)]
+if len(matches) != 1:
+    raise SystemExit("expected one local platform Gateway enrollment payload")
+payload = json.loads(matches[0])
+required = ("org_key", "token", "api_base", "wss_url")
+if any(not str(payload.get(key, "")).strip() for key in required):
+    raise SystemExit("local platform Gateway enrollment payload is incomplete")
+node_ids = ",".join(str(value) for value in payload.get("managed_node_ids", []))
+print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
+'
+	)" || die "failed to parse local platform Gateway enrollment credentials"
+	IFS=$'\t' read -r org_key token api_base wss_url managed_node_ids <<<"${parsed}"
+
+	local existing_org existing_role existing_node_id existing_token
+	existing_org="$(read_agent_env_value HFL_ORG_KEY)"
+	existing_role="$(read_agent_env_value HFL_NODE_ROLE)"
+	existing_node_id="$(read_agent_env_value HFL_NODE_ID)"
+	existing_token="$(read_agent_env_value HFL_NODE_TOKEN)"
+	if [[ -n "${existing_org}${existing_role}${existing_node_id}${existing_token}" ]]; then
+		[[ "${existing_org}" == "${org_key}" && "${existing_role}" == "gateway" ]] \
+			|| die "an existing HFL Agent on this host conflicts with local platform Gateway auto-deploy"
+		if [[ -n "${existing_node_id}" ]]; then
+			case ",${managed_node_ids}," in
+			*",${existing_node_id},"*) ;;
+			*) die "the existing platform Gateway Agent is not managed by the HFL installer" ;;
+			esac
+		elif [[ "${existing_token}" != "${token}" ]]; then
+			die "the partially enrolled platform Gateway Agent was not created by the HFL installer"
+		fi
+	fi
+
+	local insecure_tls
+	insecure_tls="$(read_env_value HFL_INSECURE_TLS)"
+	[[ -n "${insecure_tls}" ]] || insecure_tls=1
+	run_as_root env \
+		HFL_ORG_KEY="${org_key}" \
+		HFL_NODE_ROLE="gateway" \
+		HFL_NODE_TOKEN="${token}" \
+		HFL_API_BASE="${api_base}" \
+		HFL_WSS_URL="${wss_url}" \
+		HFL_INSECURE_TLS="${insecure_tls}" \
+		"${helper}" gateway-install --yes
+	ok "Installer-managed local platform Gateway is ready"
+}
+
 # --- Commands ---
 
 cmd_install() {
@@ -1555,11 +1655,23 @@ cmd_install() {
 	compose_in_root up -d --no-build --remove-orphans
 	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
+	ensure_local_platform_gateway
 
 	step "[6/6] Done"
 	log "Install and startup complete"
 	compose_in_root ps
 	print_console_access_summary
+}
+
+cmd_platform_gateway() {
+	[[ $# -eq 1 && "$1" == "ensure" ]] \
+		|| die "usage: install.sh platform-gateway ensure" 2
+	init_install_root
+	require_docker
+	[[ -f "${ROOT}/.env" ]] || die "missing .env; run install first"
+	wait_for_hfl_health || die "HyperFileLens failed its platform Gateway health gate"
+	wait_for_sourcelens_health || die "bundled SourceLens failed its platform Gateway health gate"
+	ensure_local_platform_gateway
 }
 
 cmd_start() {
@@ -2248,6 +2360,7 @@ cmd_upgrade() {
 	compose_in_root up -d --no-build --remove-orphans
 	wait_for_hfl_health || die "HyperFileLens failed its post-upgrade health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-upgrade health gate"
+	ensure_local_platform_gateway
 
 	step "[7/7] Cleaning up temporary directory ..."
 	cleanup_upgrade_tmp
@@ -2308,7 +2421,7 @@ main() {
 
 	local cmd=$1
 	case "${cmd}" in
-	install | start | stop | restart | status | uninstall | upgrade | lang-pack)
+	install | start | stop | restart | status | platform-gateway | uninstall | upgrade | lang-pack)
 		shift
 		;;
 	-*)
@@ -2326,6 +2439,7 @@ main() {
 	stop) cmd_stop "$@" ;;
 	restart) cmd_restart "$@" ;;
 	status) cmd_status "$@" ;;
+	platform-gateway) cmd_platform_gateway "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;
 	upgrade) cmd_upgrade "$@" ;;
 	lang-pack) cmd_language_pack "$@" ;;
