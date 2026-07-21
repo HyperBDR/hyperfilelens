@@ -20,7 +20,7 @@
   overflow: hidden;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 10px;
-  background: #fff;
+  background: var(--el-bg-color-overlay);
 }
 
 .insight-detail-drawer .insight-detail-tag-row {
@@ -560,8 +560,8 @@
   margin: 0;
   padding: 13px 16px;
   border-bottom: 1px solid var(--el-border-color-lighter);
-  background: rgba(248, 250, 252, 0.86);
-  color: rgb(15 23 42);
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
   font-size: 14px;
   font-weight: 650;
 }
@@ -688,14 +688,14 @@
 .hfl-detail-row__label,
 .detail-page-row__label,
 .repo-detail-row__label {
-  background: rgba(248, 250, 252, 0.64);
-  color: rgb(100 116 139);
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-secondary);
 }
 
 .hfl-detail-row__value,
 .detail-page-row__value,
 .repo-detail-row__value {
-  color: rgb(15 23 42);
+  color: var(--el-text-color-primary);
   overflow-wrap: anywhere;
 }
 
