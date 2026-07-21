@@ -103,9 +103,9 @@ function channelTarget(ch: NotificationChannel) {
   const cfg = (ch.config || {}) as Record<string, unknown>
   if (ch.type === 'email') {
     const emails = cfg.to_emails || cfg.to || ''
-    return String(emails).slice(0, 48) || t('common.empty')
+    return String(emails) || t('common.empty')
   }
-  return String(cfg.url || cfg.webhook_url || t('common.empty')).slice(0, 48)
+  return String(cfg.url || cfg.webhook_url || t('common.empty'))
 }
 
 function hasChannelTarget(ch: NotificationChannel) {

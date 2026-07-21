@@ -4547,11 +4547,8 @@ function policyRetentionDetailLines(policy: WizardPolicy | null | undefined): Po
 function policyRetentionListSummary(policy: WizardPolicy | null | undefined): string {
   const f = policy?.formData
   if (!f || !f.sectionRetentionEnabled) return t('protection.backupsPage.policyConfigNotConfigured')
-  if (messageLocale.value === 'en') {
-    const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-    return `Keep last ${f.retentionRecentPoints} restore ${suffix} ...`
-  }
-  return `Keep the latest ${f.retentionRecentPoints} restore points ...`
+  const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
+  return `Keep the latest ${f.retentionRecentPoints} restore ${suffix}`
 }
 
 function filterFormView(filter: WizardFilter) {
@@ -4581,11 +4578,7 @@ function filterCompiledRuleLines(filter: WizardFilter | null | undefined) {
 }
 
 function filterDisplayedRuleLines(filter: WizardFilter | null | undefined) {
-  return filterCompiledRuleLines(filter).slice(0, 5)
-}
-
-function filterHasMoreRuleLines(filter: WizardFilter | null | undefined) {
-  return filterCompiledRuleLines(filter).length > 5
+  return filterCompiledRuleLines(filter)
 }
 
 function filterMaxSizeLimitValue(filter: WizardFilter) {
@@ -5861,7 +5854,6 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 >
                                   {{ line }}
                                 </code>
-                                <span v-if="filterHasMoreRuleLines(gf)" class="create-filter-rules-option__more">...</span>
                               </div>
                               <span v-else class="create-filter-rules-option__empty">
                                 {{ t('protection.policiesPage.filterNoActiveRules') }}
@@ -6223,7 +6215,6 @@ function preserveShallowestPathOrder(paths: string[]) {
                                             >
                                               {{ line }}
                                             </code>
-                                            <span v-if="filterHasMoreRuleLines(gf)" class="create-filter-rules-option__more">...</span>
                                           </div>
                                           <span v-else class="create-filter-rules-option__empty">
                                             {{ t('protection.policiesPage.filterNoActiveRules') }}
@@ -11207,12 +11198,11 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-filter-rules-option__list {
-  display: flex;
+  display: block;
   min-width: 0;
   flex: 1 1 auto;
-  align-items: center;
-  gap: 4px;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -11220,7 +11210,7 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: inline-block;
   max-width: 112px;
   min-width: 0;
-  flex: 0 1 auto;
+  margin-right: 4px;
   padding: 2px 6px;
   overflow: hidden;
   border: 1px solid rgb(226 232 240);
@@ -11231,14 +11221,8 @@ function preserveShallowestPathOrder(paths: string[]) {
   font-size: 12px;
   line-height: 1.45;
   text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
-}
-
-.create-filter-rules-option__more {
-  flex: 0 0 auto;
-  color: rgb(100 116 139);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .create-filter-rules-option__empty {

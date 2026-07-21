@@ -78,8 +78,6 @@ type PolicyRetentionDetailLine = {
   text: string
 }
 
-const FILTER_RULES_LIST_PREVIEW_LIMIT = 5
-
 const { t, locale } = useI18n()
 const { drawerSize } = useResponsiveDrawerWidth()
 const pageRequests = usePageRequestScope()
@@ -524,30 +522,24 @@ function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[]
   if (!f) return [{ text: row.retentionSummary || t('protection.policiesPage.timeDash') }]
   if (!f.sectionRetentionEnabled) return [{ text: 'Not configured' }]
 
-  if (messageLocale.value === 'en') {
-    const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-    const lines: PolicyRetentionDetailLine[] = [{ text: `Keep last ${f.retentionRecentPoints} restore ${latestSuffix}.` }]
-    if (f.retentionShortHourly) {
-      lines.push({ label: 'Hourly:', text: `First ${f.retentionShortDaysMax} days, one restore point per hour.` })
-    }
-    if (f.retentionMidDaily) {
-      lines.push({ label: 'Daily:', text: `Day ${f.retentionShortDaysMax} to day ${f.retentionMidDaysMax}, one restore point per day.` })
-    }
-    if (f.retentionLongMonthly) {
-      lines.push({ label: 'Monthly:', text: `After day ${f.retentionMidDaysMax}, one restore point per month, up to ${f.retentionLongMonths} months.` })
-    }
-    return lines
+  const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
+  const lines: PolicyRetentionDetailLine[] = [
+    { text: `Keep the latest ${f.retentionRecentPoints} restore ${latestSuffix}.` },
+  ]
+  if (f.retentionHourlyEnabled) {
+    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${f.retentionHourlyHours} hour(s).` })
   }
-
-  const lines: PolicyRetentionDetailLine[] = [{ text: `Keep the latest ${f.retentionRecentPoints} restore points.` }]
-  if (f.retentionShortHourly) {
-    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for the first ${f.retentionShortDaysMax} days.` })
+  if (f.retentionDailyEnabled) {
+    lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionDailyDays} day(s).` })
   }
-  if (f.retentionMidDaily) {
-    lines.push({ label: 'Daily:', text: `Keep one restore point per day from day ${f.retentionShortDaysMax} through day ${f.retentionMidDaysMax}.` })
+  if (f.retentionWeeklyEnabled) {
+    lines.push({ label: 'Weekly:', text: `Keep one restore point per week for ${f.retentionWeeklyWeeks} week(s).` })
   }
-  if (f.retentionLongMonthly) {
-    lines.push({ label: 'Monthly:', text: `After day ${f.retentionMidDaysMax}, keep one restore point per month for up to ${f.retentionLongMonths} months.` })
+  if (f.retentionMonthlyEnabled) {
+    lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionMonthlyMonths} month(s).` })
+  }
+  if (f.retentionAnnualEnabled) {
+    lines.push({ label: 'Annual:', text: `Keep one restore point per year for ${f.retentionAnnualYears} year(s).` })
   }
   return lines
 }
@@ -556,11 +548,8 @@ function policyRetentionListSummary(row: PolicyRow): string {
   const f = row.formData
   if (!f) return row.retentionSummary || t('protection.policiesPage.timeDash')
   if (!f.sectionRetentionEnabled) return 'Not configured'
-  if (messageLocale.value === 'en') {
-    const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-    return `Keep last ${f.retentionRecentPoints} restore ${suffix} ...`
-  }
-  return `Keep the latest ${f.retentionRecentPoints} restore points ...`
+  const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
+  return `Keep the latest ${f.retentionRecentPoints} restore ${suffix}`
 }
 
 let relatedBackupConfigRequestSeq = 0
@@ -796,14 +785,6 @@ function onFilterSelectionChange(rows: FilterRow[]) {
 
 function filterRowClassName({ row }: { row: FilterRow }) {
   return row.is_active ? '' : 'hfl-filter-row--inactive'
-}
-
-function displayedFilterExcludeRuleLines(row: FilterRow) {
-  return row.excludeRuleLines.slice(0, FILTER_RULES_LIST_PREVIEW_LIMIT)
-}
-
-function hasMoreFilterExcludeRules(row: FilterRow) {
-  return row.excludeRuleLines.length > FILTER_RULES_LIST_PREVIEW_LIMIT
 }
 
 function openFilterDetail(row: FilterRow) {
@@ -1235,13 +1216,12 @@ function onMoreDisable() {
                     <span class="hfl-filter-rules-cell__prefix">{{ t('protection.policiesPage.filterExcludeRulesTitle') }}:</span>
                     <div class="hfl-filter-rules-cell__list">
                       <code
-                        v-for="(line, index) in displayedFilterExcludeRuleLines(row)"
+                        v-for="(line, index) in row.excludeRuleLines"
                         :key="`${index}-${line}`"
                         class="hfl-filter-rules-cell__rule"
                       >
                         {{ line }}
                       </code>
-                      <span v-if="hasMoreFilterExcludeRules(row)" class="hfl-filter-rules-cell__more">...</span>
                     </div>
                   </div>
                 </template>
@@ -1757,19 +1737,18 @@ function onMoreDisable() {
 
 .hfl-filter-rules-cell__list {
   flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  display: block;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .hfl-filter-rules-cell__rule {
-  flex: 0 1 auto;
   display: inline-block;
   max-width: 120px;
   min-width: 0;
+  margin-right: 4px;
   padding: 2px 6px;
   overflow: hidden;
   border: 1px solid rgb(226 232 240);
@@ -1780,19 +1759,8 @@ function onMoreDisable() {
   font-size: 12px;
   line-height: 1.45;
   text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
-}
-
-.hfl-filter-rules-cell__more {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  width: fit-content;
-  padding: 0 6px;
-  color: rgb(100 116 139);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.3;
 }
 
 .hfl-filter-rules-cell__empty {
