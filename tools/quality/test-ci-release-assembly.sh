@@ -124,6 +124,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	archive="${first%.part-000}"
 	cat "${archive}.part-"* >"${archive}"
 	tar -tzf "${archive}" | grep -E '/sync-env\.py$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/apply-runtime-config\.py$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.crt$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.key$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/root-ca\.crt$' >/dev/null
