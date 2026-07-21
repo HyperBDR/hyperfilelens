@@ -88,7 +88,7 @@ async function save() {
           </template>
         </el-table-column>
         <el-table-column :label="t('protection.retentionPage.colSpec')" min-width="200">
-          <template #default="{ row }">{{ JSON.stringify(row.spec || {}).slice(0, 80) }}</template>
+          <template #default="{ row }">{{ JSON.stringify(row.spec || {}) }}</template>
         </el-table-column>
         <el-table-column prop="updated_at" :label="t('protection.retentionPage.colUpdated')" min-width="180">
           <template #default="{ row }">
