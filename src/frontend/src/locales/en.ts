@@ -2979,6 +2979,8 @@ export const en = {
     },
     notification: {
       channelsTitle: 'Total Channels',
+      listLoadFailed: 'Failed to load notification channels.',
+      secretConfigured: 'Configured (hidden)',
       colTarget: 'Target',
       logsTotal: 'Total Records',
       logsCount: 'Deliveries',

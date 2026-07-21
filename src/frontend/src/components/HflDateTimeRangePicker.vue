@@ -23,6 +23,7 @@ const props = withDefaults(
     clearText: string
     applyText: string
     constrainToTrigger?: boolean
+    disabled?: boolean
   }>(),
   {
     presets: () => [],
@@ -30,6 +31,7 @@ const props = withDefaults(
     start: '',
     end: '',
     constrainToTrigger: false,
+    disabled: false,
   },
 )
 
@@ -159,6 +161,7 @@ watch(
       :end-placeholder="displayPlaceholder"
       :range-separator="'~'"
       :popper-class="popperClass"
+      :disabled="disabled"
       clearable
       @update:model-value="onUpdate"
       @change="onChange"
@@ -204,31 +207,11 @@ watch(
 }
 
 :global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar) {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
   width: 130px;
 }
 
 :global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar + .el-picker-panel__body) {
   margin-left: 130px;
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar) {
-  width: 6px;
-  height: 6px;
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar-thumb) {
-  border-radius: 4px;
-  background: rgba(89, 89, 89, 0.3);
-}
-
-:global(.hfl-date-time-range-picker__popper .el-picker-panel__sidebar::-webkit-scrollbar-thumb:hover) {
-  background: rgba(89, 89, 89, 0.5);
 }
 
 :global(.hfl-date-time-range-picker__popper .el-picker-panel__footer) {

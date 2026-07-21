@@ -4516,30 +4516,44 @@ function policyRetentionDetailLines(policy: WizardPolicy | null | undefined): Po
     return [{ text: t('protection.backupsPage.policyConfigNotConfigured') }]
   }
 
-  if (messageLocale.value === 'en') {
-    const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-    const lines: PolicyRetentionDetailLine[] = [{ text: `Keep last ${f.retentionRecentPoints} restore ${latestSuffix}.` }]
-    if (f.retentionShortHourly) {
-      lines.push({ label: 'Hourly:', text: `First ${f.retentionShortDaysMax} days, one restore point per hour.` })
-    }
-    if (f.retentionMidDaily) {
-      lines.push({ label: 'Daily:', text: `Day ${f.retentionShortDaysMax} to day ${f.retentionMidDaysMax}, one restore point per day.` })
-    }
-    if (f.retentionLongMonthly) {
-      lines.push({ label: 'Monthly:', text: `After day ${f.retentionMidDaysMax}, one restore point per month, up to ${f.retentionLongMonths} months.` })
-    }
-    return lines
+  const recentPoints = Number(f.retentionRecentPoints)
+  const lines: PolicyRetentionDetailLine[] = [{
+    text: t(
+      recentPoints === 1
+        ? 'protection.policiesPage.retentionLatestOne'
+        : 'protection.policiesPage.retentionLatestMany',
+      { n: recentPoints },
+    ),
+  }]
+  if (f.retentionHourlyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.hourlyTitle')}:`,
+      text: t('protection.policiesPage.retentionHourlyDetail', { n: f.retentionHourlyHours }),
+    })
   }
-
-  const lines: PolicyRetentionDetailLine[] = [{ text: `Keep the latest ${f.retentionRecentPoints} restore points.` }]
-  if (f.retentionShortHourly) {
-    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for the first ${f.retentionShortDaysMax} days.` })
+  if (f.retentionDailyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.dailyTitle')}:`,
+      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionDailyDays }),
+    })
   }
-  if (f.retentionMidDaily) {
-    lines.push({ label: 'Daily:', text: `Keep one restore point per day from day ${f.retentionShortDaysMax} through day ${f.retentionMidDaysMax}.` })
+  if (f.retentionWeeklyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.weeklyTitle')}:`,
+      text: t('protection.policiesPage.retentionWeeklyDetail', { n: f.retentionWeeklyWeeks }),
+    })
   }
-  if (f.retentionLongMonthly) {
-    lines.push({ label: 'Monthly:', text: `After day ${f.retentionMidDaysMax}, keep one restore point per month for up to ${f.retentionLongMonths} months.` })
+  if (f.retentionMonthlyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.monthlyTitle')}:`,
+      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionMonthlyMonths }),
+    })
+  }
+  if (f.retentionAnnualEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.annualTitle')}:`,
+      text: t('protection.policiesPage.retentionAnnualDetail', { n: f.retentionAnnualYears }),
+    })
   }
   return lines
 }
@@ -4547,8 +4561,13 @@ function policyRetentionDetailLines(policy: WizardPolicy | null | undefined): Po
 function policyRetentionListSummary(policy: WizardPolicy | null | undefined): string {
   const f = policy?.formData
   if (!f || !f.sectionRetentionEnabled) return t('protection.backupsPage.policyConfigNotConfigured')
-  const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-  return `Keep the latest ${f.retentionRecentPoints} restore ${suffix}`
+  const recentPoints = Number(f.retentionRecentPoints)
+  return t(
+    recentPoints === 1
+      ? 'protection.policiesPage.retentionLatestSummaryOne'
+      : 'protection.policiesPage.retentionLatestSummaryMany',
+    { n: recentPoints },
+  )
 }
 
 function filterFormView(filter: WizardFilter) {
@@ -11213,10 +11232,10 @@ function preserveShallowestPathOrder(paths: string[]) {
   margin-right: 4px;
   padding: 2px 6px;
   overflow: hidden;
-  border: 1px solid rgb(226 232 240);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  background: rgb(248 250 252);
-  color: rgb(15 23 42);
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -11735,30 +11754,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-height: 0;
   overflow-y: auto;
   padding: 18px 22px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar) {
-  width: 6px;
-  height: 6px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-track),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb) {
-  background: rgba(89, 89, 89, 0.3);
-  border-radius: 4px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover),
-:global(.dp-add-target-dialog.create-policy-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover) {
-  background: rgba(89, 89, 89, 0.5);
 }
 
 :global(.el-dialog.dp-add-target-dialog.create-policy-dialog .el-dialog__footer),
@@ -11928,30 +11923,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 24px 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(89, 89, 89, 0.3) transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar) {
-  width: 6px;
-  height: 6px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-track),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb) {
-  background: rgba(89, 89, 89, 0.3);
-  border-radius: 4px;
-}
-
-:global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover),
-:global(.dp-add-target-dialog.repository-add-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover) {
-  background: rgba(89, 89, 89, 0.5);
 }
 
 :global(.el-dialog.dp-add-target-dialog.repository-add-dialog .el-dialog__footer),

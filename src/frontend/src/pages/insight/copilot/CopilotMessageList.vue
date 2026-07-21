@@ -774,7 +774,6 @@ const showLiveRow = computed(() => props.streaming)
     gap: 8px;
     overflow-x: auto;
     padding-bottom: 2px;
-    scrollbar-width: thin;
   }
 
   .copilot-chip-box {

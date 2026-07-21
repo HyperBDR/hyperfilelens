@@ -56,3 +56,4 @@ src/backend/staticfiles/
 *.mo
 .tmp/
 .tools/
+/src/frontend/AGENTS.md

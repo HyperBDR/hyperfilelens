@@ -5,11 +5,6 @@
  * variables here.
  */
 
-.resource-add-fullscreen :is(.proxy-dir-tree, .source-script-shell__content)::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
 .resource-add-fullscreen .fullscreen-form-page {
   display: flex;
   flex-direction: column;
@@ -26,19 +21,6 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-}
-
-.resource-add-fullscreen :is(.proxy-dir-tree, .source-script-shell__content)::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.resource-add-fullscreen :is(.proxy-dir-tree, .source-script-shell__content)::-webkit-scrollbar-thumb {
-  border-radius: 4px;
-  background: #c9cdd4;
-}
-
-.resource-add-fullscreen :is(.proxy-dir-tree, .source-script-shell__content)::-webkit-scrollbar-thumb:hover {
-  background: #86909c;
 }
 
 .resource-add-fullscreen :is(.add-s3-steps, .add-nas-steps) {
@@ -115,11 +97,6 @@
 
 .resource-add-fullscreen :is(.add-s3-steps__item--active, .add-s3-steps__item--done, .add-nas-steps__item--active, .add-nas-steps__item--done) :is(.add-s3-steps__label, .add-nas-steps__label) {
   color: #1d2129;
-}
-
-.resource-add-fullscreen :is(.add-s3-platform-grid--scroll, .add-s3-region-grid--scroll) {
-  scrollbar-width: thin;
-  scrollbar-color: #c9cdd4 transparent;
 }
 
 .resource-add-fullscreen :is(.add-s3-card, .add-s3-card--policy-like, .add-nas-card, .add-proxy-fs-section--card) {
@@ -358,24 +335,6 @@
   overflow-y: auto;
   padding-right: 8px;
   padding-bottom: 4px;
-}
-
-.resource-add-fullscreen :is(.add-s3-platform-grid--scroll, .add-s3-region-grid--scroll)::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.resource-add-fullscreen :is(.add-s3-platform-grid--scroll, .add-s3-region-grid--scroll)::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.resource-add-fullscreen :is(.add-s3-platform-grid--scroll, .add-s3-region-grid--scroll)::-webkit-scrollbar-thumb {
-  border-radius: 4px;
-  background: #c9cdd4;
-}
-
-.resource-add-fullscreen :is(.add-s3-platform-grid--scroll, .add-s3-region-grid--scroll)::-webkit-scrollbar-thumb:hover {
-  background: #86909c;
 }
 
 .resource-add-fullscreen :is(.add-s3-platform-btn) {

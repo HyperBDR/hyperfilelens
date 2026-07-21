@@ -768,26 +768,6 @@
 }
 
 /* ----------------------------------------
-   Scrollbar styling
-   ---------------------------------------- */
-.el-table__body-wrapper::-webkit-scrollbar {
-  height: 10px;
-}
-
-.el-table__body-wrapper::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 5px;
-}
-
-.el-table__body-wrapper::-webkit-scrollbar-track {
-  background: var(--el-fill-color-light, #f5f5f5);
-}
-
-.el-table__body-wrapper::-webkit-scrollbar-thumb:hover {
-  background: #bfbfbf;
-}
-
-/* ----------------------------------------
    Table wrapper
    ---------------------------------------- */
 .el-table__wrapper {
@@ -1004,13 +984,6 @@
   .el-table-filter .el-table-filter__bottom button:first-child {
     background: var(--color-primary);
     border-color: var(--color-primary);
-  }
-  /* Scrollbar */
-  .el-table__body-wrapper::-webkit-scrollbar-track {
-    background: var(--color-grey-2, #252630) !important;
-  }
-  .el-table__body-wrapper::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted, #787880) !important;
   }
   /* Pagination text */
   .el-pagination {

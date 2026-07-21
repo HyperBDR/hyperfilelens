@@ -360,20 +360,6 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
   color: var(--brand-color, #6D5EF6);
 }
 
-.sidebar-nav::-webkit-scrollbar {
-  width: 4px;
-}
-.sidebar-nav::-webkit-scrollbar-track {
-  background: transparent;
-}
-.sidebar-nav::-webkit-scrollbar-thumb {
-  background: rgba(95, 106, 134, 0.24);
-  border-radius: 4px;
-}
-.sidebar-nav::-webkit-scrollbar-thumb:hover {
-  background: rgba(95, 106, 134, 0.34);
-}
-
 .menu-item + .menu-item,
 .menu-item + .menu-link,
 .menu-link + .menu-item {

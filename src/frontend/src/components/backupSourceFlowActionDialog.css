@@ -932,13 +932,7 @@ html[data-theme='hybrid'] .hfl-flow-action-dialog--delete .hfl-flow-action-dialo
   font-size: 12px;
   line-height: 1.5;
   color: var(--el-color-warning);
-  white-space: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.hfl-flow-action-dialog__proxy-empty-warn::-webkit-scrollbar {
-  display: none;
+  overflow-wrap: anywhere;
 }
 
 .hfl-flow-action-dialog__proxy-empty-warn__link {

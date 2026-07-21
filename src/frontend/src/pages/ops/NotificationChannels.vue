@@ -25,6 +25,7 @@ import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { getNotificationTypeIcon } from '../../composables/useNotificationTypeIcon'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { booleanStatusTag, lifecycleStatusTagAttrs } from '../../lib/statusTag'
@@ -54,6 +55,7 @@ type ChannelInlineField = 'name' | 'enabled' | `config:${string}`
 const router = useRouter()
 const { t, te } = useI18n()
 const opsMenus = useOpsMenus()
+const pageRequests = usePageRequestScope()
 const { drawerSize, bindDrawerResize } = useResponsiveDrawerWidth()
 const detailsLoading = ref(false)
 const detailsError = ref<string | null>(null)
@@ -66,6 +68,7 @@ const { schedule: scheduleFilterSearch, runNow: runFilterSearch } = useDebounced
 
 const channels = ref<NotificationChannel[]>([])
 const loading = ref(false)
+const listError = ref('')
 const testing = ref(false)
 const skipNextSearchWatch = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
@@ -209,7 +212,14 @@ function channelLastDeliveryAt(ch: NotificationChannel) {
   return ch.lastDeliveryAt ?? ch.last_delivery_at ?? null
 }
 
-type ConfigItem = { key: string; labelKey: string; value: unknown; mono?: boolean; full?: boolean }
+type ConfigItem = {
+  key: string
+  labelKey: string
+  value: unknown
+  mono?: boolean
+  full?: boolean
+  editable?: boolean
+}
 
 function asList<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : []
@@ -220,9 +230,21 @@ function summarizeConfig(ch: NotificationChannel | null): ConfigItem[] {
   const cfg = (ch.config || {}) as Record<string, unknown>
   const items: ConfigItem[] = []
   const k = (sub: string) => `ops.notification.cfgLabel.${ch.type}.${sub}`
-  const push = (key: string, labelKey: string, value: unknown, opts?: { mono?: boolean; full?: boolean }) => {
+  const push = (
+    key: string,
+    labelKey: string,
+    value: unknown,
+    opts?: { mono?: boolean; full?: boolean; editable?: boolean },
+  ) => {
     if (value === undefined || value === null || value === '') return
-    items.push({ key, labelKey, value, mono: opts?.mono, full: opts?.full })
+    items.push({
+      key,
+      labelKey,
+      value,
+      mono: opts?.mono,
+      full: opts?.full,
+      editable: opts?.editable ?? true,
+    })
   }
   if (ch.type === 'webhook') {
     push('url', k('url'), cfg.url || cfg.webhook_url, { mono: true, full: true })
@@ -238,7 +260,11 @@ function summarizeConfig(ch: NotificationChannel | null): ConfigItem[] {
     push('subject', k('subject'), cfg.subject)
   } else if (ch.type === 'dingtalk') {
     push('webhookUrl', k('url'), cfg.url || cfg.webhook_url, { mono: true, full: true })
-    push('secret', k('secret'), cfg.secret, { mono: true, full: true })
+    push('secret', k('secret'), t('ops.notification.secretConfigured'), {
+      mono: true,
+      full: true,
+      editable: false,
+    })
     push('atMobiles', k('atMobiles'), cfg.at_mobiles)
     push('atUserIds', k('atUserIds'), cfg.at_user_ids)
     push('atAll', k('atAll'), cfg.at_all)
@@ -254,7 +280,14 @@ function summarizeConfig(ch: NotificationChannel | null): ConfigItem[] {
   } else {
     Object.entries(cfg).forEach(([key, v]) => {
       if (v === undefined || v === null || v === '') return
-      items.push({ key, labelKey: `ops.notification.cfgLabel.raw.${key}`, value: v, mono: typeof v === 'string' })
+      const sensitive = isSensitiveConfigKey(key)
+      items.push({
+        key,
+        labelKey: `ops.notification.cfgLabel.raw.${key}`,
+        value: sensitive ? t('ops.notification.secretConfigured') : v,
+        mono: typeof v === 'string',
+        editable: !sensitive,
+      })
     })
   }
   return items
@@ -268,12 +301,32 @@ function configLabel(item: ConfigItem) {
     .replace(/^./, (char) => char.toUpperCase())
 }
 
+function isSensitiveConfigKey(key: string) {
+  return /password|secret|token|api[_-]?key|authorization|cookie/i.test(key)
+}
+
+function formatConfigValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => formatConfigValue(item)).join(', ')
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${key}: ${isSensitiveConfigKey(key)
+        ? t('ops.notification.secretConfigured')
+        : formatConfigValue(item)}`)
+      .join('; ')
+  }
+  return String(value)
+}
+
 function formatDate(value?: string | null) {
   return formatLocalDateTime(value, t('common.empty'))
 }
 
 async function fetchChannels() {
+  const signal = pageRequests.nextSignal('notification-channel-list')
   loading.value = true
+  listError.value = ''
   try {
     const [res, statRes] = await Promise.all([
       listChannels({
@@ -282,12 +335,12 @@ async function fetchChannels() {
         search: filters.search,
         type: filters.type,
         enabled: filters.enabled,
-      }),
+      }, { signal }),
       channelStatistics({
         search: filters.search,
         type: filters.type,
         enabled: filters.enabled,
-      }),
+      }, { signal }),
     ])
     channels.value = res.results
     pagination.count = res.count
@@ -297,8 +350,12 @@ async function fetchChannels() {
       disabled: statRes.disabled,
       enabledRate: statRes.enabled_rate,
     }
+  } catch (err) {
+    if (pageRequests.isAbortError(err)) return
+    listError.value = apiErrorMessageI18n(err, t, t('ops.notification.listLoadFailed'))
   } finally {
-    loading.value = false
+    pageRequests.releaseSignal('notification-channel-list', signal)
+    if (!signal.aborted) loading.value = false
   }
 }
 
@@ -1152,6 +1209,21 @@ watch(
           </el-button>
         </template>
 
+        <ElAlert
+          v-if="listError"
+          type="error"
+          show-icon
+          :closable="false"
+          class="mb-3"
+          :title="listError"
+        >
+          <template #default>
+            <ElButton size="small" @click="fetchChannels">
+              {{ t('common.retry') }}
+            </ElButton>
+          </template>
+        </ElAlert>
+
         <template #table="{ tableMaxHeight }">
         <el-table
           ref="channelsTableRef"
@@ -1475,10 +1547,17 @@ watch(
                           </template>
                           <template v-else>
                             <span class="hfl-detail-row__text">
-                              <span v-if="typeof item.value === 'object'">{{ JSON.stringify(item.value) }}</span>
-                              <span v-else>{{ item.value }}</span>
+                              <span>{{ formatConfigValue(item.value) }}</span>
                             </span>
-                            <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" @click="beginChannelInlineEdit(`config:${item.key}`)">
+                            <ElButton
+                              v-if="item.editable"
+                              text
+                              circle
+                              size="small"
+                              class="hfl-detail-row__edit"
+                              :title="t('common.edit')"
+                              @click="beginChannelInlineEdit(`config:${item.key}`)"
+                            >
                               <Pencil :size="13" />
                             </ElButton>
                           </template>

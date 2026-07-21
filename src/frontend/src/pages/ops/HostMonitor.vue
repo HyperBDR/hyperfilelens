@@ -23,6 +23,7 @@ import HflDateTimeRangePicker from '../../components/HflDateTimeRangePicker.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { debouncedNodeStatus } from '../../composables/useNodeConnectionDisplay'
 import { useHostMonitorCharts } from '../../composables/useHostMonitorCharts'
+import { resolveHostMonitorRefreshTarget } from './hostMonitorRefresh'
 import {
   fetchMonitorNodes,
   fetchNodeMonitor,
@@ -291,23 +292,37 @@ function onTimeRangeApply(start: string, end: string) {
   void applyCustomRange()
 }
 
-function onManualRefresh() {
-  if (selectedTimeOption.value === 'custom') {
-    void applyCustomRange()
-    return
+async function onManualRefresh() {
+  if (loading.value) return
+  loading.value = true
+  try {
+    await loadNodes()
+    if (!selectedNodeId.value) return
+
+    const target = resolveHostMonitorRefreshTarget(
+      selectedTimeOption.value,
+      customTimeRange.value,
+      timePresets.value,
+    )
+    if (target.kind === 'custom') {
+      await applyCustomRange(true)
+      return
+    }
+    selectedTimeOption.value = target.value
+    await fetchData(target.hours, true)
+  } finally {
+    loading.value = false
   }
-  const preset = timePresets.value.find((p) => p.value === selectedTimeOption.value)
-  void fetchData(preset?.hours ?? 24)
 }
 
-async function applyCustomRange() {
+async function applyCustomRange(silent = false) {
   if (!selectedNodeId.value) return
   if (!customTimeRange.value.start || !customTimeRange.value.end) return
   const start = new Date(customTimeRange.value.start)
   const end = new Date(customTimeRange.value.end)
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return
   selectedTimeOption.value = 'custom'
-  loading.value = true
+  if (!silent) loading.value = true
   try {
     data.value = await fetchNodeMonitor(selectedNodeId.value, {
       startAt: formatToUTC(start),
@@ -320,12 +335,13 @@ async function applyCustomRange() {
       grouping: true,
     })
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
 function clearCustomRange() {
   customTimeRange.value = { start: '', end: '' }
+  selectedTimeOption.value = ''
   data.value = { host: data.value.host, range: {}, current: {}, series: [] }
 }
 
@@ -483,7 +499,7 @@ watch(
             :title="t('ops.task.btnRefresh')"
             :aria-label="t('ops.task.btnRefresh')"
             :disabled="loading"
-            @click="onManualRefresh"
+            @click="onManualRefresh()"
           >
             <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
           </el-button>
