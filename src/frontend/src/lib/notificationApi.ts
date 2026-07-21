@@ -102,7 +102,10 @@ function paged<T>(raw: unknown): Paged<T> {
 
 const base = '/api/v1/notification'
 
-export async function listChannels(params?: Record<string, string | number>) {
+export async function listChannels(
+  params?: Record<string, string | number>,
+  options?: { signal?: AbortSignal },
+) {
   const qs = new URLSearchParams()
   if (params) {
     for (const [k, v] of Object.entries(params)) {
@@ -110,7 +113,7 @@ export async function listChannels(params?: Record<string, string | number>) {
     }
   }
   const path = qs.toString() ? `${base}/channels/?${qs}` : `${base}/channels/`
-  const result = paged<NotificationChannelPayload>(await api<unknown>(path))
+  const result = paged<NotificationChannelPayload>(await api<unknown>(path, { signal: options?.signal }))
   return { ...result, results: result.results.map(normalizeChannel) }
 }
 
@@ -227,7 +230,10 @@ export type NotificationChannelStatistics = {
   sent_recent?: number
 }
 
-export async function channelStatistics(params?: Record<string, string | number>) {
+export async function channelStatistics(
+  params?: Record<string, string | number>,
+  options?: { signal?: AbortSignal },
+) {
   const qs = new URLSearchParams()
   if (params) {
     for (const [k, v] of Object.entries(params)) {
@@ -235,7 +241,9 @@ export async function channelStatistics(params?: Record<string, string | number>
     }
   }
   const path = qs.toString() ? `${base}/channels/stats/?${qs}` : `${base}/channels/stats/`
-  return unwrapApiPayload<NotificationChannelStatistics>(await api<unknown>(path))
+  return unwrapApiPayload<NotificationChannelStatistics>(
+    await api<unknown>(path, { signal: options?.signal }),
+  )
 }
 
 export async function listLogs(params?: Record<string, string | number>) {
