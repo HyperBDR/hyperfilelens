@@ -81,6 +81,10 @@ printf 'preserved env\n' >"${ROOT}/.env"
 printf 'preserved data\n' >"${ROOT}/data/marker"
 printf 'preserved backup\n' >"${ROOT}/backup/marker"
 printf 'preserved upgrade state\n' >"${ROOT}/upgrade_tmp/marker"
+# Rsync's size+mtime quick check must not preserve stale release-controlled
+# content. Match both attributes while deliberately changing the bytes.
+printf 'outdate\n' >"${ROOT}/docker-compose.yml"
+touch -r "${source_fixture}/docker-compose.yml" "${ROOT}/docker-compose.yml"
 before="$(sha256sum "${ROOT}/deploy/nginx/certs/tls.crt" "${ROOT}/deploy/nginx/certs/tls.key")"
 sync_default_tls_bundle "${source_fixture}/deploy/nginx/certs"
 after="$(sha256sum "${ROOT}/deploy/nginx/certs/tls.crt" "${ROOT}/deploy/nginx/certs/tls.key")"
@@ -94,6 +98,7 @@ after="$(sha256sum "${ROOT}/deploy/nginx/certs/tls.crt" "${ROOT}/deploy/nginx/ce
 [[ "$(<"${ROOT}/data/marker")" == "preserved data" ]]
 [[ "$(<"${ROOT}/backup/marker")" == "preserved backup" ]]
 [[ "$(<"${ROOT}/upgrade_tmp/marker")" == "preserved upgrade state" ]]
+[[ "$(<"${ROOT}/docker-compose.yml")" == "fixture" ]]
 
 ROOT="${tmp}/incomplete"
 mkdir -p "${ROOT}/deploy/nginx/certs"

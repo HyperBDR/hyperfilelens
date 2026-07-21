@@ -194,6 +194,7 @@ grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 
 installer="${ROOT}/deploy/installer/install.sh"
 materialize_body="$(sed -n '/^materialize_to_install_dir()/,/^}/p' "${installer}")"
+grep -F -- '--checksum' <<<"${materialize_body}" >/dev/null
 grep -F -- '--delete' <<<"${materialize_body}" >/dev/null
 if grep -F -- '--delete-excluded' <<<"${materialize_body}" >/dev/null; then
 	printf 'ERROR: release materialization must preserve excluded runtime state\n' >&2
