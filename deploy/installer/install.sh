@@ -363,6 +363,7 @@ materialize_to_install_dir() {
 	if command -v rsync >/dev/null 2>&1; then
 		local -a rsync_args=(
 			-a
+			--delete
 			--exclude '.env'
 			--exclude 'data/'
 			--exclude 'backup/'
