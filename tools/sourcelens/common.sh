@@ -1013,9 +1013,19 @@ sourcelens_ensure_runtime_image() {
 
 sourcelens_ensure_runtime_images() {
 	local force_pull=${1:-${SOURCELENS_FORCE_PULL}}
-	local image
+	local image source_ref target_ref
 	for image in nginx:stable-alpine postgres:17 redis:alpine; do
 		sourcelens_ensure_runtime_image "${image}" "${force_pull}"
+	done
+	for image in \
+		"nginx:stable-alpine hyperfilelens-sourcelens-nginx:stable-alpine" \
+		"postgres:17 hyperfilelens-postgres:17" \
+		"redis:alpine hyperfilelens-redis:alpine"; do
+		source_ref=${image%% *}
+		target_ref=${image#* }
+		docker tag "${source_ref}" "${target_ref}" \
+			|| sourcelens_die "unable to tag runtime image ${source_ref} as ${target_ref}"
+		sourcelens_log "Tagged runtime image ${source_ref} -> ${target_ref}"
 	done
 }
 
