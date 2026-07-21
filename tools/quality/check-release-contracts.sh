@@ -191,6 +191,7 @@ grep -F 'Verified that unrelated Docker containers, networks, and volumes are un
 grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy}" >/dev/null
 grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
 
 installer="${ROOT}/deploy/installer/install.sh"
 materialize_body="$(sed -n '/^materialize_to_install_dir()/,/^}/p' "${installer}")"

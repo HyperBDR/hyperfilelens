@@ -42,14 +42,16 @@ hfl_build_enroll_args() {
 	fi
 }
 
-hfl_curl_retry() {
+hfl_sourcelens_health_retry() {
 	local url="$1"
 	local label="$2"
 	local attempts="${3:-3}"
 	local delay="${4:-5}"
 	local n=1
+	local response=""
 	while [[ "${n}" -le "${attempts}" ]]; do
-		if curl "${CURL_TLS[@]}" -fsSL "${url}" >/dev/null 2>&1; then
+		if response="$(curl "${CURL_TLS[@]}" -fsSL "${url}" 2>/dev/null)" \
+			&& grep -Eq '"health"[[:space:]]*:[[:space:]]*"OK"' <<<"${response}"; then
 			return 0
 		fi
 		if [[ "${n}" -lt "${attempts}" ]]; then
@@ -59,7 +61,7 @@ hfl_curl_retry() {
 		fi
 		n=$((n + 1))
 	done
-	hfl_fail "${label} unreachable at ${url} after ${attempts} attempts." 3
+	hfl_fail "${label} unreachable or unhealthy at ${url} after ${attempts} attempts." 3
 }
 
 MIN_ENGINE_VERSION="${HFL_DOCKER_MIN_ENGINE:-24.0.0}"
@@ -179,7 +181,7 @@ curl "${CURL_TLS[@]}" -fsSL "${CONSOLE_BASE}/health" >/dev/null
 hfl_ok "Console is reachable."
 
 hfl_step "Checking SourceLens health via console proxy."
-hfl_curl_retry "${CONSOLE_BASE}/sourcelens/health" "SourceLens health" 3 5
+hfl_sourcelens_health_retry "${CONSOLE_BASE}/sourcelens/health" "SourceLens health" 3 5
 hfl_ok "SourceLens is reachable."
 
 ensure_docker_for_gateway

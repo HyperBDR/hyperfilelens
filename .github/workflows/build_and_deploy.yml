@@ -138,6 +138,7 @@ jobs:
           uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py
           ./tools/quality/check-release-contracts.sh
           ./tools/quality/test-default-certificates.sh
+          ./tools/quality/test-gateway-bootstrap-health.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-ci-release-assembly.sh
           git diff --check

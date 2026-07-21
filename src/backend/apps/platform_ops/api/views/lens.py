@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from urllib.parse import urlsplit
 
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -39,10 +40,26 @@ from apps.lens_bridge.services.skills import beautify_skill
 from apps.node.models import NodeToken
 from apps.node.models.base import NodeRole
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
+from common.deploy.site import tenant_public_url
 
 
 def _platform_org():
     return platform_lens.get_or_create_platform_org()
+
+
+def _platform_gateway_api_base() -> str | None:
+    """Return the configured tenant origin used by platform Data Gateways."""
+    api_base = tenant_public_url()
+    parsed = urlsplit(api_base)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return api_base.rstrip("/")
 
 
 class PlatformOpsLensGatewayListView(APIView):
@@ -58,6 +75,18 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
     permission_classes = [IsPlatformOpsStaff]
 
     def post(self, request):
+        api_base = _platform_gateway_api_base()
+        if api_base is None:
+            return Response(
+                {
+                    "detail": (
+                        "FRONTEND_URL must be an absolute HTTP(S) origin "
+                        "for Data Gateway enrollment."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         org = _platform_org()
         token = NodeToken.objects.create(
             organization=org,
@@ -72,6 +101,7 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
                 "token_id": token.id,
                 "org_key": org.key,
                 "gateway_scope": LensGatewayLink.GatewayScope.PLATFORM,
+                "api_base": api_base,
             },
             status=status.HTTP_201_CREATED,
         )
