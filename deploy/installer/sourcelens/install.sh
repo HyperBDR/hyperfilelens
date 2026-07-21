@@ -99,21 +99,18 @@ resolve_tls_cert_dir() {
 ensure_tls_certs() {
 	local cert="${SOURCELENS_TLS_CERT_DIR}/tls.crt"
 	local key="${SOURCELENS_TLS_CERT_DIR}/tls.key"
-	run_as_root mkdir -p "${SOURCELENS_TLS_CERT_DIR}"
-	if [[ -s "${cert}" && -s "${key}" ]]; then
-		log "Using existing shared TLS certificates from ${SOURCELENS_TLS_CERT_DIR}"
-		return 0
-	fi
+	[[ -s "${cert}" && -s "${key}" ]] \
+		|| die "shared HyperFileLens TLS certificate and key must both exist under ${SOURCELENS_TLS_CERT_DIR}"
 	command -v openssl >/dev/null 2>&1 \
-		|| die "openssl is required to generate SourceLens TLS certificates"
-	step "Generating self-signed SourceLens TLS certificates"
-	run_as_root openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-		-keyout "${key}" \
-		-out "${cert}" \
-		-subj "/CN=localhost" \
-		-addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
+		|| die "openssl is required to validate shared TLS certificates"
+	local cert_pub key_pub
+	cert_pub="$(openssl x509 -in "${cert}" -pubkey -noout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	key_pub="$(openssl pkey -in "${key}" -pubout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	[[ -n "${cert_pub}" && "${cert_pub}" == "${key_pub}" ]] \
+		|| die "shared HyperFileLens TLS certificate and key do not match"
 	run_as_root chmod 644 "${cert}"
 	run_as_root chmod 600 "${key}"
+	log "Using existing shared TLS certificates from ${SOURCELENS_TLS_CERT_DIR}"
 }
 
 run_as_root() {
@@ -156,8 +153,10 @@ ensure_env_file() {
 	fi
 	if [[ ! -f "${env_file}" ]]; then
 		run_as_root cp "${example}" "${env_file}"
+		run_as_root chmod 600 "${env_file}"
 		log "Created ${env_file} from .env.example"
 	else
+		run_as_root chmod 600 "${env_file}"
 		python3 - "${env_file}" "${example}" <<'PY'
 import pathlib
 import re
@@ -210,6 +209,7 @@ for name, value in {
         text = text.rstrip() + f"\n{line}\n"
 path.write_text(text, encoding="utf-8")
 PY
+	run_as_root chmod 600 "${env_file}"
 	if [[ -e "${root}/.env" && ! -L "${root}/.env" ]]; then
 		run_as_root rm -f "${root}/.env"
 	fi

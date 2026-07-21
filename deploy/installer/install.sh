@@ -347,6 +347,7 @@ resolve_source_root() {
 
 materialize_to_install_dir() {
 	local source=$1
+	local tls_state
 	source="$(safe_normalize_dir "${source}")"
 	INSTALL_DIR="$(safe_normalize_dir "${INSTALL_DIR}")"
 	if [[ "${source}" == "${INSTALL_DIR}" ]]; then
@@ -356,10 +357,22 @@ materialize_to_install_dir() {
 	step "Copying release package ${source} -> ${INSTALL_DIR} ..."
 	require_root_or_sudo
 	run_as_root mkdir -p "${INSTALL_DIR}"
+	tls_state="$(tls_pair_state "${INSTALL_DIR}/deploy/nginx/certs")"
+	[[ "${tls_state}" != "incomplete" ]] \
+		|| die "existing TLS certificate pair is incomplete under ${INSTALL_DIR}/deploy/nginx/certs"
 	if command -v rsync >/dev/null 2>&1; then
-		run_as_root rsync -a \
-			--exclude '.env' --exclude 'data/' --exclude 'backup/' --exclude 'upgrade_tmp/' \
-			"${source}/" "${INSTALL_DIR}/"
+		local -a rsync_args=(
+			-a
+			--exclude '.env'
+			--exclude 'data/'
+			--exclude 'backup/'
+			--exclude 'upgrade_tmp/'
+		)
+		if [[ "${tls_state}" == "complete" ]]; then
+			rsync_args+=(--exclude 'deploy/nginx/certs/')
+			log "Preserving existing TLS certificate directory"
+		fi
+		run_as_root rsync "${rsync_args[@]}" "${source}/" "${INSTALL_DIR}/"
 	else
 		die "rsync is required to copy the release package to ${INSTALL_DIR}"
 	fi
@@ -518,35 +531,90 @@ sync_runtime_media() {
 }
 
 ensure_tls_certs() {
-	local cert="${ROOT}/deploy/nginx/certs/tls.crt"
-	local key="${ROOT}/deploy/nginx/certs/tls.key"
-	mkdir -p "${ROOT}/deploy/nginx/certs"
+	validate_tls_pair "${ROOT}/deploy/nginx/certs"
+	secure_tls_permissions "${ROOT}/deploy/nginx/certs"
+	log "Using existing TLS certificate pair"
+}
+
+tls_pair_state() {
+	local cert_dir=$1
+	local cert="${cert_dir}/tls.crt"
+	local key="${cert_dir}/tls.key"
 	if [[ -s "${cert}" && -s "${key}" ]]; then
-		log "TLS certificates already exist"
-		return 0
+		printf 'complete'
+	elif [[ ! -e "${cert}" && ! -e "${key}" ]]; then
+		printf 'missing'
+	else
+		printf 'incomplete'
 	fi
-	command -v openssl >/dev/null 2>&1 || die "openssl is required to generate self-signed TLS certificates"
-	step "Generating self-signed TLS certificates (deploy/nginx/certs/)..."
-	local san_dns="DNS:localhost"
-	local san_ip="IP:127.0.0.1,IP:::1"
-	if [[ -f "${ROOT}/.env" ]]; then
-		local env_ip env_dns
-		env_ip="$(grep -E '^HFL_TLS_SAN_IP=' "${ROOT}/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' \"')"
-		env_dns="$(grep -E '^HFL_TLS_SAN_DNS=' "${ROOT}/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' \"')"
-		if [[ -n "${env_ip}" ]]; then
-			san_ip="IP:127.0.0.1,IP:::1,IP:${env_ip}"
-		fi
-		if [[ -n "${env_dns}" ]]; then
-			san_dns="DNS:localhost,DNS:${env_dns}"
-		fi
+}
+
+validate_tls_pair() {
+	local cert_dir=$1
+	local cert="${cert_dir}/tls.crt"
+	local key="${cert_dir}/tls.key"
+	local cert_pub key_pub
+	[[ "$(tls_pair_state "${cert_dir}")" == "complete" ]] \
+		|| die "TLS certificate and key must both exist under ${cert_dir}"
+	command -v openssl >/dev/null 2>&1 \
+		|| die "openssl is required to validate TLS certificates"
+	openssl x509 -in "${cert}" -noout >/dev/null 2>&1 \
+		|| die "invalid TLS certificate: ${cert}"
+	openssl pkey -in "${key}" -check -noout >/dev/null 2>&1 \
+		|| die "invalid TLS private key: ${key}"
+	cert_pub="$(openssl x509 -in "${cert}" -pubkey -noout | sha256sum | cut -d' ' -f1)"
+	key_pub="$(openssl pkey -in "${key}" -pubout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	[[ "${cert_pub}" == "${key_pub}" ]] \
+		|| die "TLS certificate and private key do not match under ${cert_dir}"
+	openssl x509 -in "${cert}" -checkend 0 -noout >/dev/null 2>&1 \
+		|| die "TLS certificate is expired or not yet valid: ${cert}"
+	if ! openssl x509 -in "${cert}" -checkend 2592000 -noout >/dev/null 2>&1; then
+		warn "TLS certificate expires within 30 days: ${cert}"
 	fi
-	openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-		-keyout "${key}" \
-		-out "${cert}" \
-		-subj "/CN=localhost" \
-		-addext "subjectAltName=${san_dns},${san_ip}" 2>/dev/null
-	chmod 600 "${key}"
-	log "TLS certificates generated"
+}
+
+secure_tls_permissions() {
+	local cert_dir=$1
+	chmod 644 "${cert_dir}/tls.crt"
+	chmod 600 "${cert_dir}/tls.key"
+	[[ ! -f "${cert_dir}/root-ca.crt" ]] || chmod 644 "${cert_dir}/root-ca.crt"
+}
+
+validate_default_tls_bundle() {
+	local cert_dir=$1
+	for required in tls.crt tls.key root-ca.crt SHA256SUMS README.md; do
+		[[ -s "${cert_dir}/${required}" ]] \
+			|| die "default TLS bundle is missing ${cert_dir}/${required}"
+	done
+	(
+		cd "${cert_dir}"
+		sha256sum --strict --check SHA256SUMS >/dev/null
+	) || die "default TLS bundle checksum validation failed under ${cert_dir}"
+	validate_tls_pair "${cert_dir}"
+	openssl verify -CAfile "${cert_dir}/root-ca.crt" "${cert_dir}/tls.crt" >/dev/null 2>&1 \
+		|| die "default TLS certificate is not signed by root-ca.crt"
+}
+
+sync_default_tls_bundle() {
+	local source_dir=$1
+	local target_dir="${ROOT}/deploy/nginx/certs"
+	case "$(tls_pair_state "${target_dir}")" in
+	complete)
+		log "Preserving existing TLS certificate directory"
+		validate_tls_pair "${target_dir}"
+		secure_tls_permissions "${target_dir}"
+		;;
+	missing)
+		step "Installing repository-pinned default TLS certificates ..."
+		mkdir -p "${target_dir}"
+		rsync -a "${source_dir}/" "${target_dir}/"
+		validate_tls_pair "${target_dir}"
+		secure_tls_permissions "${target_dir}"
+		;;
+	incomplete)
+		die "existing TLS certificate pair is incomplete under ${target_dir}"
+		;;
+	esac
 }
 
 ensure_env_file() {
@@ -555,16 +623,16 @@ ensure_env_file() {
 	[[ -f "${example}" ]] || die "missing .env.example"
 
 	if [[ -f "${env_file}" ]]; then
+		chmod 600 "${env_file}"
 		log ".env already exists; synchronizing missing keys"
 		sync_env_from_example "${example}"
 		return 0
 	fi
 
-	local version secret db_pass admin_pass host
+	local version secret db_pass host
 	version="$(read_version)"
 	secret="$(random_hex)"
 	db_pass="$(random_hex | cut -c1-32)"
-	admin_pass="Hfl-0$(random_hex | cut -c1-14)!"
 	host="${PUBLIC_HOST}"
 	if [[ -z "${host}" ]]; then
 		host="$(hostname -I 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if (!found && $i ~ /^[0-9]+\./) { print $i; found = 1 } }' || true)"
@@ -573,14 +641,14 @@ ensure_env_file() {
 
 	step "Creating .env from .env.example ..."
 	cp "${example}" "${env_file}"
-	python3 - "${env_file}" "${version}" "${secret}" "${db_pass}" "${admin_pass}" "${host}" <<'PY'
-import ipaddress
+	chmod 600 "${env_file}"
+	python3 - "${env_file}" "${version}" "${secret}" "${db_pass}" "${host}" <<'PY'
 import pathlib
 import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-version, secret, db_pass, admin_pass, host = sys.argv[2:7]
+version, secret, db_pass, host = sys.argv[2:6]
 text = path.read_text(encoding="utf-8")
 
 def sub_key(name, value):
@@ -595,7 +663,6 @@ sub_key("AGENT_VERSION", version)
 sub_key("APP_VERSION", version)
 sub_key("SECRET_KEY", secret)
 sub_key("POSTGRES_PASSWORD", db_pass)
-sub_key("SEED_ADMIN_PASSWORD", admin_pass)
 sub_key("DJANGO_DEBUG", "false")
 sub_key("SENTRY_ENVIRONMENT", "production")
 sub_key("HFL_EMAIL_SIGNUP_ENABLED", "false")
@@ -613,15 +680,10 @@ sub_key(
     "CORS_ALLOWED_ORIGINS",
     f"https://localhost:{tenant_port},https://127.0.0.1:{tenant_port},{frontend_url}",
 )
-try:
-    ipaddress.ip_address(host)
-except ValueError:
-    sub_key("HFL_TLS_SAN_DNS", host)
-else:
-    sub_key("HFL_TLS_SAN_IP", host)
 path.write_text(text, encoding="utf-8")
 PY
-	log ".env created (generated secrets, host configuration, DJANGO_DEBUG=false)"
+	chmod 600 "${env_file}"
+	log ".env created (fixed login credentials, generated internal secrets, DJANGO_DEBUG=false)"
 }
 
 preflight_package_layout() {
@@ -767,8 +829,10 @@ sync_env_from_example() {
 	local sync_script="$(dirname "${example}")/sync-env.py"
 	[[ -f "${example}" ]] || return 0
 	[[ -f "${sync_script}" ]] || die "missing environment sync script: ${sync_script}"
+	[[ -f "${env_file}" ]] && chmod 600 "${env_file}"
 	step "Merging missing keys from .env.example into .env ..."
 	python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
+	chmod 600 "${env_file}"
 }
 
 update_env_versions() {
@@ -796,12 +860,13 @@ backup_env_and_data() {
 	stamp="$(date +%Y%m%d-%H%M%S)"
 	mkdir -p "${ROOT}/backup"
 	archive="${ROOT}/backup/hyperfilelens-backup-${stamp}.tar.gz"
-	step "Backing up .env and data/ -> ${archive} ..."
+	step "Backing up .env, TLS certificates, and data/ -> ${archive} ..."
 	local -a items=()
 	[[ -f "${ROOT}/.env" ]] && items+=(".env")
+	[[ -d "${ROOT}/deploy/nginx/certs" ]] && items+=("deploy/nginx/certs")
 	[[ -d "${ROOT}/data" ]] && items+=("data")
 	if ((${#items[@]} == 0)); then
-		warn "nothing to back up (.env and data/ missing); skipping"
+		warn "nothing to back up (.env, TLS certificates, and data/ missing); skipping"
 		return 0
 	fi
 	set +e
@@ -865,6 +930,7 @@ apply_upgrade_files() {
 	local remove_sourcelens=${2:-0}
 	step "Overwriting application files and release payload ..."
 	mkdir -p "${ROOT}/deploy/nginx" "${ROOT}/images" "${ROOT}/host" "${ROOT}/payload"
+	sync_default_tls_bundle "${from_root}/deploy/nginx/certs"
 	rsync -a --delete "${from_root}/payload/" "${ROOT}/payload/"
 	rsync -a --delete "${from_root}/images/" "${ROOT}/images/"
 	if [[ -d "${ROOT}/src" ]]; then
@@ -991,16 +1057,20 @@ read_env_value() {
 }
 
 resolve_console_host() {
-	local san_dns san_ip host
-	san_dns="$(read_env_value HFL_TLS_SAN_DNS)"
-	san_ip="$(read_env_value HFL_TLS_SAN_IP)"
-	if [[ -n "${san_dns}" && "${san_dns}" != "localhost" ]]; then
-		printf '%s' "${san_dns}"
-		return 0
-	fi
-	if [[ -n "${san_ip}" ]]; then
-		printf '%s' "${san_ip}"
-		return 0
+	local frontend_url host
+	frontend_url="$(read_env_value FRONTEND_URL)"
+	if [[ -n "${frontend_url}" ]]; then
+		host="$(python3 - "${frontend_url}" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+print(urlsplit(sys.argv[1]).hostname or "")
+PY
+)"
+		if [[ -n "${host}" ]]; then
+			printf '%s' "${host}"
+			return 0
+		fi
 	fi
 	host="$(hostname -I 2>/dev/null | awk '{print $1}')"
 	if [[ -n "${host}" ]]; then
@@ -2107,6 +2177,15 @@ cmd_upgrade() {
 
 	step "[2/7] Validating upgrade package ..."
 	validate_publish_artifacts "${src_root}"
+	validate_default_tls_bundle "${src_root}/deploy/nginx/certs"
+	case "$(tls_pair_state "${ROOT}/deploy/nginx/certs")" in
+	complete)
+		validate_tls_pair "${ROOT}/deploy/nginx/certs"
+		secure_tls_permissions "${ROOT}/deploy/nginx/certs"
+		;;
+	missing) log "No installed TLS pair exists; package defaults will be installed" ;;
+	incomplete) die "existing TLS certificate pair is incomplete under ${ROOT}/deploy/nginx/certs" ;;
+	esac
 	if package_has_sourcelens_dir "${src_root}"; then
 		preflight_sourcelens_bundle "${src_root}"
 	fi
@@ -2140,6 +2219,7 @@ cmd_upgrade() {
 	sync_env_from_example "${src_root}/.env.example"
 	apply_upgrade_files "${src_root}" "${remove_sourcelens}"
 	update_env_versions "${new_version}"
+	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 
 	if [[ "${remove_sourcelens}" -eq 1 && "${purge_sourcelens_data}" -eq 1 ]]; then
 		purge_sourcelens_data_dir

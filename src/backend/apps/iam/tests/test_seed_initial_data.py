@@ -43,6 +43,11 @@ class SeedInitialDataCommandTests(TestCase):
             admin_email="admin@hyperfilelens.com",
             admin_password="Admin@123",
         )
+
+        user = User.objects.get(email="admin@hyperfilelens.com")
+        user.set_password("OperatorChangedPassword@123")
+        user.save(update_fields=["password"])
+
         call_command(
             "seed_initial_data",
             admin_email="admin@hyperfilelens.com",
@@ -53,4 +58,5 @@ class SeedInitialDataCommandTests(TestCase):
         self.assertEqual(Membership.objects.count(), 1)
 
         user = User.objects.get(email="admin@hyperfilelens.com")
-        self.assertTrue(user.check_password("Admin@123"))
+        self.assertTrue(user.check_password("OperatorChangedPassword@123"))
+        self.assertFalse(user.check_password("Admin@123"))

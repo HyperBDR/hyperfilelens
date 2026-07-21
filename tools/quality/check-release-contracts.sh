@@ -181,12 +181,14 @@ done
 grep -F 'Verified that unrelated Docker containers, networks, and volumes are unchanged' "${remote_deploy}" >/dev/null
 grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy}" >/dev/null
 grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 
 installer="${ROOT}/deploy/installer/install.sh"
 grep -F 'PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"' "${installer}" >/dev/null
 grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
-grep -F 'admin_pass="Hfl-0$(random_hex | cut -c1-14)!"' "${installer}" >/dev/null
-grep -F 'san_dns="DNS:localhost,DNS:${env_dns}"' "${installer}" >/dev/null
+grep -F 'validate_default_tls_bundle "${src_root}/deploy/nginx/certs"' "${installer}" >/dev/null
+grep -F 'sync_default_tls_bundle "${from_root}/deploy/nginx/certs"' "${installer}" >/dev/null
+grep -F 'Preserving existing TLS certificate directory' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
@@ -204,6 +206,9 @@ grep -F 'HFL_PUBLIC_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'export SMOKE_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
+grep -F 'stage_default_tls_bundle "${pkg_root}"' \
+	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
+grep -F 'hyperfilelens-root-ca.crt' "${workflow}" >/dev/null
 fingerprint_body="$(sed -n '/^sourcelens_bundle_fingerprint()/,/^}/p' "${installer}")"
 grep -F 'BUILD_INFO.identity' <<<"${fingerprint_body}" >/dev/null
 if grep -F 'upstream_ref' <<<"${fingerprint_body}" >/dev/null; then
@@ -227,6 +232,28 @@ grep -F 'HFL_TENANT_PORT=11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'HFL_ADMIN_PORT=11444' "${ROOT}/.env.example" >/dev/null
 grep -F 'FRONTEND_URL=https://127.0.0.1:11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
+grep -F 'SEED_ADMIN_PASSWORD=Admin@123' "${ROOT}/.env.example" >/dev/null
+if grep -E 'HFL_TLS_SAN_(IP|DNS)' "${ROOT}/.env.example" "${installer}" >/dev/null; then
+	printf 'ERROR: runtime-generated TLS SAN configuration must not remain\n' >&2
+	exit 1
+fi
+for runtime_tls_script in \
+	"${installer}" \
+	"${ROOT}/deploy/installer/sourcelens/install.sh" \
+	"${ROOT}/dev/stack.sh" \
+	"${ROOT}/tools/sourcelens/common.sh"; do
+	if grep -F 'openssl req -x509' "${runtime_tls_script}" >/dev/null; then
+		printf 'ERROR: runtime TLS generation remains in %s\n' "${runtime_tls_script}" >&2
+		exit 1
+	fi
+done
+for cert_file in tls.crt tls.key root-ca.crt SHA256SUMS README.md; do
+	[[ -s "${ROOT}/deploy/nginx/certs/${cert_file}" ]] || {
+		printf 'ERROR: default TLS file is missing: %s\n' "${cert_file}" >&2
+		exit 1
+	}
+done
+[[ ! -e "${ROOT}/deploy/nginx/certs/.gitignore" ]]
 legacy_public_port_pattern='104(43|45|46)'
 if git -C "${ROOT}" grep -n -E "${legacy_public_port_pattern}" -- .; then
 	printf 'ERROR: tracked HFL files must not reference legacy 104xx public ports\n' >&2

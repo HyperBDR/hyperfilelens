@@ -272,18 +272,15 @@ sourcelens_ensure_tls_certs() {
 	local cert_dir=$1
 	local cert="${cert_dir}/tls.crt"
 	local key="${cert_dir}/tls.key"
-	mkdir -p "${cert_dir}"
-	if [[ -s "${cert}" && -s "${key}" ]]; then
-		return 0
-	fi
+	[[ -s "${cert}" && -s "${key}" ]] \
+		|| sourcelens_die "shared HyperFileLens TLS certificate and key are required under ${cert_dir#${HFL_ROOT}/}"
 	command -v openssl >/dev/null 2>&1 \
-		|| sourcelens_die "openssl is required to generate SourceLens TLS certificates"
-	sourcelens_log "Generating SourceLens development TLS certificates in ${cert_dir#${HFL_ROOT}/}"
-	openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-		-keyout "${key}" \
-		-out "${cert}" \
-		-subj "/CN=localhost" \
-		-addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1" 2>/dev/null
+		|| sourcelens_die "openssl is required to validate shared TLS certificates"
+	local cert_pub key_pub
+	cert_pub="$(openssl x509 -in "${cert}" -pubkey -noout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	key_pub="$(openssl pkey -in "${key}" -pubout 2>/dev/null | sha256sum | cut -d' ' -f1)"
+	[[ -n "${cert_pub}" && "${cert_pub}" == "${key_pub}" ]] \
+		|| sourcelens_die "shared HyperFileLens TLS certificate and key do not match"
 	chmod 644 "${cert}"
 	chmod 600 "${key}"
 }
@@ -1195,9 +1192,11 @@ sourcelens_prepare_dev_runtime_tree() {
 	fi
 	if [[ ! -f "${env_file}" ]]; then
 		cp "${env_sample}" "${env_file}"
+		chmod 600 "${env_file}"
 		sourcelens_patch_env_runtime_defaults "${env_file}"
 		sourcelens_log "Created ${env_file#${HFL_ROOT}/}"
 	else
+		chmod 600 "${env_file}"
 		python3 - "${env_file}" "${env_sample}" <<'PY'
 import pathlib
 import re
@@ -1217,6 +1216,7 @@ env_path.write_text(text, encoding="utf-8")
 PY
 	fi
 	sourcelens_patch_env_runtime_defaults "${env_file}"
+	chmod 600 "${env_file}"
 	if [[ -e "${legacy_env_file}" && ! -L "${legacy_env_file}" ]]; then
 		rm -f "${legacy_env_file}"
 	fi

@@ -136,6 +136,7 @@ jobs:
           python3 -m unittest tools/quality/test_check_english_source.py
           uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py
           ./tools/quality/check-release-contracts.sh
+          ./tools/quality/test-default-certificates.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-ci-release-assembly.sh
           git diff --check
@@ -503,6 +504,7 @@ jobs:
             --pattern 'SHA256SUMS' \
             --pattern 'MANIFEST.json' \
             --pattern 'SBOM.spdx.json' \
+            --pattern 'hyperfilelens-root-ca.crt' \
             --pattern 'assemble-release.*' \
             --dir build/release-candidate
       - name: Verify checksums and reconstruct package when split

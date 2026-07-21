@@ -108,6 +108,7 @@ cp "${ROOT}/deploy/docker-compose.yml" "${pkg_root}/docker-compose.yml"
 cp "${ROOT}/.env.example" "${pkg_root}/.env.example"
 cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
 mkdir -p "${pkg_root}/deploy/nginx/certs" "${pkg_root}/deploy/nginx/snippets" "${pkg_root}/deploy/logrotate"
+stage_default_tls_bundle "${pkg_root}"
 cp "${ROOT}/deploy/nginx/default.conf" "${pkg_root}/deploy/nginx/default.conf"
 rsync -a "${ROOT}/deploy/nginx/snippets/" "${pkg_root}/deploy/nginx/snippets/"
 cp "${ROOT}/deploy/logrotate/hyperfilelens.conf" "${pkg_root}/deploy/logrotate/hyperfilelens.conf"
@@ -194,6 +195,9 @@ if ((tar_bytes >= max_single_bytes)); then
 	cp "${SCRIPT_DIR}/assemble-release.ps1.txt" "${DIST_DIR}/assemble-release.ps1"
 	chmod 755 "${DIST_DIR}/assemble-release.sh"
 fi
+
+cp "${ROOT}/deploy/nginx/certs/root-ca.crt" "${DIST_DIR}/hyperfilelens-root-ca.crt"
+chmod 644 "${DIST_DIR}/hyperfilelens-root-ca.crt"
 
 (
 	cd "${DIST_DIR}"

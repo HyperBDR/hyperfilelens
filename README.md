@@ -79,7 +79,7 @@ root:
 On the first run, the script:
 
 1. Creates `.env` from `.env.example` when it is missing.
-2. Generates local self-signed TLS certificates.
+2. Validates the repository-pinned default TLS certificates.
 3. Fetches the pinned Kopia package and other build dependencies.
 4. Builds and publishes Agent packages under `data/media/`.
 5. Builds and starts the image-only SourceLens stack.
@@ -105,8 +105,10 @@ Email:    admin@hyperfilelens.com
 Password: Admin@123
 ```
 
-The development environment uses a self-signed certificate. Accept the local
-browser warning and change the default password after the first login.
+The default certificate is signed by the repository-pinned HyperFileLens root
+CA. Trust `deploy/nginx/certs/root-ca.crt` on the client to remove browser
+warnings for the covered local names. Change the default password after the
+first login.
 
 Common lifecycle commands:
 
@@ -324,7 +326,11 @@ The generated archive is written to `build/release/dist/` and contains:
 - Optional bundled SourceLens images
 - Agent installers and enrollment bootstrap files
 - Ubuntu 20.04/24.04 amd64 Docker CE packages
+- Repository-pinned default TLS certificates and root CA
 - Runtime Compose, Nginx, installer, and license files
+
+GitHub Releases also publish the same root certificate as the standalone
+`hyperfilelens-root-ca.crt` asset for client trust-store installation.
 
 Application source code is not copied into the release package. Installed
 runtime files are placed under `/opt/hyperfilelens`, with persistent state
@@ -338,10 +344,12 @@ cd hyperfilelens-<version>
 sudo ./install.sh install
 ```
 
-The installer creates `.env`, generates application, database, and initial
-administrator secrets, creates a self-signed certificate, loads the packaged
-images, and starts the stack. It prints the generated administrator password
-after installation.
+The installer creates a mode-`0600` `.env`, generates internal application and
+database secrets, validates the packaged default TLS identity, loads the
+packaged images, and starts the stack. Fresh installations use the fixed HFL
+login `admin@hyperfilelens.com` / `Admin@123`; bundled SourceLens uses
+`admin` / `adminpassword`. An upgrade preserves `.env`, an existing complete
+TLS pair, and passwords already changed in either database.
 
 Upgrade an existing installation:
 
@@ -382,18 +390,22 @@ hyperfilelens/
 
 ## Security
 
-Development defaults are intentionally convenient and are not production
-credentials. Release installation generates random application, database, and
-administrator secrets, but operators must still:
+Default login credentials and the default TLS server private key are
+intentionally public and convenient. Release installation generates random
+internal application and database secrets, but operators must still:
 
-- Replace self-signed certificates with certificates trusted by their users.
+- Trust `root-ca.crt` only where the shared default identity is acceptable, or
+  atomically replace `tls.crt` and `tls.key` with a deployment-specific pair.
+- Change the fixed default login passwords or enforce equivalent external access controls.
 - Review listener bind addresses and restrict administrative access.
 - Configure trusted hostnames, CSRF/CORS origins, email, and optional OAuth.
 - Protect `.env`, TLS private keys, backups, logs, and `data/`.
-- Keep credentials and generated runtime files out of version control.
+- Keep deployment-specific credentials and generated runtime files out of version control.
 
-Do not commit `.env`, private keys, access tokens, runtime data, build output,
-or release archives.
+Do not commit `.env`, deployment-specific private keys, access tokens, runtime
+data, build output, or release archives. The only intentional private key in
+the repository is the checksum-pinned default `deploy/nginx/certs/tls.key`;
+the root CA private key is never committed.
 
 ## Contributing
 
