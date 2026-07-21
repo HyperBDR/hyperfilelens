@@ -76,6 +76,22 @@ class DeployProfileViewTest(TestCase):
             "https://app.example.com:11444",
         )
 
+    @override_settings(
+        FRONTEND_URL="https://app.example.com",
+        HFL_ADMIN_PORT=11444,
+        HFL_ADMIN_PUBLIC_URL="https://ops.example.com/",
+    )
+    def test_admin_console_url_prefers_configured_public_url(self):
+        response = self.client.get(
+            "/api/v1/meta/deploy-profile",
+            HTTP_HOST="app.example.com",
+            HTTP_X_FORWARDED_PROTO="https",
+        )
+        self.assertEqual(
+            response.data["admin_console_url"],
+            "https://ops.example.com",
+        )
+
     def test_invalid_access_token_cookie_is_treated_as_anonymous(self):
         self.client.cookies["access_token"] = "not-a-valid-jwt"
         response = self.client.get("/api/v1/meta/deploy-profile")

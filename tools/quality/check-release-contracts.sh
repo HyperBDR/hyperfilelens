@@ -73,8 +73,76 @@ grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
 grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.4.0}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
+grep -F 'SOURCELENS_UV_VERSION="${SOURCELENS_UV_VERSION:-0.10.2}"' \
+	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
 grep -F 'set_key("DJANGO_DEBUG", "true")' \
 	"${ROOT}/deploy/installer/sourcelens/patch-env-runtime.py" >/dev/null
+
+sourcelens_common="${ROOT}/tools/sourcelens/common.sh"
+sourcelens_build_body="$(sed -n '/^sourcelens_build_app_images()/,/^}/p' "${sourcelens_common}")"
+grep -F 'http://archive.ubuntu.com/ubuntu' <<<"${sourcelens_build_body}" >/dev/null
+grep -F 'https://deb.debian.org/debian' <<<"${sourcelens_build_body}" >/dev/null
+grep -F 'https://pypi.org/simple' <<<"${sourcelens_build_body}" >/dev/null
+if grep -F 'mirrors.tuna.tsinghua.edu.cn' <<<"${sourcelens_build_body}" >/dev/null; then
+	printf 'ERROR: SourceLens build must not enable a third-party mirror by default\n' >&2
+	exit 1
+fi
+
+mkdir -p "${tmp}/source-patch/lensnode"
+cat >"${tmp}/source-patch/Dockerfile" <<'DOCKERFILE'
+FROM ubuntu:24.04
+ARG PIP_TRUSTED_HOST=pypi.org
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+RUN set -eux; \
+    pip install \
+        uv; \
+    uv pip install --system .
+DOCKERFILE
+cp "${tmp}/source-patch/Dockerfile" "${tmp}/source-patch/lensnode/Dockerfile"
+sourcelens_patch_dockerfile_uv_network "${tmp}/source-patch" 120 2 0.10.2
+for dockerfile in "${tmp}/source-patch/Dockerfile" "${tmp}/source-patch/lensnode/Dockerfile"; do
+	grep -F 'ARG UV_VERSION=0.10.2' "${dockerfile}" >/dev/null
+	grep -F '"uv==${UV_VERSION}"' "${dockerfile}" >/dev/null
+done
+
+cat >"${tmp}/source-patch/docker-compose.yml" <<'YAML'
+services:
+  backend-api:
+    build:
+      context: .
+      args:
+        APT_MIRROR_URL: ${APT_MIRROR_URL:-https://mirrors.tuna.tsinghua.edu.cn/ubuntu}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
+  lensnode:
+    build:
+      context: ./lensnode
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
+YAML
+sourcelens_patch_compose_lensnode_apt_mirror \
+	"${tmp}/source-patch" https://deb.debian.org/debian
+sourcelens_patch_compose_build_sources \
+	"${tmp}/source-patch" \
+	http://archive.ubuntu.com/ubuntu \
+	https://deb.debian.org/debian \
+	https://pypi.org/simple \
+	pypi.org
+sourcelens_patch_compose_uv_network "${tmp}/source-patch" 120 2 0.10.2
+if grep -F 'mirrors.tuna.tsinghua.edu.cn' \
+	"${tmp}/source-patch/docker-compose.yml" >/dev/null; then
+	printf 'ERROR: patched SourceLens Compose still defaults to a third-party mirror\n' >&2
+	exit 1
+fi
+grep -F 'APT_MIRROR_URL: ${APT_MIRROR_URL:-http://archive.ubuntu.com/ubuntu}' \
+	"${tmp}/source-patch/docker-compose.yml" >/dev/null
+grep -F 'APT_MIRROR_URL: ${DEBIAN_APT_MIRROR_URL:-https://deb.debian.org/debian}' \
+	"${tmp}/source-patch/docker-compose.yml" >/dev/null
+[[ "$(grep -Fc 'PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}' \
+	"${tmp}/source-patch/docker-compose.yml")" -eq 2 ]]
+[[ "$(grep -Fc 'UV_VERSION: ${UV_VERSION:-0.10.2}' \
+	"${tmp}/source-patch/docker-compose.yml")" -eq 2 ]]
 
 workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
 [[ -f "${workflow}" ]] || {
@@ -91,6 +159,11 @@ workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
 }
 grep -F 'timeout-minutes: 120' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${workflow}" >/dev/null
+grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${workflow}" >/dev/null
+if grep -F 'PROD_PUBLIC_HOST' "${workflow}" >/dev/null; then
+	printf 'ERROR: release workflow still uses the ambiguous PROD_PUBLIC_HOST variable\n' >&2
+	exit 1
+fi
 grep -F '"TURNSTILE_ENABLED=$TURNSTILE_ENABLED"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 if git -C "${ROOT}" grep -n 'CAPTCHA_PROVIDER' -- . \
@@ -177,6 +250,10 @@ remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 grep -F 'browser_download_url' "${remote_deploy}" >/dev/null
 grep -F 'bash "${INSTALL_DIR}/install.sh" upgrade --from "${package_root}" --yes' \
 	"${remote_deploy}" >/dev/null
+grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
+grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
+grep -F 'optional configuration was not healthy; restoring previous .env' \
+	"${remote_deploy}" >/dev/null
 if grep -E 'docker (pull|compose pull)' "${remote_deploy}" >/dev/null; then
 	printf 'ERROR: production deployment must consume the complete Release package\n' >&2
 	exit 1
@@ -192,6 +269,16 @@ grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy
 grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
+grep -F 'Post-deploy internal health checks' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'https://127.0.0.1:11443/health/ready' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F '::warning::Public endpoint is not ready' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+if grep -F 'APP_PUBLIC_HOST' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
+	printf 'ERROR: deployment checks must not append internal ports to a public hostname\n' >&2
+	exit 1
+fi
 
 installer="${ROOT}/deploy/installer/install.sh"
 materialize_body="$(sed -n '/^materialize_to_install_dir()/,/^}/p' "${installer}")"

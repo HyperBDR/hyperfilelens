@@ -58,6 +58,7 @@ sourcelens_load_config() {
 	SOURCELENS_UV_CONCURRENT_DOWNLOADS="${SOURCELENS_UV_CONCURRENT_DOWNLOADS:-${UV_CONCURRENT_DOWNLOADS:-${BUILD_UV_CONCURRENT_DOWNLOADS:-2}}}"
 	SOURCELENS_PIP_RETRY_MAX="${SOURCELENS_PIP_RETRY_MAX:-${HFL_PIP_RETRY_MAX:-${BUILD_PIP_RETRY_MAX:-5}}}"
 	SOURCELENS_PIP_RETRY_DELAY="${SOURCELENS_PIP_RETRY_DELAY:-${HFL_PIP_RETRY_DELAY:-${BUILD_PIP_RETRY_DELAY:-5}}}"
+	SOURCELENS_UV_VERSION="${SOURCELENS_UV_VERSION:-0.10.2}"
 	SOURCELENS_NPM_REGISTRY="${SOURCELENS_NPM_REGISTRY:-${NPM_REGISTRY:-${BUILD_NPM_REGISTRY:-}}}"
 	SOURCELENS_DOCKER_MIRROR="${SOURCELENS_DOCKER_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
 	SOURCELENS_DOCKER_PULL_TIMEOUT="${SOURCELENS_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
@@ -435,22 +436,95 @@ path.write_text("".join(out), encoding="utf-8")
 PY
 }
 
-sourcelens_patch_dockerfile_uv_network() {
+sourcelens_patch_compose_build_sources() {
 	local src=$1
-	local timeout=$2
-	local concurrent=$3
-	local dockerfile
-	for dockerfile in "${src}/Dockerfile" "${src}/lensnode/Dockerfile"; do
-		[[ -f "${dockerfile}" ]] || continue
-		python3 - "${dockerfile}" "${timeout}" "${concurrent}" <<'PY'
+	local ubuntu_default=$2
+	local debian_default=$3
+	local pip_index_default=$4
+	local pip_trusted_host_default=$5
+	local compose="${src}/docker-compose.yml"
+	[[ -f "${compose}" ]] || return 0
+	python3 - "${compose}" "${ubuntu_default}" "${debian_default}" \
+		"${pip_index_default}" "${pip_trusted_host_default}" <<'PY'
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
-timeout, concurrent = sys.argv[2:4]
+ubuntu_default, debian_default, pip_index_default, pip_trusted_host_default = (
+    sys.argv[2:6]
+)
+service_settings = {
+    "backend-api": {
+        "APT_MIRROR_URL": ("APT_MIRROR_URL", ubuntu_default),
+        "PIP_INDEX_URL": ("PIP_INDEX_URL", pip_index_default),
+        "PIP_TRUSTED_HOST": ("PIP_TRUSTED_HOST", pip_trusted_host_default),
+    },
+    "lensnode": {
+        "APT_MIRROR_URL": ("DEBIAN_APT_MIRROR_URL", debian_default),
+        "PIP_INDEX_URL": ("PIP_INDEX_URL", pip_index_default),
+        "PIP_TRUSTED_HOST": ("PIP_TRUSTED_HOST", pip_trusted_host_default),
+    },
+}
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+out = []
+service = None
+in_build = False
+in_args = False
+seen = set()
+
+for line in lines:
+    stripped = line.strip()
+    if line.startswith("  ") and not line.startswith("    ") and stripped.endswith(":"):
+        service = stripped[:-1]
+        in_build = False
+        in_args = False
+    if service in service_settings and stripped == "build:":
+        in_build = True
+    if service in service_settings and in_build and stripped == "args:":
+        in_args = True
+    elif in_args and stripped and not line.startswith("        "):
+        in_args = False
+    if service in service_settings and in_args:
+        for name, (environment_name, default) in service_settings[service].items():
+            if stripped.startswith(f"{name}:"):
+                indent = line[: len(line) - len(line.lstrip())]
+                line = f"{indent}{name}: ${{{environment_name}:-{default}}}\n"
+                seen.add((service, name))
+                break
+    out.append(line)
+
+expected = {
+    (service_name, setting_name)
+    for service_name, settings in service_settings.items()
+    for setting_name in settings
+}
+missing = sorted(expected - seen)
+if missing:
+    details = ", ".join(f"{service}.{name}" for service, name in missing)
+    raise SystemExit(f"ERROR: could not patch SourceLens Compose build sources: {details}")
+
+path.write_text("".join(out), encoding="utf-8")
+PY
+}
+
+sourcelens_patch_dockerfile_uv_network() {
+	local src=$1
+	local timeout=$2
+	local concurrent=$3
+	local uv_version=$4
+	local dockerfile
+	for dockerfile in "${src}/Dockerfile" "${src}/lensnode/Dockerfile"; do
+		[[ -f "${dockerfile}" ]] || continue
+		python3 - "${dockerfile}" "${timeout}" "${concurrent}" "${uv_version}" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+timeout, concurrent, uv_version = sys.argv[2:5]
 settings = [
     ("UV_HTTP_TIMEOUT", timeout),
     ("UV_CONCURRENT_DOWNLOADS", concurrent),
+    ("UV_VERSION", uv_version),
 ]
 text = path.read_text(encoding="utf-8")
 lines = text.splitlines(keepends=True)
@@ -488,10 +562,14 @@ for line in lines:
     out.append(line)
 
 updated = "".join(out)
+updated = updated.replace("        uv; \\\n", '        "uv==${UV_VERSION}"; \\\n')
 for name, default in settings:
     if f"ARG {name}" not in updated or f"{name}=${{{name}}}" not in updated:
         sys.stderr.write(f"ERROR: could not patch {name} in {path}\n")
         sys.exit(1)
+if '"uv==${UV_VERSION}"' not in updated:
+    sys.stderr.write(f"ERROR: could not pin uv in {path}\n")
+    sys.exit(1)
 
 path.write_text(updated, encoding="utf-8")
 PY
@@ -594,18 +672,20 @@ sourcelens_patch_compose_uv_network() {
 	local src=$1
 	local timeout=$2
 	local concurrent=$3
+	local uv_version=$4
 	local compose="${src}/docker-compose.yml"
 	[[ -f "${compose}" ]] || return 0
-	python3 - "${compose}" "${timeout}" "${concurrent}" <<'PY'
+	python3 - "${compose}" "${timeout}" "${concurrent}" "${uv_version}" <<'PY'
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
-timeout, concurrent = sys.argv[2:4]
+timeout, concurrent, uv_version = sys.argv[2:5]
 services = {"backend-api", "lensnode"}
 settings = [
     ("UV_HTTP_TIMEOUT", timeout),
     ("UV_CONCURRENT_DOWNLOADS", concurrent),
+    ("UV_VERSION", uv_version),
 ]
 lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
 out = []
@@ -618,6 +698,14 @@ insert_after_idx = None
 for line in lines:
     stripped = line.strip()
     if line.startswith("  ") and not line.startswith("    ") and stripped.endswith(":"):
+        if in_args and insert_after_idx is not None:
+            offset = 1
+            for name, default in (item for item in settings if item[0] not in present):
+                out.insert(
+                    insert_after_idx + offset,
+                    f"        {name}: ${{{name}:-{default}}}\n",
+                )
+                offset += 1
         service = stripped[:-1]
         in_build = False
         in_args = False
@@ -648,6 +736,15 @@ for line in lines:
                     offset += 1
             in_args = False
     out.append(line)
+
+if in_args and insert_after_idx is not None:
+    offset = 1
+    for name, default in (item for item in settings if item[0] not in present):
+        out.insert(
+            insert_after_idx + offset,
+            f"        {name}: ${{{name}:-{default}}}\n",
+        )
+        offset += 1
 
 path.write_text("".join(out), encoding="utf-8")
 PY
@@ -931,27 +1028,28 @@ sourcelens_build_app_images() {
 
 	local src="${SOURCELENS_SOURCE_CACHE}"
 	local version="${SOURCELENS_VERSION}"
-	local ubuntu_apt_mirror_url=""
-	local debian_apt_mirror_url=""
+	local ubuntu_apt_mirror_url="http://archive.ubuntu.com/ubuntu"
+	local debian_apt_mirror_url="https://deb.debian.org/debian"
+	local pip_index_url="${SOURCELENS_PIP_INDEX_URL:-https://pypi.org/simple}"
+	local pip_trusted_host="${SOURCELENS_PIP_TRUSTED_HOST:-pypi.org}"
 
 	if [[ -n "${SOURCELENS_APT_MIRROR:-}" ]]; then
 		ubuntu_apt_mirror_url="$(sourcelens_normalize_apt_mirror_url ubuntu "${SOURCELENS_APT_MIRROR}" "${SOURCELENS_DOCKER_PLATFORM}")"
 		debian_apt_mirror_url="$(sourcelens_normalize_apt_mirror_url debian "${SOURCELENS_APT_MIRROR}" "${SOURCELENS_DOCKER_PLATFORM}")"
 	fi
-	if [[ -z "${debian_apt_mirror_url}" ]]; then
-		debian_apt_mirror_url="https://mirrors.tuna.tsinghua.edu.cn/debian"
-	fi
-
 	sourcelens_restore_source_dockerfiles "${src}"
 	sourcelens_restore_compose_file "${src}"
 	sourcelens_patch_dockerfile_uv_network "${src}" "${SOURCELENS_UV_HTTP_TIMEOUT}" \
-		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}"
+		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}" "${SOURCELENS_UV_VERSION}"
 	sourcelens_patch_dockerfile_pip_resilience "${src}" \
 		"${SOURCELENS_PIP_RETRY_MAX}" "${SOURCELENS_PIP_RETRY_DELAY}"
 	sourcelens_patch_frontend_dockerfile_npm_registry "${src}"
 	sourcelens_patch_compose_lensnode_apt_mirror "${src}" "${debian_apt_mirror_url}"
+	sourcelens_patch_compose_build_sources "${src}" \
+		"${ubuntu_apt_mirror_url}" "${debian_apt_mirror_url}" \
+		"${pip_index_url}" "${pip_trusted_host}"
 	sourcelens_patch_compose_uv_network "${src}" "${SOURCELENS_UV_HTTP_TIMEOUT}" \
-		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}"
+		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}" "${SOURCELENS_UV_VERSION}"
 	sourcelens_patch_compose_npm_registry "${src}" "${SOURCELENS_NPM_REGISTRY}"
 	sourcelens_log "Building SourceLens Docker images (APP_VERSION=${version}, base images from docker.io like HFL)..."
 	(
@@ -959,20 +1057,17 @@ sourcelens_build_app_images() {
 		export APP_VERSION="${version}"
 		export DOCKER_DEFAULT_PLATFORM="${SOURCELENS_DOCKER_PLATFORM}"
 		sourcelens_log "Using SourceLens Docker platform: ${DOCKER_DEFAULT_PLATFORM}"
-		if [[ -n "${ubuntu_apt_mirror_url}" ]]; then
-			sourcelens_log "Using SourceLens Ubuntu apt mirror: ${ubuntu_apt_mirror_url}"
-			export APT_MIRROR_URL="${ubuntu_apt_mirror_url}"
-		else
-			unset APT_MIRROR_URL
-		fi
+		sourcelens_log "Using SourceLens Ubuntu apt source: ${ubuntu_apt_mirror_url}"
+		export APT_MIRROR_URL="${ubuntu_apt_mirror_url}"
 		export DEBIAN_APT_MIRROR_URL="${debian_apt_mirror_url}"
-		sourcelens_log "Using SourceLens Debian apt mirror: ${DEBIAN_APT_MIRROR_URL}"
-		export PIP_INDEX_URL="${SOURCELENS_PIP_INDEX_URL}"
-		export PIP_TRUSTED_HOST="${SOURCELENS_PIP_TRUSTED_HOST}"
+		sourcelens_log "Using SourceLens Debian apt source: ${DEBIAN_APT_MIRROR_URL}"
+		export PIP_INDEX_URL="${pip_index_url}"
+		export PIP_TRUSTED_HOST="${pip_trusted_host}"
 		export UV_HTTP_TIMEOUT="${SOURCELENS_UV_HTTP_TIMEOUT}"
 		export UV_CONCURRENT_DOWNLOADS="${SOURCELENS_UV_CONCURRENT_DOWNLOADS}"
+		export UV_VERSION="${SOURCELENS_UV_VERSION}"
 		export NPM_REGISTRY="${SOURCELENS_NPM_REGISTRY}"
-		sourcelens_log "Using SourceLens pip index: ${PIP_INDEX_URL}"
+		sourcelens_log "Using SourceLens pip index: ${PIP_INDEX_URL} (uv=${UV_VERSION})"
 		sourcelens_log "Using SourceLens pip resilience: BuildKit uv/pip cache + retry max=${SOURCELENS_PIP_RETRY_MAX} delay=${SOURCELENS_PIP_RETRY_DELAY}s"
 		sourcelens_log "Using SourceLens uv network: timeout=${UV_HTTP_TIMEOUT}s concurrent=${UV_CONCURRENT_DOWNLOADS} (uv retries=default)"
 		sourcelens_log "Using SourceLens npm registry: ${NPM_REGISTRY}"
