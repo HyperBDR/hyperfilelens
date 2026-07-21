@@ -1,4 +1,5 @@
-name: Deploy Published Release
+name: HFL - Manual Release Deployment
+run-name: Deploy ${{ inputs.tag }} to ${{ inputs.target }}
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Deploy HFL target
+name: HFL - Target Deployment (Reusable)
 
 on:
   workflow_call:
