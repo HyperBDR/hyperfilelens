@@ -261,23 +261,48 @@ export function useDeploymentHostMonitor(
     void applyCustomRange()
   }
 
-  function onManualRefresh() {
-    if (selectedTimeOption.value === 'custom') {
-      void applyCustomRange()
-      return
+  async function refreshCurrentSelection(reloadHosts = false) {
+    if (loading.value) return
+    loading.value = true
+    try {
+      if (reloadHosts) await loadHosts()
+      if (!selectedHostId.value) return
+
+      if (selectedTimeOption.value === 'custom') {
+        const start = new Date(customTimeRange.value.start)
+        const end = new Date(customTimeRange.value.end)
+        if (
+          customTimeRange.value.start
+          && customTimeRange.value.end
+          && !Number.isNaN(start.getTime())
+          && !Number.isNaN(end.getTime())
+        ) {
+          await applyCustomRange(true)
+          return
+        }
+      }
+
+      const preset = timePresets.value.find((item) => item.value === selectedTimeOption.value)
+      const fallbackPreset = timePresets.value.find((item) => item.value === '24h')
+      selectedTimeOption.value = preset?.value ?? fallbackPreset?.value ?? '24h'
+      await fetchData(preset?.hours ?? fallbackPreset?.hours ?? 24, true)
+    } finally {
+      loading.value = false
     }
-    const preset = timePresets.value.find((p) => p.value === selectedTimeOption.value)
-    void fetchData(preset?.hours ?? 24)
   }
 
-  async function applyCustomRange() {
+  function onManualRefresh() {
+    void refreshCurrentSelection(true)
+  }
+
+  async function applyCustomRange(silent = false) {
     if (!selectedHostId.value) return
     if (!customTimeRange.value.start || !customTimeRange.value.end) return
     const start = new Date(customTimeRange.value.start)
     const end = new Date(customTimeRange.value.end)
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return
     selectedTimeOption.value = 'custom'
-    loading.value = true
+    if (!silent) loading.value = true
     try {
       data.value = await fetchMonitor(
         monitorParams(undefined, {
@@ -289,12 +314,13 @@ export function useDeploymentHostMonitor(
       if (isAbortError(err)) return
       ElMessage.error({ message: t(loadFailedKey), grouping: true })
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 
   function clearCustomRange() {
     customTimeRange.value = { start: '', end: '' }
+    selectedTimeOption.value = ''
     data.value = { host: data.value.host, range: {}, current: {}, series: [] }
   }
 
@@ -321,10 +347,7 @@ export function useDeploymentHostMonitor(
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
     }
     customTimeRange.value = { start: fmt(start), end: fmt(now) }
-    await loadHosts()
-    if (selectedHostId.value) {
-      await fetchData(24)
-    }
+    await refreshCurrentSelection(true)
   })
 
   onUnmounted(() => {

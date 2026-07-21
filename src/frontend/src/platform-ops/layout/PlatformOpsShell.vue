@@ -24,7 +24,7 @@ const fallbackMenuItems = usePlatformOpsSideNav()
 const routeSkeletonShowsCards = computed(() => route.path.startsWith('/platform-ops/monitoring'))
 
 onMounted(async () => {
-  const profile = await fetchDeployProfile(true)
+  const profile = await fetchDeployProfile()
   if (profile?.tenant_public_url) {
     try {
       tenantUrl.value = new URL(profile.tenant_public_url).toString()

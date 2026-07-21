@@ -1,7 +1,11 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { router } from '../router'
-import { fetchDeployProfile, resolvePostLoginPath } from './useDeployProfile'
+import {
+  fetchDeployProfile,
+  resolvePostLoginPath,
+  shouldForceDeployProfileRefresh,
+} from './useDeployProfile'
 import { getCorrelationHeaders } from '../lib/requestContext'
 import { refreshAuthToken } from '../lib/authRefresh'
 import { i18n } from '../i18n'
@@ -386,7 +390,11 @@ export function setupAuthGuard() {
           return
         }
         if (isPlatformOpsPath || to.meta.requiresPlatformOps) {
-          const profile = await fetchDeployProfile(true)
+          const profile = await fetchDeployProfile(shouldForceDeployProfileRefresh(
+            to.path,
+            from.path,
+            Boolean(to.meta.requiresPlatformOps),
+          ))
           const staff = currentUser.value?.is_staff === true
           if (!staff || !profile?.platform_ops_access_allowed) {
             if (profile?.tenant_public_url) {
@@ -406,7 +414,11 @@ export function setupAuthGuard() {
         const payload = await fetchCurrentUser()
         if (payload?.id) {
           if (isPlatformOpsPath || to.meta.requiresPlatformOps) {
-            const profile = await fetchDeployProfile(true)
+            const profile = await fetchDeployProfile(shouldForceDeployProfileRefresh(
+              to.path,
+              from.path,
+              Boolean(to.meta.requiresPlatformOps),
+            ))
             const staff = payload.is_staff === true
             if (!staff || !profile?.platform_ops_access_allowed) {
               if (profile?.tenant_public_url) {

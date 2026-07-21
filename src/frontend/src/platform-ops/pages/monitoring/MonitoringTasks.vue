@@ -90,11 +90,11 @@ watch(() => route.query, () => {
 
         <el-table
           v-table-column-resize="'platformOps.monitoring.tasks'"
+          v-loading="busy"
           :data="rows"
           stripe
           row-key="id"
           class="hfl-list-table"
-          :loading="busy"
           :max-height="PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT"
           :header-cell-style="PLATFORM_OPS_TABLE_HEADER_STYLE"
           @selection-change="onSelectionChange"

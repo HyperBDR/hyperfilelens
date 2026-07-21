@@ -133,11 +133,11 @@ watch([currentPage, pageSize], load)
 
         <el-table
           v-table-column-resize="'platformOps.platform.agentReleases'"
+          v-loading="busy"
           :data="rows"
           stripe
           :row-key="(row: ArtifactRow) => `${row.version}::${row.name}`"
           class="hfl-list-table"
-          :loading="busy"
           :max-height="PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT"
           :header-cell-style="PLATFORM_OPS_TABLE_HEADER_STYLE"
         >
