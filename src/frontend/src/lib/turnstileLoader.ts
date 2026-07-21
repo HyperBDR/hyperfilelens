@@ -1,4 +1,4 @@
-import { TURNSTILE_LOAD_TIMEOUT_MS } from '../composables/useCaptchaConfig'
+export const TURNSTILE_LOAD_TIMEOUT_MS = 15000
 
 export const TURNSTILE_SCRIPT_ID = 'cf-turnstile-script'
 export const TURNSTILE_SCRIPT_SRC =

@@ -32,6 +32,7 @@ jobs:
       ssh_user: ${{ vars.PREPROD_SSH_USER }}
       ssh_known_hosts: ${{ vars.PREPROD_SSH_KNOWN_HOSTS }}
       turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
+      turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED == 'true' }}
     secrets:
       ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}
@@ -47,6 +48,7 @@ jobs:
       ssh_user: ${{ vars.PROD_SSH_USER }}
       ssh_known_hosts: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
       turnstile_site_key: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
+      turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED == 'true' }}
     secrets:
       ssh_private_key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}

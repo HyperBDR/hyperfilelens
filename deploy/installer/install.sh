@@ -668,6 +668,7 @@ sub_key("SENTRY_ENVIRONMENT", "production")
 sub_key("HFL_EMAIL_SIGNUP_ENABLED", "false")
 sub_key("HFL_GOOGLE_OAUTH_ENABLED", "false")
 sub_key("HFL_PLATFORM_OPS_ENABLED", "true")
+sub_key("TURNSTILE_ENABLED", "false")
 tenant_port = "11443"
 frontend_url = f"https://{host}:{tenant_port}"
 sub_key("FRONTEND_URL", frontend_url)

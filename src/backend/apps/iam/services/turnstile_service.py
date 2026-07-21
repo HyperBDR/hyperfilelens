@@ -21,8 +21,14 @@ def _get_http_session() -> requests.Session:
     return _session
 
 
-def validate_turnstile(token: str, remote_ip: str | None = None) -> bool:
-    """Verify a Turnstile response token with Cloudflare."""
+def validate_turnstile(
+    token: str,
+    remote_ip: str | None = None,
+    *,
+    expected_action: str,
+    expected_hostname: str,
+) -> bool:
+    """Verify a Turnstile token and bind it to the expected action and host."""
     from apps.platform_ops.services.internal.runtime_settings import turnstile_secret_key
 
     secret = turnstile_secret_key()
@@ -56,13 +62,30 @@ def validate_turnstile(token: str, remote_ip: str | None = None) -> bool:
         logger.warning("[TURNSTILE] siteverify returned invalid JSON")
         return False
 
-    success = bool(result.get("success"))
-    if not success:
+    if not bool(result.get("success")):
         logger.info(
             "[TURNSTILE] verification failed: %s",
             result.get("error-codes"),
         )
-    return success
+        return False
+
+    action = str(result.get("action") or "")
+    hostname = str(result.get("hostname") or "").lower()
+    if action != expected_action:
+        logger.warning(
+            "[TURNSTILE] action mismatch: expected=%s received=%s",
+            expected_action,
+            action or "-",
+        )
+        return False
+    if hostname != expected_hostname.lower():
+        logger.warning(
+            "[TURNSTILE] hostname mismatch: expected=%s received=%s",
+            expected_hostname,
+            hostname or "-",
+        )
+        return False
+    return True
 
 
 def get_client_ip(request) -> str | None:

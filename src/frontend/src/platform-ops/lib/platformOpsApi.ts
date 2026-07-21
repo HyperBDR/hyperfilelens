@@ -107,7 +107,7 @@ export interface PlatformIdentitySettings {
   self_service_password_reset: boolean
   platform_ops_enabled: boolean
   platform_ops_allowed_cidrs: string[]
-  captcha_provider: string
+  turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_secret_configured: boolean
   google_client_id: string

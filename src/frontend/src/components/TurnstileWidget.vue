@@ -2,8 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { TURNSTILE_LOAD_TIMEOUT_MS } from '../composables/useCaptchaConfig'
-import { preloadTurnstileScript, resetTurnstileScriptLoad } from '../lib/turnstileLoader'
+import {
+  preloadTurnstileScript,
+  resetTurnstileScriptLoad,
+  TURNSTILE_LOAD_TIMEOUT_MS,
+} from '../lib/turnstileLoader'
 import { turnstileLanguageFromAppLocale } from '../lib/turnstileLanguage'
 
 declare global {
@@ -21,6 +24,7 @@ declare global {
           size?: 'normal' | 'compact' | 'flexible'
           language?: string
           appearance?: 'always' | 'execute' | 'interaction-only'
+          action?: string
         },
       ) => string
       reset: (widgetId?: string) => void
@@ -37,6 +41,7 @@ const props = withDefaults(
     /** Override Turnstile language; defaults to the current page locale. */
     language?: string
     loadTimeoutMs?: number
+    action: string
   }>(),
   {
     theme: 'dark',
@@ -153,6 +158,7 @@ function renderWidget() {
       size: props.size,
       language: effectiveLanguage.value,
       appearance: 'always',
+      action: props.action,
       callback: (token: string) => {
         emitSuccess(token)
       },
@@ -216,7 +222,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.siteKey, props.theme, props.size, props.language, effectiveLanguage.value] as const,
+  () => [props.siteKey, props.action, props.theme, props.size, props.language, effectiveLanguage.value] as const,
   () => {
     void initWidget()
   },

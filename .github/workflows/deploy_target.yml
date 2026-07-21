@@ -31,6 +31,10 @@ on:
         description: Public Cloudflare Turnstile site key
         required: true
         type: string
+      turnstile_enabled:
+        description: Require Turnstile on the SaaS deployment target
+        required: true
+        type: boolean
     secrets:
       ssh_private_key:
         description: SSH private key for the deployment target
@@ -60,6 +64,7 @@ jobs:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
+          TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
         shell: bash
         run: |
           set -euo pipefail
@@ -69,6 +74,7 @@ jobs:
           [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
           [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" ]]
           [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
+          [[ "$TURNSTILE_ENABLED" == "true" ]]
           [[ "$TURNSTILE_SITE_KEY" =~ ^[A-Za-z0-9_-]+$ ]]
           [[ "$TURNSTILE_SECRET_KEY" =~ ^[A-Za-z0-9_-]+$ ]]
 
@@ -87,6 +93,7 @@ jobs:
         env:
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
+          TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
         shell: bash
         run: |
           set -euo pipefail
@@ -94,7 +101,7 @@ jobs:
           trap 'rm -f -- "$runtime_env"' EXIT
           umask 077
           printf '%s\n' \
-            'CAPTCHA_PROVIDER=turnstile' \
+            "TURNSTILE_ENABLED=$TURNSTILE_ENABLED" \
             "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \
             "TURNSTILE_SECRET_KEY=$TURNSTILE_SECRET_KEY" \
             > "$runtime_env"

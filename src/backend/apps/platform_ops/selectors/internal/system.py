@@ -162,16 +162,17 @@ def deploy_profile_staff_payload() -> dict:
 
 def auth_policy_payload() -> dict:
     from apps.platform_ops.services.internal.runtime_settings import (
-        captcha_provider,
         google_client_id,
         google_oauth_enabled,
+        turnstile_enabled,
+        turnstile_secret_key,
         turnstile_site_key,
     )
 
     google_id = google_client_id()
     return {
-        "captcha_provider": captcha_provider(),
+        "turnstile_enabled": turnstile_enabled(),
         "google_oauth_configured": google_oauth_enabled(),
         "google_client_id_hint": google_id[-4:] if len(google_id) >= 4 else None,
-        "turnstile_configured": bool(turnstile_site_key()),
+        "turnstile_configured": bool(turnstile_site_key() and turnstile_secret_key()),
     }

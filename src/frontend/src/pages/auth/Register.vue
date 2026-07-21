@@ -6,8 +6,8 @@ import { ElMessage } from 'element-plus'
 import { Mail, Lock, Key, Globe, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-next'
 import { api } from '../../lib/api'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
-import { useCaptchaConfig } from '../../composables/useCaptchaConfig'
-import AuthCaptchaField from '../../components/auth/AuthCaptchaField.vue'
+import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
+import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import { appConfig } from '../../lib/appConfig'
 
 const { t, locale } = useI18n()
@@ -23,29 +23,22 @@ const showEula = appConfig.showEula
 
 const {
   turnstileSiteKey,
-  isCaptchaPending,
-  isTurnstile,
-  isImageCaptcha,
-  isCaptchaBlocked,
-  authCaptchaMountGeneration,
-  loadCaptchaConfig,
-  buildCaptchaPayload,
+  isTurnstilePending,
+  isTurnstileReady,
+  isTurnstileBlocked,
+  authTurnstileMountGeneration,
+  loadTurnstileConfig,
+  buildTurnstilePayload,
   blockTurnstile,
-} = useCaptchaConfig()
+} = useTurnstileConfig()
 
 const turnstileToken = ref('')
-const captchaFieldRef = ref<InstanceType<typeof AuthCaptchaField> | null>(null)
-const codeImg = ref('')
-const codeId = ref('')
+const turnstileError = ref('')
+const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(null)
 
 const formItems = reactive({
   email: {
     value: typeof route.query.email === 'string' ? route.query.email.trim().toLowerCase() : '',
-    errorMsg: '',
-    showError: false,
-  },
-  captcha: {
-    value: '',
     errorMsg: '',
     showError: false,
   },
@@ -183,43 +176,27 @@ function restoreCooldown() {
   }
 }
 
-async function getCode() {
-  try {
-    const res = await api<AuthResponse<{ image?: string; id?: string }>>('/api/v1/auth/captcha')
-    codeImg.value = res.data?.image || ''
-    codeId.value = res.data?.id || ''
-  } catch {
-    // ignore
-  }
-}
-
-function blockUnavailableTurnstile(reason: 'widget_error' | 'script_load_failed') {
-  if (!blockTurnstile(reason)) return
+function blockUnavailableTurnstile() {
+  blockTurnstile()
   turnstileToken.value = ''
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
-  void getCode()
+  turnstileError.value = t('login.captchaUnavailable')
 }
 
-function refreshCode() {
-  if (isCaptchaBlocked.value) {
-    formItems.captcha.errorMsg = ''
-    formItems.captcha.showError = false
-    void loadCaptchaConfig(true)
-    return
-  }
-  if (isTurnstile.value) {
-    turnstileToken.value = ''
-    captchaFieldRef.value?.reset()
-    return
-  }
-  void getCode()
+async function retryTurnstile() {
+  turnstileToken.value = ''
+  turnstileError.value = ''
+  await loadTurnstileConfig(true)
+}
+
+function resetTurnstile() {
+  if (!isTurnstileReady.value) return
+  turnstileToken.value = ''
+  turnstileFieldRef.value?.reset()
 }
 
 function onTurnstileSuccess(token: string) {
   turnstileToken.value = token
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
+  turnstileError.value = ''
 }
 
 function onTurnstileExpire() {
@@ -227,16 +204,11 @@ function onTurnstileExpire() {
 }
 
 function onTurnstileError() {
-  blockUnavailableTurnstile('widget_error')
+  blockUnavailableTurnstile()
 }
 
 function onTurnstileLoadFailed() {
-  blockUnavailableTurnstile('script_load_failed')
-}
-
-function clearCaptchaError() {
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
+  blockUnavailableTurnstile()
 }
 
 function clearCodeError() {
@@ -253,9 +225,8 @@ function applySendCodeFieldsError(fields?: Record<string, string[]>) {
   if (!fields) return false
 
   let handled = false
-  if (fields.code) {
-    refreshCode()
-    applyFieldError('captcha', fields.code[0] || t('login.captchaInvalid'))
+  if (fields.turnstile_token) {
+    turnstileError.value = fields.turnstile_token[0] || t('login.captchaInvalid')
     handled = true
   }
   if (fields.email) {
@@ -291,30 +262,21 @@ function validateSendCodeForm() {
     formItems.email.showError = false
   }
 
-  if (isCaptchaPending.value) {
-    formItems.captcha.errorMsg = t('login.captchaLoading')
-    formItems.captcha.showError = true
+  if (isTurnstilePending.value) {
+    turnstileError.value = t('login.captchaLoading')
     hasError = true
-  } else if (isCaptchaBlocked.value) {
-    formItems.captcha.errorMsg = t('login.captchaUnavailable')
-    formItems.captcha.showError = true
+  } else if (isTurnstileBlocked.value) {
+    turnstileError.value = t('login.captchaUnavailable')
     hasError = true
-  } else if (isTurnstile.value) {
+  } else if (isTurnstileReady.value) {
     if (!turnstileToken.value) {
-      formItems.captcha.errorMsg = t('login.captchaErrRequired')
-      formItems.captcha.showError = true
+      turnstileError.value = t('login.captchaErrRequired')
       hasError = true
     } else {
-      formItems.captcha.errorMsg = ''
-      formItems.captcha.showError = false
+      turnstileError.value = ''
     }
-  } else if (!formItems.captcha.value) {
-    formItems.captcha.errorMsg = t('login.captchaErrRequired')
-    formItems.captcha.showError = true
-    hasError = true
   } else {
-    formItems.captcha.errorMsg = ''
-    formItems.captcha.showError = false
+    turnstileError.value = ''
   }
 
   return !hasError
@@ -327,18 +289,14 @@ async function handleSendCode() {
   sendCodeLoading.value = true
   formItems.email.errorMsg = ''
   formItems.email.showError = false
-  formItems.captcha.errorMsg = ''
-  formItems.captcha.showError = false
+  turnstileError.value = ''
 
   try {
     const res = await api<AuthResponse>('/api/v1/auth/email-register/send-code', {
       method: 'POST',
       body: JSON.stringify({
         email: formItems.email.value.trim().toLowerCase(),
-        ...buildCaptchaPayload(
-          { id: codeId.value, code: formItems.captcha.value },
-          turnstileToken.value,
-        ),
+        ...buildTurnstilePayload(turnstileToken.value),
       }),
     })
 
@@ -353,9 +311,9 @@ async function handleSendCode() {
   } catch (err: unknown) {
     const errObj = err as { message?: string; fields?: Record<string, string[]> }
     if (applySendCodeFieldsError(errObj.fields)) return
-    refreshCode()
     ElMessage.error({ message: errObj.message || t('register.sendCodeFailed'), grouping: true })
   } finally {
+    resetTurnstile()
     sendCodeLoading.value = false
   }
 }
@@ -443,12 +401,8 @@ function toggleLocale() {
 
 onMounted(async () => {
   turnstileToken.value = ''
-  formItems.captcha.value = ''
   restoreCooldown()
-  await loadCaptchaConfig()
-  if (isImageCaptcha.value) {
-    await getCode()
-  }
+  await loadTurnstileConfig()
 })
 
 onUnmounted(() => {
@@ -510,26 +464,19 @@ onUnmounted(() => {
           <p v-if="formItems.email.showError" class="error-msg">{{ formItems.email.errorMsg }}</p>
         </div>
 
-        <!-- Human verification -->
-        <AuthCaptchaField
-          :key="authCaptchaMountGeneration"
-          ref="captchaFieldRef"
-          v-model="formItems.captcha.value"
-          :is-captcha-pending="isCaptchaPending"
-          :is-image-captcha="isImageCaptcha"
-          :is-turnstile="isTurnstile"
-          :is-captcha-blocked="isCaptchaBlocked"
+        <AuthTurnstileField
+          :key="authTurnstileMountGeneration"
+          ref="turnstileFieldRef"
+          :pending="isTurnstilePending"
+          :ready="isTurnstileReady"
+          :blocked="isTurnstileBlocked"
           :site-key="turnstileSiteKey"
-          :placeholder="t('login.captchaPh')"
+          action="register_send_code"
           :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
           :retry-label="t('login.captchaRetry')"
-          :code-img="codeImg"
-          :show-error="formItems.captcha.showError"
-          :error-message="formItems.captcha.errorMsg"
-          tabindex="2"
-          @clear-error="clearCaptchaError"
-          @refresh="refreshCode"
+          :error-message="turnstileError"
+          @retry="retryTurnstile"
           @success="onTurnstileSuccess"
           @expire="onTurnstileExpire"
           @error="onTurnstileError"

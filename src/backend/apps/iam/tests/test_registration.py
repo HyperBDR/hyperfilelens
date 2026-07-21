@@ -28,14 +28,9 @@ from apps.iam.services.registration_service import (
 )
 class RegistrationApiTests(APITestCase):
     def _send_code_payload(self, email: str) -> dict:
-        return {
-            "email": email,
-            "id": "captcha_test",
-            "code": "abcd",
-        }
+        return {"email": email}
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_send_code_creates_pending_user_and_email(self, _mock_captcha):
+    def test_send_code_creates_pending_user_and_email(self):
         email = "new-user@example.com"
         response = self.client.post(
             reverse("email_register_send_code"),
@@ -135,8 +130,7 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.data["error"]["error_code"], "ALREADY_ACTIVE")
         self.assertIn("email", response.data["error"]["fields"])
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_send_code_rejects_active_email(self, _mock_captcha):
+    def test_send_code_rejects_active_email(self):
         email = "active@example.com"
         User.objects.create_user(
             username="active",
@@ -154,17 +148,21 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"]["error_code"], "EMAIL_EXISTS")
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_send_code_requires_human_verification(self, _mock_captcha):
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="site-key",
+        TURNSTILE_SECRET_KEY="secret-key",
+    )
+    def test_send_code_requires_turnstile_when_enabled(self):
         response = self.client.post(
             reverse("email_register_send_code"),
-            {"email": "missing-captcha@example.com"},
+            {"email": "missing-turnstile@example.com"},
             format="json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"]["error_code"], "VALIDATION_ERROR")
-        self.assertIn("code", response.data["error"]["fields"])
+        self.assertIn("turnstile_token", response.data["error"]["fields"])
 
 
 @override_settings(HFL_EMAIL_SIGNUP_ENABLED=False)
@@ -174,7 +172,7 @@ class EmailSignupDisabledTests(APITestCase):
         requests = (
             (
                 "email_register_send_code",
-                {"email": "disabled@example.com", "id": "captcha", "code": "abcd"},
+                {"email": "disabled@example.com"},
             ),
             (
                 "email_register",
@@ -182,8 +180,6 @@ class EmailSignupDisabledTests(APITestCase):
                     "first_name": "Disabled",
                     "last_name": "User",
                     "email": "disabled@example.com",
-                    "id": "captcha",
-                    "code": "abcd",
                 },
             ),
             (

@@ -20,9 +20,12 @@ from rest_framework.views import APIView
 from common.http.public_api import AnonymousPublicViewMixin
 
 from apps.iam.profile_models import Profile
-from apps.iam.services.human_verification import (
-    missing_human_verification_fields,
-    verify_human_verification,
+from apps.iam.services.turnstile_verification import (
+    invalid_turnstile_fields,
+    missing_turnstile_fields,
+    turnstile_configured,
+    turnstile_enabled,
+    verify_turnstile_for_action,
 )
 from apps.iam.services.verification_code_service import verify_email_verification_code
 from apps.iam.services.registration_service import (
@@ -69,6 +72,26 @@ def _email_signup_disabled_response() -> Response:
         "EMAIL_SIGNUP_DISABLED",
         _("Email sign-up is disabled"),
         http_status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _turnstile_misconfigured_response() -> Response | None:
+    """Fail closed when Turnstile is enabled without a complete key pair."""
+    if not turnstile_enabled() or turnstile_configured():
+        return None
+    return _build_error_response(
+        "TURNSTILE_MISCONFIGURED",
+        _("Human verification is temporarily unavailable"),
+        http_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
+def _turnstile_invalid_response() -> Response:
+    """Return the canonical response for a rejected Turnstile token."""
+    return _build_error_response(
+        "TURNSTILE_INVALID",
+        _("Invalid or expired human verification"),
+        fields=invalid_turnstile_fields(),
     )
 
 
@@ -140,10 +163,11 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
             "application/json": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Captcha ID"},
                     "email": {"type": "string", "description": "User email"},
-                    "code": {"type": "string", "description": "Captcha code"},
-                    "turnstile_token": {"type": "string", "description": "Cloudflare Turnstile token"},
+                    "turnstile_token": {
+                        "type": "string",
+                        "description": "Required when Turnstile is enabled",
+                    },
                 },
                 "required": ["email"],
             }
@@ -154,9 +178,13 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
 
+        configuration_error = _turnstile_misconfigured_response()
+        if configuration_error is not None:
+            return configuration_error
+
         email = (request.data.get("email") or "").strip().lower()
 
-        if not email or missing_human_verification_fields(request.data):
+        if not email or missing_turnstile_fields(request.data):
             return Response(
                 {
                     "code": "1001",
@@ -164,7 +192,7 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_human_verification_fields(request.data),
+                            **missing_turnstile_fields(request.data),
                             "email": [_('Required')] if not email else [],
                         },
                     },
@@ -172,19 +200,12 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not verify_human_verification(request.data, request):
-            invalid_msg = _("Invalid or expired captcha")
-            return Response(
-                {
-                    "code": "1001",
-                    "error": {
-                        "error_code": "CAPTCHA_INVALID",
-                        "message": invalid_msg,
-                        "fields": {"code": [invalid_msg]},
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not verify_turnstile_for_action(
+            request.data,
+            request,
+            action="register_send_code",
+        ):
+            return _turnstile_invalid_response()
 
         if not _validate_email_format(email):
             return Response(
@@ -255,15 +276,17 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
             "application/json": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Captcha ID"},
                     "first_name": {"type": "string", "description": "First name"},
                     "last_name": {"type": "string", "description": "Last name"},
                     "company_name": {"type": "string", "description": "Company name"},
                     "country": {"type": "string", "description": "Country code"},
                     "email": {"type": "string", "description": "User email"},
-                    "code": {"type": "string", "description": "Captcha code"},
+                    "turnstile_token": {
+                        "type": "string",
+                        "description": "Required when Turnstile is enabled",
+                    },
                 },
-                "required": ["id", "first_name", "last_name", "email", "code"],
+                "required": ["first_name", "last_name", "email"],
             }
         },
         responses={200: OpenApiTypes.OBJECT},
@@ -272,11 +295,15 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
 
+        configuration_error = _turnstile_misconfigured_response()
+        if configuration_error is not None:
+            return configuration_error
+
         first_name = request.data.get("first_name")
         last_name = request.data.get("last_name")
         email = request.data.get("email")
 
-        if not all([first_name, last_name, email]) or missing_human_verification_fields(request.data):
+        if not all([first_name, last_name, email]) or missing_turnstile_fields(request.data):
             return Response(
                 {
                     "code": "1001",
@@ -284,7 +311,7 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_human_verification_fields(request.data),
+                            **missing_turnstile_fields(request.data),
                             "first_name": [_('Required')] if not first_name else [],
                             "last_name": [_('Required')] if not last_name else [],
                             "email": [_('Required')] if not email else [],
@@ -294,19 +321,8 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not verify_human_verification(request.data, request):
-            invalid_msg = _("Invalid or expired captcha")
-            return Response(
-                {
-                    "code": "1001",
-                    "error": {
-                        "error_code": "CAPTCHA_INVALID",
-                        "message": invalid_msg,
-                        "fields": {"code": [invalid_msg]},
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not verify_turnstile_for_action(request.data, request, action="register"):
+            return _turnstile_invalid_response()
 
         if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
             return Response(
@@ -517,19 +533,25 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
             "application/json": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Captcha ID"},
                     "email": {"type": "string", "description": "User email"},
-                    "code": {"type": "string", "description": "Captcha code"},
+                    "turnstile_token": {
+                        "type": "string",
+                        "description": "Required when Turnstile is enabled",
+                    },
                 },
-                "required": ["id", "email", "code"],
+                "required": ["email"],
             }
         },
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        configuration_error = _turnstile_misconfigured_response()
+        if configuration_error is not None:
+            return configuration_error
+
         email = (request.data.get("email") or "").strip().lower()
 
-        if not email or missing_human_verification_fields(request.data):
+        if not email or missing_turnstile_fields(request.data):
             return Response(
                 {
                     "code": "1001",
@@ -537,7 +559,7 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_human_verification_fields(request.data),
+                            **missing_turnstile_fields(request.data),
                             "email": [_('Required')] if not email else [],
                         },
                     },
@@ -545,19 +567,12 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not verify_human_verification(request.data, request):
-            invalid_msg = _("Invalid or expired captcha")
-            return Response(
-                {
-                    "code": "1001",
-                    "error": {
-                        "error_code": "CAPTCHA_INVALID",
-                        "message": invalid_msg,
-                        "fields": {"code": [invalid_msg]},
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not verify_turnstile_for_action(
+            request.data,
+            request,
+            action="forgot_password",
+        ):
+            return _turnstile_invalid_response()
 
         user = User.objects.filter(email=email).first()
 

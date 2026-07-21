@@ -2,12 +2,7 @@
 Views for user authentication and management.
 """
 
-from .captcha import (
-    CaptchaConfigView,
-    CaptchaFallbackReportView,
-    CaptchaGenerateView,
-    CaptchaValidateView,
-)
+from .turnstile import TurnstileConfigView
 from .login import EmailLoginView, TokenRefreshView, LogoutView, OrgSelectView
 from .oauth import GoogleOAuthCallbackView, GoogleOAuthConfigView
 from .registration import (
@@ -22,10 +17,6 @@ from .scenes import GetAvailableScenesView
 from .user import CustomUserDetailsView
 
 __all__ = [
-    "CaptchaConfigView",
-    "CaptchaFallbackReportView",
-    "CaptchaGenerateView",
-    "CaptchaValidateView",
     "ChangePasswordView",
     "CustomUserDetailsView",
     "EmailLoginView",
@@ -39,5 +30,6 @@ __all__ = [
     "GoogleOAuthConfigView",
     "OrgSelectView",
     "TokenRefreshView",
+    "TurnstileConfigView",
     "LogoutView",
 ]

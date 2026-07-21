@@ -76,8 +76,7 @@ class PlatformOpsUsersApiTest(TestCase):
         target = User.objects.get(pk=user_id)
         self.assertTrue(target.check_password("Newpass1234"))
 
-    @patch("apps.iam.services.human_verification.validate_captcha", return_value=True)
-    def test_created_tenant_user_can_reach_org_selection(self, _mock_captcha):
+    def test_created_tenant_user_can_reach_org_selection(self):
         create_resp = self.client.post(
             "/api/v1/platform-ops/users",
             {
@@ -94,8 +93,6 @@ class PlatformOpsUsersApiTest(TestCase):
             {
                 "email": "login-ready@test.com",
                 "password": "Pass1234",
-                "id": "captcha-test",
-                "code": "abcd",
             },
             format="json",
         )
