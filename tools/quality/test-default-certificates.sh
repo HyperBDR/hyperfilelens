@@ -66,11 +66,21 @@ ensure_tls_certs
 [[ "$(stat -c '%a' "${INSTALL_DIR}/deploy/nginx/certs/tls.key")" == "600" ]]
 
 ROOT="${tmp}/custom"
-mkdir -p "${ROOT}/deploy/nginx/certs"
+mkdir -p \
+	"${ROOT}/deploy/nginx/certs" \
+	"${ROOT}/payload" \
+	"${ROOT}/data" \
+	"${ROOT}/backup" \
+	"${ROOT}/upgrade_tmp"
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 30 \
 	-keyout "${ROOT}/deploy/nginx/certs/tls.key" \
 	-out "${ROOT}/deploy/nginx/certs/tls.crt" \
 	-subj '/CN=custom.example.test' >/dev/null 2>&1
+printf 'stale\n' >"${ROOT}/payload/stale-release-file"
+printf 'preserved env\n' >"${ROOT}/.env"
+printf 'preserved data\n' >"${ROOT}/data/marker"
+printf 'preserved backup\n' >"${ROOT}/backup/marker"
+printf 'preserved upgrade state\n' >"${ROOT}/upgrade_tmp/marker"
 before="$(sha256sum "${ROOT}/deploy/nginx/certs/tls.crt" "${ROOT}/deploy/nginx/certs/tls.key")"
 sync_default_tls_bundle "${source_fixture}/deploy/nginx/certs"
 after="$(sha256sum "${ROOT}/deploy/nginx/certs/tls.crt" "${ROOT}/deploy/nginx/certs/tls.key")"
@@ -79,6 +89,11 @@ INSTALL_DIR="${ROOT}"
 materialize_to_install_dir "${source_fixture}"
 after="$(sha256sum "${ROOT}/deploy/nginx/certs/tls.crt" "${ROOT}/deploy/nginx/certs/tls.key")"
 [[ "${before}" == "${after}" ]]
+[[ ! -e "${ROOT}/payload/stale-release-file" ]]
+[[ "$(<"${ROOT}/.env")" == "preserved env" ]]
+[[ "$(<"${ROOT}/data/marker")" == "preserved data" ]]
+[[ "$(<"${ROOT}/backup/marker")" == "preserved backup" ]]
+[[ "$(<"${ROOT}/upgrade_tmp/marker")" == "preserved upgrade state" ]]
 
 ROOT="${tmp}/incomplete"
 mkdir -p "${ROOT}/deploy/nginx/certs"

@@ -193,6 +193,12 @@ grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 
 installer="${ROOT}/deploy/installer/install.sh"
+materialize_body="$(sed -n '/^materialize_to_install_dir()/,/^}/p' "${installer}")"
+grep -F -- '--delete' <<<"${materialize_body}" >/dev/null
+if grep -F -- '--delete-excluded' <<<"${materialize_body}" >/dev/null; then
+	printf 'ERROR: release materialization must preserve excluded runtime state\n' >&2
+	exit 1
+fi
 grep -F 'PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"' "${installer}" >/dev/null
 grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
 grep -F 'validate_default_tls_bundle "${src_root}/deploy/nginx/certs"' "${installer}" >/dev/null
