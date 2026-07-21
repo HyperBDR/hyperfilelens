@@ -127,7 +127,12 @@ export async function listPlatformOpsOrganizations(params: {
   return unwrapApiPayload<PlatformOpsOrganizationListResponse>(raw)
 }
 
-export async function getPlatformOpsOrganization(id: number): Promise<PlatformOpsOrganization> {
-  const raw = await api<unknown>(`/api/v1/platform-ops/orgs/${id}`)
+export async function getPlatformOpsOrganization(
+  id: number,
+  options?: { signal?: AbortSignal },
+): Promise<PlatformOpsOrganization> {
+  const raw = await api<unknown>(`/api/v1/platform-ops/orgs/${id}`, {
+    signal: options?.signal,
+  })
   return unwrapApiPayload<PlatformOpsOrganization>(raw)
 }
