@@ -154,7 +154,7 @@ const deleteConfirmItems = computed<DangerConfirmItem[]>(() =>
     },
     description: deleteConfirmKind.value === 'policy'
       ? (row as PolicyRow).scheduleSummary
-      : (row as FilterRow).excludeRuleLines.slice(0, 2).join(', ') || t('protection.policiesPage.colFilterSummary'),
+      : (row as FilterRow).excludeRuleLines.join(', ') || t('protection.policiesPage.colFilterSummary'),
   })),
 )
 
@@ -244,7 +244,7 @@ const stateConfirmItems = computed<DangerConfirmItem[]>(() =>
     },
     description: stateConfirmKind.value === 'policy'
       ? (row as PolicyRow).scheduleSummary
-      : (row as FilterRow).excludeRuleLines.slice(0, 2).join(', ') || t('protection.policiesPage.colFilterSummary'),
+      : (row as FilterRow).excludeRuleLines.join(', ') || t('protection.policiesPage.colFilterSummary'),
   })),
 )
 
@@ -1778,10 +1778,10 @@ function onMoreDisable() {
   margin-right: 4px;
   padding: 2px 6px;
   overflow: hidden;
-  border: 1px solid rgb(226 232 240);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  background: rgb(248 250 252);
-  color: rgb(15 23 42);
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   line-height: 1.45;
