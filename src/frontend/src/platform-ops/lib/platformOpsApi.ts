@@ -4,8 +4,8 @@ import { fetchSystemMonitor, type SystemMonitorPayload } from '../../lib/monitor
 
 export type Paginated<T> = { count: number; page: number; page_size: number; results: T[] }
 
-async function get<T>(path: string): Promise<T> {
-  return unwrapApiPayload<T>(await api<unknown>(path))
+async function get<T>(path: string, init?: RequestInit): Promise<T> {
+  return unwrapApiPayload<T>(await api<unknown>(path, init))
 }
 
 async function send<T>(path: string, init: RequestInit): Promise<T> {
@@ -170,8 +170,11 @@ export async function fetchAgentReleases(params?: { page?: number; page_size?: n
   )
 }
 
-export async function fetchOrgSummary(orgId: number) {
-  return get<Record<string, unknown>>(`/api/v1/platform-ops/orgs/${orgId}/summary`)
+export async function fetchOrgSummary(orgId: number, options?: { signal?: AbortSignal }) {
+  return get<Record<string, unknown>>(
+    `/api/v1/platform-ops/orgs/${orgId}/summary`,
+    { signal: options?.signal },
+  )
 }
 
 export async function startSupportSession(orgId: number) {

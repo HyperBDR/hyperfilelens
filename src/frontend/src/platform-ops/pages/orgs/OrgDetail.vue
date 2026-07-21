@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
 import ModulePage from '../../../components/ModulePage.vue'
+import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
 import PlatformOpsActiveTag from '../../components/PlatformOpsActiveTag.vue'
 import PlatformOpsDetailSection from '../../components/PlatformOpsDetailSection.vue'
 import PlatformOpsDetailShell from '../../components/PlatformOpsDetailShell.vue'
@@ -11,6 +11,7 @@ import PlatformOpsTimeCell from '../../components/PlatformOpsTimeCell.vue'
 import PlatformOpsUserLink from '../../components/PlatformOpsUserLink.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import { usePlatformOpsClientPagination } from '../../composables/usePlatformOpsClientPagination'
+import { usePageRequestScope } from '../../../composables/usePageRequestScope'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
 import { PLATFORM_OPS_TABLE_HEADER_STYLE } from '../../lib/tableUi'
 import {
@@ -20,8 +21,9 @@ import {
   updatePlatformOrg,
 } from '../../lib/platformOpsApi'
 import { getPlatformOpsOrganization } from '../../lib/platformOpsUserApi'
-import { apiErrorMessage } from '../../../lib/api'
+import { apiErrorMessageI18n } from '../../../lib/api'
 import { formatLocalDateTime } from '../../../lib/dateTime'
+import { notifyError, notifySuccess } from '../../../lib/notify'
 
 interface OrgDetail {
   id: number
@@ -46,12 +48,17 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const sideNav = usePlatformOpsSideNav()
+const pageRequests = usePageRequestScope()
 
 const orgId = computed(() => Number(route.params.id))
 const org = ref<OrgDetail | null>(null)
 const summary = ref<Record<string, unknown> | null>(null)
 const busy = ref(false)
 const saving = ref(false)
+const loadError = ref('')
+const summaryError = ref('')
+const summaryBusy = ref(false)
+const deactivateConfirmOpen = ref(false)
 
 const memberships = computed(() => org.value?.memberships || [])
 const {
@@ -72,62 +79,146 @@ const monitoringLinks = computed(() => {
   ]
 })
 
+async function loadSummary() {
+  if (!org.value) return
+  const targetOrgId = org.value.id
+  const signal = pageRequests.nextSignal('platform-org-summary')
+  summaryBusy.value = true
+  summaryError.value = ''
+  try {
+    const result = await fetchOrgSummary(targetOrgId, { signal })
+    if (!pageRequests.isCurrentSignal('platform-org-summary', signal)) return
+    summary.value = result
+  } catch (err) {
+    if (pageRequests.isAbortError(err)) return
+    summaryError.value = apiErrorMessageI18n(err, t, t('platformOps.orgs.summaryLoadFailed'))
+    notifyError({
+      message: summaryError.value,
+      error: err,
+      showDetails: true,
+      dedupeKey: `platform-org:${targetOrgId}:summary-load:error`,
+    })
+  } finally {
+    pageRequests.releaseSignal('platform-org-summary', signal)
+    if (!signal.aborted) summaryBusy.value = false
+  }
+}
+
 async function load() {
   if (!orgId.value) {
     router.replace('/platform-ops/orgs')
     return
   }
+  const targetOrgId = orgId.value
+  pageRequests.abortScope('platform-org-summary')
+  summaryBusy.value = false
+  const signal = pageRequests.nextSignal('platform-org-detail')
   busy.value = true
+  loadError.value = ''
+  summaryError.value = ''
+  org.value = null
+  summary.value = null
   try {
-    org.value = await getPlatformOpsOrganization(orgId.value)
-    summary.value = await fetchOrgSummary(orgId.value)
+    const result = await getPlatformOpsOrganization(targetOrgId, { signal })
+    if (!pageRequests.isCurrentSignal('platform-org-detail', signal)) return
+    org.value = result as OrgDetail
+    await loadSummary()
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('platformOps.orgs.loadFailed')), grouping: true })
-    router.replace('/platform-ops/orgs')
+    if (pageRequests.isAbortError(err)) return
+    loadError.value = apiErrorMessageI18n(err, t, t('platformOps.orgs.loadFailed'))
+    notifyError({
+      message: loadError.value,
+      error: err,
+      showDetails: true,
+      dedupeKey: `platform-org:${targetOrgId}:detail-load:error`,
+    })
   } finally {
-    busy.value = false
+    pageRequests.releaseSignal('platform-org-detail', signal)
+    if (!signal.aborted) busy.value = false
   }
 }
 
-onMounted(load)
+watch(orgId, () => {
+  void load()
+}, { immediate: true })
 
-async function toggleActive() {
-  if (!org.value) return
+function requestToggleActive() {
+  if (!org.value || saving.value) return
+  if (org.value.is_active) {
+    deactivateConfirmOpen.value = true
+    return
+  }
+  void updateActiveState()
+}
+
+async function updateActiveState() {
+  if (!org.value || saving.value) return
+  const targetOrg = org.value
   saving.value = true
   try {
-    org.value = await updatePlatformOrg(org.value.id, { is_active: !org.value.is_active }) as OrgDetail
-    ElMessage.success({ message: t('platformOps.orgs.saveSuccess'), grouping: true })
+    org.value = await updatePlatformOrg(targetOrg.id, { is_active: !targetOrg.is_active }) as OrgDetail
+    deactivateConfirmOpen.value = false
+    notifySuccess({
+      message: t('platformOps.orgs.saveSuccess'),
+      dedupeKey: `platform-org:${targetOrg.id}:active:${String(org.value.is_active)}`,
+    })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('platformOps.orgs.saveFailed')), grouping: true })
+    const message = apiErrorMessageI18n(err, t, t('platformOps.orgs.saveFailed'))
+    notifyError({
+      message,
+      error: err,
+      showDetails: true,
+      dedupeKey: `platform-org:${targetOrg.id}:active:error`,
+    })
   } finally {
     saving.value = false
   }
 }
 
 async function enterSupport() {
-  if (!org.value) return
+  if (!org.value || supportBusy.value) return
+  const targetOrg = org.value
   supportBusy.value = true
   try {
-    const session = await startSupportSession(org.value.id)
+    const session = await startSupportSession(targetOrg.id)
     const base = session.tenant_url?.replace(/\/$/, '') || ''
     const url = `${base}/?org=${encodeURIComponent(session.org_key)}`
     window.open(url, '_blank', 'noopener,noreferrer')
-    ElMessage.success({ message: t('platformOps.orgs.supportStarted', { name: session.org_name }), grouping: true })
+    notifySuccess({
+      message: t('platformOps.orgs.supportStarted', { name: session.org_name }),
+      dedupeKey: `platform-org:${targetOrg.id}:support:start:success`,
+    })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('platformOps.orgs.supportFailed')), grouping: true })
+    const message = apiErrorMessageI18n(err, t, t('platformOps.orgs.supportFailed'))
+    notifyError({
+      message,
+      error: err,
+      showDetails: true,
+      dedupeKey: `platform-org:${targetOrg.id}:support:start:error`,
+    })
   } finally {
     supportBusy.value = false
   }
 }
 
 async function exitSupport() {
-  if (!org.value) return
+  if (!org.value || supportBusy.value) return
+  const targetOrg = org.value
   supportBusy.value = true
   try {
-    await endSupportSession(org.value.id)
-    ElMessage.success({ message: t('platformOps.orgs.supportEnded'), grouping: true })
+    await endSupportSession(targetOrg.id)
+    notifySuccess({
+      message: t('platformOps.orgs.supportEnded'),
+      dedupeKey: `platform-org:${targetOrg.id}:support:end:success`,
+    })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('platformOps.orgs.supportFailed')), grouping: true })
+    const message = apiErrorMessageI18n(err, t, t('platformOps.orgs.supportFailed'))
+    notifyError({
+      message,
+      error: err,
+      showDetails: true,
+      dedupeKey: `platform-org:${targetOrg.id}:support:end:error`,
+    })
   } finally {
     supportBusy.value = false
   }
@@ -141,10 +232,24 @@ async function exitSupport() {
       :loading="busy"
       @back="router.push('/platform-ops/orgs')"
     >
-      <template #actions>
+      <template v-if="org" #actions>
         <el-button :loading="supportBusy" @click="enterSupport">{{ t('platformOps.orgs.enterSupport') }}</el-button>
         <el-button :loading="supportBusy" @click="exitSupport">{{ t('platformOps.orgs.exitSupport') }}</el-button>
       </template>
+
+      <el-alert
+        v-if="loadError"
+        type="error"
+        show-icon
+        :closable="false"
+        :title="loadError"
+      >
+        <template #default>
+          <el-button size="small" @click="load">
+            {{ t('common.retry') }}
+          </el-button>
+        </template>
+      </el-alert>
 
       <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.sectionBasic')">
         <div class="hfl-detail-grid">
@@ -168,7 +273,7 @@ async function exitSupport() {
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colActive') }}</span>
             <span class="hfl-detail-row__value">
               <PlatformOpsActiveTag :active="org.is_active" />
-              <el-button size="small" class="ml-2" :loading="saving" @click="toggleActive">
+              <el-button size="small" class="ml-2" :loading="saving" @click="requestToggleActive">
                 {{ org.is_active ? t('platformOps.orgs.deactivate') : t('platformOps.orgs.activate') }}
               </el-button>
             </span>
@@ -182,8 +287,21 @@ async function exitSupport() {
         </div>
       </PlatformOpsDetailSection>
 
-      <PlatformOpsDetailSection v-if="summary?.counts" :title="t('platformOps.orgs.usageTitle')">
-        <div class="hfl-detail-grid">
+      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.usageTitle')">
+        <el-alert
+          v-if="summaryError"
+          type="error"
+          show-icon
+          :closable="false"
+          :title="summaryError"
+        >
+          <template #default>
+            <el-button size="small" :loading="summaryBusy" @click="loadSummary">
+              {{ t('common.retry') }}
+            </el-button>
+          </template>
+        </el-alert>
+        <div v-else-if="summary?.counts" v-loading="summaryBusy" class="hfl-detail-grid">
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colMembers') }}</span>
             <span class="hfl-detail-row__value">{{ (summary.counts as Record<string, number>).members ?? 0 }}</span>
@@ -193,7 +311,10 @@ async function exitSupport() {
             <span class="hfl-detail-row__value">{{ (summary.counts as Record<string, number>).nodes ?? 0 }}</span>
           </div>
         </div>
-        <div class="platform-ops-detail__links">
+        <div v-else v-loading="summaryBusy" class="platform-ops-detail__summary-state">
+          <span v-if="!summaryBusy">{{ t('common.empty') }}</span>
+        </div>
+        <div v-if="summary?.counts" class="platform-ops-detail__links">
           <router-link
             v-for="link in monitoringLinks"
             :key="link.to"
@@ -205,10 +326,12 @@ async function exitSupport() {
         </div>
       </PlatformOpsDetailSection>
 
-      <PlatformOpsDetailSection v-if="org?.memberships?.length" :title="t('platformOps.orgs.membersTitle')">
+      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.membersTitle')">
         <div class="platform-ops-detail__table-wrap">
           <el-table
+            v-if="memberships.length"
             v-table-column-resize="'platformOps.orgs.members'"
+            v-table-overflow-title
             :data="pagedMembers"
             stripe
             class="hfl-list-table"
@@ -232,7 +355,8 @@ async function exitSupport() {
               </template>
             </el-table-column>
           </el-table>
-          <div class="hfl-list-footer platform-ops-detail__table-footer">
+          <el-empty v-else :description="t('platformOps.orgs.membersEmpty')" :image-size="72" />
+          <div v-if="memberships.length" class="hfl-list-footer platform-ops-detail__table-footer">
             <HflPagination
               v-model:current-page="membersPage"
               v-model:page-size="membersPageSize"
@@ -243,5 +367,17 @@ async function exitSupport() {
         </div>
       </PlatformOpsDetailSection>
     </PlatformOpsDetailShell>
+
+    <DangerConfirmDialog
+      v-if="org"
+      v-model="deactivateConfirmOpen"
+      :title="t('platformOps.orgs.deactivateConfirmTitle')"
+      :message="t('platformOps.orgs.deactivateConfirmMessage', { name: org.name })"
+      :warning="t('platformOps.orgs.deactivateConfirmWarning')"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="t('platformOps.orgs.deactivateConfirmAction')"
+      :loading="saving"
+      @confirm="updateActiveState"
+    />
   </ModulePage>
 </template>
