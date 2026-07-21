@@ -109,9 +109,18 @@ export SOURCELENS_CONSOLE_PORT=11445
 export SMOKE_HOST="${smoke_host}"
 export SEED_ADMIN_EMAIL
 export SEED_ADMIN_PASSWORD
-SEED_ADMIN_EMAIL="$(sed -n 's/^SEED_ADMIN_EMAIL=//p' /opt/hyperfilelens/.env | head -1)"
-SEED_ADMIN_PASSWORD="$(sed -n 's/^SEED_ADMIN_PASSWORD=//p' /opt/hyperfilelens/.env | head -1)"
+SEED_ADMIN_EMAIL="$(sudo sed -n 's/^SEED_ADMIN_EMAIL=//p' /opt/hyperfilelens/.env | head -1)"
+SEED_ADMIN_PASSWORD="$(sudo sed -n 's/^SEED_ADMIN_PASSWORD=//p' /opt/hyperfilelens/.env | head -1)"
 export SMOKE_REQUIRE_HMR=0
 export SMOKE_SOURCELENS_ENV_FILE=/opt/hyperfilelens/data/sourcelens/config/.env
-"${ROOT}/tools/dev/browser-smoke.sh"
+sudo env \
+	HFL_TENANT_PORT="${HFL_TENANT_PORT}" \
+	HFL_ADMIN_PORT="${HFL_ADMIN_PORT}" \
+	SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT}" \
+	SMOKE_HOST="${SMOKE_HOST}" \
+	SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL}" \
+	SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD}" \
+	SMOKE_REQUIRE_HMR="${SMOKE_REQUIRE_HMR}" \
+	SMOKE_SOURCELENS_ENV_FILE="${SMOKE_SOURCELENS_ENV_FILE}" \
+	"${ROOT}/tools/dev/browser-smoke.sh"
 printf 'Full release install and login verification passed\n'

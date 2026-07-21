@@ -213,6 +213,8 @@ release_verifier="${ROOT}/release/ci/verify-release.sh"
 grep -F 'smoke_host="${SMOKE_HOST:-host.docker.internal}"' "${release_verifier}" >/dev/null
 grep -F 'HFL_PUBLIC_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'export SMOKE_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
+grep -F 'SEED_ADMIN_EMAIL="$(sudo sed' "${release_verifier}" >/dev/null
+grep -F 'sudo env \' "${release_verifier}" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'stage_default_tls_bundle "${pkg_root}"' \
