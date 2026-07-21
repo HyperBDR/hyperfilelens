@@ -23,6 +23,7 @@ const props = withDefaults(
     clearText: string
     applyText: string
     constrainToTrigger?: boolean
+    disabled?: boolean
   }>(),
   {
     presets: () => [],
@@ -30,6 +31,7 @@ const props = withDefaults(
     start: '',
     end: '',
     constrainToTrigger: false,
+    disabled: false,
   },
 )
 
@@ -159,6 +161,7 @@ watch(
       :end-placeholder="displayPlaceholder"
       :range-separator="'~'"
       :popper-class="popperClass"
+      :disabled="disabled"
       clearable
       @update:model-value="onUpdate"
       @change="onChange"

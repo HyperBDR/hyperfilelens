@@ -11,7 +11,6 @@ import OpsStatCard from '../ops/OpsStatCard.vue'
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
 
 defineProps<{
-  loading: boolean
   kpiCards: Array<{
     label: string
     value: string
@@ -43,7 +42,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div v-loading="loading" class="host-monitor">
+  <div class="host-monitor">
     <div class="host-monitor__kpi">
       <OpsStatCard
         v-for="(card, index) in kpiCards"

@@ -56,13 +56,14 @@ const {
 
 <template>
   <ModulePage :menus="sideNav" body-fill>
-    <div class="platform-host-monitor">
+    <div v-loading="loading" class="platform-host-monitor">
       <header class="platform-host-monitor__toolbar">
         <div ref="entityDropdownRef" class="platform-host-monitor__host">
           <button
             type="button"
             class="platform-host-monitor__host-btn"
             :title="hostEntityTooltip"
+            :disabled="loading"
             @click.stop="showEntityDropdown = !showEntityDropdown"
           >
             <Server :size="16" class="platform-host-monitor__host-icon" aria-hidden="true" />
@@ -142,6 +143,7 @@ const {
             :end="customTimeRange.end"
             :clear-text="t('ops.monitorPage.clearRange')"
             :apply-text="t('ops.monitorPage.applyRange')"
+            :disabled="loading"
             @preset="onPresetSelect"
             @apply="onTimeRangeApply"
             @clear="clearCustomRange"
@@ -162,7 +164,6 @@ const {
       <p class="platform-host-monitor__subtitle">{{ t('platformOps.monitoring.hostSubtitle') }}</p>
 
       <SystemMonitorDashboard
-        :loading="loading"
         :kpi-cards="kpiCards"
         :has-chart-data="hasChartData"
         :cpu-option="cpuOption"
