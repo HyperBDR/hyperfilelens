@@ -227,6 +227,17 @@ grep -F 'HFL_TENANT_PORT=11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'HFL_ADMIN_PORT=11444' "${ROOT}/.env.example" >/dev/null
 grep -F 'FRONTEND_URL=https://127.0.0.1:11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
+legacy_public_port_pattern='104(43|45|46)'
+if git -C "${ROOT}" grep -n -E "${legacy_public_port_pattern}" -- .; then
+	printf 'ERROR: tracked HFL files must not reference legacy 104xx public ports\n' >&2
+	exit 1
+fi
+for runtime_alias in \
+	'nginx:stable-alpine hyperfilelens-sourcelens-nginx:stable-alpine' \
+	'postgres:17 hyperfilelens-postgres:17' \
+	'redis:alpine hyperfilelens-redis:alpine'; do
+	grep -F "${runtime_alias}" "${ROOT}/tools/sourcelens/common.sh" >/dev/null
+done
 smoke_runner="${ROOT}/tools/dev/browser-smoke.sh"
 grep -F -- '--add-host host.docker.internal:host-gateway' "${smoke_runner}" >/dev/null
 grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
@@ -236,6 +247,7 @@ grep -F 'captchaImage.waitFor' "${smoke_script}" >/dev/null
 grep -F 'captchaRefresh.click' "${smoke_script}" >/dev/null
 grep -F 'waitForPlatformOps' "${smoke_script}" >/dev/null
 grep -F 'const hfl = await browser.newContext' "${smoke_script}" >/dev/null
+grep -F "allowedHosts: ['host.docker.internal']" "${ROOT}/src/frontend/vite.config.ts" >/dev/null
 if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 	printf 'ERROR: browser smoke must reach published ports through host-gateway\n' >&2
 	exit 1
