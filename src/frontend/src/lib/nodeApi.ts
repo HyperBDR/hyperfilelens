@@ -393,14 +393,23 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
     method: 'POST',
     body: JSON.stringify({ note: params?.note ?? 'deploy:platform-gateway' }),
   })
-  const payload = unwrapApiPayload<{ token: string; token_id: number; org_key: string }>(raw)
-  if (!payload.token || !payload.org_key) {
+  const payload = unwrapApiPayload<{
+    token: string
+    token_id: number
+    org_key: string
+    api_base: string
+  }>(raw)
+  if (!payload.token || !payload.org_key || !payload.api_base) {
     throw new Error('Platform gateway enrollment response is incomplete')
   }
   return {
     token: payload.token,
     tokenId: payload.token_id,
-    command: buildGatewayEnrollmentInstallCommand({ org: payload.org_key, token: payload.token }),
+    command: buildGatewayEnrollmentInstallCommand({
+      org: payload.org_key,
+      token: payload.token,
+      apiBase: payload.api_base,
+    }),
   }
 }
 
