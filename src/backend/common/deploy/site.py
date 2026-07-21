@@ -100,6 +100,10 @@ def tenant_public_url() -> str:
 
 def admin_console_public_url(request: HttpRequest) -> str:
     """Build the Admin Console origin from the current host and configured port."""
+    configured = str(getattr(settings, "HFL_ADMIN_PUBLIC_URL", "")).strip()
+    if configured:
+        return configured.rstrip("/")
+
     parsed_host = urlsplit(f"//{request.get_host()}")
     if not parsed_host.hostname:
         return ""

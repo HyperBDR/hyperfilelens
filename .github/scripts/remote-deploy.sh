@@ -5,15 +5,18 @@ set -euo pipefail
 REPOSITORY="HyperBDR/hyperfilelens"
 TAG=""
 INSTALL_DIR="/opt/hyperfilelens"
-PUBLIC_HOST=""
+PUBLIC_URL=""
+DIRECT_HOST=""
 RUNTIME_ENV_FILE=""
 
 usage() {
 	cat <<'USAGE'
-Usage: remote-deploy.sh --tag vX.Y.Z --public-host HOST [options]
+Usage: remote-deploy.sh --tag vX.Y.Z --direct-host HOST [options]
 
   --repository OWNER/REPO  Public GitHub repository (default: HyperBDR/hyperfilelens)
   --install-dir DIR        HFL install directory (default: /opt/hyperfilelens)
+  --direct-host HOST       SSH-reachable host used for direct listener URLs
+  --public-url URL         Optional canonical browser URL; external checks are non-blocking
   --runtime-env-file PATH  Root-only staged runtime configuration under /var/tmp
 USAGE
 }
@@ -21,7 +24,8 @@ USAGE
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--tag) TAG=${2:-}; shift 2 ;;
-	--public-host) PUBLIC_HOST=${2:-}; shift 2 ;;
+	--public-url) PUBLIC_URL=${2:-}; shift 2 ;;
+	--direct-host) DIRECT_HOST=${2:-}; shift 2 ;;
 	--repository) REPOSITORY=${2:-}; shift 2 ;;
 	--install-dir) INSTALL_DIR=${2:-}; shift 2 ;;
 	--runtime-env-file) RUNTIME_ENV_FILE=${2:-}; shift 2 ;;
@@ -36,8 +40,8 @@ done
 	printf 'ERROR: current HFL installer supports /opt/hyperfilelens only\n' >&2
 	exit 2
 }
-[[ -n "${PUBLIC_HOST}" && "${PUBLIC_HOST}" != *[[:space:]]* ]] || {
-	printf 'ERROR: --public-host is required\n' >&2
+[[ -n "${DIRECT_HOST}" && "${DIRECT_HOST}" != *[[:space:]]* ]] || {
+	printf 'ERROR: --direct-host is required\n' >&2
 	exit 2
 }
 if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
@@ -322,62 +326,165 @@ package_root="$(find "${work}/extract" -mindepth 1 -maxdepth 1 -type d -name 'hy
 
 if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
 	printf '[deploy] Upgrading installed HFL to %s\n' "${TAG}"
-	HFL_PUBLIC_HOST="${PUBLIC_HOST}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
+	HFL_PUBLIC_HOST="${DIRECT_HOST}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 		bash "${INSTALL_DIR}/install.sh" upgrade --from "${package_root}" --yes
 else
 	printf '[deploy] Installing HFL %s\n' "${TAG}"
-	HFL_PUBLIC_HOST="${PUBLIC_HOST}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
+	HFL_PUBLIC_HOST="${DIRECT_HOST}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 		bash "${package_root}/install.sh" install
 fi
 
 if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
-	printf '[deploy] Applying staged runtime configuration\n'
-	python3 - "${INSTALL_DIR}/.env" "${RUNTIME_ENV_FILE}" <<'PY'
+	printf '[deploy] Applying optional public URL and Turnstile configuration\n'
+	env_backup="${work}/env-before-optional-config"
+	cp -p "${INSTALL_DIR}/.env" "${env_backup}"
+	python3 - "${INSTALL_DIR}/.env" "${RUNTIME_ENV_FILE}" "${PUBLIC_URL}" "${DIRECT_HOST}" <<'PY'
 import os
 import pathlib
 import re
 import sys
+from urllib.parse import urlsplit, urlunsplit
 
 env_path = pathlib.Path(sys.argv[1])
 staged_path = pathlib.Path(sys.argv[2])
+public_url = sys.argv[3].strip()
+direct_host = sys.argv[4].strip()
 allowed = {"TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"}
 values = {}
 for raw_line in staged_path.read_text(encoding="utf-8").splitlines():
     if not raw_line or raw_line.startswith("#"):
         continue
     key, separator, value = raw_line.partition("=")
-    if not separator or key not in allowed or not value or re.search(r"[\r\n]", value):
-        raise SystemExit("invalid staged runtime configuration")
+    if not separator or key not in allowed or re.search(r"[\r\n]", value):
+        print(f"[deploy] WARNING: ignoring invalid staged runtime key {key!r}")
+        continue
     values[key] = value
-if set(values) != allowed or values["TURNSTILE_ENABLED"] != "true":
-    raise SystemExit("incomplete staged Turnstile configuration")
 
 lines = env_path.read_text(encoding="utf-8").splitlines()
+current = {}
+for line in lines:
+    key, separator, value = line.partition("=")
+    if separator:
+        current[key] = value
+
+updates = {}
+turnstile_enabled = values.get("TURNSTILE_ENABLED", "").lower()
+if turnstile_enabled in {"true", "false"}:
+    updates["TURNSTILE_ENABLED"] = turnstile_enabled
+else:
+    print("[deploy] WARNING: invalid Turnstile enabled value; preserving installed value")
+
+key_pattern = re.compile(r"^[A-Za-z0-9_-]+$")
+for name in ("TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
+    value = values.get(name, "")
+    if value and key_pattern.fullmatch(value):
+        updates[name] = value
+    else:
+        print(f"[deploy] WARNING: {name} is empty or malformed; preserving installed value")
+
+def parse_public_origin(value):
+    try:
+        candidate = urlsplit(value)
+        candidate.port  # Validate malformed or out-of-range ports.
+    except ValueError:
+        return None
+    if (
+        candidate.scheme not in {"http", "https"}
+        or not candidate.hostname
+        or candidate.username
+        or candidate.password
+        or candidate.query
+        or candidate.fragment
+        or candidate.path not in {"", "/"}
+        or re.search(r"\s", candidate.netloc)
+    ):
+        return None
+    return candidate
+
+
+def host_for_url(value):
+    if ":" in value and not value.startswith("["):
+        return f"[{value}]"
+    return value
+
+
+if public_url:
+    parsed = parse_public_origin(public_url)
+    if parsed:
+        public_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+        direct_url_host = host_for_url(direct_host)
+        direct_allowed_host = direct_host.strip("[]")
+        allowed_hosts = [
+            item.strip()
+            for item in current.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+            if item.strip() and item.strip() != "*"
+        ]
+        csrf_origins = [
+            item.strip()
+            for item in current.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+            if item.strip()
+        ]
+        for host in ("localhost", "127.0.0.1", direct_allowed_host, parsed.hostname):
+            if host and host not in allowed_hosts:
+                allowed_hosts.append(host)
+        for origin in (
+            "https://localhost:11443",
+            "https://127.0.0.1:11443",
+            f"https://{direct_url_host}:11443" if direct_url_host else "",
+            public_origin,
+        ):
+            if origin and origin not in csrf_origins:
+                csrf_origins.append(origin)
+        updates.update(
+            {
+                "FRONTEND_URL": public_origin,
+                "DJANGO_ALLOWED_HOSTS": ",".join(allowed_hosts),
+                "CSRF_TRUSTED_ORIGINS": ",".join(csrf_origins),
+                "LENS_GATEWAY_BASE_URL": f"{public_origin}/sourcelens",
+                "HFL_ADMIN_PUBLIC_URL": f"https://{direct_url_host}:11444" if direct_url_host else "",
+            }
+        )
+    else:
+        print(f"[deploy] WARNING: invalid public URL {public_url!r}; preserving installed URL configuration")
+else:
+    print("[deploy] WARNING: public URL is empty; preserving installed URL configuration")
+
 updated = []
 seen = set()
 for line in lines:
     key = line.split("=", 1)[0] if "=" in line else ""
-    if key in values:
-        updated.append(f"{key}={values[key]}")
+    if key in updates:
+        updated.append(f"{key}={updates[key]}")
         seen.add(key)
     else:
         updated.append(line)
-for key in ("TURNSTILE_ENABLED", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
+for key, value in updates.items():
     if key not in seen:
-        updated.append(f"{key}={values[key]}")
+        updated.append(f"{key}={value}")
 
-temporary = env_path.with_name(f"{env_path.name}.turnstile.tmp")
+temporary = env_path.with_name(f"{env_path.name}.optional-config.tmp")
 temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
 os.chmod(temporary, 0o600)
 os.replace(temporary, env_path)
 PY
 	rm -f -- "${RUNTIME_ENV_FILE}"
 	RUNTIME_ENV_FILE=""
-	printf '[deploy] Recreating HFL API with updated runtime configuration\n'
-	(
+	printf '[deploy] Recreating HFL services with updated optional configuration\n'
+	if ! (
 		cd "${INSTALL_DIR}"
-		docker compose --env-file .env -f docker-compose.yml up -d --force-recreate api
-	)
+		docker compose --env-file .env -f docker-compose.yml up -d --force-recreate api worker scheduler
+	) || ! curl -kfsS --retry 24 --retry-delay 5 --retry-connrefused \
+		"https://127.0.0.1:11443/health/ready" >/dev/null; then
+		printf '[deploy] WARNING: optional configuration was not healthy; restoring previous .env\n' >&2
+		cp -p "${env_backup}" "${INSTALL_DIR}/.env"
+		(
+			cd "${INSTALL_DIR}"
+			docker compose --env-file .env -f docker-compose.yml up -d --force-recreate api worker scheduler
+		)
+		curl -kfsS --retry 24 --retry-delay 5 --retry-connrefused \
+			"https://127.0.0.1:11443/health/ready" >/dev/null \
+			|| { printf 'ERROR: failed to restore healthy HFL services after optional configuration rollback\n' >&2; exit 1; }
+	fi
 fi
 
 if verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
