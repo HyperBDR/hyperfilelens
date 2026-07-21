@@ -4516,30 +4516,44 @@ function policyRetentionDetailLines(policy: WizardPolicy | null | undefined): Po
     return [{ text: t('protection.backupsPage.policyConfigNotConfigured') }]
   }
 
-  if (messageLocale.value === 'en') {
-    const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-    const lines: PolicyRetentionDetailLine[] = [{ text: `Keep last ${f.retentionRecentPoints} restore ${latestSuffix}.` }]
-    if (f.retentionShortHourly) {
-      lines.push({ label: 'Hourly:', text: `First ${f.retentionShortDaysMax} days, one restore point per hour.` })
-    }
-    if (f.retentionMidDaily) {
-      lines.push({ label: 'Daily:', text: `Day ${f.retentionShortDaysMax} to day ${f.retentionMidDaysMax}, one restore point per day.` })
-    }
-    if (f.retentionLongMonthly) {
-      lines.push({ label: 'Monthly:', text: `After day ${f.retentionMidDaysMax}, one restore point per month, up to ${f.retentionLongMonths} months.` })
-    }
-    return lines
+  const recentPoints = Number(f.retentionRecentPoints)
+  const lines: PolicyRetentionDetailLine[] = [{
+    text: t(
+      recentPoints === 1
+        ? 'protection.policiesPage.retentionLatestOne'
+        : 'protection.policiesPage.retentionLatestMany',
+      { n: recentPoints },
+    ),
+  }]
+  if (f.retentionHourlyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.hourlyTitle')}:`,
+      text: t('protection.policiesPage.retentionHourlyDetail', { n: f.retentionHourlyHours }),
+    })
   }
-
-  const lines: PolicyRetentionDetailLine[] = [{ text: `Keep the latest ${f.retentionRecentPoints} restore points.` }]
-  if (f.retentionShortHourly) {
-    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for the first ${f.retentionShortDaysMax} days.` })
+  if (f.retentionDailyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.dailyTitle')}:`,
+      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionDailyDays }),
+    })
   }
-  if (f.retentionMidDaily) {
-    lines.push({ label: 'Daily:', text: `Keep one restore point per day from day ${f.retentionShortDaysMax} through day ${f.retentionMidDaysMax}.` })
+  if (f.retentionWeeklyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.weeklyTitle')}:`,
+      text: t('protection.policiesPage.retentionWeeklyDetail', { n: f.retentionWeeklyWeeks }),
+    })
   }
-  if (f.retentionLongMonthly) {
-    lines.push({ label: 'Monthly:', text: `After day ${f.retentionMidDaysMax}, keep one restore point per month for up to ${f.retentionLongMonths} months.` })
+  if (f.retentionMonthlyEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.monthlyTitle')}:`,
+      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionMonthlyMonths }),
+    })
+  }
+  if (f.retentionAnnualEnabled) {
+    lines.push({
+      label: `${t('protection.policiesPage.annualTitle')}:`,
+      text: t('protection.policiesPage.retentionAnnualDetail', { n: f.retentionAnnualYears }),
+    })
   }
   return lines
 }
@@ -4547,8 +4561,13 @@ function policyRetentionDetailLines(policy: WizardPolicy | null | undefined): Po
 function policyRetentionListSummary(policy: WizardPolicy | null | undefined): string {
   const f = policy?.formData
   if (!f || !f.sectionRetentionEnabled) return t('protection.backupsPage.policyConfigNotConfigured')
-  const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-  return `Keep the latest ${f.retentionRecentPoints} restore ${suffix}`
+  const recentPoints = Number(f.retentionRecentPoints)
+  return t(
+    recentPoints === 1
+      ? 'protection.policiesPage.retentionLatestSummaryOne'
+      : 'protection.policiesPage.retentionLatestSummaryMany',
+    { n: recentPoints },
+  )
 }
 
 function filterFormView(filter: WizardFilter) {

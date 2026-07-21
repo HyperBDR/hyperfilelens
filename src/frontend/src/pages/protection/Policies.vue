@@ -520,26 +520,48 @@ function fmtLocalTime(v: string | null | undefined) {
 function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[] {
   const f = row.formData
   if (!f) return [{ text: row.retentionSummary || t('protection.policiesPage.timeDash') }]
-  if (!f.sectionRetentionEnabled) return [{ text: 'Not configured' }]
+  if (!f.sectionRetentionEnabled) return [{ text: t('protection.policiesPage.retentionNotConfigured') }]
 
-  const latestSuffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
+  const recentPoints = Number(f.retentionRecentPoints)
   const lines: PolicyRetentionDetailLine[] = [
-    { text: `Keep the latest ${f.retentionRecentPoints} restore ${latestSuffix}.` },
+    {
+      text: t(
+        recentPoints === 1
+          ? 'protection.policiesPage.retentionLatestOne'
+          : 'protection.policiesPage.retentionLatestMany',
+        { n: recentPoints },
+      ),
+    },
   ]
   if (f.retentionHourlyEnabled) {
-    lines.push({ label: 'Hourly:', text: `Keep one restore point per hour for ${f.retentionHourlyHours} hour(s).` })
+    lines.push({
+      label: `${t('protection.policiesPage.hourlyTitle')}:`,
+      text: t('protection.policiesPage.retentionHourlyDetail', { n: f.retentionHourlyHours }),
+    })
   }
   if (f.retentionDailyEnabled) {
-    lines.push({ label: 'Daily:', text: `Keep one restore point per day for ${f.retentionDailyDays} day(s).` })
+    lines.push({
+      label: `${t('protection.policiesPage.dailyTitle')}:`,
+      text: t('protection.policiesPage.retentionDailyDetail', { n: f.retentionDailyDays }),
+    })
   }
   if (f.retentionWeeklyEnabled) {
-    lines.push({ label: 'Weekly:', text: `Keep one restore point per week for ${f.retentionWeeklyWeeks} week(s).` })
+    lines.push({
+      label: `${t('protection.policiesPage.weeklyTitle')}:`,
+      text: t('protection.policiesPage.retentionWeeklyDetail', { n: f.retentionWeeklyWeeks }),
+    })
   }
   if (f.retentionMonthlyEnabled) {
-    lines.push({ label: 'Monthly:', text: `Keep one restore point per month for ${f.retentionMonthlyMonths} month(s).` })
+    lines.push({
+      label: `${t('protection.policiesPage.monthlyTitle')}:`,
+      text: t('protection.policiesPage.retentionMonthlyDetail', { n: f.retentionMonthlyMonths }),
+    })
   }
   if (f.retentionAnnualEnabled) {
-    lines.push({ label: 'Annual:', text: `Keep one restore point per year for ${f.retentionAnnualYears} year(s).` })
+    lines.push({
+      label: `${t('protection.policiesPage.annualTitle')}:`,
+      text: t('protection.policiesPage.retentionAnnualDetail', { n: f.retentionAnnualYears }),
+    })
   }
   return lines
 }
@@ -547,9 +569,14 @@ function policyRetentionDetailLines(row: PolicyRow): PolicyRetentionDetailLine[]
 function policyRetentionListSummary(row: PolicyRow): string {
   const f = row.formData
   if (!f) return row.retentionSummary || t('protection.policiesPage.timeDash')
-  if (!f.sectionRetentionEnabled) return 'Not configured'
-  const suffix = Number(f.retentionRecentPoints) === 1 ? 'point' : 'points'
-  return `Keep the latest ${f.retentionRecentPoints} restore ${suffix}`
+  if (!f.sectionRetentionEnabled) return t('protection.policiesPage.retentionNotConfigured')
+  const recentPoints = Number(f.retentionRecentPoints)
+  return t(
+    recentPoints === 1
+      ? 'protection.policiesPage.retentionLatestSummaryOne'
+      : 'protection.policiesPage.retentionLatestSummaryMany',
+    { n: recentPoints },
+  )
 }
 
 let relatedBackupConfigRequestSeq = 0
