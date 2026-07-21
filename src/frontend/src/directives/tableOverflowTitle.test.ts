@@ -16,8 +16,10 @@ describe('tableOverflowTitle', () => {
   beforeAll(() => {
     vi.useFakeTimers()
     setupTableOverflowTitleDirective({
-      directive: (_name: string, registered: Directive) => {
-        directive = registered as Directive<HTMLElement>
+      directive: (name: string, registered: Directive) => {
+        if (name === 'table-overflow-title') {
+          directive = registered as Directive<HTMLElement>
+        }
       },
     } as Pick<App, 'directive'> as App)
 

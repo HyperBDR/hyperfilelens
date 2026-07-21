@@ -6,6 +6,8 @@ type OverflowTitleState = {
   pendingTimer: number | null
   hideTimer: number | null
   tooltipHovered: boolean
+  resolveTarget: (eventTarget: EventTarget | null) => HTMLElement | null
+  titleForTarget: (target: HTMLElement) => string
   onMouseOver: (event: MouseEvent) => void
   onMouseOut: (event: MouseEvent) => void
   onFocusIn: (event: FocusEvent) => void
@@ -194,7 +196,7 @@ function showTooltip(state: OverflowTitleState, cell: HTMLElement, text: string)
 }
 
 function applyTooltip(state: OverflowTitleState, cell: HTMLElement) {
-  const text = titleTextForCell(cell)
+  const text = state.titleForTarget(cell)
   if (!text) {
     clearTooltip(state)
     return
@@ -263,7 +265,11 @@ function clearTooltip(state: OverflowTitleState) {
   }
 }
 
-function install(el: HTMLElement) {
+function installWithResolvers(
+  el: HTMLElement,
+  resolveTarget: (eventTarget: EventTarget | null) => HTMLElement | null,
+  titleForTarget: (target: HTMLElement) => string,
+) {
   if (stateByElement.has(el)) return
 
   const state: OverflowTitleState = {
@@ -272,8 +278,10 @@ function install(el: HTMLElement) {
     pendingTimer: null,
     hideTimer: null,
     tooltipHovered: false,
+    resolveTarget,
+    titleForTarget,
     onMouseOver: (event) => {
-      const cell = findCell(el, event.target)
+      const cell = state.resolveTarget(event.target)
       if (cell) scheduleTooltip(state, cell)
     },
     onMouseOut: (event) => {
@@ -288,7 +296,7 @@ function install(el: HTMLElement) {
       scheduleTooltipHide(state)
     },
     onFocusIn: (event) => {
-      const cell = findCell(el, event.target)
+      const cell = state.resolveTarget(event.target)
       if (cell) scheduleTooltip(state, cell)
     },
     onFocusOut: () => {
@@ -317,6 +325,25 @@ function install(el: HTMLElement) {
   window.addEventListener('resize', state.onResize)
   el.addEventListener(COLUMN_RESIZED_EVENT, state.onColumnResize)
   stateByElement.set(el, state)
+}
+
+function install(el: HTMLElement) {
+  installWithResolvers(
+    el,
+    (eventTarget) => findCell(el, eventTarget),
+    titleTextForCell,
+  )
+}
+
+function installOverflowTitle(el: HTMLElement) {
+  installWithResolvers(
+    el,
+    (eventTarget) => eventTarget instanceof Node && el.contains(eventTarget) ? el : null,
+    (target) => {
+      if (!isOverflowing(target)) return ''
+      return target.dataset.overflowTitle?.trim() || textFromElement(target)
+    },
+  )
 }
 
 function uninstall(el: HTMLElement) {
@@ -369,6 +396,19 @@ export function setupTableOverflowTitleDirective(app: App) {
   app.directive('table-overflow-title', {
     mounted: install,
     unmounted: uninstall,
+  })
+  app.directive('overflow-title', {
+    mounted(el: HTMLElement, binding) {
+      el.dataset.overflowTitle = String(binding.value || '')
+      installOverflowTitle(el)
+    },
+    updated(el: HTMLElement, binding) {
+      el.dataset.overflowTitle = String(binding.value || '')
+    },
+    unmounted(el: HTMLElement) {
+      uninstall(el)
+      delete el.dataset.overflowTitle
+    },
   })
   setupAutoInstall()
 }
