@@ -26,6 +26,8 @@ def list_tasks(
     queryset = (
         Task.objects.filter(organization_id=organization_id)
         .select_related(
+            "replaces_task",
+            "replacement_task",
             "repository_operation__execution_target",
             "repository_operation__triggered_by_task",
         )
@@ -73,6 +75,8 @@ def get_task(*, organization_id: int, task_uuid: UUID | str) -> Task | None:
     return (
         Task.objects.filter(organization_id=organization_id, task_uuid=task_uuid)
         .select_related(
+            "replaces_task",
+            "replacement_task",
             "repository_operation__execution_target",
             "repository_operation__triggered_by_task",
         )

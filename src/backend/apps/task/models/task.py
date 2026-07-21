@@ -44,6 +44,14 @@ class Task(models.Model):
     progress = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
     current_step = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     retry_count = models.IntegerField(default=0)
+    recovery_attempt = models.PositiveIntegerField(default=0)
+    replaces_task = models.OneToOneField(
+        "self",
+        on_delete=models.SET_NULL,
+        related_name="replacement_task",
+        blank=True,
+        null=True,
+    )
     trigger_type = models.CharField(
         max_length=16,
         choices=TriggerType.choices,

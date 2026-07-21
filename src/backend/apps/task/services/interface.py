@@ -133,6 +133,7 @@ def create_task(
     resources: list[dict[str, Any]] | None = None,
     steps: list[dict[str, Any] | str] | None = None,
     normalize_trigger_type: bool = True,
+    replaces_task: Task | None = None,
 ) -> Task:
     if task_type not in {value for value, _label in Task.Type.choices}:
         raise ValidationError({"task_type": "Unsupported task type."})
@@ -143,6 +144,18 @@ def create_task(
     clean_name = display_name.strip()
     if not clean_name:
         raise ValidationError({"display_name": "Display name is required."})
+    if replaces_task is not None:
+        if replaces_task.pk is None:
+            raise ValidationError({"replaces_task": "The interrupted task must be persisted."})
+        replaces_task = Task.objects.select_for_update().get(pk=replaces_task.pk)
+        if replaces_task.organization_id != organization_id:
+            raise ValidationError({"replaces_task": "Replacement tasks must belong to the same organization."})
+        if replaces_task.task_type != task_type:
+            raise ValidationError({"replaces_task": "Replacement tasks must use the same task type."})
+        if replaces_task.status != Task.Status.FAILED:
+            raise ValidationError({"replaces_task": "The interrupted task must be failed before replacement."})
+        if Task.objects.filter(replaces_task_id=replaces_task.id).exists():
+            raise ValidationError({"replaces_task": "The interrupted task already has a replacement."})
 
     resource_defs = resources or []
     primary_resources = [resource for resource in resource_defs if resource.get("is_primary")]
@@ -170,6 +183,8 @@ def create_task(
         trigger_type=trigger_type,
         request_payload=request_payload or None,
         current_step=str(first_step) if first_step else None,
+        replaces_task=replaces_task,
+        recovery_attempt=(int(replaces_task.recovery_attempt) + 1 if replaces_task else 0),
     )
 
     for resource in resource_defs:

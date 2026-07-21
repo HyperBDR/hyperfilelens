@@ -19,10 +19,12 @@ import { useListSearch } from '../../composables/useListSearch'
 import { apiErrorMessage } from '../../lib/api'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { layoutElTable } from '../../lib/tableScrollSync'
-import { listBackupConfigs, getBackupConfig, type BackupConfig, type BackupConfigDetail } from '../../lib/protectionBackupConfigApi'
-import { listAllNodes } from '../../lib/nodeApi'
-import { listSourceResources } from '../../lib/sourceApi'
-import { listAllStorageRepositories } from '../../lib/storageRepositoryApi'
+import { listBackupConfigs, type BackupConfig } from '../../lib/protectionBackupConfigApi'
+import { listBackupSelectableSources, type BackupSelectableSource } from '../../lib/sourceApi'
+import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
+import { nasMountProtocolIcon } from '../../lib/resourceIcons'
+import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
+import FlowSourceConnectionCell from './components/FlowSourceConnectionCell.vue'
 import {
   bulkDeleteBackupPolicies,
   bulkDeleteFileFilters,
@@ -303,10 +305,21 @@ const relatedBackupConfigsError = ref('')
 const filterRelatedBackupConfigs = ref<BackupConfig[]>([])
 const filterRelatedBackupConfigsLoading = ref(false)
 const filterRelatedBackupConfigsError = ref('')
-const backupConfigDetailById = ref(new Map<number, BackupConfigDetail>())
-const agentNameById = ref(new Map<number, string>())
-const nasNameById = ref(new Map<number, string>())
-const repositoryNameById = ref(new Map<number, string>())
+const relatedSourceById = ref(new Map<string, BackupSelectableSource>())
+const relatedBackupPage = ref(1)
+const relatedBackupPageSize = ref(10)
+const filterRelatedBackupPage = ref(1)
+const filterRelatedBackupPageSize = ref(10)
+
+const pagedRelatedBackupConfigs = computed(() => {
+  const start = (relatedBackupPage.value - 1) * relatedBackupPageSize.value
+  return relatedBackupConfigs.value.slice(start, start + relatedBackupPageSize.value)
+})
+
+const pagedFilterRelatedBackupConfigs = computed(() => {
+  const start = (filterRelatedBackupPage.value - 1) * filterRelatedBackupPageSize.value
+  return filterRelatedBackupConfigs.value.slice(start, start + filterRelatedBackupPageSize.value)
+})
 
 function formFromPolicyApi(policy: BackupPolicy): BackupPolicyForm {
   return backupPolicyToForm(policy)
@@ -503,6 +516,7 @@ async function refreshPoliciesList() {
 function openPolicyDetail(row: PolicyRow) {
   activePolicy.value = row
   policyDetailTab.value = 'basic'
+  relatedBackupPage.value = 1
   detailDrawerOpen.value = true
   void loadRelatedBackupConfigs(row)
 }
@@ -511,6 +525,7 @@ function onPolicyDetailClosed() {
   activePolicy.value = null
   relatedBackupConfigs.value = []
   relatedBackupConfigsError.value = ''
+  relatedBackupPage.value = 1
 }
 
 function fmtLocalTime(v: string | null | undefined) {
@@ -554,37 +569,31 @@ function policyRetentionListSummary(row: PolicyRow): string {
 
 let relatedBackupConfigRequestSeq = 0
 let filterRelatedBackupConfigRequestSeq = 0
-let relatedLookupRequestSeq = 0
+let relatedSourceRequestSeq = 0
 
-async function loadRelatedLookupMaps(signal?: AbortSignal) {
-  const seq = ++relatedLookupRequestSeq
-  try {
-    const [agents, nasResources, repositories] = await Promise.all([
-      listAllNodes({ role: 'agent' }, { signal }),
-      listSourceResources({ resource_type: 'nas', page: 1, page_size: 500 }, { signal }).then((result) => result.results),
-      listAllStorageRepositories({ page_size: 10 }, { signal }),
-    ])
-    if (seq !== relatedLookupRequestSeq || signal?.aborted) return
-    agentNameById.value = new Map(agents.map((node) => [node.id, node.name]))
-    nasNameById.value = new Map(nasResources.map((resource) => [resource.id, resource.name]))
-    repositoryNameById.value = new Map(repositories.map((repo) => [repo.id, repo.name]))
-  } catch {
-    if (seq !== relatedLookupRequestSeq || signal?.aborted) return
-  }
+function backupConfigSourceId(config: BackupConfig) {
+  return `${config.source_type}:${config.source_ref_id}`
 }
 
-async function hydrateRelatedBackupConfigDetails(configs: BackupConfig[], signal?: AbortSignal) {
-  const missing = configs.filter((config) => !backupConfigDetailById.value.has(config.id))
-  if (!missing.length) return
-  const details = await Promise.all(
-    missing.map((config) => getBackupConfig(config.id, { signal }).catch(() => null)),
-  )
-  if (signal?.aborted) return
-  const next = new Map(backupConfigDetailById.value)
-  for (const detail of details) {
-    if (detail) next.set(detail.id, detail)
+async function loadRelatedSources(configs: BackupConfig[], signal?: AbortSignal) {
+  const seq = ++relatedSourceRequestSeq
+  try {
+    const sourceIds = [...new Set(configs.map(backupConfigSourceId))]
+    const sourceIdBatches = Array.from(
+      { length: Math.ceil(sourceIds.length / 100) },
+      (_, index) => sourceIds.slice(index * 100, (index + 1) * 100),
+    )
+    const sources = await Promise.all(
+      sourceIdBatches.map((ids) =>
+        listBackupSelectableSources({ ids: ids.join(','), page: 1, page_size: ids.length }, { signal })
+          .then((result) => result.results),
+      ),
+    ).then((batches) => batches.flat())
+    if (seq !== relatedSourceRequestSeq || signal?.aborted) return
+    relatedSourceById.value = new Map(sources.map((source) => [`${source.kind}:${source.ref_id}`, source]))
+  } catch {
+    if (seq !== relatedSourceRequestSeq || signal?.aborted) return
   }
-  backupConfigDetailById.value = next
 }
 
 async function loadRelatedBackupConfigs(policy: PolicyRow) {
@@ -593,11 +602,10 @@ async function loadRelatedBackupConfigs(policy: PolicyRow) {
   relatedBackupConfigsLoading.value = true
   relatedBackupConfigsError.value = ''
   try {
-    await loadRelatedLookupMaps(signal)
     const result = await listBackupConfigs({ page: 1, page_size: 500, ordering: '-created_at' }, { signal })
     if (seq !== relatedBackupConfigRequestSeq) return
     relatedBackupConfigs.value = result.results.filter((config) => config.backup_policy_id === policy.apiId)
-    await hydrateRelatedBackupConfigDetails(relatedBackupConfigs.value, signal)
+    await loadRelatedSources(relatedBackupConfigs.value, signal)
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
     if (seq !== relatedBackupConfigRequestSeq) return
@@ -614,11 +622,10 @@ async function loadFilterRelatedBackupConfigs(rule: FilterRow) {
   filterRelatedBackupConfigsLoading.value = true
   filterRelatedBackupConfigsError.value = ''
   try {
-    await loadRelatedLookupMaps(signal)
     const result = await listBackupConfigs({ page: 1, page_size: 500, ordering: '-created_at' }, { signal })
     if (seq !== filterRelatedBackupConfigRequestSeq) return
     filterRelatedBackupConfigs.value = result.results.filter((config) => config.file_filter_rule_id === rule.apiId)
-    await hydrateRelatedBackupConfigDetails(filterRelatedBackupConfigs.value, signal)
+    await loadRelatedSources(filterRelatedBackupConfigs.value, signal)
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
     if (seq !== filterRelatedBackupConfigRequestSeq) return
@@ -640,39 +647,52 @@ function sourceRefLabel(config: BackupConfig) {
 }
 
 function backupConfigSourceLabel(config: BackupConfig) {
-  if (config.source_type === 'agent') {
-    return agentNameById.value.get(config.source_ref_id)
-      ?? `${t('protection.backupsPage.sourceTypeHost')} #${config.source_ref_id}`
+  return relatedSourceById.value.get(backupConfigSourceId(config))?.name
+    ?? sourceRefLabel(config)
+}
+
+function relatedSource(config: BackupConfig) {
+  return relatedSourceById.value.get(backupConfigSourceId(config))
+}
+
+function relatedSourceKind(config: BackupConfig) {
+  return relatedSource(config)?.type === 'nas' || config.source_type === 'nas' ? 'nas' : 'host'
+}
+
+function relatedSourceTraitLabel(config: BackupConfig) {
+  const source = relatedSource(config)
+  if (relatedSourceKind(config) === 'nas') {
+    if (source?.protocol === 'smb') return t('repositoriesPage.protocolSmb')
+    if (source?.protocol === 'nfs') return t('repositoriesPage.protocolNfs')
+    return ''
   }
-  if (config.source_type === 'nas') {
-    return nasNameById.value.get(config.source_ref_id)
-      ?? `${t('protection.backupsPage.sourceTypeNas')} #${config.source_ref_id}`
+  if (source?.platform === 'windows') return t('protection.sourceResources.osPlatformWindows')
+  if (source?.platform === 'macos') return t('protection.sourceResources.osPlatformMacos')
+  if (source?.platform === 'linux') return t('protection.sourceResources.osPlatformLinux')
+  return ''
+}
+
+function relatedSourceEndpointRow(config: BackupConfig) {
+  const source = relatedSource(config)
+  return {
+    type: relatedSourceKind(config),
+    name: backupConfigSourceLabel(config),
+    hostname: source?.hostname || '',
+    nodeName: source?.node_name || '',
+    nodeIp: source?.node_ip || '',
   }
-  return config.name || sourceRefLabel(config)
 }
 
-function repositoryLabel(repositoryId: number) {
-  return repositoryNameById.value.get(repositoryId) ?? `#${repositoryId}`
+function relatedSourceStatus(config: BackupConfig) {
+  return relatedSource(config)?.status || ''
 }
 
-function policyNameById(policyId: number | null | undefined) {
-  if (policyId == null) return t('protection.backupsPage.flowBackupColPolicyNone')
-  return policyRows.value.find((row) => row.apiId === policyId)?.name ?? `#${policyId}`
-}
-
-function filterNameById(filterId: number | null | undefined) {
-  if (filterId == null) return t('protection.backupsPage.flowBackupColPolicyNone')
-  return filterRows.value.find((row) => row.apiId === filterId)?.name ?? `#${filterId}`
-}
-
-function backupConfigPathsLabel(config: BackupConfig) {
-  const detail = backupConfigDetailById.value.get(config.id)
-  const paths = detail?.directories?.map((dir) => dir.path).filter(Boolean) ?? []
-  if (paths.length) return paths.join('\n')
-  if (config.directory_count > 0) {
-    return t('protection.policiesPage.relatedBackupPathCount', { n: config.directory_count })
-  }
-  return t('protection.policiesPage.timeDash')
+function relatedSourceStatusLabel(config: BackupConfig) {
+  const status = relatedSourceStatus(config)
+  if (status === 'online') return t('protection.backupsPage.sourceStatusOnline')
+  if (status === 'reconnecting') return t('protection.backupsPage.sourceStatusReconnecting')
+  if (status === 'offline') return t('protection.backupsPage.sourceStatusOffline')
+  return t('repositoriesPage.associatedSourceUnknown')
 }
 
 function onPolicySelectionChange(rows: PolicyRow[]) {
@@ -790,6 +810,7 @@ function filterRowClassName({ row }: { row: FilterRow }) {
 function openFilterDetail(row: FilterRow) {
   activeFilter.value = row
   filterDetailTab.value = 'basic'
+  filterRelatedBackupPage.value = 1
   filterDetailDrawerOpen.value = true
   void loadFilterRelatedBackupConfigs(row)
 }
@@ -798,6 +819,7 @@ function onFilterDetailClosed() {
   activeFilter.value = null
   filterRelatedBackupConfigs.value = []
   filterRelatedBackupConfigsError.value = ''
+  filterRelatedBackupPage.value = 1
 }
 
 function openEditFilter(row: FilterRow) {
@@ -1324,39 +1346,71 @@ function onMoreDisable() {
               v-table-column-resize="'protection.policies.backup.related'"
               v-table-overflow-title
               v-loading="relatedBackupConfigsLoading"
-              :data="relatedBackupConfigs"
+              :data="pagedRelatedBackupConfigs"
               stripe
               row-key="id"
               class="hfl-list-table policy-related-backup-table"
             >
-              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="168" fixed="left">
+              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="260" fixed="left">
                 <template #default="{ row }">
                   <div class="policy-related-source-cell">
                     <span class="policy-related-source-cell__name">{{ backupConfigSourceLabel(row) }}</span>
-                    <span class="policy-related-source-cell__type">{{ sourceTypeLabel(row.source_type) }}</span>
+                    <span class="policy-related-source-cell__meta">
+                      <ElTag size="small" effect="plain">{{ sourceTypeLabel(row.source_type) }}</ElTag>
+                      <ElTooltip
+                        v-if="relatedSourceTraitLabel(row)"
+                        :content="relatedSourceTraitLabel(row)"
+                        placement="top"
+                      >
+                        <span
+                          v-if="relatedSourceKind(row) === 'host'"
+                          class="source-os-cell__icon-wrap policy-related-source-cell__trait-icon"
+                        >
+                          <AgentPlatformBrandIcon :os="relatedSource(row)?.platform || 'linux'" />
+                        </span>
+                        <span
+                          v-else
+                          class="repo-protocol-pill repo-protocol-pill--icon-only policy-related-source-cell__trait-icon"
+                          :class="`repo-protocol-pill--${relatedSource(row)?.protocol || 'nfs'}`"
+                        >
+                          <component
+                            :is="nasMountProtocolIcon(relatedSource(row)?.protocol)"
+                            :size="12"
+                            stroke-width="2.25"
+                          />
+                        </span>
+                      </ElTooltip>
+                      <span v-else class="policy-related-source-cell__trait-empty">
+                        {{ t('protection.policiesPage.timeDash') }}
+                      </span>
+                    </span>
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColBackupName')" min-width="140">
+              <el-table-column :label="t('repositoriesPage.associatedSourceColEndpoint')" min-width="220">
                 <template #default="{ row }">
-                  <span class="font-medium text-slate-900">{{ row.name }}</span>
+                  <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColBackupDirs')" min-width="180">
+              <el-table-column :label="t('repositoriesPage.associatedSourceColStatus')" min-width="130">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-full hfl-table-no-tooltip policy-related-paths-cell">{{ backupConfigPathsLabel(row) }}</span>
+                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceStatus(row))">
+                    {{ relatedSourceStatusLabel(row) }}
+                  </ElTag>
                 </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColTargetRepo')" min-width="140">
-                <template #default="{ row }">{{ repositoryLabel(row.repository_id) }}</template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColBoundFileFilter')" min-width="140">
-                <template #default="{ row }">{{ filterNameById(row.file_filter_rule_id) }}</template>
               </el-table-column>
               <template #empty>
                 <el-empty :description="t('protection.policiesPage.emptyRelatedBackupSourcesPolicy')" :image-size="72" />
               </template>
             </el-table>
+            <div v-if="relatedBackupConfigs.length > 0" class="policy-related-backup-footer">
+              <HflPagination
+                v-model:current-page="relatedBackupPage"
+                v-model:page-size="relatedBackupPageSize"
+                :total="relatedBackupConfigs.length"
+                @update:page-size="relatedBackupPage = 1"
+              />
+            </div>
           </ElTabPane>
         </ElTabs>
       </div>
@@ -1400,39 +1454,71 @@ function onMoreDisable() {
               v-table-column-resize="'protection.policies.filters.related'"
               v-table-overflow-title
               v-loading="filterRelatedBackupConfigsLoading"
-              :data="filterRelatedBackupConfigs"
+              :data="pagedFilterRelatedBackupConfigs"
               stripe
               row-key="id"
               class="hfl-list-table policy-related-backup-table"
             >
-              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="168" fixed="left">
+              <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="260" fixed="left">
                 <template #default="{ row }">
                   <div class="policy-related-source-cell">
                     <span class="policy-related-source-cell__name">{{ backupConfigSourceLabel(row) }}</span>
-                    <span class="policy-related-source-cell__type">{{ sourceTypeLabel(row.source_type) }}</span>
+                    <span class="policy-related-source-cell__meta">
+                      <ElTag size="small" effect="plain">{{ sourceTypeLabel(row.source_type) }}</ElTag>
+                      <ElTooltip
+                        v-if="relatedSourceTraitLabel(row)"
+                        :content="relatedSourceTraitLabel(row)"
+                        placement="top"
+                      >
+                        <span
+                          v-if="relatedSourceKind(row) === 'host'"
+                          class="source-os-cell__icon-wrap policy-related-source-cell__trait-icon"
+                        >
+                          <AgentPlatformBrandIcon :os="relatedSource(row)?.platform || 'linux'" />
+                        </span>
+                        <span
+                          v-else
+                          class="repo-protocol-pill repo-protocol-pill--icon-only policy-related-source-cell__trait-icon"
+                          :class="`repo-protocol-pill--${relatedSource(row)?.protocol || 'nfs'}`"
+                        >
+                          <component
+                            :is="nasMountProtocolIcon(relatedSource(row)?.protocol)"
+                            :size="12"
+                            stroke-width="2.25"
+                          />
+                        </span>
+                      </ElTooltip>
+                      <span v-else class="policy-related-source-cell__trait-empty">
+                        {{ t('protection.policiesPage.timeDash') }}
+                      </span>
+                    </span>
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColBackupName')" min-width="140">
+              <el-table-column :label="t('repositoriesPage.associatedSourceColEndpoint')" min-width="220">
                 <template #default="{ row }">
-                  <span class="font-medium text-slate-900">{{ row.name }}</span>
+                  <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColBackupDirs')" min-width="180">
+              <el-table-column :label="t('repositoriesPage.associatedSourceColStatus')" min-width="130">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-full hfl-table-no-tooltip policy-related-paths-cell">{{ backupConfigPathsLabel(row) }}</span>
+                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceStatus(row))">
+                    {{ relatedSourceStatusLabel(row) }}
+                  </ElTag>
                 </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColTargetRepo')" min-width="140">
-                <template #default="{ row }">{{ repositoryLabel(row.repository_id) }}</template>
-              </el-table-column>
-              <el-table-column :label="t('protection.backupsPage.flowBackupColBoundBackupPolicy')" min-width="140">
-                <template #default="{ row }">{{ policyNameById(row.backup_policy_id) }}</template>
               </el-table-column>
               <template #empty>
                 <el-empty :description="t('protection.policiesPage.emptyRelatedBackupSourcesFilter')" :image-size="72" />
               </template>
             </el-table>
+            <div v-if="filterRelatedBackupConfigs.length > 0" class="policy-related-backup-footer">
+              <HflPagination
+                v-model:current-page="filterRelatedBackupPage"
+                v-model:page-size="filterRelatedBackupPageSize"
+                :total="filterRelatedBackupConfigs.length"
+                @update:page-size="filterRelatedBackupPage = 1"
+              />
+            </div>
           </ElTabPane>
         </ElTabs>
       </div>
@@ -1838,33 +1924,45 @@ function onMoreDisable() {
 
 .policy-related-source-cell {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.policy-related-source-cell__name,
-.policy-related-source-cell__type {
+.policy-related-source-cell__name {
   display: block;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
+  color: rgb(15 23 42);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.policy-related-source-cell__name {
-  font-weight: 500;
-  color: rgb(15 23 42);
+.policy-related-source-cell__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
 }
 
-.policy-related-source-cell__type {
+.policy-related-source-cell__trait-icon {
+  flex: 0 0 auto;
+}
+
+.policy-related-source-cell__trait-empty {
   font-size: 12px;
+  line-height: 17px;
   color: rgb(100 116 139);
 }
 
-.policy-related-paths-cell {
-  white-space: pre-line;
+.policy-related-backup-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 0 0;
 }
 
 </style>

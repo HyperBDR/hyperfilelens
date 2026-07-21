@@ -4,7 +4,6 @@ import logging
 
 from celery import shared_task
 from django.core.cache import cache
-from django.core.exceptions import ValidationError
 
 from common.observability.celery_context import logged_celery_task
 
@@ -20,6 +19,12 @@ from apps.storage.services.internal.repository_usage import (
 )
 from apps.storage.services.internal.kopia_cli import KopiaCliError, run_maintenance
 from apps.storage.services.internal.repository_access import repository_payload_for_node
+from apps.storage.services.internal.repository_agent_operation import (
+    RepositoryAgentOperationResult,
+    RepositoryAgentOperationStateUnknown,
+    RepositoryAgentOperationTimeout,
+    resolve_or_dispatch_repository_agent_operation,
+)
 from apps.storage.services.internal.repository_operations import (
     finalize_repository_operation,
     maintenance_settings,
@@ -29,11 +34,18 @@ from apps.storage.services.internal.repository_operations import (
 from apps.storage.services.internal.repository_secrets import scrub_secrets
 from apps.task.models import Task, TaskStep
 from apps.task.services.interface import start_task
+from apps.task.services.recovery import (
+    CONTROL_PLANE_RESTART_INTERRUPTED,
+    RecoveryDecision,
+    RecoveryPlan,
+    record_recovery_decision,
+)
 
 
 logger = logging.getLogger(__name__)
 
 _REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS = 300
+_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS = 600
 
 
 def _repository_health_lock(repository_id: int) -> str:
@@ -183,12 +195,48 @@ def schedule_repository_maintenance():
     return {"scheduled": len(repository_task_ids), "repository_task_ids": repository_task_ids}
 
 
+@shared_task(name="apps.storage.tasks.reconcile_repository_operations")
+@logged_celery_task(
+    name="apps.storage.tasks.reconcile_repository_operations",
+    trace_keys=("limit",),
+)
+def reconcile_repository_operations(*, limit: int = 100):
+    """Requeue active Agent-backed repository operations for one idempotent advance."""
+    repository_task_ids = list(
+        RepositoryTask.objects.filter(
+            owner_type=RepositoryExecutionTarget.OwnerType.NODE,
+            task__status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+        )
+        .order_by("task__updated_at", "id")
+        .values_list("id", flat=True)[: max(1, int(limit))]
+    )
+    for repository_task_id in repository_task_ids:
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task_id}
+        )
+    return {
+        "scanned": len(repository_task_ids),
+        "redispatched": len(repository_task_ids),
+        "repository_task_ids": repository_task_ids,
+    }
+
+
 @shared_task(name="apps.storage.tasks.execute_repository_operation")
 @logged_celery_task(
     name="apps.storage.tasks.execute_repository_operation",
     trace_keys=("repository_task_id",),
 )
 def execute_repository_operation(*, repository_task_id: int):
+    lock_key = f"storage:repository-operation:advance:{int(repository_task_id)}"
+    if not cache.add(lock_key, "1", timeout=_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS):
+        return {"status": "already_running", "repository_task_id": repository_task_id}
+    try:
+        return _execute_repository_operation(repository_task_id=repository_task_id)
+    finally:
+        cache.delete(lock_key)
+
+
+def _execute_repository_operation(*, repository_task_id: int):
     repository_task = RepositoryTask.objects.select_related(
         "task", "repository", "execution_target"
     ).get(pk=repository_task_id)
@@ -204,16 +252,29 @@ def execute_repository_operation(*, repository_task_id: int):
     task = repository_task.task
     if task.status in {Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT}:
         return {"status": task.status, "idempotent": True}
-    try:
+    started_now = task.status == Task.Status.PENDING
+    if started_now:
         start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
-    except ValidationError:
-        task.refresh_from_db()
-        return {"status": task.status, "idempotent": True}
-    try:
         set_task_step(task, "prepare_repository_operation", status=TaskStep.Status.SUCCESS, progress=10)
         set_task_step(task, "verify_repository_owner", status=TaskStep.Status.SUCCESS, progress=20)
         set_task_step(task, "run_repository_operation", status=TaskStep.Status.RUNNING, progress=25)
-        result = _execute_maintenance(repository_task)
+    elif task.status == Task.Status.RUNNING:
+        if repository_task.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
+            return {"status": task.status, "idempotent": True}
+    else:
+        return {"status": task.status, "idempotent": True}
+    try:
+        operation = _execute_maintenance(
+            repository_task,
+            allow_dispatch=started_now,
+        )
+        if operation.waiting:
+            return {
+                "status": "waiting",
+                "repository_task_id": repository_task.id,
+                "remote_task_id": str(operation.node_task_id),
+            }
+        result = operation.result
         set_task_step(task, "run_repository_operation", status=TaskStep.Status.SUCCESS, progress=80)
         set_task_step(task, "refresh_repository_usage", status=TaskStep.Status.RUNNING, progress=85)
         sync_organization_repositories(
@@ -231,8 +292,38 @@ def execute_repository_operation(*, repository_task_id: int):
             result_payload=scrub_secrets(result),
         )
         return {"status": "success", "repository_task_id": repository_task.id}
+    except RepositoryAgentOperationStateUnknown as exc:
+        record_recovery_decision(
+            task=task,
+            plan=RecoveryPlan(
+                decision=RecoveryDecision.FAIL,
+                reason=str(exc),
+                evidence={
+                    "current_step": task.current_step,
+                    "operation_type": repository_task.operation_type,
+                },
+            ),
+        )
+        set_task_step(
+            task,
+            task.current_step or "run_repository_operation",
+            status=TaskStep.Status.FAILED,
+            progress=int(task.progress),
+        )
+        finalize_repository_operation(
+            repository_task_id=repository_task.id,
+            succeeded=False,
+            error_code=CONTROL_PLANE_RESTART_INTERRUPTED,
+            error_message=str(exc),
+        )
+        return {"status": "failed", "repository_task_id": repository_task.id}
     except Exception as exc:
-        set_task_step(task, task.current_step or "run_repository_operation", status=TaskStep.Status.FAILED, progress=int(task.progress))
+        set_task_step(
+            task,
+            task.current_step or "run_repository_operation",
+            status=TaskStep.Status.FAILED,
+            progress=int(task.progress),
+        )
         finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
@@ -242,7 +333,11 @@ def execute_repository_operation(*, repository_task_id: int):
         return {"status": "failed", "repository_task_id": repository_task.id}
 
 
-def _execute_maintenance(repository_task: RepositoryTask) -> dict:
+def _execute_maintenance(
+    repository_task: RepositoryTask,
+    *,
+    allow_dispatch: bool = True,
+) -> RepositoryAgentOperationResult:
     if repository_task.operation_type not in {
         RepositoryTask.OperationType.MAINTENANCE_QUICK,
         RepositoryTask.OperationType.MAINTENANCE_FULL,
@@ -257,11 +352,17 @@ def _execute_maintenance(repository_task: RepositoryTask) -> dict:
             owner_identity=repository_task.owner_identity,
             timeout_seconds=settings.execution_timeout_seconds,
         )
-        return {"operation_type": repository_task.operation_type, "stdout": result.stdout, "stderr": result.stderr}
+        return RepositoryAgentOperationResult(
+            waiting=False,
+            node_task_id=repository_task.remote_task_id,
+            result={
+                "operation_type": repository_task.operation_type,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+        )
 
     from apps.node.models import Node
-    from apps.node.services.interface import cancel_agent_task, run_agent_task_sync
-
     node = Node.objects.filter(
         id=repository_task.owner_node_id,
         organization_id=repository_task.repository.organization_id,
@@ -279,30 +380,27 @@ def _execute_maintenance(repository_task: RepositoryTask) -> dict:
         source_type="proxy" if node.role == "proxy" else "agent",
         source_ref_id=node.id,
     )
-    outcome = run_agent_task_sync(
-        organization_id=repository_task.repository.organization_id,
-        node_id=node.id,
-        kind="repository.operation",
+    outcome = resolve_or_dispatch_repository_agent_operation(
+        repository_task=repository_task,
+        node=node,
         payload={
             "operation_type": repository_task.operation_type,
             "owner_identity": repository_task.owner_identity,
             "repository": repository_payload,
         },
         correlation_type="repository_operation",
-        correlation_id=str(repository_task.task.task_uuid),
-        wait_timeout_seconds=settings.execution_timeout_seconds,
+        timeout_seconds=settings.execution_timeout_seconds,
+        allow_dispatch=allow_dispatch,
     )
-    RepositoryTask.objects.filter(pk=repository_task.id).update(remote_task_id=outcome.task.id)
-    if outcome.timed_out:
-        cancel_agent_task(task_id=outcome.task.id, reason="repository operation execution timeout")
-        raise TimeoutError("Repository owner did not finish maintenance before the execution timeout")
-    if not outcome.ok:
-        raise RuntimeError(outcome.task.last_error or "Repository owner maintenance failed")
-    return scrub_secrets(outcome.result if isinstance(outcome.result, dict) else {})
+    return RepositoryAgentOperationResult(
+        waiting=outcome.waiting,
+        node_task_id=outcome.node_task_id,
+        result=scrub_secrets(outcome.result),
+    )
 
 
 def _repository_operation_error_code(exc: Exception) -> str:
-    if isinstance(exc, TimeoutError):
+    if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)):
         return "REPOSITORY_OPERATION_TIMEOUT"
     if isinstance(exc, KopiaCliError):
         return "KOPIA_MAINTENANCE_FAILED"

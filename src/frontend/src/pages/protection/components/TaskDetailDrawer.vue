@@ -30,6 +30,7 @@ import {
   buildStopConfirmItemFromTask,
 } from '../../../lib/protectionStopConfirm'
 import { useProtectionStopConfirmDialog } from '../../../composables/useProtectionStopConfirmDialog'
+import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
 import { getSourceResource } from '../../../lib/sourceApi'
 import { getStorageRepository } from '../../../lib/storageRepositoryApi'
@@ -64,6 +65,7 @@ const stopConfirmDialog = useProtectionStopConfirmDialog()
 const stopConfirmOpen = stopConfirmDialog.open
 const stopConfirmKind = stopConfirmDialog.kind
 const stopConfirmItems = stopConfirmDialog.items
+const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const activeTask = ref<TaskRow | null>(null)
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
@@ -519,6 +521,7 @@ async function loadTaskDetail(taskUuid: string) {
   try {
     const task = await getTask(uuid)
     activeTask.value = task
+    resetDrawerScroll()
     taskOwner.value = t('ops.task.emptyMark')
     detailEvents.value = task.recent_events || []
     selectedResourceType.value = task.resources?.[0]?.resource_type || ''
@@ -607,6 +610,7 @@ watch(
     class="hfl-task-drawer"
     :class="{ 'hfl-task-drawer--target-repositories': usesTargetRepositoryResources }"
     :size="drawerSize"
+    @opened="resetDrawerScroll"
     @closed="closeDetail"
   >
     <template #header>
@@ -656,7 +660,7 @@ watch(
       </div>
     </template>
 
-    <div v-if="activeTask" v-loading="detailRefreshing" class="hfl-task-drawer__body">
+    <div v-if="activeTask" ref="drawerScrollAnchorRef" v-loading="detailRefreshing" class="hfl-task-drawer__body">
       <section class="hfl-task-drawer__hero">
         <div class="hfl-task-drawer__hero-section-title">{{ t('ops.task.basicData') }}</div>
         <div class="hfl-task-drawer__hero-grid">
@@ -968,7 +972,7 @@ watch(
         </ElTabPane>
       </ElTabs>
     </div>
-    <div v-else class="hfl-task-drawer__body">
+    <div v-else ref="drawerScrollAnchorRef" class="hfl-task-drawer__body">
       <div class="hfl-task-drawer__loading" aria-busy="true">
         <el-skeleton :rows="6" animated />
       </div>

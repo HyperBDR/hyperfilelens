@@ -83,6 +83,16 @@ class RepositoryHealthConfigurationTests(SimpleTestCase):
             health_call.kwargs["schedule"].run_every,
             timedelta(seconds=420),
         )
+        recovery_call = next(
+            call
+            for call in registry_add.call_args_list
+            if call.kwargs["name"] == "storage_reconcile_repository_operations"
+        )
+        self.assertEqual(
+            recovery_call.kwargs["schedule"].run_every,
+            timedelta(seconds=60),
+        )
+        self.assertTrue(recovery_call.kwargs["enabled"])
 
 
 class RepositoryHealthTaskTests(TestCase):

@@ -4042,7 +4042,7 @@ async function stopSelectedBackupTasks() {
       await cancelProtectionBackupTask(task.task_uuid)
       stopped += 1
     }
-    await refreshStep3State()
+    await refreshStep3AfterMoreAction()
     for (const row of targets) syncSourceStopOptimisticFromRuntime(row.id, 'backup')
     if (stopped > 0) {
       ElMessage.success({ message: t('protection.backupsPage.msgStopBackupRequested', { n: stopped }), grouping: true })
@@ -4072,7 +4072,7 @@ async function stopSelectedRestoreTasks() {
       await cancelProtectionRestoreTask(task.task_uuid)
       stopped += 1
     }
-    await refreshStep3State()
+    await refreshStep3AfterMoreAction()
     for (const row of targets) syncSourceStopOptimisticFromRuntime(row.id, 'restore')
     if (stopped > 0) {
       ElMessage.success({ message: t('protection.backupsPage.msgStopRestoreRequested', { n: stopped }), grouping: true })

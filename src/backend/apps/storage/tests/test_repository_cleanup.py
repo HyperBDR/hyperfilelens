@@ -57,7 +57,7 @@ class RepositoryCleanupTests(TestCase):
 
         self.assertEqual(
             repository_task.task.display_name,
-            "Repository Cleanup · cleanup-s3",
+            "Delete Repository · cleanup-s3",
         )
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
@@ -216,6 +216,10 @@ class RepositoryCleanupTests(TestCase):
                 target_id=target_ids[0],
                 triggered_by_task=source_unregister,
             )
+            self.assertEqual(
+                physical_task.task.display_name,
+                f"Delete Subrepository · {node.name}",
+            )
             if index == 0:
                 physical_task.task.status = Task.Status.FAILED
                 physical_task.task.save(update_fields=["status", "updated_at"])
@@ -257,6 +261,7 @@ class RepositoryCleanupTests(TestCase):
 
         logical_task = create_repository_cleanup_task(repository=repository, dispatch=False)
         self.assertEqual(logical_task.operation_type, RepositoryTask.OperationType.CLEANUP_REPOSITORY)
+        self.assertEqual(logical_task.task.display_name, "Delete Repository · direct-nas")
         self.assertIsNone(logical_task.execution_target_id)
         self.assertIsNone(logical_task.triggered_by_task_id)
         run_repository_cleanup_task(repository_task_id=logical_task.id)

@@ -39,6 +39,8 @@ class TaskSerializer(serializers.ModelSerializer):
     repository_owner = serializers.SerializerMethodField()
     repository_target = serializers.SerializerMethodField()
     repository_cleanup = serializers.SerializerMethodField()
+    replaces_task_uuid = serializers.SerializerMethodField()
+    replacement_task_uuid = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -52,6 +54,9 @@ class TaskSerializer(serializers.ModelSerializer):
             "progress",
             "current_step",
             "retry_count",
+            "recovery_attempt",
+            "replaces_task_uuid",
+            "replacement_task_uuid",
             "trigger_type",
             "request_payload",
             "result_payload",
@@ -72,6 +77,16 @@ class TaskSerializer(serializers.ModelSerializer):
             "recent_events",
         ]
         read_only_fields = fields
+
+    def get_replaces_task_uuid(self, obj: Task) -> str | None:
+        return str(obj.replaces_task.task_uuid) if obj.replaces_task_id else None
+
+    def get_replacement_task_uuid(self, obj: Task) -> str | None:
+        try:
+            replacement = obj.replacement_task
+        except ObjectDoesNotExist:
+            return None
+        return str(replacement.task_uuid)
 
     def get_transfer_progress(self, obj: Task) -> dict | None:
         payload = obj.result_payload if isinstance(obj.result_payload, dict) else {}

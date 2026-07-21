@@ -7,10 +7,12 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
+from apps.node.models import Node
 from apps.storage.repositories.models import (
     Repository,
     RepositoryExecutionTarget,
     RepositoryTask,
+    RepositoryUsageShard,
 )
 from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
@@ -63,8 +65,167 @@ class RepositoryTaskTests(TestCase):
         self.assertIsNotNone(first)
         self.assertIsNone(duplicate)
         self.assertEqual(first.task.task_type, Task.Type.REPOSITORY_OPERATION)
+        self.assertEqual(first.task.display_name, "Quick maintenance · maintenance-s3")
         self.assertEqual(first.task.resources.get().resource_id, self.repository.id)
         self.assertTrue(first.task.resources.get().is_primary)
+
+    def test_proxy_nas_maintenance_keeps_repository_name(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="storage-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+        )
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="proxy-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            nas_protocol=Repository.NasProtocol.NFS,
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=proxy.id,
+        )
+        discover_repository_execution_targets()
+
+        task = create_repository_operation_task(
+            target_id=repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+
+        self.assertEqual(task.task.display_name, "Full maintenance · proxy-nas")
+
+    def test_direct_nas_maintenance_uses_backup_source_names(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="direct-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            nas_protocol=Repository.NasProtocol.NFS,
+        )
+        nodes = [
+            Node.objects.create(
+                organization=self.org,
+                name=name,
+                role=Node.Role.AGENT,
+                status=Node.Status.ONLINE,
+            )
+            for name in ("Finance-Server", "HR-Server")
+        ]
+        for node in nodes:
+            RepositoryUsageShard.objects.create(
+                organization_id=self.org.id,
+                repository_id=repository.id,
+                node_id=node.id,
+                repository_subdir=f"hp-repos/agent-{node.id}",
+                status=RepositoryUsageShard.Status.SUCCESS,
+            )
+        discover_repository_execution_targets()
+        targets = {
+            target.owner_node_id: target
+            for target in RepositoryExecutionTarget.objects.filter(repository=repository)
+        }
+
+        quick = create_repository_operation_task(
+            target_id=targets[nodes[0].id].id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        full = create_repository_operation_task(
+            target_id=targets[nodes[1].id].id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+
+        self.assertEqual(quick.task.display_name, "Quick maintenance · Finance-Server")
+        self.assertEqual(full.task.display_name, "Full maintenance · HR-Server")
+
+    def test_direct_nas_duplicate_source_names_include_node_ids(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="duplicate-source-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            nas_protocol=Repository.NasProtocol.NFS,
+        )
+        nodes = [
+            Node.objects.create(
+                organization=self.org,
+                name="Finance-Server",
+                role=Node.Role.AGENT,
+                status=Node.Status.ONLINE,
+            )
+            for _ in range(2)
+        ]
+        for node in nodes:
+            RepositoryUsageShard.objects.create(
+                organization_id=self.org.id,
+                repository_id=repository.id,
+                node_id=node.id,
+                repository_subdir=f"hp-repos/agent-{node.id}",
+                status=RepositoryUsageShard.Status.SUCCESS,
+            )
+        discover_repository_execution_targets()
+
+        for node in nodes:
+            target = RepositoryExecutionTarget.objects.get(
+                repository=repository,
+                owner_node_id=node.id,
+            )
+            task = create_repository_operation_task(
+                target_id=target.id,
+                operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+            )
+            self.assertEqual(
+                task.task.display_name,
+                f"Quick maintenance · Finance-Server (#{node.id})",
+            )
+
+    def test_direct_nas_source_name_survives_soft_delete_and_has_missing_fallback(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="source-fallback-nas",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            nas_protocol=Repository.NasProtocol.NFS,
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="Archived-Server",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+        )
+        for node_id in (node.id, 999999):
+            RepositoryUsageShard.objects.create(
+                organization_id=self.org.id,
+                repository_id=repository.id,
+                node_id=node_id,
+                repository_subdir=f"hp-repos/agent-{node_id}",
+                status=RepositoryUsageShard.Status.SUCCESS,
+            )
+        discover_repository_execution_targets()
+        node.soft_delete()
+
+        archived_target = RepositoryExecutionTarget.objects.get(
+            repository=repository,
+            owner_node_id=node.id,
+        )
+        missing_target = RepositoryExecutionTarget.objects.get(
+            repository=repository,
+            owner_node_id=999999,
+        )
+        archived = create_repository_operation_task(
+            target_id=archived_target.id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        missing = create_repository_operation_task(
+            target_id=missing_target.id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
+        )
+
+        self.assertEqual(archived.task.display_name, "Quick maintenance · Archived-Server")
+        self.assertEqual(missing.task.display_name, "Full maintenance · Backup Source #999999")
 
     def test_finalize_repository_operation_locks_nullable_target_separately(self):
         discover_repository_execution_targets()

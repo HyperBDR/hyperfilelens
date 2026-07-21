@@ -18,6 +18,7 @@ import FlowSourceConnectionCell from '../protection/components/FlowSourceConnect
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useListSearch } from '../../composables/useListSearch'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { useDrawerScrollReset } from '../../composables/useDrawerScrollReset'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { apiErrorMessage } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
@@ -57,6 +58,7 @@ const stopConfirmKind = stopConfirmDialog.kind
 const stopConfirmItems = stopConfirmDialog.items
 const { drawerSize, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
 const { drawerSize: nestedDrawerSize } = useResponsiveDrawerWidth(2)
+const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const pageRequests = usePageRequestScope()
 const route = useRoute()
 const router = useRouter()
@@ -760,6 +762,7 @@ async function openTaskDetail(row: TaskRow | string) {
   detailEvents.value = []
   try {
     activeTask.value = await getTask(taskUuid, { signal })
+    resetDrawerScroll()
     taskOwner.value = t('ops.task.emptyMark')
     await loadTaskOwner(activeTask.value, signal)
     const eventPage = await listTaskEvents(taskUuid, { page_size: 50 }, { signal })
@@ -794,6 +797,11 @@ function closeDetail() {
   delete nextQuery.taskUuid
   delete nextQuery.taskId
   router.replace({ query: nextQuery })
+}
+
+function onDetailOpened() {
+  bindDrawerResize()
+  resetDrawerScroll()
 }
 
 async function cancelActiveTask() {
@@ -1120,7 +1128,7 @@ watch(
       </template>
     </ElDrawer>
 
-    <ElDrawer v-model="detailOpen" class="hfl-task-drawer" :size="drawerSize" @opened="bindDrawerResize" @closed="closeDetail">
+    <ElDrawer v-model="detailOpen" class="hfl-task-drawer" :size="drawerSize" @opened="onDetailOpened" @closed="closeDetail">
       <template #header>
         <div class="hfl-task-drawer__header-bar">
           <div v-if="activeTask" class="hfl-task-drawer__header-summary">
@@ -1173,7 +1181,7 @@ watch(
         </div>
       </template>
 
-      <div v-if="activeTask" class="hfl-task-drawer__body">
+      <div v-if="activeTask" ref="drawerScrollAnchorRef" class="hfl-task-drawer__body">
         <section class="hfl-task-drawer__hero">
           <div class="hfl-task-drawer__hero-section-title">{{ t('ops.task.basicData') }}</div>
           <div class="hfl-task-drawer__hero-grid">
@@ -1508,7 +1516,7 @@ watch(
           </ElTabPane>
         </ElTabs>
       </div>
-      <div v-else class="hfl-task-drawer__body">
+      <div v-else ref="drawerScrollAnchorRef" class="hfl-task-drawer__body">
         <div class="hfl-task-drawer__loading" aria-busy="true">
           <el-skeleton :rows="6" animated />
         </div>

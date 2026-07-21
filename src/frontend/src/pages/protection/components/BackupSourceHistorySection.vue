@@ -9,6 +9,7 @@ import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import type { DemoBackup, DemoFsNode, DemoSnapshotDir } from '../../../composables/useProtectionDemoStore'
 import { useProtectionDemoStore } from '../../../composables/useProtectionDemoStore'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
+import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import {
   buildHistoryTasksForBackups,
@@ -70,6 +71,7 @@ const pendingDeleteSnapshotRow = ref<SourceSnapshotRow | null>(null)
 const taskTableRef = ref<InstanceType<typeof ElTable>>()
 const taskDrawerOpen = ref(false)
 const activeTask = ref<BackupHistoryTask | null>(null)
+const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
 const { drawerSize: nestedDrawerSize } = useResponsiveDrawerWidth(2)
 
@@ -147,6 +149,7 @@ function openTaskDrawer(row: BackupHistoryTask) {
 
 function onTaskDrawerOpened() {
   bindDrawerResize()
+  resetDrawerScroll()
 }
 
 function onTaskDrawerClosed() {
@@ -433,7 +436,7 @@ onBeforeUnmount(() => {
           · {{ activeTask.backupName }}
         </span>
       </template>
-      <div v-if="activeTask" class="snapshot-drawer-body">
+      <div v-if="activeTask" ref="drawerScrollAnchorRef" class="snapshot-drawer-body">
         <el-descriptions :column="1" border>
           <el-descriptions-item :label="t('protection.backupDetail.labelTaskId')">{{ activeTask.id }}</el-descriptions-item>
           <el-descriptions-item v-if="showBackupName" :label="t('protection.backupDetail.labelName')">

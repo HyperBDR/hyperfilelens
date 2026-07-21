@@ -38,6 +38,9 @@ export type TaskRow = {
   progress: number | string
   current_step?: string | null
   retry_count: number
+  recovery_attempt: number
+  replaces_task_uuid?: string | null
+  replacement_task_uuid?: string | null
   trigger_type: string
   request_payload?: unknown
   result_payload?: unknown
