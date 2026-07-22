@@ -230,31 +230,33 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p /out
 
-apt_mirror_http=""
+apt_mirror_url=""
 if [[ -n "${APT_MIRROR:-}" ]]; then
-  apt_mirror_http="${APT_MIRROR%/}"
-  apt_mirror_http="${apt_mirror_http#https://}"
-  apt_mirror_http="${apt_mirror_http#http://}"
-  apt_mirror_http="http://${apt_mirror_http}"
-fi
-
-if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-  sed -i 's|https://ports.ubuntu.com/ubuntu-ports|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list.d/ubuntu.sources
-  sed -i 's|https://archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-  sed -i 's|https://security.ubuntu.com/ubuntu|http://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+  apt_mirror_url="${APT_MIRROR%/}"
 fi
 
 apt-get update -qq
 apt-get install -y --no-install-recommends ca-certificates curl gnupg apt-utils
 
-if [[ -n "${apt_mirror_http}" ]]; then
-  m="${apt_mirror_http}"
-  if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-    sed -i "s|http://archive.ubuntu.com/ubuntu|${m}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources
-    sed -i "s|http://security.ubuntu.com/ubuntu|${m}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources
-  fi
-  apt-get update -qq
+if [[ -n "${apt_mirror_url}" ]]; then
+  m="${apt_mirror_url}"
+  echo "  using Ubuntu apt mirror: ${m}"
+else
+  echo "  using official Ubuntu HTTPS sources"
 fi
+for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+  [[ -f "${source_file}" ]] || continue
+  if [[ -n "${apt_mirror_url}" ]]; then
+    sed -E -i "s|https?://ports.ubuntu.com/ubuntu-ports|${m}/ubuntu-ports|g" "${source_file}"
+    sed -E -i "s|https?://archive.ubuntu.com/ubuntu|${m}/ubuntu|g" "${source_file}"
+    sed -E -i "s|https?://security.ubuntu.com/ubuntu|${m}/ubuntu|g" "${source_file}"
+  else
+    sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "${source_file}"
+    sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "${source_file}"
+    sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "${source_file}"
+  fi
+done
+apt-get update -qq
 
 docker_apt="${DOCKER_APT_MIRROR:-https://download.docker.com/linux/ubuntu}"
 docker_apt="${docker_apt%/}"

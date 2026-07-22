@@ -254,6 +254,15 @@ grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
 grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification}" >/dev/null
+grep -F 'apt source: official Ubuntu HTTPS' "${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
+grep -F 'using official Ubuntu HTTPS sources' \
+	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
+if rg -n 'apt_mirror_http|default Ubuntu HTTP sources' \
+	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
+	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null; then
+	printf 'ERROR: offline dependency fetchers must not force apt mirrors to HTTP\n' >&2
+	exit 1
+fi
 grep -F 'release/ci/verify-agent-certifications.py' "${workflow}" >/dev/null
 grep -F 'runner: ubuntu-24.04-arm' "${workflow}" >/dev/null
 grep -F 'runner: macos-15-intel' "${workflow}" >/dev/null
