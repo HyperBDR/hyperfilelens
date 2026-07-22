@@ -311,13 +311,16 @@ def stream_sse(
     return _iter()
 
 
-def ping() -> dict[str, Any]:
+def ping(*, timeout: int = 10) -> dict[str, Any]:
     """Lightweight connectivity check."""
 
     if not deploy.lens_bridge_configured():
         return {"configured": False, "reachable": False}
     try:
-        health = requests.get(urljoin(_base_url() + "/", "health"), timeout=10)
+        health = requests.get(
+            urljoin(_base_url() + "/", "health"),
+            timeout=timeout,
+        )
         reachable = health.status_code == 200
     except requests.RequestException:
         reachable = False

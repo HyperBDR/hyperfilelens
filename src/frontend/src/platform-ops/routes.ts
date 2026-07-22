@@ -1,7 +1,12 @@
 import { lazyRoute } from '../router/lazyRoute'
 
 export const platformOpsRoutes = [
-  { path: '', redirect: '/platform-ops/monitoring/host' },
+  { path: '', redirect: '/platform-ops/overview' },
+  {
+    path: 'overview',
+    name: 'PlatformOpsOverview',
+    component: lazyRoute(() => import('./pages/overview/Overview.vue')),
+  },
   {
     path: 'users',
     name: 'PlatformOpsUsers',
