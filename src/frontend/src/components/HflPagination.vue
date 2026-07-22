@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElPagination } from 'element-plus'
+import { useResponsiveLayout } from '../composables/useResponsiveLayout'
 
 defineOptions({
   name: 'HflPagination',
@@ -17,13 +18,13 @@ const props = withDefaults(
     size?: 'large' | 'default' | 'small'
     popperClass?: string
     pagerCount?: number
+    responsive?: boolean
   }>(),
   {
     pageSizes: () => [10, 30, 50, 100],
-    layout: 'total, sizes, prev, pager, next, jumper',
     size: 'small',
     popperClass: '',
-    pagerCount: 7,
+    responsive: true,
   },
 )
 
@@ -35,8 +36,14 @@ const emit = defineEmits<{
 const mergedPopperClass = computed(() =>
   ['hfl-pagination-size-popper', props.popperClass].filter(Boolean).join(' '),
 )
-
 const paginationRef = ref<{ $el?: HTMLElement } | null>(null)
+const { isPhone } = useResponsiveLayout()
+const resolvedLayout = computed(() =>
+  props.responsive && isPhone.value
+    ? 'prev, pager, next'
+    : props.layout ?? 'total, sizes, prev, pager, next, jumper',
+)
+const resolvedPagerCount = computed(() => props.pagerCount ?? (props.responsive && isPhone.value ? 5 : 7))
 
 function applyInputLabels() {
   const root = paginationRef.value?.$el
@@ -51,7 +58,10 @@ function applyInputLabels() {
 }
 
 onMounted(() => void nextTick(applyInputLabels))
-watch(() => [props.currentPage, props.pageSize, props.total], () => void nextTick(applyInputLabels))
+watch(
+  () => [props.currentPage, props.pageSize, props.total, isPhone.value],
+  () => void nextTick(applyInputLabels),
+)
 </script>
 
 <template>
@@ -63,10 +73,10 @@ watch(() => [props.currentPage, props.pageSize, props.total], () => void nextTic
     :page-size="pageSize"
     :total="total"
     :page-sizes="pageSizes"
-    :layout="layout"
+    :layout="resolvedLayout"
     :size="size"
     :popper-class="mergedPopperClass"
-    :pager-count="pagerCount"
+    :pager-count="resolvedPagerCount"
     @update:current-page="emit('update:currentPage', $event)"
     @update:page-size="emit('update:pageSize', $event)"
   />

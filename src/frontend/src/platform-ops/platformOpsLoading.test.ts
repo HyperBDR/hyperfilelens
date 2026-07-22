@@ -19,4 +19,16 @@ describe('Admin Console list loading', () => {
     expect(tableTags.some((tag) => /\bv-loading="busy"/.test(tag))).toBe(true)
     expect(tableTags.every((tag) => !/\s:loading=/.test(tag))).toBe(true)
   })
+
+  it('keeps shared table empty content centered without a second horizontal offset', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/styles/element-plus-table.css'), 'utf8')
+    const emptyTextRule = source.match(/\.el-table__empty-text\s*\{([^}]*)\}/)?.[1] || ''
+
+    expect(emptyTextRule).toContain('width: 100%')
+    expect(emptyTextRule).toContain('align-items: center')
+    expect(emptyTextRule).toContain('justify-content: center')
+    expect(emptyTextRule).toContain('text-align: center')
+    expect(emptyTextRule).toContain('transform: none')
+    expect(emptyTextRule).not.toContain('translateX')
+  })
 })

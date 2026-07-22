@@ -1934,7 +1934,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               size="small"
               class="hfl-list-search hfl-list-search-group"
               :placeholder="listSearchPlaceholder"
-              @search="runFilterSearch"
+              @keyup.enter="runFilterSearch"
               @clear="clearSearch"
             >
               <template #prepend>
