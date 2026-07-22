@@ -93,6 +93,18 @@ sync_source
 
 [[ ! -e "${ROOT}/tools/dependencies/versions/kopia.env" ]]
 [[ ! -e "${ROOT}/tools/dependencies/fetch-kopia-deb.sh" ]]
+for docker_context_path in \
+	'!build/kopia/' \
+	'!build/kopia/dist/' \
+	'!build/kopia/dist/linux/' \
+	'!build/kopia/dist/linux/amd64/' \
+	'!build/kopia/dist/linux/amd64/kopia'; do
+	grep -Fx "${docker_context_path}" "${ROOT}/.dockerignore" >/dev/null
+done
+if rg -n 'build/dependencies/kopia|kopia_linux_amd64[.]deb' "${ROOT}/.dockerignore" >/dev/null; then
+	printf 'ERROR: obsolete Kopia Docker context paths are still configured\n' >&2
+	exit 1
+fi
 if rg -n --glob '!build/**' --glob '!data/**' \
 	--glob '!tools/quality/test-kopia-build-config.sh' -- \
 	'--kopia-version|KOPIA_DEB|kopia_linux_amd64[.]deb|tools/dependencies/versions/kopia[.]env' \

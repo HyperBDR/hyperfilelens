@@ -369,12 +369,12 @@ cache_update() {
 build_dev_images() {
 	local force=$1 backend_fingerprint frontend_fingerprint
 	backend_fingerprint="$(cache_fingerprint \
-		deploy/docker/backend.Dockerfile deploy/docker/backend-entrypoint.sh deploy/bootstrap \
+		.dockerignore deploy/docker/backend.Dockerfile deploy/docker/backend-entrypoint.sh deploy/bootstrap \
 		pyproject.toml uv.lock build/kopia/KOPIA_INFO.json build/kopia/dist/linux/amd64/kopia -- \
 		"apt=${MIRROR_APT}" "pip=${OPT_PIP_INDEX_URL}" \
 		"pip_host=${OPT_PIP_TRUSTED_HOST}" "kopia=${KOPIA_GIT_REF}" "kopia_mode=${KOPIA_ARTIFACT_MODE}")"
 	frontend_fingerprint="$(cache_fingerprint \
-		deploy/docker/frontend.Dockerfile deploy/docker/frontend-dev-entrypoint.sh \
+		.dockerignore deploy/docker/frontend.Dockerfile deploy/docker/frontend-dev-entrypoint.sh \
 		src/frontend/package.json \
 		src/frontend/package-lock.json -- "npm=${OPT_NPM_REGISTRY}")"
 
