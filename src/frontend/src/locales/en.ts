@@ -626,6 +626,7 @@ export const en = {
       groupToday: 'Today',
       groupYesterday: 'Yesterday',
       groupEarlier: 'Earlier',
+      sessions: 'Chats',
       switchKnowledgeSource: 'Switch assistant',
       switchContextTitle: 'New chat with assistant',
       contextSearchPlaceholder: 'Search assistant, task, or path…',
