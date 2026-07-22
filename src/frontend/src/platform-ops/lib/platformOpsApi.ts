@@ -4,12 +4,74 @@ import { fetchSystemMonitor, type SystemMonitorPayload } from '../../lib/monitor
 
 export type Paginated<T> = { count: number; page: number; page_size: number; results: T[] }
 
+export type PlatformOverviewMetricValue = string | number | null
+
+export interface PlatformOverviewAlert {
+  id: string
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  title: string
+  severity: string
+  status: string
+  resource_type: string
+  resource_name: string
+  last_triggered_at: string | null
+  created_at: string
+}
+
+export interface PlatformOverviewTask {
+  id: number
+  task_uuid: string
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  task_type: string
+  status: string
+  display_name: string
+  error_message: string | null
+  finished_at: string | null
+  created_at: string
+}
+
+export interface PlatformOverviewService {
+  key: string
+  label: string
+  status: 'healthy' | 'degraded' | 'unavailable'
+  detail: string
+}
+
+export interface PlatformOverviewPayload {
+  range_hours: number
+  generated_at: string
+  metrics: Record<string, PlatformOverviewMetricValue>
+  system_health: {
+    overall_status: 'healthy' | 'degraded' | 'unavailable'
+    healthy_count: number
+    degraded_count: number
+    unavailable_count: number
+    checked_at: string
+    services: PlatformOverviewService[]
+  }
+  activity_series: Array<{
+    started_at: string
+    alerts: number
+    failed_tasks: number
+  }>
+  recent_alerts: PlatformOverviewAlert[]
+  recent_failed_tasks: PlatformOverviewTask[]
+}
+
 async function get<T>(path: string, init?: RequestInit): Promise<T> {
   return unwrapApiPayload<T>(await api<unknown>(path, init))
 }
 
 async function send<T>(path: string, init: RequestInit): Promise<T> {
   return unwrapApiPayload<T>(await api<unknown>(path, init))
+}
+
+export async function fetchPlatformOverview(hours = 24) {
+  return get<PlatformOverviewPayload>(`/api/v1/platform-ops/?hours=${hours}`)
 }
 
 export async function fetchMonitoringTasks(params: Record<string, string | number | undefined>) {

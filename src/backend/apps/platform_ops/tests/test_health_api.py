@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
@@ -33,10 +35,34 @@ class PlatformOpsMonitoringApiTest(TestCase):
         )
 
     def test_overview_ok(self):
-        response = self.client.get("/api/v1/platform-ops/")
+        health = {
+            "api": {"status": "ok"},
+            "database": {"status": "ok", "latency_ms": 2},
+            "redis": {"status": "ok", "latency_ms": 1},
+            "celery": {"status": "ok", "worker_count": 1, "active_tasks": 0},
+            "checked_at": "2026-07-22T00:00:00Z",
+        }
+        lens = {"configured": True, "reachable": True, "authenticated": True}
+        with (
+            patch(
+                "apps.platform_ops.selectors.internal.overview.system_health_payload",
+                return_value=health,
+            ),
+            patch(
+                "apps.platform_ops.selectors.internal.overview.sl_client.ping",
+                return_value=lens,
+            ),
+        ):
+            response = self.client.get("/api/v1/platform-ops/", {"hours": "168"})
         self.assertEqual(response.status_code, 200)
         payload = _payload(response)
         self.assertIn("metrics", payload)
+        self.assertEqual(payload["range_hours"], 168)
+        self.assertEqual(payload["system_health"]["overall_status"], "healthy")
+        self.assertEqual(len(payload["system_health"]["services"]), 5)
+        self.assertEqual(len(payload["activity_series"]), 14)
+        self.assertIn("repositories_at_risk", payload["metrics"])
+        self.assertIn("ai_success_rate", payload["metrics"])
 
     def test_monitoring_tasks_ok(self):
         response = self.client.get("/api/v1/platform-ops/monitoring/tasks")

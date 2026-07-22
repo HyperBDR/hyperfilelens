@@ -6,6 +6,7 @@ import {
   Building2,
   Cpu,
   KeyRound,
+  LayoutDashboard,
   ListTodo,
   Mail,
   Monitor,
@@ -21,6 +22,12 @@ export function usePlatformOpsSideNav() {
   const { t } = useI18n()
 
   return computed<MenuItem[]>(() => [
+    {
+      label: t('platformOps.nav.overview'),
+      to: '/platform-ops/overview',
+      icon: LayoutDashboard,
+      pageTitle: t('platformOps.overview.title'),
+    },
     {
       label: t('platformOps.nav.groupMonitoringDiagnostics'),
       children: [

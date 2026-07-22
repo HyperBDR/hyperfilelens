@@ -21,7 +21,9 @@ const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
 const fallbackMenuItems = usePlatformOpsSideNav()
 
-const routeSkeletonShowsCards = computed(() => route.path.startsWith('/platform-ops/monitoring'))
+const routeSkeletonShowsCards = computed(
+  () => route.path.startsWith('/platform-ops/monitoring') || route.path === '/platform-ops/overview',
+)
 
 onMounted(async () => {
   const profile = await fetchDeployProfile()
