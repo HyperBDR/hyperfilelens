@@ -25,8 +25,9 @@ from apps.node.services.internal.agent_release import (
     agent_releases_root,
     dist_filename,
     latest_published_agent_version,
+    normalize_ubuntu_bundle_release,
     resolve_agent_version,
-    use_ubuntu2404_bundle,
+    ubuntu_bundle_release,
     version_has_dist,
 )
 
@@ -73,16 +74,17 @@ def _get_agent_artifact(
     *,
     platform: str | None = None,
     arch: str | None = None,
+    os_version: str | None = None,
 ) -> AgentArtifact:
     plat = _normalize_platform(platform) or os.getenv("AGENT_PLATFORM", "linux")
     machine = _normalize_arch(arch) or os.getenv("AGENT_ARCH", "amd64")
-    version = resolve_agent_version(plat, machine, role)
-    ubuntu2404 = use_ubuntu2404_bundle(role, plat)
+    version = resolve_agent_version(plat, machine, role, os_version)
+    ubuntu_release = ubuntu_bundle_release(role, plat, os_version)
     filename = os.getenv("AGENT_FILENAME") or dist_filename(
         version,
         plat,
         machine,
-        ubuntu2404=ubuntu2404,
+        ubuntu_release=ubuntu_release,
     )
     return AgentArtifact(platform=plat, arch=machine, version=version, filename=filename)
 
@@ -219,6 +221,7 @@ class AgentReleaseView(APIView):
         enroll_token = str(request.query_params.get("token") or "").strip()
         plat_raw = str(request.query_params.get("platform") or "").strip()
         arch_raw = str(request.query_params.get("arch") or "").strip()
+        os_version = str(request.query_params.get("os_version") or "").strip()
 
         platform: str | None = None
         if plat_raw:
@@ -231,6 +234,17 @@ class AgentReleaseView(APIView):
             arch = _normalize_arch(arch_raw)
             if arch is None:
                 return Response({"error": "invalid arch"}, status=400)
+
+        if (
+            platform == "linux"
+            and role in {Node.Role.PROXY, Node.Role.GATEWAY}
+            and os_version
+            and normalize_ubuntu_bundle_release(os_version) is None
+        ):
+            return Response(
+                {"error": "gateway/proxy supports Ubuntu 20.04 or 24.04"},
+                status=400,
+            )
 
         if not org_key or role not in dict(Node.Role.choices) or not enroll_token:
             return Response({"error": "org/role/token required"}, status=400)
@@ -247,7 +261,12 @@ class AgentReleaseView(APIView):
             ):
                 return Response({"error": "invalid enrollment token"}, status=401)
 
-        artifact = _get_agent_artifact(role, platform=platform, arch=arch)
+        artifact = _get_agent_artifact(
+            role,
+            platform=platform,
+            arch=arch,
+            os_version=os_version,
+        )
         ttl = int(os.getenv("AGENT_RELEASE_URL_TTL_SECONDS", "600"))
         signed = _make_release_token(
             {
@@ -353,4 +372,4 @@ _agent_releases_root = agent_releases_root
 _resolve_agent_version = resolve_agent_version
 _version_has_dist = version_has_dist
 _dist_filename = dist_filename
-_use_ubuntu2404_bundle = use_ubuntu2404_bundle
+_ubuntu_bundle_release = ubuntu_bundle_release

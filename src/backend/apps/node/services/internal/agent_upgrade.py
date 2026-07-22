@@ -9,7 +9,6 @@ from apps.node.services.internal.agent_release import (
     parse_semver,
     resolve_agent_version,
     semver_compare,
-    use_ubuntu2404_bundle,
 )
 
 
@@ -41,6 +40,11 @@ def node_platform_arch(node: Node) -> tuple[str, str]:
     return platform, arch
 
 
+def node_os_version(node: Node) -> str:
+    inv = _merged_inventory(node)
+    return str(inv.get("os_version") or "").strip()
+
+
 def validate_agent_upgrade(*, node: Node) -> str:
     """
     Validate node can receive agent.upgrade.
@@ -57,13 +61,13 @@ def validate_agent_upgrade(*, node: Node) -> str:
         raise AgentUpgradeError("node is offline", code="node_offline")
 
     platform, arch = node_platform_arch(node)
-    if use_ubuntu2404_bundle(node.role, platform) and platform != "linux":
+    if node.role in {Node.Role.PROXY, Node.Role.GATEWAY} and platform != "linux":
         raise AgentUpgradeError(
             f"role {node.role} requires linux",
             code="unsupported_platform",
         )
 
-    target = resolve_agent_version(platform, arch, node.role)
+    target = resolve_agent_version(platform, arch, node.role, node_os_version(node))
     if not parse_semver(target):
         raise AgentUpgradeError(
             "no published agent release available",

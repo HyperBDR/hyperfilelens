@@ -114,7 +114,7 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 	dialCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	host := parsed.Host
+	host := websocketDialAddress(parsed)
 	dialer := net.Dialer{Timeout: 8 * time.Second}
 
 	switch parsed.Scheme {
@@ -122,6 +122,11 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 		tlsConfig := tlsclient.Config()
 		if tlsConfig == nil {
 			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+		}
+		if tlsConfig.ServerName == "" {
+			tlsConfig.ServerName = parsed.Hostname()
 		}
 		conn, err := tls.DialWithDialer(&dialer, "tcp", host, tlsConfig)
 		if err != nil {
@@ -158,6 +163,23 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 			Title:   "WebSocket reachability inconclusive",
 			Detail:  wssURL,
 		}
+	}
+}
+
+func websocketDialAddress(parsed *url.URL) string {
+	if parsed == nil || parsed.Port() != "" {
+		if parsed == nil {
+			return ""
+		}
+		return parsed.Host
+	}
+	switch parsed.Scheme {
+	case "wss":
+		return net.JoinHostPort(parsed.Hostname(), "443")
+	case "ws":
+		return net.JoinHostPort(parsed.Hostname(), "80")
+	default:
+		return parsed.Host
 	}
 }
 

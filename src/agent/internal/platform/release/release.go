@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/hostinfo"
 	"hyperfilelens/agent/internal/platform/tlsclient"
 )
 
@@ -68,14 +69,11 @@ func fetchDownloadURLOnce(ctx context.Context, cfg *model.AgentConfig) (download
 	if runtime.GOARCH == "arm64" {
 		arch = "arm64"
 	}
-	q := url.Values{
-		"org":      {cfg.OrgKey},
-		"role":     {string(cfg.Role)},
-		"token":    {cfg.NodeToken},
-		"platform": {platform},
-		"arch":     {arch},
-		"api_base": {base},
+	osVersion := ""
+	if platform == "linux" {
+		osVersion = strings.TrimSpace(hostinfo.Collect(ctx).OSVersion)
 	}
+	q := releaseQueryValues(cfg, platform, arch, base, osVersion)
 	reqURL := base + "/api/v1/node/enrollment/agent/release?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -110,6 +108,27 @@ func fetchDownloadURLOnce(ctx context.Context, cfg *model.AgentConfig) (download
 		return "", "", fmt.Errorf("release API missing download_url")
 	}
 	return dl, ver, nil
+}
+
+func releaseQueryValues(
+	cfg *model.AgentConfig,
+	platform string,
+	arch string,
+	apiBase string,
+	osVersion string,
+) url.Values {
+	q := url.Values{
+		"org":      {cfg.OrgKey},
+		"role":     {string(cfg.Role)},
+		"token":    {cfg.NodeToken},
+		"platform": {platform},
+		"arch":     {arch},
+		"api_base": {apiBase},
+	}
+	if platform == "linux" && strings.TrimSpace(osVersion) != "" {
+		q.Set("os_version", strings.TrimSpace(osVersion))
+	}
+	return q
 }
 
 // IsRetryableReleaseError reports whether FetchDownloadURLWithRetry should try again.
