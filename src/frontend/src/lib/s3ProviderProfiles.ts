@@ -1,6 +1,13 @@
 export type S3UrlStyle = 'auto' | 'virtual_hosted' | 'path'
 export type S3StoragePlatform = 'aliyun' | 'huawei' | 'aws' | 'custom'
 export type S3PlatformSelection = Exclude<S3StoragePlatform, 'custom'> | 'other'
+export type S3PlatformCapability = S3PlatformSelection | 'tencent' | 'azure' | 'gcp'
+
+export interface S3ProviderOption {
+  value: S3PlatformCapability
+  labelKey: string
+  enabled: boolean
+}
 
 export interface S3RegionPreset {
   key: string
@@ -46,12 +53,19 @@ const awsRegions: S3RegionPreset[] = [
   { key: 'ap-northeast-1', labelKey: 'addS3Repo.regionLabels.awsApNortheast1', endpoint: 'https://s3.ap-northeast-1.amazonaws.com', region: 'ap-northeast-1' },
 ]
 
-export const S3_PROVIDER_OPTIONS: Array<{ value: S3PlatformSelection; labelKey: string }> = [
-  { value: 'other', labelKey: 'addS3Repo.platformOtherS3' },
-  { value: 'aliyun', labelKey: 'addS3Repo.platformAliyun' },
-  { value: 'huawei', labelKey: 'addS3Repo.platformHuawei' },
-  { value: 'aws', labelKey: 'addS3Repo.platformAws' },
+export const S3_PROVIDER_OPTIONS: S3ProviderOption[] = [
+  { value: 'aws', labelKey: 'addS3Repo.platformAws', enabled: true },
+  { value: 'aliyun', labelKey: 'addS3Repo.platformAliyun', enabled: true },
+  { value: 'huawei', labelKey: 'addS3Repo.platformHuawei', enabled: true },
+  { value: 'other', labelKey: 'addS3Repo.platformOtherS3', enabled: true },
+  { value: 'tencent', labelKey: 'addS3Repo.platformTencent', enabled: false },
+  { value: 'azure', labelKey: 'addS3Repo.platformAzure', enabled: false },
+  { value: 'gcp', labelKey: 'addS3Repo.platformGcp', enabled: false },
 ]
+
+export function isS3ProviderEnabled(platform: S3PlatformCapability): platform is S3PlatformSelection {
+  return S3_PROVIDER_OPTIONS.some((item) => item.value === platform && item.enabled)
+}
 
 export function s3ProviderRegions(platform: S3PlatformSelection | undefined): S3RegionPreset[] {
   if (platform === 'aliyun') return aliyunRegions

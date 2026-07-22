@@ -35,4 +35,36 @@ describe('S3 object prefix defaults', () => {
     expect(wrapper.findAll('input').map((input) => input.element.value))
       .toContain(DEFAULT_S3_OBJECT_PREFIX)
   })
+
+  it('shows future platform capabilities as disabled Coming Soon options', async () => {
+    const wrapper = mount(AddS3Repo, {
+      global: {
+        plugins: [ElementPlus],
+        stubs: {
+          S3PlatformBrandIcon: true,
+        },
+      },
+    })
+    const platformButtons = wrapper.findAll('.add-s3-platform-btn')
+
+    expect(platformButtons.map((button) => button.text())).toEqual([
+      'addS3Repo.platformAws',
+      'addS3Repo.platformAliyun',
+      'addS3Repo.platformHuawei',
+      'addS3Repo.platformOtherS3',
+      'addS3Repo.platformTencent',
+      'addS3Repo.platformAzure',
+      'addS3Repo.platformGcp',
+    ])
+    expect(platformButtons.filter((button) => button.classes().includes('add-s3-platform-btn--disabled'))
+      .map((button) => button.text())).toEqual([
+      'addS3Repo.platformTencent',
+      'addS3Repo.platformAzure',
+      'addS3Repo.platformGcp',
+    ])
+
+    await platformButtons[4].trigger('click')
+    expect(platformButtons[4].classes()).not.toContain('add-s3-platform-btn--active')
+    expect(platformButtons[3].classes()).toContain('add-s3-platform-btn--active')
+  })
 })
