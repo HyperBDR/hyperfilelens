@@ -12,6 +12,7 @@ from apps.iam.models import Membership, Organization
 from apps.monitor.services.interface import collect_and_persist_sample
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel, NotificationDelivery
+from apps.platform_ops.models import PlatformAuditLog
 from apps.task.models import Task
 
 
@@ -229,5 +230,30 @@ class PlatformOpsMonitoringApiTest(TestCase):
         self.assertIn("current", payload)
 
     def test_system_audit_ok(self):
-        response = self.client.get("/api/v1/platform-ops/system/audit")
+        PlatformAuditLog.objects.create(
+            actor=self.staff,
+            action="user.create",
+            target_type="user",
+            target_id="1",
+            result=PlatformAuditLog.Result.SUCCESS,
+        )
+        failed_log = PlatformAuditLog.objects.create(
+            actor=self.staff,
+            action="user.update",
+            target_type="user",
+            target_id="2",
+            result=PlatformAuditLog.Result.FAILURE,
+        )
+
+        response = self.client.get(
+            "/api/v1/platform-ops/system/audit",
+            {"result": PlatformAuditLog.Result.FAILURE},
+        )
+
         self.assertEqual(response.status_code, 200)
+        payload = _payload(response)
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["results"][0]["id"], failed_log.pk)
+        self.assertEqual(payload["results"][0]["result"], "failure")
+        self.assertEqual(payload["stats"]["successful"], 1)
+        self.assertEqual(payload["stats"]["failed"], 1)

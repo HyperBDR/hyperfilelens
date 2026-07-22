@@ -11,7 +11,6 @@ import json
 import os
 import pathlib
 import platform
-import shutil
 import socketserver
 import stat
 import subprocess

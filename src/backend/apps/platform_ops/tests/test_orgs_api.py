@@ -94,6 +94,26 @@ class PlatformOpsOrgsApiTest(TestCase):
         self.assertEqual(row["incident_count"], 1)
         self.assertEqual(payload["stats"]["with_incidents"], 1)
 
+    def test_list_orgs_excludes_soft_deleted_nodes_from_count(self):
+        Node.objects.create(
+            organization=self.org,
+            name="active-agent",
+            role=NodeRole.AGENT,
+        )
+        deleted_node = Node.objects.create(
+            organization=self.org,
+            name="deleted-agent",
+            role=NodeRole.AGENT,
+        )
+        deleted_node.soft_delete()
+
+        response = self.client.get("/api/v1/platform-ops/orgs")
+
+        self.assertEqual(response.status_code, 200)
+        payload = _payload(response)
+        row = next(item for item in payload["results"] if item["key"] == "acme")
+        self.assertEqual(row["node_count"], 1)
+
     def test_org_detail_includes_memberships(self):
         response = self.client.get(f"/api/v1/platform-ops/orgs/{self.org.pk}")
         self.assertEqual(response.status_code, 200)

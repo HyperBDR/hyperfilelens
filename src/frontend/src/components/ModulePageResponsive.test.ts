@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { defineComponent, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -49,7 +51,7 @@ describe('ModulePage responsive sidebar', () => {
     vi.restoreAllMocks()
   })
 
-  it('allows a responsive sidebar to expand without overwriting the desktop preference', async () => {
+  it('keeps mobile visibility separate from the desktop collapse preference', async () => {
     localStorage.setItem('sidebar-collapsed', 'false')
     setViewportWidth(800)
     const wrapper = mount(ModulePage, {
@@ -63,9 +65,6 @@ describe('ModulePage responsive sidebar', () => {
     await nextTick()
 
     const sidebar = wrapper.get('.sidebar-stub')
-    expect(sidebar.attributes('data-collapsed')).toBe('true')
-
-    await sidebar.trigger('click')
     expect(sidebar.attributes('data-collapsed')).toBe('false')
     expect(localStorage.getItem('sidebar-collapsed')).toBe('false')
 
@@ -78,5 +77,24 @@ describe('ModulePage responsive sidebar', () => {
     expect(localStorage.getItem('sidebar-collapsed')).toBe('true')
 
     wrapper.unmount()
+  })
+
+  it('pairs the hidden mobile sidebar with the shell navigation drawer', () => {
+    const modulePageSource = readFileSync(
+      resolve(process.cwd(), 'src/components/ModulePage.vue'),
+      'utf8',
+    )
+    const shellSource = readFileSync(
+      resolve(process.cwd(), 'src/platform-ops/layout/PlatformOpsShell.vue'),
+      'utf8',
+    )
+
+    expect(modulePageSource).toMatch(
+      /@media \(max-width: 1023\.98px\)[\s\S]*?\.sidebar-wrapper\s*{[\s\S]*?display:\s*none/,
+    )
+    expect(shellSource).toContain('<MobileNavigationDrawer')
+    expect(shellSource).toMatch(
+      /@media \(max-width: 1023\.98px\)[\s\S]*?\.platform-ops-header__menu\s*{[\s\S]*?display:\s*inline-flex/,
+    )
   })
 })

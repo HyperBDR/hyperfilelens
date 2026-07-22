@@ -59,7 +59,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
         <template #toolbar><div class="platform-monitoring-page__filters">
           <el-input v-model="filters.search" clearable class="platform-monitoring-page__search" placeholder="Search actor, action, or target"><template #prefix><Search :size="15" /></template></el-input>
           <el-input v-model="filters.action" clearable class="platform-monitoring-page__filter" placeholder="Action" />
-          <el-select v-model="filters.result" clearable class="platform-monitoring-page__filter" placeholder="Result"><el-option value="success" label="Success" /><el-option value="failed" label="Failed" /></el-select>
+          <el-select v-model="filters.result" clearable class="platform-monitoring-page__filter" placeholder="Result"><el-option value="success" label="Success" /><el-option value="failure" label="Failed" /></el-select>
           <el-input v-model="filters.org" clearable class="platform-monitoring-page__filter" placeholder="Account key" />
           <el-button v-if="Object.values(filters).some(Boolean)" text @click="resetFilters">Reset</el-button>
         </div></template>

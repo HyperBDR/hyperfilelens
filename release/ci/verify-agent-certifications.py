@@ -7,7 +7,6 @@ import argparse
 import json
 import hashlib
 import pathlib
-import sys
 import tarfile
 
 

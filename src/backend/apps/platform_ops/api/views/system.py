@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
 from apps.platform_ops.api.serializers.platform import PlatformAuditLogSerializer
 from apps.platform_ops.api.views._utils import paginated, safe_int
+from apps.platform_ops.models import PlatformAuditLog
 from apps.platform_ops.selectors.internal.security import list_platform_audit_logs
 from apps.platform_ops.selectors.internal.system import (
     migration_status,
@@ -58,8 +59,12 @@ class PlatformOpsSystemAuditView(APIView):
         all_logs = list_platform_audit_logs()
         stats = {
             "total": all_logs.count(),
-            "successful": all_logs.filter(result="success").count(),
-            "failed": all_logs.filter(result="failed").count(),
+            "successful": all_logs.filter(
+                result=PlatformAuditLog.Result.SUCCESS
+            ).count(),
+            "failed": all_logs.filter(
+                result=PlatformAuditLog.Result.FAILURE
+            ).count(),
             "last_24_hours": all_logs.filter(
                 created_at__gte=timezone.now() - timedelta(hours=24)
             ).count(),
