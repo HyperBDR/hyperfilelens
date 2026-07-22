@@ -1044,6 +1044,31 @@ function handleBack() {
 }
 
 @media (max-width: 640px) {
+  .add-s3-page {
+    padding-bottom: calc(128px + var(--app-safe-bottom));
+  }
+
+  .add-s3-footer {
+    min-height: calc(104px + var(--app-safe-bottom));
+    flex-wrap: wrap;
+    align-content: center;
+    padding-top: 10px;
+    padding-bottom: calc(10px + var(--app-safe-bottom));
+  }
+
+  .add-s3-footer .form-submit-hint {
+    flex: 1 0 100%;
+    line-height: 1.4;
+  }
+
+  .add-s3-footer .form-action {
+    white-space: nowrap;
+  }
+
+  .add-s3-footer .form-action--secondary {
+    margin-left: auto;
+  }
+
   .add-s3-auth-check {
     align-items: stretch;
     flex-direction: column;
