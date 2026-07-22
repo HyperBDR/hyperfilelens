@@ -124,7 +124,7 @@ function handleRowAction(command: string, row: PlatformOpsOrganization) {
   if (command === 'view') void router.push(`/platform-ops/orgs/${row.id}`)
   if (command === 'user' && row.owner_user_id) void router.push(`/platform-ops/users/${row.owner_user_id}`)
   if (command === 'monitoring') {
-    void router.push(`/platform-ops/monitoring/incidents?org=${encodeURIComponent(row.key)}`)
+    void router.push(`/platform-ops/alert-center/incidents?org=${encodeURIComponent(row.key)}`)
   }
   if (command === 'toggle') void toggleOrganization(row)
 }

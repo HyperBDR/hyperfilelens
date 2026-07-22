@@ -12,12 +12,22 @@ from apps.platform_ops.models import PlatformAuditLog
 User = get_user_model()
 
 
-def list_platform_audit_logs(*, search: str = "", action: str = "") -> QuerySet:
+def list_platform_audit_logs(
+    *,
+    search: str = "",
+    action: str = "",
+    result: str = "",
+    org_key: str = "",
+) -> QuerySet:
     from django.db.models import Q
 
     qs = PlatformAuditLog.objects.select_related("actor").order_by("-created_at", "-id")
     if action:
         qs = qs.filter(action=action)
+    if result:
+        qs = qs.filter(result=result)
+    if org_key:
+        qs = qs.filter(org_key=org_key)
     term = (search or "").strip()
     if term:
         qs = qs.filter(

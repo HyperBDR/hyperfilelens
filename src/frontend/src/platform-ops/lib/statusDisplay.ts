@@ -10,6 +10,7 @@ const STATUS_ALIASES: Record<string, string> = {
   active: 'success',
   ok: 'success',
   healthy: 'success',
+  enabled: 'success',
   sent: 'success',
   delivered: 'success',
   failure: 'failed',
@@ -21,6 +22,7 @@ const STATUS_ALIASES: Record<string, string> = {
   offline: 'failed',
   inactive: 'failed',
   unhealthy: 'failed',
+  unavailable: 'failed',
   running: 'running',
   in_progress: 'running',
   processing: 'running',
@@ -28,6 +30,7 @@ const STATUS_ALIASES: Record<string, string> = {
   ack: 'running',
   medium: 'running',
   warning: 'timeout',
+  degraded: 'timeout',
   warn: 'timeout',
   timeout: 'timeout',
   timed_out: 'timeout',
@@ -41,6 +44,8 @@ const STATUS_ALIASES: Record<string, string> = {
   cancelled: 'cancelled',
   canceled: 'cancelled',
   skipped: 'cancelled',
+  disabled: 'cancelled',
+  not_configured: 'cancelled',
 }
 
 const PILL_KEYS = new Set(['pending', 'running', 'success', 'failed', 'timeout', 'cancelled'])

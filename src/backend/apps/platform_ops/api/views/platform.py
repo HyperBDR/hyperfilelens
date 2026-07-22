@@ -19,8 +19,12 @@ from apps.node.services.internal.agent_release import (
     latest_published_agent_version,
     semver_sort_key,
 )
-from django.db.models import Count
+from django.db.models import Count, Q
 
+from apps.alert.api.serializers import AlertPolicySerializer
+from apps.alert.models import AlertPolicy
+from apps.lens_bridge import deploy as lens_deploy
+from apps.lens_bridge.services import sl_client
 from apps.notification.models import NotificationChannel
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
 from apps.platform_ops.api.views._utils import paginated, safe_int
@@ -134,7 +138,31 @@ class PlatformOpsPlatformNotificationChannelsView(APIView):
             .annotate(delivery_count=Count("deliveries"))
             .order_by("organization__key", "name", "id")
         )
+        search = str(request.query_params.get("search") or "").strip()
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search)
+                | Q(channel_type__icontains=search)
+                | Q(organization__key__icontains=search)
+                | Q(organization__name__icontains=search)
+            )
+        channel_type = str(request.query_params.get("type") or "").strip()
+        if channel_type:
+            qs = qs.filter(channel_type=channel_type)
+        active = str(request.query_params.get("active") or "").strip().lower()
+        if active in {"true", "false"}:
+            qs = qs.filter(is_active=active == "true")
+        org_key = str(request.query_params.get("org") or "").strip()
+        if org_key:
+            qs = qs.filter(organization__key=org_key)
         total = qs.count()
+        all_channels = NotificationChannel.objects.all()
+        stats = {
+            "total": all_channels.count(),
+            "active": all_channels.filter(is_active=True).count(),
+            "inactive": all_channels.filter(is_active=False).count(),
+            "types": all_channels.values("channel_type").distinct().count(),
+        }
         offset = (page - 1) * page_size
         rows = []
         for channel in qs[offset : offset + page_size]:
@@ -151,4 +179,97 @@ class PlatformOpsPlatformNotificationChannelsView(APIView):
                     "updated_at": channel.updated_at,
                 }
             )
-        return Response(paginated(rows, total=total, page=page, page_size=page_size))
+        return Response(
+            paginated(
+                rows,
+                total=total,
+                page=page,
+                page_size=page_size,
+                extra={"stats": stats},
+            )
+        )
+
+
+class PlatformOpsPlatformIntegrationsView(APIView):
+    """Deployment-managed service integrations visible to platform operators."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def get(self, request):
+        health = sl_client.ping(timeout=3)
+        return Response(
+            {
+                "integrations": [
+                    {
+                        "key": "sourcelens",
+                        "name": "SourceLens",
+                        "category": "AI and data services",
+                        "mode": lens_deploy.sourcelens_mode(),
+                        "base_url": lens_deploy.lens_base_url(),
+                        "gateway_base_url": lens_deploy.lens_gateway_base_url(),
+                        "configured": bool(health.get("configured")),
+                        "reachable": bool(health.get("reachable")),
+                        "authenticated": bool(health.get("authenticated")),
+                        "managed_by": "deployment",
+                    }
+                ]
+            }
+        )
+
+
+class PlatformOpsPlatformAlertPoliciesView(APIView):
+    """Cross-account alert policy inventory for the Admin Console."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def get(self, request):
+        page = safe_int(request.query_params.get("page"), 1)
+        page_size = safe_int(request.query_params.get("page_size"), 20, max_value=200)
+        qs = AlertPolicy.objects.select_related("organization").order_by(
+            "organization__key",
+            "name",
+            "id",
+        )
+        search = str(request.query_params.get("search") or "").strip()
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search)
+                | Q(description__icontains=search)
+                | Q(organization__key__icontains=search)
+                | Q(organization__name__icontains=search)
+            )
+        for field in ("type", "severity"):
+            value = str(request.query_params.get(field) or "").strip()
+            if value:
+                qs = qs.filter(**{field: value})
+        enabled = str(request.query_params.get("enabled") or "").strip().lower()
+        if enabled in {"true", "false"}:
+            qs = qs.filter(enabled=enabled == "true")
+        org_key = str(request.query_params.get("org") or "").strip()
+        if org_key:
+            qs = qs.filter(organization__key=org_key)
+
+        total = qs.count()
+        all_qs = AlertPolicy.objects.all()
+        stats = {
+            "total": all_qs.count(),
+            "enabled": all_qs.filter(enabled=True).count(),
+            "disabled": all_qs.filter(enabled=False).count(),
+            "critical": all_qs.filter(severity="critical").count(),
+        }
+        offset = (page - 1) * page_size
+        rows = []
+        for policy in qs[offset : offset + page_size]:
+            row = AlertPolicySerializer(policy).data
+            row["organization_key"] = policy.organization.key
+            row["organization_name"] = policy.organization.name
+            rows.append(row)
+        return Response(
+            paginated(
+                rows,
+                total=total,
+                page=page,
+                page_size=page_size,
+                extra={"stats": stats},
+            )
+        )

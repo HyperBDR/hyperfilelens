@@ -171,6 +171,96 @@ export type DeliveryStats = {
   delivery_rate: number
 }
 
+export interface PlatformAlertPolicy {
+  id: number
+  organization: number
+  organization_key: string
+  organization_name: string
+  name: string
+  description: string
+  type: string
+  severity: string
+  enabled: boolean
+  threshold: Record<string, unknown>
+  target_filter: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type AlertPolicyStats = {
+  total: number
+  enabled: number
+  disabled: number
+  critical: number
+}
+
+export interface PlatformNotificationChannel {
+  id: number
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  name: string
+  channel_type: string
+  is_active: boolean
+  delivery_count: number
+  updated_at: string
+}
+
+export type NotificationChannelStats = {
+  total: number
+  active: number
+  inactive: number
+  types: number
+}
+
+export interface PlatformLogRow {
+  id: string
+  timestamp: string
+  level: string
+  service: string
+  message: string
+}
+
+export type PlatformLogStats = {
+  total: number
+  errors: number
+  warnings: number
+  services: number
+}
+
+export interface PlatformAuditLog {
+  id: number
+  actor_email: string
+  action: string
+  target_type: string
+  target_id: string
+  org_key: string
+  details: Record<string, unknown>
+  ip_address: string | null
+  result: string
+  created_at: string
+}
+
+export type PlatformAuditStats = {
+  total: number
+  successful: number
+  failed: number
+  last_24_hours: number
+}
+
+export interface PlatformIntegration {
+  key: string
+  name: string
+  category: string
+  mode: string
+  base_url: string
+  gateway_base_url: string
+  configured: boolean
+  reachable: boolean
+  authenticated: boolean
+  managed_by: string
+}
+
 export async function fetchMonitoringIncidents(params: Record<string, string | number | undefined>) {
   return get<Paginated<MonitoringIncident, IncidentStats>>(
     `/api/v1/platform-ops/monitoring/alerts${qs(params)}`,
@@ -218,6 +308,34 @@ export async function retryMonitoringDelivery(deliveryId: number) {
     `/api/v1/platform-ops/monitoring/notifications/${deliveryId}/retry`,
     { method: 'POST', body: '{}' },
   )
+}
+
+export async function fetchPlatformAlertPolicies(params: Record<string, string | number | undefined>) {
+  return get<Paginated<PlatformAlertPolicy, AlertPolicyStats>>(
+    `/api/v1/platform-ops/platform/alert-policies${qs(params)}`,
+  )
+}
+
+export async function fetchPlatformNotificationChannels(params: Record<string, string | number | undefined>) {
+  return get<Paginated<PlatformNotificationChannel, NotificationChannelStats>>(
+    `/api/v1/platform-ops/platform/notification-channels${qs(params)}`,
+  )
+}
+
+export async function fetchPlatformLogs(params: Record<string, string | number | undefined>) {
+  return get<Paginated<PlatformLogRow, PlatformLogStats> & { service_options: string[] }>(
+    `/api/v1/platform-ops/system/logs${qs(params)}`,
+  )
+}
+
+export async function fetchPlatformAuditLogs(params: Record<string, string | number | undefined>) {
+  return get<Paginated<PlatformAuditLog, PlatformAuditStats>>(
+    `/api/v1/platform-ops/system/audit${qs(params)}`,
+  )
+}
+
+export async function fetchPlatformIntegrations() {
+  return get<{ integrations: PlatformIntegration[] }>('/api/v1/platform-ops/platform/integrations')
 }
 
 export type DeploymentHostItem = {

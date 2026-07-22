@@ -1,21 +1,25 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  Activity,
+  AlertTriangle,
+  BellRing,
   Bot,
   BookOpen,
   Building2,
   Cpu,
+  FileText,
+  History,
   KeyRound,
   LayoutDashboard,
   ListTodo,
   Mail,
   Package,
   Puzzle,
-  Send,
+  Radio,
+  ScrollText,
   Server,
-  Siren,
-  HeartPulse,
-  Shield,
+  Settings,
   Users,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
@@ -34,22 +38,10 @@ export function usePlatformOpsSideNav() {
       label: t('platformOps.nav.groupMonitoringDiagnostics'),
       children: [
         {
-          label: t('platformOps.nav.monitoringIncidents'),
-          to: '/platform-ops/monitoring/incidents',
-          icon: Siren,
-          pageTitle: t('platformOps.monitoring.incidentsTitle'),
-        },
-        {
-          label: t('platformOps.nav.monitoringSystemHealth'),
-          to: '/platform-ops/monitoring/system-health',
-          icon: HeartPulse,
-          pageTitle: t('platformOps.monitoring.systemHealthTitle'),
-        },
-        {
-          label: t('platformOps.nav.monitoringTasks'),
-          to: '/platform-ops/monitoring/tasks',
-          icon: ListTodo,
-          pageTitle: t('platformOps.monitoring.tasksTitle'),
+          label: t('platformOps.nav.monitoringMonitor'),
+          to: '/platform-ops/monitoring/monitor',
+          icon: Activity,
+          pageTitle: t('platformOps.monitoring.monitorTitle'),
         },
         {
           label: t('platformOps.nav.monitoringNodes'),
@@ -58,10 +50,45 @@ export function usePlatformOpsSideNav() {
           pageTitle: t('platformOps.monitoring.nodesTitle'),
         },
         {
-          label: t('platformOps.nav.monitoringDeliveries'),
-          to: '/platform-ops/monitoring/notification-deliveries',
-          icon: Send,
-          pageTitle: t('platformOps.monitoring.deliveriesTitle'),
+          label: t('platformOps.nav.monitoringTasks'),
+          to: '/platform-ops/monitoring/tasks',
+          icon: ListTodo,
+          pageTitle: t('platformOps.monitoring.tasksTitle'),
+        },
+        {
+          label: t('platformOps.nav.monitoringLogs'),
+          to: '/platform-ops/monitoring/logs',
+          icon: ScrollText,
+          pageTitle: t('platformOps.monitoring.logsTitle'),
+        },
+      ],
+    },
+    {
+      label: t('platformOps.nav.groupAlertCenter'),
+      children: [
+        {
+          label: t('platformOps.nav.alertIncidents'),
+          to: '/platform-ops/alert-center/incidents',
+          icon: AlertTriangle,
+          pageTitle: t('platformOps.monitoring.incidentsTitle'),
+        },
+        {
+          label: t('platformOps.nav.alertPolicies'),
+          to: '/platform-ops/alert-center/policies',
+          icon: BellRing,
+          pageTitle: t('platformOps.alertCenter.policiesTitle'),
+        },
+        {
+          label: t('platformOps.nav.notificationChannels'),
+          to: '/platform-ops/alert-center/notification-channels',
+          icon: Radio,
+          pageTitle: t('platformOps.alertCenter.channelsTitle'),
+        },
+        {
+          label: t('platformOps.nav.notificationHistory'),
+          to: '/platform-ops/alert-center/notification-history',
+          icon: History,
+          pageTitle: t('platformOps.monitoring.notificationHistoryTitle'),
         },
       ],
     },
@@ -91,9 +118,19 @@ export function usePlatformOpsSideNav() {
           icon: Cpu,
         },
         {
+          label: t('platformOps.nav.engineUsage'),
+          to: '/platform-ops/engine/usage',
+          icon: Activity,
+        },
+        {
           label: t('platformOps.nav.engineGateways'),
           to: '/platform-ops/engine/gateways',
           icon: Server,
+        },
+        {
+          label: t('platformOps.nav.engineConnections'),
+          to: '/platform-ops/engine/data-connections',
+          icon: Radio,
         },
         {
           label: t('platformOps.nav.engineKnowledge'),
@@ -118,36 +155,48 @@ export function usePlatformOpsSideNav() {
       ],
     },
     {
-      label: t('platformOps.nav.groupSystemSettings'),
+      label: t('platformOps.nav.groupPlatform'),
       children: [
         {
+          label: t('platformOps.nav.platformIntegrations'),
+          to: '/platform-ops/platform/integrations',
+          icon: Radio,
+          pageTitle: t('platformOps.integrations.title'),
+        },
+        {
+          label: t('platformOps.nav.platformAuthentication'),
+          to: '/platform-ops/platform/authentication',
+          icon: KeyRound,
+          pageTitle: t('platformOps.settings.identityTitle'),
+        },
+        {
           label: t('platformOps.nav.platformEmail'),
-          to: '/platform-ops/platform/settings/email',
+          to: '/platform-ops/platform/email',
           icon: Mail,
           pageTitle: t('platformOps.settings.emailTitle'),
         },
         {
-          label: t('platformOps.nav.platformTurnstile'),
-          to: '/platform-ops/platform/settings/turnstile',
-          icon: Shield,
-          pageTitle: t('platformOps.settings.turnstileTitle'),
+          label: t('platformOps.nav.platformRuntime'),
+          to: '/platform-ops/platform/runtime-environment',
+          icon: Settings,
+          pageTitle: t('platformOps.settings.environmentTitle'),
         },
-        {
-          label: t('platformOps.nav.platformGoogleOAuth'),
-          to: '/platform-ops/platform/settings/google-oauth',
-          icon: KeyRound,
-          pageTitle: t('platformOps.settings.googleOAuthTitle'),
-        },
-      ],
-    },
-    {
-      label: t('platformOps.nav.groupResourcesReleases'),
-      children: [
         {
           label: t('platformOps.nav.platformAgentReleases'),
           to: '/platform-ops/platform/agent-releases',
           icon: Package,
           pageTitle: t('platformOps.platform.agentsTitle'),
+        },
+      ],
+    },
+    {
+      label: t('platformOps.nav.groupAuditCenter'),
+      children: [
+        {
+          label: t('platformOps.nav.auditLogs'),
+          to: '/platform-ops/audit-center/audit-logs',
+          icon: FileText,
+          pageTitle: t('platformOps.audit.title'),
         },
       ],
     },
