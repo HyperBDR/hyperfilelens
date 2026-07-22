@@ -26,11 +26,17 @@ func missingRequiredCommands() []string {
 }
 
 func requiredCommands() []string {
-	switch runtime.GOOS {
+	return requiredCommandsFor(runtime.GOOS)
+}
+
+func requiredCommandsFor(goos string) []string {
+	switch goos {
 	case "windows":
-		return []string{"curl.exe"}
+		// Enrollment and release downloads use the Go HTTP client. The Windows
+		// bootstrap can also fall back to PowerShell when curl.exe is absent.
+		return nil
 	default:
-		return []string{"curl", "tar"}
+		return []string{"bash", "curl", "tar"}
 	}
 }
 

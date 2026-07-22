@@ -63,7 +63,27 @@ function Get-HflEnrollmentBinary {
   }
 }
 
-$archRel = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+$nativeArch = if ($env:PROCESSOR_ARCHITEW6432) {
+  $env:PROCESSOR_ARCHITEW6432
+}
+else {
+  $env:PROCESSOR_ARCHITECTURE
+}
+$archRel = switch ($nativeArch) {
+  "AMD64" { "amd64"; break }
+  "ARM64" {
+    Write-HflBootstrapLog "FAIL " "Windows ARM64 is not supported by this release."
+    exit 4
+  }
+  "x86" {
+    Write-HflBootstrapLog "FAIL " "32-bit Windows is not supported by this release."
+    exit 4
+  }
+  default {
+    Write-HflBootstrapLog "FAIL " "Unsupported Windows architecture $nativeArch."
+    exit 4
+  }
+}
 $bin = Join-Path $env:TEMP ("hfl-enroll-" + [guid]::NewGuid().ToString("n") + ".exe")
 
 $enrollUrl = "$($env:HFL_API_BASE)/media/enroll-bootstrap/hfl-enroll-windows-$archRel.exe"

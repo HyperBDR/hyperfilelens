@@ -8,13 +8,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/hostinfo"
 	"hyperfilelens/agent/internal/platform/tlsclient"
 	"hyperfilelens/agent/internal/selfupdate"
 )
@@ -70,23 +70,22 @@ func httpRegisterNode(
 	base, org, token, agentVersion string,
 ) (string, error) {
 	hostname, _ := os.Hostname()
+	platform := hostinfo.Collect(ctx)
+	inventory := platform.Inventory()
+	inventory["hostname"] = hostname
+	inventory["agent_version"] = agentVersion
 	body := map[string]any{
 		"name":    hostname,
 		"role":    string(cfg.Role),
 		"version": agentVersion,
-		"os_name": runtime.GOOS + " " + runtime.GOARCH,
+		"os_name": platform.Description(),
 		"metadata": map[string]any{
-			"hostname": hostname,
-			"inventory": map[string]any{
-				"hostname":      hostname,
-				"agent_version": agentVersion,
-				"platform":      runtime.GOOS,
-				"arch":          runtime.GOARCH,
-			},
+			"hostname":      hostname,
+			"inventory":     inventory,
 			"install":       "hfl-enroll",
 			"agent_version": agentVersion,
-			"platform":      runtime.GOOS,
-			"arch":          runtime.GOARCH,
+			"platform":      platform.OSFamily,
+			"arch":          platform.Arch,
 		},
 	}
 	if id := strings.TrimSpace(cfg.NodeID); id != "" {

@@ -1,6 +1,7 @@
 package enroll
 
 import (
+	"runtime"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
@@ -9,6 +10,45 @@ import (
 func TestIsUbuntuMinSkipsNonLinux(t *testing.T) {
 	if isUbuntuMin(20, 4) && testing.Short() {
 		t.Skip("environment-specific")
+	}
+}
+
+func TestServiceManagerConstraint(t *testing.T) {
+	switch runtime.GOOS {
+	case "linux":
+		if err := serviceManagerConstraint("systemd"); err != nil {
+			t.Fatal(err)
+		}
+		if err := serviceManagerConstraint("none"); err == nil {
+			t.Fatal("expected non-systemd Linux to be rejected")
+		}
+	case "darwin":
+		if err := serviceManagerConstraint("launchd"); err != nil {
+			t.Fatal(err)
+		}
+	case "windows":
+		if err := serviceManagerConstraint("windows-service"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRequiredCommandsForWindows(t *testing.T) {
+	if commands := requiredCommandsFor("windows"); len(commands) != 0 {
+		t.Fatalf("Windows required commands=%v, want none", commands)
+	}
+	commands := requiredCommandsFor("linux")
+	for _, required := range []string{"bash", "curl", "tar"} {
+		found := false
+		for _, command := range commands {
+			if command == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Linux required commands=%v, missing %q", commands, required)
+		}
 	}
 }
 
