@@ -239,7 +239,7 @@ if [[ -n "${apt_mirror_url}" ]]; then
   m="${apt_mirror_url}"
   echo "  using Ubuntu apt mirror: ${m}"
 else
-  echo "  using official Ubuntu HTTPS sources"
+  echo "  using official Ubuntu sources (HTTPS after CA bootstrap)"
 fi
 for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
   [[ -f "${source_file}" ]] || continue
@@ -247,10 +247,6 @@ for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources;
     sed -E -i "s|https?://ports.ubuntu.com/ubuntu-ports|${m}/ubuntu-ports|g" "${source_file}"
     sed -E -i "s|https?://archive.ubuntu.com/ubuntu|${m}/ubuntu|g" "${source_file}"
     sed -E -i "s|https?://security.ubuntu.com/ubuntu|${m}/ubuntu|g" "${source_file}"
-  else
-    sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "${source_file}"
-    sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "${source_file}"
-    sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "${source_file}"
   fi
 done
 
@@ -269,6 +265,14 @@ bootstrap_apt=(
 )
 "${bootstrap_apt[@]}" update -qq
 "${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates
+if [[ -z "${apt_mirror_url}" ]]; then
+  for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+    [[ -f "${source_file}" ]] || continue
+    sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "${source_file}"
+    sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "${source_file}"
+    sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "${source_file}"
+  done
+fi
 "${apt_network[@]}" update -qq
 
 bootstrap_tools_ok=0
