@@ -65,6 +65,16 @@ class DeploymentAiModelServiceTests(TestCase):
         create_payload = request_json.call_args_list[0].kwargs["json_body"]
         self.assertTrue(create_payload["is_default"])
         self.assertEqual(create_payload["config"]["api_key"], "deployment-secret")
+        request_json.assert_any_call(
+            "POST",
+            "/api/v1/admin/llm-config/test-call/",
+            json_body={
+                "config_uuid": str(self.model_uuid),
+                "prompt": "Respond with exactly OK and no explanation.",
+                "max_tokens": 512,
+            },
+            timeout=90,
+        )
         link = LensOrgModelLink.objects.get(
             management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY
         )
