@@ -275,6 +275,8 @@ def certify_backup(
             "KOPIA_CACHE_DIRECTORY": str(workspace / "cache"),
             "KOPIA_LOG_DIR": str(workspace / "logs"),
             "KOPIA_CHECK_FOR_UPDATES": "false",
+            "KOPIA_USE_KEYRING": "false",
+            "KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false",
         }
     )
     base = [str(kopia), "--config-file", str(config), "--no-progress"]

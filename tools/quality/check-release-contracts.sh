@@ -145,6 +145,7 @@ grep -F 'APT_MIRROR_URL: ${DEBIAN_APT_MIRROR_URL:-https://deb.debian.org/debian}
 	"${tmp}/source-patch/docker-compose.yml")" -eq 2 ]]
 
 workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
+agent_certification="${ROOT}/release/ci/certify-agent-candidate.py"
 [[ -f "${workflow}" ]] || {
 	printf 'ERROR: tag release workflow is missing\n' >&2
 	exit 1
@@ -251,6 +252,8 @@ grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
 grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${workflow}" >/dev/null
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
+grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
+grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification}" >/dev/null
 grep -F 'release/ci/verify-agent-certifications.py' "${workflow}" >/dev/null
 grep -F 'runner: ubuntu-24.04-arm' "${workflow}" >/dev/null
 grep -F 'runner: macos-15-intel' "${workflow}" >/dev/null
