@@ -634,9 +634,9 @@ onMounted(async () => {
             <button
               type="button"
               class="eye-btn"
-              @mousedown.prevent="showPassword = true"
-              @mouseup="showPassword = false"
-              @mouseleave="showPassword = false"
+              :aria-label="showPassword ? t('common.hidePassword') : t('common.showPassword')"
+              :aria-pressed="showPassword"
+              @click="showPassword = !showPassword"
             >
               <EyeOff v-if="showPassword" class="eye-icon" :size="16" />
               <Eye v-else class="eye-icon" :size="16" />
@@ -747,12 +747,13 @@ onMounted(async () => {
 .login-container {
   user-select: none;
   width: 100%;
-  height: 100vh;
+  min-height: var(--app-viewport-height);
   background-color: #08090C;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   position: relative;
 }
 
@@ -847,6 +848,7 @@ onMounted(async () => {
 }
 
 .login-form-box {
+  box-sizing: border-box;
   min-width: 440px;
   width: 440px;
   padding: 40px;
@@ -1205,5 +1207,80 @@ onMounted(async () => {
 .card-view-fade-leave-to {
   opacity: 0;
   transform: translateX(-12px);
+}
+
+@media (max-width: 1023.98px) {
+  .login-container {
+    min-height: var(--app-viewport-height);
+    height: auto;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 20px;
+    box-sizing: border-box;
+    padding: calc(24px + var(--app-safe-top)) max(20px, var(--app-safe-right)) calc(24px + var(--app-safe-bottom)) max(20px, var(--app-safe-left));
+  }
+
+  .left-logo {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .auth-brand-panel {
+    gap: 14px;
+    margin: 0;
+  }
+
+  .auth-logo-mark {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+  }
+
+  .auth-logo-mark::before {
+    inset: 9px;
+  }
+
+  .auth-logo-text {
+    font-size: 26px;
+  }
+
+  .auth-brand-copy p {
+    display: none;
+  }
+
+  .login-form-box {
+    width: min(440px, 100%);
+    min-width: 0;
+    padding: 32px 28px;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .login-container {
+    gap: 14px;
+    padding: calc(14px + var(--app-safe-top)) max(12px, var(--app-safe-right)) calc(16px + var(--app-safe-bottom)) max(12px, var(--app-safe-left));
+  }
+
+  .login-form-box {
+    padding: 24px 16px;
+  }
+
+  .login-box-content {
+    gap: 16px;
+    margin-top: 20px;
+  }
+
+  .input-row,
+  .submit-btn,
+  .google-btn {
+    min-height: 44px;
+  }
+
+  .eye-btn,
+  .lang-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
 }
 </style>
