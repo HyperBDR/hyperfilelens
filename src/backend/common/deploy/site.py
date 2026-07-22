@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from django.http import HttpRequest
 
 
+PLATFORM_OPS_LANDING_PATH = "/platform-ops/overview"
+
+
 def resolve_site_role(request: HttpRequest) -> str:
     """Return ``tenant`` or ``ops`` from the edge-controlled request header."""
     role = str(request.META.get("HTTP_X_HFL_SITE_ROLE") or "").strip().lower()
@@ -123,5 +126,5 @@ def admin_console_public_url(request: HttpRequest) -> str:
 def default_landing_path(request: HttpRequest) -> str:
     site = resolve_site_role(request)
     if site == "ops" and platform_ops_access_allowed(request):
-        return "/platform-ops/monitoring/host"
+        return PLATFORM_OPS_LANDING_PATH
     return "/"

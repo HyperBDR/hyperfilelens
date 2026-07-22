@@ -63,6 +63,7 @@ class DeployProfileViewTest(TestCase):
         self.assertEqual(response.data["site_role"], "ops")
         self.assertFalse(response.data["admin_console_entry_visible"])
         self.assertTrue(response.data["platform_ops_access_allowed"])
+        self.assertEqual(response.data["landing_path"], "/platform-ops/overview")
 
     @override_settings(FRONTEND_URL="https://app.example.com:11443", HFL_ADMIN_PORT=11444)
     def test_admin_console_url_uses_tenant_host_and_configured_port(self):
