@@ -1,8 +1,10 @@
 package enroll
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,19 +24,11 @@ func RunBundleUpgrade(ctx context.Context, archivePath string) error {
 			"upgrade", "-From", archivePath, "-QuietFooter",
 		}
 		cmd := exec.CommandContext(ctx, "powershell.exe", args...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return commandError("Agent upgrade", err, out)
-		}
-		return nil
+		return runStreamingCommand(cmd, "Agent upgrade")
 	}
 	script := filepath.Join(installDir, "install.sh")
 	cmd := exec.CommandContext(ctx, script, "upgrade", "--from", archivePath, "--yes", "--quiet-footer")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return commandError("Agent upgrade", err, out)
-	}
-	return nil
+	return runStreamingCommand(cmd, "Agent upgrade")
 }
 
 // RunBundleInstall invokes the distribution install script with --no-start.
@@ -62,11 +56,7 @@ func runBundleInstallUnix(ctx context.Context, bundleRoot string, cfg Config) er
 	}
 	cmd := exec.CommandContext(ctx, script, args...)
 	cmd.Dir = bundleRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return commandError("Agent installation", err, out)
-	}
-	return nil
+	return runStreamingCommand(cmd, "Agent installation")
 }
 
 func runBundleInstallWindows(ctx context.Context, bundleRoot string, cfg Config) error {
@@ -86,9 +76,17 @@ func runBundleInstallWindows(ctx context.Context, bundleRoot string, cfg Config)
 	}
 	cmd := exec.CommandContext(ctx, "powershell.exe", args...)
 	cmd.Dir = bundleRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return commandError("Agent installation", err, out)
+	return runStreamingCommand(cmd, "Agent installation")
+}
+
+func runStreamingCommand(cmd *exec.Cmd, action string) error {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	if err := cmd.Run(); err != nil {
+		captured := append(append([]byte{}, stdout.Bytes()...), stderr.Bytes()...)
+		return commandError(action, err, captured)
 	}
 	return nil
 }

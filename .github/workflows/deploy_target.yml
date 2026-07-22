@@ -225,6 +225,9 @@ jobs:
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
@@ -238,6 +241,9 @@ jobs:
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             bash -s -- \
@@ -257,6 +263,9 @@ jobs:
               -o BatchMode=yes \
               -o StrictHostKeyChecking=yes \
               -o ConnectTimeout=20 \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=20 \
+              -o TCPKeepAlive=yes \
               -p "$DEPLOY_SSH_PORT" \
               "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
               rm -f -- "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
@@ -270,6 +279,9 @@ jobs:
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             'curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null && curl -kfsS https://127.0.0.1:11444/ >/dev/null && curl -kfsS https://127.0.0.1:11445/ >/dev/null'
@@ -314,6 +326,9 @@ jobs:
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             'cd /opt/hyperfilelens && docker compose exec -T api python manage.py ensure_platform_ai_model' \

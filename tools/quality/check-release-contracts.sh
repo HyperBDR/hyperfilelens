@@ -238,6 +238,15 @@ for job in \
 done
 grep -F "if: \${{ vars.PREPROD_DEPLOY_ENABLED == 'true' }}" "${workflow}" >/dev/null
 grep -F "vars.PROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
+deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
+[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 5 ]] || {
+	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
+	exit 1
+}
+[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 5 ]] || {
+	printf 'ERROR: every deployment SSH call must set ServerAliveCountMax\n' >&2
+	exit 1
+}
 grep -F 'repository: hyperfilelens-backend' "${workflow}" >/dev/null
 grep -F 'repository: hyperfilelens-frontend' "${workflow}" >/dev/null
 grep -F '"$REGISTRY_PREFIX"' "${workflow}" >/dev/null
