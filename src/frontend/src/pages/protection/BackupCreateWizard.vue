@@ -114,6 +114,10 @@ import {
 import { issueEnrollmentInstall, listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import {
+  isBackupTargetCompatible,
+  requiresCrossProxyRepositoryServerHost,
+} from './lib/backupTargetCompatibility'
+import {
   createEmptyPolicyForm,
   createEmptyFileFilterForm,
   backupPolicyToForm,
@@ -281,6 +285,10 @@ type WizardTarget = {
   nasServerAddress?: string | null
   nasSharePath?: string | null
   proxyNodeDir?: string | null
+  crossProxyReady?: boolean
+  crossProxyReason?: string | null
+  disabled?: boolean
+  disabledReason?: string | null
   usedBytes?: number
   capacityBytes?: number
 }
@@ -359,6 +367,8 @@ function mapRepository(repo: StorageRepository): WizardTarget {
     nasServerAddress: (repo.config?.server_address as string | undefined) ?? null,
     nasSharePath: (repo.config?.share_path as string | undefined) ?? null,
     proxyNodeDir: (repo.config?.proxy_node_dir as string | undefined) ?? null,
+    crossProxyReady: repo.cross_proxy_access?.ready === true,
+    crossProxyReason: repo.cross_proxy_access?.reason ?? null,
     usedBytes: Number(repo.estimated_usage_bytes || 0),
     capacityBytes: Number(repo.capacity_bytes || 0),
   }
@@ -1070,6 +1080,7 @@ const addTargetNasPassword = ref('')
 const addTargetNasMountOptions = ref('')
 const addTargetNasProxyNodeId = ref<number | undefined>(undefined)
 const addTargetProxyNodeId = ref<number | undefined>(undefined)
+const addTargetRepositoryServerHost = ref('')
 const addTargetProxyDir = ref('')
 const addTargetProxyUseTree = ref(true)
 const addTargetProxyDirTreeRef = ref<InstanceType<typeof ElTree>>()
@@ -1418,18 +1429,35 @@ const filteredTargetGroups = computed(() =>
 
 function isTargetCompatibleWithGroup(target: WizardTarget | null | undefined, group: WizardSourceGroup | null | undefined) {
   if (!target || !group) return false
-  return true
+  const source = realSourceById.value.get(group.sourceId)
+  return isBackupTargetCompatible(
+    { sourceType: group.sourceType, boundNodeId: source?.boundNodeId },
+    target,
+  )
 }
 
 function targetOptionsForGroup(group: WizardSourceGroup | null | undefined) {
   return filterTargetsByCriteria(batchTargetPicker.search, batchTargetPicker.repoType)
-    .filter((target) => isTargetCompatibleWithGroup(target, group))
+    .map((target) => ({
+      ...target,
+      disabled: !isTargetCompatibleWithGroup(target, group),
+      disabledReason: isTargetCompatibleWithGroup(target, group)
+        ? null
+        : t('protection.backupsPage.targetCrossProxyUnavailable'),
+    }))
 }
 
 function targetOptionsForCheckedGroups() {
   const groups = checkedTargetGroups.value
   return filterTargetsByCriteria(batchTargetPicker.search, batchTargetPicker.repoType)
-    .filter((target) => groups.length > 0 && groups.every((group) => isTargetCompatibleWithGroup(target, group)))
+    .map((target) => {
+      const compatible = groups.length > 0 && groups.every((group) => isTargetCompatibleWithGroup(target, group))
+      return {
+        ...target,
+        disabled: !compatible,
+        disabledReason: compatible ? null : t('protection.backupsPage.targetCrossProxyUnavailable'),
+      }
+    })
 }
 
 const filteredRecoveryPlanGroups = computed(() =>
@@ -2486,6 +2514,7 @@ function resetAddTargetForm(kind: AddTargetRepoKind = addTargetKind.value) {
   addTargetNasMountOptions.value = ''
   addTargetNasProxyNodeId.value = undefined
   addTargetProxyNodeId.value = undefined
+  addTargetRepositoryServerHost.value = ''
   addTargetProxyDir.value = ''
   addTargetProxyUseTree.value = true
   addTargetQuota.value = 0
@@ -2586,6 +2615,10 @@ function validateAddTargetNasStep(step: 0 | 1 | 2) {
     return true
   }
   if (step === 1) {
+    if (addTargetRequiresRepositoryServerHost.value && !addTargetRepositoryServerHost.value.trim()) {
+      ElMessage.warning({ message: t('repositoriesPage.errRepositoryServerHost'), grouping: true })
+      return false
+    }
     return true
   }
   if (!addTargetRepoName.value.trim()) {
@@ -2612,6 +2645,10 @@ function validateAddTargetForm() {
   }
   if (!addTargetProxyDir.value.trim()) {
     ElMessage.warning({ message: t('repositoriesPage.errProxyNodeDir'), grouping: true })
+    return false
+  }
+  if (addTargetRequiresRepositoryServerHost.value && !addTargetRepositoryServerHost.value.trim()) {
+    ElMessage.warning({ message: t('repositoriesPage.errRepositoryServerHost'), grouping: true })
     return false
   }
   return true
@@ -2685,6 +2722,9 @@ function buildAddTargetPayload() {
         smb_username: addTargetNasProtocol.value === 'smb' ? addTargetNasUsername.value.trim() : undefined,
         smb_password: addTargetNasProtocol.value === 'smb' ? addTargetNasPassword.value : undefined,
         mount_options: addTargetNasMountOptions.value.trim() || undefined,
+        proxy_repository_server_host: addTargetNasProxyNodeId.value
+          ? addTargetRepositoryServerHost.value.trim() || undefined
+          : undefined,
       },
     } as const
   }
@@ -2695,6 +2735,7 @@ function buildAddTargetPayload() {
     bind_node_id: addTargetProxyNodeId.value,
     config: {
       proxy_node_dir: addTargetProxyDir.value.trim(),
+      proxy_repository_server_host: addTargetRepositoryServerHost.value.trim() || undefined,
     },
   } as const
 }
@@ -4260,6 +4301,22 @@ function onTargetGroupSelectionChange(rows: WizardSourceGroup[]) {
 const checkedTargetGroups = computed(() =>
   wizardSourceGroups.value.filter((group) => isTargetGroupChecked(group.key)),
 )
+
+const addTargetRequiresRepositoryServerHost = computed(() => {
+  const bindNodeId = addTargetKind.value === 'nas'
+    ? addTargetNasProxyNodeId.value
+    : addTargetProxyNodeId.value
+  const groups = checkedTargetGroups.value.length > 0
+    ? checkedTargetGroups.value
+    : wizardSourceGroups.value
+  return requiresCrossProxyRepositoryServerHost(
+    groups.map((group) => ({
+      sourceType: group.sourceType,
+      boundNodeId: realSourceById.value.get(group.sourceId)?.boundNodeId,
+    })),
+    bindNodeId,
+  )
+})
 
 function isTargetGroupMissing(group: WizardSourceGroup) {
   return !sourceTargetMap.value[group.key] || !getRealTarget(sourceTargetMap.value[group.key])
@@ -8151,6 +8208,19 @@ function preserveShallowestPathOrder(paths: string[]) {
                               {{ addTargetNasProxyNodeId ? t('addNasRepo.hintProxySelected') : t('addNasRepo.hintProxySkipped') }}
                             </div>
                           </ElFormItem>
+                          <ElFormItem
+                            v-if="addTargetNasProxyNodeId"
+                            :label="t('repositoriesPage.fieldRepositoryServerHost')"
+                            :required="addTargetRequiresRepositoryServerHost"
+                          >
+                            <ElInput
+                              v-model="addTargetRepositoryServerHost"
+                              :placeholder="t('repositoriesPage.phRepositoryServerHost')"
+                            />
+                            <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                              {{ t('repositoriesPage.hintRepositoryServerHost') }}
+                            </div>
+                          </ElFormItem>
                         </ElForm>
 
                         <div class="add-nas-proxy-benefits">
@@ -8247,6 +8317,18 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :value="node.id"
                           />
                         </ElSelect>
+                      </ElFormItem>
+                      <ElFormItem
+                        :label="t('repositoriesPage.fieldRepositoryServerHost')"
+                        :required="addTargetRequiresRepositoryServerHost"
+                      >
+                        <ElInput
+                          v-model="addTargetRepositoryServerHost"
+                          :placeholder="t('repositoriesPage.phRepositoryServerHost')"
+                        />
+                        <div class="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                          {{ t('repositoriesPage.hintRepositoryServerHost') }}
+                        </div>
                       </ElFormItem>
                       <ElFormItem :label="t('repositoriesPage.fieldProxyNodeDir')" required>
                         <div class="repository-dir-selector">

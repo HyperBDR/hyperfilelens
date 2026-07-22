@@ -38,6 +38,7 @@ import {
   ShieldCheck,
   Scale,
   Info,
+  Pencil,
 } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ElTable, ElTree } from 'element-plus'
@@ -74,11 +75,12 @@ import {
   type DemoSnapshot,
   type DemoSnapshotDir,
 } from '../../composables/useProtectionDemoStore'
-import { issueEnrollmentInstall, listNodes, type EnrollmentOs } from '../../lib/nodeApi'
+import { issueEnrollmentInstall, listNodes, updateNode, type EnrollmentOs } from '../../lib/nodeApi'
 import {
   getBackupSourcePathInfo,
   listBackupSelectableSources,
   listBackupSourceDirectories,
+  updateSourceResource,
   type BackupSelectableSource,
   type BackupSourceDirectoryEntry,
 } from '../../lib/sourceApi'
@@ -3922,6 +3924,188 @@ async function clearStep3TableSelection() {
 function onStep3SelectionChange(rows: FlowSourceRow[]) {
   if (syncingStep3Selection) return
   step3SourceSelection.value = rows
+}
+
+type DisplayNameEditRow = {
+  source: FlowSourceRow
+  originalName: string
+  name: string
+  error: string
+}
+
+const DISPLAY_NAME_EDIT_BATCH_SIZE = 5
+const displayNameEditOpen = ref(false)
+const displayNameEditSubmitting = ref(false)
+const displayNameEditRows = ref<DisplayNameEditRow[]>([])
+
+function selectedFlowRows(ids: string[]) {
+  return ids
+    .map((id) => backupSelectableById.value.get(id))
+    .filter((row): row is FlowSourceRow => row != null)
+}
+
+function displayNameEditMaxLength(row: DisplayNameEditRow) {
+  return row.source.type === 'host' ? 200 : 255
+}
+
+function displayNameEditError(row: DisplayNameEditRow) {
+  if (!row.name.trim()) return t('protection.backupsPage.displayNameRequired')
+  if (row.name.trim().length > displayNameEditMaxLength(row)) {
+    return t('protection.backupsPage.displayNameTooLong', { n: displayNameEditMaxLength(row) })
+  }
+  return row.error
+}
+
+const displayNameEditCanSubmit = computed(() => {
+  if (displayNameEditSubmitting.value || displayNameEditRows.value.length === 0) return false
+  if (displayNameEditRows.value.some((row) => Boolean(displayNameEditError(row)))) return false
+  return displayNameEditRows.value.some((row) => row.name.trim() !== row.originalName)
+})
+
+function sourceCanEditDisplayName(row: FlowSourceRow | undefined) {
+  return Boolean(row && flowSourceRowSelectable(row) && !sourceResetRunning(row.id))
+}
+
+const step1DisplayNameEditEnabled = computed(() =>
+  !displayNameEditSubmitting.value
+  && selectedSourceIds.value.length > 0
+  && selectedSourceIds.value.every((id) => sourceCanEditDisplayName(backupSelectableById.value.get(id))),
+)
+
+const step2DisplayNameEditEnabled = computed(() =>
+  !displayNameEditSubmitting.value
+  && step1Selection.value.length > 0
+  && step1Selection.value.every((id) => sourceCanEditDisplayName(backupSelectableById.value.get(id))),
+)
+
+const step3DisplayNameEditEnabled = computed(() =>
+  !displayNameEditSubmitting.value
+  && step3SourceSelection.value.length > 0
+  && step3SourceSelection.value.every((row) => sourceCanEditDisplayName(row)),
+)
+
+function openDisplayNameEditor(sources: FlowSourceRow[]) {
+  if (!sources.length || displayNameEditSubmitting.value) return
+  displayNameEditRows.value = sources.map((source) => ({
+    source,
+    originalName: source.name.trim(),
+    name: source.name,
+    error: '',
+  }))
+  displayNameEditOpen.value = true
+}
+
+function openStep1DisplayNameEditor() {
+  if (!step1DisplayNameEditEnabled.value) return
+  openDisplayNameEditor(selectedFlowRows(selectedSourceIds.value))
+}
+
+function openStep2DisplayNameEditor() {
+  if (!step2DisplayNameEditEnabled.value) return
+  openDisplayNameEditor(selectedFlowRows(step1Selection.value))
+}
+
+function openStep3DisplayNameEditor() {
+  if (!step3DisplayNameEditEnabled.value) return
+  openDisplayNameEditor(step3SourceSelection.value)
+}
+
+function closeDisplayNameEditor() {
+  if (displayNameEditSubmitting.value) return
+  displayNameEditOpen.value = false
+  displayNameEditRows.value = []
+}
+
+function onDisplayNameInput(row: DisplayNameEditRow) {
+  row.error = ''
+}
+
+async function updateBackupSourceDisplayName(row: DisplayNameEditRow) {
+  const parsed = parseEndpointUiId(row.source.id)
+  if (!parsed) throw new Error(t('protection.backupsPage.displayNameUpdateFailed'))
+  const name = row.name.trim()
+  if (row.source.type === 'host' && parsed.type === 'agent') {
+    await updateNode(parsed.refId, { name })
+    return
+  }
+  if (row.source.type === 'nas' && parsed.type === 'nas') {
+    await updateSourceResource(parsed.refId, { name })
+    return
+  }
+  throw new Error(t('protection.backupsPage.displayNameUpdateFailed'))
+}
+
+async function refreshAfterDisplayNameEdit(step: 0 | 1 | 2, sourceIds: string[]) {
+  if (step === 2) {
+    await refreshStep3AfterMoreAction({ focusIds: sourceIds })
+    return
+  }
+  await refreshFlowStepData(step)
+  await nextTick()
+  if (step === 0) syncSourceTableSelection()
+  else syncStep2TableSelection()
+}
+
+async function submitDisplayNameEdit() {
+  if (!displayNameEditCanSubmit.value) return
+  const candidates = displayNameEditRows.value.filter((row) => row.name.trim() !== row.originalName)
+  const step = flowMainStep.value
+  const succeeded = new Set<string>()
+
+  displayNameEditSubmitting.value = true
+  for (const row of candidates) row.error = ''
+  try {
+    for (let index = 0; index < candidates.length; index += DISPLAY_NAME_EDIT_BATCH_SIZE) {
+      const batch = candidates.slice(index, index + DISPLAY_NAME_EDIT_BATCH_SIZE)
+      const results = await Promise.allSettled(batch.map((row) => updateBackupSourceDisplayName(row)))
+      results.forEach((result, resultIndex) => {
+        const row = batch[resultIndex]
+        if (!row) return
+        if (result.status === 'fulfilled') {
+          succeeded.add(row.source.id)
+        } else {
+          row.error = apiErrorMessageI18n(
+            result.reason,
+            t,
+            t('protection.backupsPage.displayNameUpdateFailed'),
+          )
+        }
+      })
+    }
+
+    if (succeeded.size > 0) {
+      await refreshAfterDisplayNameEdit(step, Array.from(succeeded))
+    }
+
+    const failed = candidates.filter((row) => !succeeded.has(row.source.id))
+    if (failed.length === 0) {
+      displayNameEditOpen.value = false
+      displayNameEditRows.value = []
+      ElMessage.success({
+        message: t('protection.backupsPage.displayNameUpdateSuccess', { n: succeeded.size }),
+        grouping: true,
+      })
+      return
+    }
+
+    displayNameEditRows.value = failed
+    if (succeeded.size > 0) {
+      ElMessage.warning({
+        message: t('protection.backupsPage.displayNameUpdatePartial', {
+          done: succeeded.size,
+          failed: failed.length,
+        }),
+        grouping: true,
+      })
+    } else {
+      ElMessage.error({
+        message: t('protection.backupsPage.displayNameUpdateAllFailed'),
+        grouping: true,
+      })
+    }
+  } finally {
+    displayNameEditSubmitting.value = false
+  }
 }
 
 const step3SourceActionsEnabled = computed(() => {
@@ -8461,6 +8645,16 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               <template #dropdown>
                 <ElDropdownMenu>
                   <ElDropdownItem
+                    :disabled="!step1DisplayNameEditEnabled"
+                    @click="openStep1DisplayNameEditor"
+                  >
+                    <span class="el-dropdown-menu__item-content">
+                      <Pencil :size="14" class="shrink-0" />
+                      <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
+                    </span>
+                  </ElDropdownItem>
+                  <ElDropdownItem
+                    divided
                     class="el-dropdown-menu__item--danger"
                     :disabled="!step1UnregisterEnabled"
                     @click="deleteSelectedSourcesFromStep1"
@@ -8500,6 +8694,15 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               </ElButton>
               <template #dropdown>
                 <ElDropdownMenu>
+                  <ElDropdownItem
+                    :disabled="!step2DisplayNameEditEnabled"
+                    @click="openStep2DisplayNameEditor"
+                  >
+                    <span class="el-dropdown-menu__item-content">
+                      <Pencil :size="14" class="shrink-0" />
+                      <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
+                    </span>
+                  </ElDropdownItem>
                   <ElDropdownItem
                     divided
                     class="el-dropdown-menu__item--danger"
@@ -8562,6 +8765,16 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               <template #dropdown>
                 <ElDropdownMenu>
                   <ElDropdownItem
+                    :disabled="!step3DisplayNameEditEnabled"
+                    @click="openStep3DisplayNameEditor"
+                  >
+                    <span class="el-dropdown-menu__item-content">
+                      <Pencil :size="14" class="shrink-0" />
+                      <span>{{ t('protection.backupsPage.flowActionEditDisplayName') }}</span>
+                    </span>
+                  </ElDropdownItem>
+                  <ElDropdownItem
+                    divided
                     :disabled="!step3SelectionEditable"
                     @click="openBackupConfigEditFromStep3('paths')"
                   >
@@ -9841,6 +10054,77 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           @click="confirmResetBackupConfiguration"
         >
           {{ t('protection.backupsPage.btnConfirmReset') }}
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="displayNameEditOpen"
+      :title="t('protection.backupsPage.displayNameDialogTitle')"
+      class="hfl-flow-action-dialog hfl-flow-action-dialog--form display-name-edit-dialog"
+      align-center
+      destroy-on-close
+      :show-close="!displayNameEditSubmitting"
+      :close-on-click-modal="!displayNameEditSubmitting"
+      :close-on-press-escape="!displayNameEditSubmitting"
+    >
+      <p class="display-name-edit-dialog__lead">
+        {{ t('protection.backupsPage.displayNameDialogLead') }}
+      </p>
+      <ElTable
+        v-table-overflow-title
+        :data="displayNameEditRows"
+        size="small"
+        class="hfl-flow-action-dialog__table hfl-table display-name-edit-dialog__table"
+        max-height="360"
+      >
+        <ElTableColumn
+          :label="t('protection.backupsPage.colBackupSource')"
+          min-width="240"
+        >
+          <template #default="{ row }">
+            <FlowSourceSummaryCell
+              :row="row.source"
+              :interactive="false"
+            />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn
+          :label="t('protection.backupsPage.displayNameColumn')"
+          min-width="280"
+        >
+          <template #default="{ row }">
+            <ElFormItem
+              class="display-name-edit-dialog__field"
+              :error="displayNameEditError(row)"
+            >
+              <ElInput
+                v-model="row.name"
+                :maxlength="displayNameEditMaxLength(row)"
+                :placeholder="t('protection.backupsPage.displayNamePlaceholder')"
+                show-word-limit
+                :disabled="displayNameEditSubmitting"
+                @input="onDisplayNameInput(row)"
+                @keyup.enter="submitDisplayNameEdit"
+              />
+            </ElFormItem>
+          </template>
+        </ElTableColumn>
+      </ElTable>
+      <template #footer>
+        <ElButton
+          :disabled="displayNameEditSubmitting"
+          @click="closeDisplayNameEditor"
+        >
+          {{ t('common.cancel') }}
+        </ElButton>
+        <ElButton
+          type="primary"
+          :disabled="!displayNameEditCanSubmit"
+          :loading="displayNameEditSubmitting"
+          @click="submitDisplayNameEdit"
+        >
+          {{ t('common.save') }}
         </ElButton>
       </template>
     </ElDialog>
@@ -11793,6 +12077,31 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
 <style src="../../styles/source-deploy-ui.css"></style>
 <style src="../../styles/agent-install-wizard.css"></style>
 <style scoped>
+.display-name-edit-dialog__lead {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary, #64748b);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.display-name-edit-dialog__table :deep(.el-table__cell) {
+  vertical-align: top;
+}
+
+.display-name-edit-dialog__field {
+  margin-bottom: 0;
+}
+
+.display-name-edit-dialog__field :deep(.el-form-item__content) {
+  display: block;
+}
+
+.display-name-edit-dialog__field :deep(.el-form-item__error) {
+  position: static;
+  padding-top: 4px;
+  line-height: 16px;
+}
+
 .protection-flow-list-shell {
   flex: 1;
   min-height: 0;

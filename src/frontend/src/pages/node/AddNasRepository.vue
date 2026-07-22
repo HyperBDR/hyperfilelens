@@ -62,6 +62,7 @@ const quota = ref(0)
 const enableQuotaAlert = ref(false)
 const quotaAlertThreshold = ref<number | undefined>(undefined)
 const proxyNodeId = ref<number | undefined>(undefined)
+const repositoryServerHost = ref('')
 
 const protocolLabel = computed(() =>
   protocol.value === 'smb' ? t('repositoriesPage.protocolSmb') : t('repositoriesPage.protocolNfs'),
@@ -161,6 +162,7 @@ function buildCreatePayload() {
     quota_gb: quota.value || 0,
     quota_alert_enabled: enableQuotaAlert.value,
     quota_alert_threshold: enableQuotaAlert.value ? Number(quotaAlertThreshold.value || 0) : 0,
+    proxy_repository_server_host: bindNodeId ? repositoryServerHost.value.trim() : undefined,
   }
 
   const payload: Record<string, unknown> = {
@@ -428,6 +430,18 @@ watch(enableQuotaAlert, (enabled) => {
                         </div>
                         <div class="mt-2 text-xs text-[rgb(100_116_139)]">
                           {{ proxyNodeId ? t('addNasRepo.hintProxySelected') : t('addNasRepo.hintProxySkipped') }}
+                        </div>
+                      </ElFormItem>
+                      <ElFormItem
+                        v-if="proxyNodeId"
+                        :label="t('repositoriesPage.fieldRepositoryServerHost')"
+                      >
+                        <ElInput
+                          v-model="repositoryServerHost"
+                          :placeholder="t('repositoriesPage.phRepositoryServerHost')"
+                        />
+                        <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                          {{ t('repositoriesPage.hintRepositoryServerHost') }}
                         </div>
                       </ElFormItem>
                     </ElForm>

@@ -9,6 +9,7 @@ from apps.protection.services.backup_runtime_policy import build_backup_runtime_
 from apps.protection.services.backup_source_snapshot import backup_config_directories
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
 from apps.source.services.internal.nas_share_path import to_mount_path
+from apps.storage.services.internal.repository_access import repository_uses_bound_proxy
 
 
 def sync_backup_config_repository_policy(*, config_id: int) -> dict[str, Any]:
@@ -22,6 +23,18 @@ def sync_backup_config_repository_policy(*, config_id: int) -> dict[str, Any]:
         source_ref_id=config.source_ref_id,
         repository_id=config.repository_id,
     )
+    if (
+        repository_uses_bound_proxy(repository)
+        and int(repository.bind_node_id or 0) != int(target.node.id)
+    ):
+        # Cross-proxy backups connect through a task-scoped Kopia server. The
+        # managed backup command applies the complete runtime policy immediately
+        # before every snapshot, using that same task-scoped identity.
+        return {
+            "config_id": config.id,
+            "status": "skipped",
+            "reason": "runtime_policy_applied_during_backup",
+        }
     runtime_policy = build_backup_runtime_policy(config=config)
     repository_payload = bt._repository_runtime_payload(repository=repository, execution_target=target)
     results: list[dict[str, Any]] = []

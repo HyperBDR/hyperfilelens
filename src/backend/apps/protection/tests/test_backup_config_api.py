@@ -19,8 +19,10 @@ from apps.protection.models import (
 )
 from apps.protection.services.backup_config_reset import run_backup_config_reset_task
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
+from apps.protection.services.repository_policy import sync_backup_config_repository_policy
 from apps.restore.models import RestorePlan
-from apps.source.models import SourceBackupPipelineEntry
+from apps.source.constants import ResourceType
+from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.storage.repositories.models import Repository, RepositoryUsageShard
 from apps.storage.services.internal.repository_errors import REPOSITORY_ALREADY_EXISTS_CODE
 from apps.task.models import Task, TaskResource
@@ -145,6 +147,32 @@ class ProtectionBackupConfigApiTests(TestCase):
                 "share_path": "/volume1/proxy-backup",
             },
         )
+
+    def _nas_source(
+        self,
+        *,
+        proxy: Node,
+        name: str = "backup-config-nas-source",
+        server: str = "10.0.0.15",
+        share: str = "source-share",
+    ):
+        return SourceResource.objects.create(
+            organization=self.org,
+            name=name,
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+            config={"protocol": "smb", "server": server, "share": share},
+        )
+
+    def _nas_payload(self, *, source: SourceResource, repository: Repository, path: str = "/data"):
+        payload = self._payload(name=f"NAS backup {source.id}")
+        payload.update({
+            "source_type": "nas",
+            "source_ref_id": source.id,
+            "repository_id": repository.id,
+            "directories": [{"path": path, "path_type": "directory"}],
+        })
+        return payload
 
     def test_create_backup_config_advances_source_pipeline_to_step3(self):
         source_key = f"agent:{self.agent.id}"
@@ -421,6 +449,228 @@ class ProtectionBackupConfigApiTests(TestCase):
 
         self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
         self.assertTrue(BackupConfig.objects.filter(name="Agent to proxy nas").exists())
+
+    def test_create_backup_config_accepts_nas_source_with_cross_proxy_repository_server(self):
+        source_proxy = self._proxy(name="source-proxy")
+        repository_proxy = self._proxy(name="repository-proxy")
+        source = self._nas_source(proxy=source_proxy)
+        repository = self._proxy_bound_nas_repository(proxy=repository_proxy)
+        repository.config = {
+            **repository.config,
+            "proxy_repository_server_host": "repo-proxy.example.internal",
+        }
+        repository.save(update_fields=["config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+
+    def test_create_backup_config_accepts_same_proxy_nas_repository_without_server_host(self):
+        proxy = self._proxy(name="same-proxy-no-host")
+        source = self._nas_source(proxy=proxy, name="same-proxy-nas-source")
+        repository = self._proxy_bound_nas_repository(proxy=proxy, name="same-proxy-repository")
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+
+    def test_create_backup_config_rejects_cross_proxy_repository_without_explicit_host(self):
+        source_proxy = self._proxy(name="source-proxy-no-host")
+        repository_proxy = self._proxy(name="repository-proxy-no-host")
+        source = self._nas_source(proxy=source_proxy, name="nas-source-no-host")
+        repository = self._proxy_bound_nas_repository(proxy=repository_proxy, name="repo-no-host")
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST, create.content)
+        self.assertIn("repository_id", self._error_fields(create))
+
+    @mock.patch(
+        "apps.protection.services.repository_compatibility.protection_conf.PROTECTION_PROXY_REPOSITORY_SERVER_ENABLED",
+        False,
+    )
+    def test_create_backup_config_rejects_cross_proxy_repository_when_server_mode_disabled(self):
+        source_proxy = self._proxy(name="source-proxy-feature-disabled")
+        repository_proxy = self._proxy(name="repository-proxy-feature-disabled")
+        source = self._nas_source(proxy=source_proxy, name="nas-source-feature-disabled")
+        repository = self._proxy_bound_nas_repository(proxy=repository_proxy, name="repo-feature-disabled")
+        repository.config = {**repository.config, "proxy_repository_server_host": "repo.example.internal"}
+        repository.save(update_fields=["config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST, create.content)
+        self.assertIn("repository_id", self._error_fields(create))
+
+    def test_create_backup_config_rejects_cross_proxy_repository_when_proxy_offline(self):
+        source_proxy = self._proxy(name="source-proxy-repo-offline")
+        repository_proxy = self._proxy(name="repository-proxy-offline")
+        repository_proxy.status = Node.Status.OFFLINE
+        repository_proxy.save(update_fields=["status", "updated_at"])
+        source = self._nas_source(proxy=source_proxy, name="nas-source-repo-offline")
+        repository = self._proxy_bound_nas_repository(proxy=repository_proxy, name="repo-offline")
+        repository.config = {**repository.config, "proxy_repository_server_host": "repo.example.internal"}
+        repository.save(update_fields=["config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST, create.content)
+        self.assertIn("repository_id", self._error_fields(create))
+
+    def test_create_backup_config_accepts_cross_proxy_proxy_fs_repository(self):
+        source_proxy = self._proxy(name="source-proxy-proxy-fs")
+        repository_proxy = self._proxy(name="repository-proxy-proxy-fs")
+        source = self._nas_source(proxy=source_proxy, name="nas-source-proxy-fs")
+        repository = self._proxy_fs_repository(proxy=repository_proxy, name="cross-proxy-fs")
+        repository.config = {**repository.config, "proxy_repository_server_host": "repo-fs.example.internal"}
+        repository.save(update_fields=["config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+
+    def test_create_backup_config_rejects_target_repository_source_path(self):
+        proxy = self._proxy(name="self-backup-proxy")
+        source = self._nas_source(
+            proxy=proxy,
+            name="self-backup-source",
+            server="192.168.8.82",
+            share="smb-share",
+        )
+        repository = self._proxy_bound_nas_repository(proxy=proxy, name="self-backup-repo")
+        repository.nas_protocol = Repository.NasProtocol.SMB
+        repository.config = {"server_address": "192.168.8.82", "share_path": "/smb-share"}
+        repository.save(update_fields=["nas_protocol", "config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(
+                source=source,
+                repository=repository,
+                path=f"/hp-repos/storage-{repository.id}/s",
+            ),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST, create.content)
+        self.assertIn("directories", self._error_fields(create))
+
+    def test_create_backup_config_allows_repository_sibling_source_path(self):
+        proxy = self._proxy(name="sibling-path-proxy")
+        source = self._nas_source(
+            proxy=proxy,
+            name="sibling-path-source",
+            server="192.168.8.82",
+            share="smb-share",
+        )
+        repository = self._proxy_bound_nas_repository(proxy=proxy, name="sibling-path-repo")
+        repository.nas_protocol = Repository.NasProtocol.SMB
+        repository.config = {"server_address": "192.168.8.82", "share_path": "/smb-share"}
+        repository.save(update_fields=["nas_protocol", "config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository, path="/hp-repos/restore"),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+
+        update = self.client.patch(
+            f"/api/v1/protection/backup-configs/{create.data['id']}/",
+            {
+                "directories": [{
+                    "path": f"/hp-repos/storage-{repository.id}",
+                    "path_type": "directory",
+                }],
+            },
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(update.status_code, status.HTTP_400_BAD_REQUEST, update.content)
+        self.assertIn("directories", self._error_fields(update))
+
+    def test_create_backup_config_rejects_direct_nas_repository_source_path(self):
+        proxy = self._proxy(name="direct-self-backup-proxy")
+        source = self._nas_source(
+            proxy=proxy,
+            name="direct-self-backup-source",
+            server="192.168.8.82",
+            share="smb-share",
+        )
+        repository = self._direct_nas_repository(name="direct-self-backup-repo")
+        repository.nas_protocol = Repository.NasProtocol.SMB
+        repository.config = {"server_address": "192.168.8.82", "share_path": "/smb-share"}
+        repository.save(update_fields=["nas_protocol", "config", "updated_at"])
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(
+                source=source,
+                repository=repository,
+                path=f"/hp-repos/agent-{proxy.id}/data",
+            ),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST, create.content)
+        self.assertIn("directories", self._error_fields(create))
+
+    def test_cross_proxy_repository_policy_is_applied_at_backup_runtime(self):
+        source_proxy = self._proxy(name="policy-source-proxy")
+        repository_proxy = self._proxy(name="policy-repository-proxy")
+        source = self._nas_source(proxy=source_proxy, name="policy-nas-source")
+        repository = self._proxy_bound_nas_repository(proxy=repository_proxy, name="policy-repo")
+        repository.config = {
+            **repository.config,
+            "proxy_repository_server_host": "repo-policy.example.internal",
+        }
+        repository.save(update_fields=["config", "updated_at"])
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=repository),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+
+        result = sync_backup_config_repository_policy(config_id=create.data["id"])
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "runtime_policy_applied_during_backup")
 
     @mock.patch("apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh")
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")

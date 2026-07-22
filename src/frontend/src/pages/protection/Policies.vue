@@ -722,6 +722,10 @@ function relatedSourceStatusLabel(config: BackupConfig) {
   return t('repositoriesPage.associatedSourceUnknown')
 }
 
+function relatedSourceRegisteredAt(config: BackupConfig) {
+  return fmtLocalTime(relatedSource(config)?.registered_at)
+}
+
 function onPolicySelectionChange(rows: PolicyRow[]) {
   selectedPolicies.value = rows
   if (!rows.length) moreActionsOpen.value = false
@@ -1378,6 +1382,11 @@ function onMoreDisable() {
               row-key="id"
               class="hfl-list-table policy-related-backup-table"
             >
+              <el-table-column :label="t('repositoriesPage.associatedSourceColId')" width="90" fixed="left">
+                <template #default="{ row }">
+                  <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
+                </template>
+              </el-table-column>
               <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="260" fixed="left">
                 <template #default="{ row }">
                   <div class="policy-related-source-cell">
@@ -1424,6 +1433,11 @@ function onMoreDisable() {
                   <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceStatus(row))">
                     {{ relatedSourceStatusLabel(row) }}
                   </ElTag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.backupsPage.colRegistered')" min-width="170">
+                <template #default="{ row }">
+                  <span class="hfl-table-cell-time">{{ relatedSourceRegisteredAt(row) }}</span>
                 </template>
               </el-table-column>
               <template #empty>
@@ -1486,6 +1500,11 @@ function onMoreDisable() {
               row-key="id"
               class="hfl-list-table policy-related-backup-table"
             >
+              <el-table-column :label="t('repositoriesPage.associatedSourceColId')" width="90" fixed="left">
+                <template #default="{ row }">
+                  <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
+                </template>
+              </el-table-column>
               <el-table-column :label="t('protection.backupsPage.colBackupSource')" min-width="260" fixed="left">
                 <template #default="{ row }">
                   <div class="policy-related-source-cell">
@@ -1532,6 +1551,11 @@ function onMoreDisable() {
                   <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceStatus(row))">
                     {{ relatedSourceStatusLabel(row) }}
                   </ElTag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.backupsPage.colRegistered')" min-width="170">
+                <template #default="{ row }">
+                  <span class="hfl-table-cell-time">{{ relatedSourceRegisteredAt(row) }}</span>
                 </template>
               </el-table-column>
               <template #empty>

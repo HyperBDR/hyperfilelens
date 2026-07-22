@@ -45,6 +45,7 @@ const nasShare = ref('')
 const nasMountOptionsCurrent = ref('')
 const mountOptionsDraft = ref('')
 const mountOptionsInputRef = ref<InputInstance>()
+const repositoryServerHost = ref('')
 
 const credentialMask = '\u2022\u2022\u2022\u2022\u2022\u2022'
 const hasSmbUsername = ref(false)
@@ -135,6 +136,7 @@ async function loadRepository() {
     nasShare.value = extractConfigString(cfg, 'share_path')
     nasMountOptionsCurrent.value = extractConfigString(cfg, 'mount_options')
     mountOptionsDraft.value = nasMountOptionsCurrent.value
+    repositoryServerHost.value = extractConfigString(cfg, 'proxy_repository_server_host')
     hasSmbUsername.value = Boolean(extractConfigString(cfg, 'smb_username'))
     hasSmbPassword.value = Boolean(extractConfigString(cfg, 'smb_password'))
     smbUsernameRewriting.value = false
@@ -279,6 +281,9 @@ async function onSubmit() {
       quota_alert_threshold: quotaAlertEnabled.value
         ? Number(quotaAlertThreshold.value || 0)
         : 0,
+      proxy_repository_server_host: proxyNodeId.value
+        ? repositoryServerHost.value.trim()
+        : undefined,
     }
     if (protocol.value === 'smb') {
       if (smbUsernameRewriting.value && smbUsernameDraft.value.trim()) {
@@ -673,6 +678,18 @@ onMounted(async () => {
                         <template v-else>
                           {{ accessPathLabel }}
                         </template>
+                      </div>
+                    </ElFormItem>
+                    <ElFormItem
+                      v-if="proxyNodeId"
+                      :label="t('repositoriesPage.fieldRepositoryServerHost')"
+                    >
+                      <ElInput
+                        v-model="repositoryServerHost"
+                        :placeholder="t('repositoriesPage.phRepositoryServerHost')"
+                      />
+                      <div class="mt-1 text-xs text-[rgb(100_116_139)]">
+                        {{ t('repositoriesPage.hintRepositoryServerHost') }}
                       </div>
                     </ElFormItem>
                   </ElForm>

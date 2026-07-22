@@ -25,12 +25,14 @@ from apps.protection.services.repository_compatibility import validate_backup_re
 from apps.restore.services.interface import create_restore_plan
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
-from apps.source.services.internal.nas_display import nfs_export_path
+from apps.source.services.internal.nas_display import nfs_export_path, nas_protocol, smb_share
+from apps.source.services.internal.nas_path_normalize import normalize_nfs_export_path, normalize_smb_share
 from apps.source.services.internal.nas_share_path import normalize_user_share_path
 from apps.storage.repositories.models import Repository, RepositoryUsageShard
 from apps.storage.services.internal.nas_repository import (
     mount_point_from_repo_status_result,
     nas_agent_repository_subdir,
+    nas_proxy_repository_subdir,
     nas_repository_payload,
 )
 from apps.storage.services.internal.repository_errors import (
@@ -84,6 +86,13 @@ def create_backup_config(
         raise ValidationError({
             "recovery_plans": "At least one recovery plan is required when recovery_plan_enabled is true."
         })
+    _validate_no_repository_self_backup(
+        organization_id=organization_id,
+        source_type=payload["source_type"],
+        source_ref_id=payload["source_ref_id"],
+        repository_id=payload["repository_id"],
+        directories=directories_data,
+    )
     logger.info(
         "backup config create started org_id=%s source_type=%s source_ref_id=%s repository_id=%s name=%s dir_count=%s",
         organization_id,
@@ -323,6 +332,83 @@ def _validate_repository_exists(
         source_ref_id=source_ref_id,
         repository_id=repository_id,
     )
+
+
+def _normalized_nas_endpoint(*, protocol: str, server: object, share_path: object) -> tuple[str, str, str]:
+    normalized_protocol = str(protocol or "").strip().lower()
+    normalized_server = str(server or "").strip().rstrip(".").lower()
+    if normalized_protocol == Repository.NasProtocol.SMB:
+        normalized_share = normalize_smb_share(str(share_path or "")).lower()
+    else:
+        normalized_share = normalize_nfs_export_path(str(share_path or ""))
+    return normalized_protocol, normalized_server, normalized_share
+
+
+def _validate_no_repository_self_backup(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+    repository_id: int,
+    directories: list[dict[str, Any]],
+) -> None:
+    if source_type != "nas" or not directories:
+        return
+    source = SourceResource.objects.filter(
+        organization_id=organization_id,
+        id=source_ref_id,
+        resource_type=ResourceType.NAS,
+        is_deleted=False,
+    ).first()
+    repository = Repository.objects.filter(
+        organization_id=organization_id,
+        id=repository_id,
+        repo_type=Repository.Type.NAS,
+    ).exclude(status=Repository.Status.REMOVED).first()
+    if source is None or repository is None:
+        return
+
+    source_config = source.config if isinstance(source.config, dict) else {}
+    repository_config = repository.config if isinstance(repository.config, dict) else {}
+    source_protocol = nas_protocol(source_config)
+    source_share = (
+        smb_share(source_config)
+        if source_protocol == Repository.NasProtocol.SMB
+        else nfs_export_path(resource_type=source.resource_type, config=source_config)
+    )
+    source_endpoint = _normalized_nas_endpoint(
+        protocol=source_protocol,
+        server=source_config.get("server") or source_config.get("server_address"),
+        share_path=source_share,
+    )
+    repository_endpoint = _normalized_nas_endpoint(
+        protocol=str(repository.nas_protocol or ""),
+        server=repository_config.get("server_address"),
+        share_path=repository_config.get("share_path"),
+    )
+    if not all(source_endpoint) or source_endpoint != repository_endpoint:
+        return
+
+    if repository.bind_node_type == Repository.BindNodeType.PROXY:
+        repository_subdir = nas_proxy_repository_subdir(repository)
+    else:
+        if source.bound_node_id is None:
+            return
+        repository_subdir = nas_agent_repository_subdir(int(source.bound_node_id))
+    protected_path = normalize_user_share_path(
+        mount_root="",
+        export_path="",
+        user_path=repository_subdir,
+    )
+    for item in directories:
+        path = str(item.get("path") or "")
+        if _same_or_ancestor_path(path, protected_path) or _same_or_ancestor_path(protected_path, path):
+            raise ValidationError({
+                "directories": (
+                    f'Source path "{path}" overlaps target repository data at "{protected_path}". '
+                    "Select a directory outside the target repository."
+                )
+            })
 
 
 def _validate_unique_source_config(
@@ -875,6 +961,18 @@ def update_backup_config(
     payload = _config_payload(data, current=config)
     directories_data = payload.pop("directories", None)
     payload.pop("recovery_plans", None)
+    effective_directories = directories_data
+    if effective_directories is None:
+        effective_directories = list(
+            config.directories.order_by("sort_order", "id").values("path", "path_type")
+        )
+    _validate_no_repository_self_backup(
+        organization_id=config.organization_id,
+        source_type=payload["source_type"],
+        source_ref_id=payload["source_ref_id"],
+        repository_id=payload["repository_id"],
+        directories=effective_directories,
+    )
     logger.info(
         "backup config update started config_id=%s org_id=%s fields=%s",
         config.id,

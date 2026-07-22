@@ -147,6 +147,7 @@ def _agent_source_payload(node: Node | None, *, config: BackupConfig) -> dict:
             "bound_node_id": None,
             "mount_status": "",
             "mount_point": "",
+            "registered_at": None,
         }
     inv = node.metadata if isinstance(node.metadata, dict) else {}
     inventory = inv.get("inventory") if isinstance(inv.get("inventory"), dict) else {}
@@ -168,6 +169,7 @@ def _agent_source_payload(node: Node | None, *, config: BackupConfig) -> dict:
         "bound_node_id": node.id,
         "mount_status": "",
         "mount_point": "",
+        "registered_at": _iso(node.created_at),
     }
 
 
@@ -188,6 +190,7 @@ def _nas_source_payload(resource: SourceResource | None, *, config: BackupConfig
             "bound_node_id": None,
             "mount_status": "",
             "mount_point": "",
+            "registered_at": None,
         }
     cfg = resource.config if isinstance(resource.config, dict) else {}
     node = resource.bound_node
@@ -211,6 +214,7 @@ def _nas_source_payload(resource: SourceResource | None, *, config: BackupConfig
         "bound_node_id": node.id if node else None,
         "mount_status": resource.mount_status,
         "mount_point": resource.mount_point,
+        "registered_at": _iso(resource.created_at),
     }
 
 

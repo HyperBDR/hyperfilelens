@@ -4,8 +4,14 @@ from rest_framework import serializers
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.protection import conf as protection_conf
 from apps.storage.repositories.models import Repository
 from apps.storage.services.interface import create_repository, update_repository
+from apps.storage.services.internal.repository_access import (
+    explicit_repository_server_host,
+    normalize_repository_server_host,
+    repository_uses_bound_proxy,
+)
 from apps.storage.services.internal.repository_secrets import (
     credential_hint,
     sanitize_repository_config,
@@ -43,7 +49,6 @@ LOCKED_S3_UPDATE_FIELDS = (
     "config.prefix",
 )
 
-
 def normalize_nas_share_path(value: object) -> str:
     path = str(value or "").strip().replace("\\", "/")
     path = "/" + path.lstrip("/")
@@ -73,6 +78,7 @@ class RepositorySerializer(serializers.ModelSerializer):
     credential_hint = serializers.SerializerMethodField()
     bind_node_display_name = serializers.SerializerMethodField()
     bind_node_ip = serializers.SerializerMethodField()
+    cross_proxy_access = serializers.SerializerMethodField()
 
     class Meta:
         model = Repository
@@ -102,6 +108,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "bind_node_id",
             "bind_node_display_name",
             "bind_node_ip",
+            "cross_proxy_access",
         ]
         read_only_fields = fields
 
@@ -122,6 +129,26 @@ class RepositorySerializer(serializers.ModelSerializer):
             return None
         node = Node.objects.filter(id=obj.bind_node_id).values_list("ip_address", flat=True).first()
         return node
+
+    def get_cross_proxy_access(self, obj: Repository) -> dict:
+        if not repository_uses_bound_proxy(obj):
+            return {"enabled": False, "ready": False, "host": None, "reason": "not_applicable"}
+        if not protection_conf.PROTECTION_PROXY_REPOSITORY_SERVER_ENABLED:
+            return {"enabled": False, "ready": False, "host": None, "reason": "feature_disabled"}
+        node = Node.objects.filter(
+            id=obj.bind_node_id,
+            organization_id=obj.organization_id,
+            role=NodeRole.PROXY,
+            is_deleted=False,
+        ).first()
+        if node is None:
+            return {"enabled": True, "ready": False, "host": None, "reason": "proxy_missing"}
+        if node.status != Node.Status.ONLINE:
+            return {"enabled": True, "ready": False, "host": None, "reason": "proxy_offline"}
+        host, _source = explicit_repository_server_host(repository=obj, node=node)
+        if not host:
+            return {"enabled": True, "ready": False, "host": None, "reason": "host_missing"}
+        return {"enabled": True, "ready": True, "host": host, "reason": "ready"}
 
 
 class RepositoryWriteSerializer(serializers.ModelSerializer):
@@ -159,6 +186,14 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"config contains forbidden fields: {', '.join(forbidden)}"
             )
+        if "proxy_repository_server_host" in value:
+            value = dict(value)
+            try:
+                value["proxy_repository_server_host"] = normalize_repository_server_host(
+                    value.get("proxy_repository_server_host")
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
         return value
 
     def validate(self, attrs):
@@ -399,6 +434,14 @@ class NASRepositoryRepairSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "config contains forbidden fields: %s" % ", ".join(forbidden)
             )
+        if "proxy_repository_server_host" in value:
+            value = dict(value)
+            try:
+                value["proxy_repository_server_host"] = normalize_repository_server_host(
+                    value.get("proxy_repository_server_host")
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
         return value
 
     def validate(self, attrs):
