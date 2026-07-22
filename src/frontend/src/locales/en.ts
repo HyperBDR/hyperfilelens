@@ -139,6 +139,8 @@ export const en = {
     passwordChangeFailed: 'Failed to change password',
   },
   nav: {
+    openMenu: 'Open navigation',
+    navigation: 'Navigation',
     overview: 'Overview',
     protection: 'Protection',
     insight: 'Insights',

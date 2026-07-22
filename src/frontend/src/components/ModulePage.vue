@@ -167,16 +167,22 @@ function toggleSidebar() {
 <style scoped>
 .sidebar-wrapper {
   position: sticky;
-  top: 52px;
+  top: var(--app-header-height);
   display: flex;
-  height: calc(100vh - 52px);
+  height: calc(var(--app-viewport-height) - var(--app-header-height));
   flex-shrink: 0;
+}
+
+@media (max-width: 1023.98px) {
+  .sidebar-wrapper {
+    display: none;
+  }
 }
 </style>
 
 <style>
 .module-page--admin .main-content {
-  min-height: calc(100vh - 52px);
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
   background-color: var(--content-bg, #111116);
 }
 </style>

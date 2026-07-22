@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Globe, Shield } from 'lucide-vue-next'
+import { Globe, Menu, Shield } from 'lucide-vue-next'
 import NavNotificationPopover from '../../components/NavNotificationPopover.vue'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import OrgSwitcher from '../../components/OrgSwitcher.vue'
@@ -12,6 +12,15 @@ import { fetchDeployProfile, platformOpsEntryUrl } from '../../composables/useDe
 import { currentUser } from '../../composables/useAuth'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
+import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
+
+defineProps<{
+  mobileMenuOpen?: boolean
+}>()
+
+const emit = defineEmits<{
+  'toggle-mobile-menu': []
+}>()
 
 const { t } = useI18n()
 const { canSwitchLocale, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
@@ -37,16 +46,9 @@ watch(
   },
 )
 
-const navItems = computed(() => [
-  { to: '/', label: t('nav.overview') },
-  { to: '/protection', label: t('nav.protection') },
-  { to: '/insight', label: t('nav.insight') },
-  { to: '/node', label: t('nav.node') },
-  { to: '/ops', label: t('nav.ops') },
-])
-
 const route = useRoute()
 const router = useRouter()
+const { items: navItems, isActive: navActive } = useAppPrimaryNav()
 
 const timezoneDisplay = computed(() => {
   const offset = new Date().getTimezoneOffset()
@@ -56,43 +58,6 @@ const timezoneDisplay = computed(() => {
   const minutes = String(absOffset % 60).padStart(2, '0')
   return `${t('nav.timezone')}GMT${sign}${hours}:${minutes}`
 })
-
-function pathMatchesPrefix(path: string, prefix: string) {
-  return path === prefix || path.startsWith(`${prefix}/`)
-}
-
-/** Route prefixes moved from infrastructure into protection or insights. */
-const protectionRoutePrefixes = [
-  '/protection/backup-sources',
-  '/node/agents',
-  '/node/repositories',
-  '/node/snapshots',
-  '/node/deployment',
-]
-const insightRoutePrefixes = ['/node/ai-settings', '/node/knowledge-base', '/node/gateways']
-
-function navActive(to: string) {
-  const path = route.path
-  if (to === '/') return path === '/'
-
-  if (to === '/protection') {
-    if (pathMatchesPrefix(path, to)) return true
-    return protectionRoutePrefixes.some((p) => pathMatchesPrefix(path, p))
-  }
-
-  if (to === '/insight') {
-    if (pathMatchesPrefix(path, to)) return true
-    return insightRoutePrefixes.some((p) => pathMatchesPrefix(path, p))
-  }
-
-  if (to === '/node') {
-    if (protectionRoutePrefixes.some((p) => pathMatchesPrefix(path, p))) return false
-    if (insightRoutePrefixes.some((p) => pathMatchesPrefix(path, p))) return false
-    return pathMatchesPrefix(path, to)
-  }
-
-  return pathMatchesPrefix(path, to)
-}
 
 function navigateImmediately(to: string) {
   if (to === route.fullPath) return
@@ -110,10 +75,20 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 <template>
   <header class="top-nav">
-    <div class="logo" @click="navigateImmediately('/')">
+    <button
+      type="button"
+      class="mobile-menu-button"
+      :aria-label="t('nav.openMenu')"
+      :aria-expanded="mobileMenuOpen || false"
+      @click="emit('toggle-mobile-menu')"
+    >
+      <Menu :size="21" aria-hidden="true" />
+    </button>
+
+    <button type="button" class="logo" :aria-label="t('nav.overview')" @click="navigateImmediately('/')">
       <AppLogoMark :size="18" />
       <span class="logo-text"><span>Hyper</span><strong>FileLens</strong></span>
-    </div>
+    </button>
 
     <nav class="nav-menu">
       <RouterLink
@@ -129,13 +104,13 @@ function handleNavClick(event: MouseEvent, to: string) {
     </nav>
 
     <div class="right-menu">
-      <span class="timezone-display">
+      <span class="timezone-display desktop-navigation-control">
         {{ timezoneDisplay }}
       </span>
 
       <ElButton
         v-if="canSwitchLocale"
-        class="icon-btn"
+        class="icon-btn desktop-navigation-control"
         :title="`Switch to ${nextLocaleLabel}`"
         @click="toggleLocale"
         text
@@ -143,11 +118,11 @@ function handleNavClick(event: MouseEvent, to: string) {
         <Globe :size="16" />
       </ElButton>
 
-      <OrgSwitcher />
+      <span class="desktop-navigation-control"><OrgSwitcher /></span>
 
       <a
         v-if="adminConsoleHref"
-        class="platform-ops-entry"
+        class="platform-ops-entry desktop-navigation-control"
         :href="adminConsoleHref"
         target="_blank"
         rel="noopener noreferrer"
@@ -167,7 +142,7 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 <style scoped>
 .top-nav {
-  --topnav-height: 52px;
+  --topnav-height: var(--app-header-height);
   --brand-color: var(--color-primary, #6D5EF6);
   --brand-glow: rgba(109, 94, 246, 0.5);
   --nav-item-active-color: var(--color-primary, #6D5EF6);
@@ -182,7 +157,8 @@ function handleNavClick(event: MouseEvent, to: string) {
   z-index: 40;
   display: flex;
   align-items: center;
-  padding: 0 16px 0 12px;
+  box-sizing: border-box;
+  padding: var(--app-safe-top) max(16px, var(--app-safe-right)) 0 max(12px, var(--app-safe-left));
   box-shadow: var(--tnav-shadow, 0 12px 26px rgba(9, 8, 15, 0.22));
   font-family: var(--font-sans);
 }
@@ -194,7 +170,31 @@ function handleNavClick(event: MouseEvent, to: string) {
   width: 150px;
   height: 100%;
   cursor: pointer;
-  padding-left: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mobile-menu-button {
+  display: none;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--icon-btn-color, #aeb2c5);
+  cursor: pointer;
+}
+
+.mobile-menu-button:hover,
+.mobile-menu-button:focus-visible {
+  background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
+  color: var(--icon-btn-hover-color, #fff);
 }
 
 .logo-text {
@@ -325,6 +325,43 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 .alerts-btn {
   position: relative;
+}
+
+@media (max-width: 1023.98px) {
+  .top-nav {
+    padding-right: max(8px, var(--app-safe-right));
+    padding-left: max(6px, var(--app-safe-left));
+  }
+
+  .mobile-menu-button {
+    display: inline-flex;
+  }
+
+  .logo {
+    width: auto;
+    min-width: 0;
+  }
+
+  .nav-menu,
+  .top-nav .desktop-navigation-control {
+    display: none;
+  }
+
+  .right-menu {
+    min-width: 0;
+  }
+
+  .icon-btn,
+  .alerts-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .logo-text {
+    font-size: 13px;
+  }
 }
 
 .theme-options {

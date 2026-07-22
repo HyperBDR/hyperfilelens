@@ -156,6 +156,24 @@ async function confirmLogout() {
 .nav-user-trigger:hover .nav-user-trigger__caret {
   color: var(--nav-user-trigger-caret-hover-color, rgba(255, 255, 255, 0.95));
 }
+
+@media (max-width: 479.98px) {
+  .nav-user-trigger {
+    width: 44px;
+    height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .nav-user-trigger__label {
+    max-width: 32px;
+    font-size: 12px;
+  }
+
+  .nav-user-trigger__caret {
+    display: none;
+  }
+}
 </style>
 
 <style>
