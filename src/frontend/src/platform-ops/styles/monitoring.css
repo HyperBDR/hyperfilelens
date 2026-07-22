@@ -1,0 +1,298 @@
+.platform-monitoring-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.platform-monitoring-page__lead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.platform-monitoring-page__subtitle {
+  margin: 0;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.platform-monitoring-page__updated {
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.platform-monitoring-page .hfl-ops-stats-grid {
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+.platform-monitoring-page .hfl-ops-stat-card {
+  min-height: 104px;
+  border-radius: 10px;
+}
+
+.platform-monitoring-page .hfl-ops-stat-card__label,
+.platform-monitoring-page .hfl-ops-stat-card__sub {
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+}
+
+.platform-monitoring-page .hfl-list-panel {
+  min-height: 0;
+}
+
+.platform-monitoring-page__filters {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-monitoring-page__search {
+  width: min(280px, 100%);
+}
+
+.platform-monitoring-page__filter {
+  width: 142px;
+}
+
+.platform-monitoring-page__title-button {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-title, #1c1c26);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-monitoring-page__title-button:hover,
+.platform-monitoring-page__title-button:focus-visible {
+  color: var(--color-primary, #6d5ef6);
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.platform-monitoring-page__cell-meta {
+  display: block;
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-monitoring-page__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-monitoring-page__progress .el-progress {
+  width: 84px;
+}
+
+.platform-monitoring-drawer__header h2 {
+  margin: 0;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.platform-monitoring-drawer__header p {
+  margin: 5px 0 0;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 12px;
+}
+
+.platform-monitoring-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.platform-monitoring-drawer__section {
+  padding: 16px 0;
+  border-top: 1px solid var(--color-border-light, #f2f2f6);
+}
+
+.platform-monitoring-drawer__section h3 {
+  margin: 0 0 12px;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.platform-monitoring-drawer__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+
+.platform-monitoring-drawer__field span,
+.platform-monitoring-drawer__message-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+}
+
+.platform-monitoring-drawer__field strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary, #3a3a48);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.platform-monitoring-drawer__message {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 8px;
+  background: var(--color-grey-1, #fafafa);
+  color: var(--color-text-primary, #3a3a48);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.platform-health-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 10px;
+  background: var(--color-card-bg, #fff);
+}
+
+.platform-health-summary__state {
+  min-width: 160px;
+}
+
+.platform-health-summary__state strong,
+.platform-health-summary__state span {
+  display: block;
+}
+
+.platform-health-summary__state strong {
+  color: var(--color-text-title, #1c1c26);
+  font-size: 13px;
+}
+
+.platform-health-summary__state span {
+  margin-top: 3px;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+}
+
+.platform-health-summary__services {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: repeat(5, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.platform-health-summary__service {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-grey-1, #fafafa);
+  color: var(--color-text-secondary, #70707e);
+  font-size: 11px;
+}
+
+.platform-health-summary__service i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 999px;
+  background: var(--color-warning, #e08b0b);
+}
+
+.platform-health-summary__service.is-healthy i {
+  background: var(--color-success, #15a45b);
+}
+
+.platform-health-summary__service.is-unavailable i {
+  background: var(--color-error, #e0413e);
+}
+
+@media (max-width: 1100px) {
+  .platform-monitoring-page .hfl-ops-stats-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-health-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .platform-health-summary__services {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .platform-monitoring-page {
+    overflow-y: auto;
+  }
+
+  .platform-monitoring-page__lead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .platform-monitoring-page__search,
+  .platform-monitoring-page__filter {
+    width: 100%;
+  }
+
+  .platform-monitoring-drawer__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-health-summary__services {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .platform-monitoring-page .hfl-ops-stats-grid--4,
+  .platform-health-summary__services {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-monitoring-page *,
+  .platform-health-summary * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

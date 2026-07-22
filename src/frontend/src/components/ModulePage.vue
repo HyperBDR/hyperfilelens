@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, useSlots, type Component } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, useSlots, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 const slots = useSlots()
 import Sidebar from './Sidebar.vue'
@@ -47,6 +47,21 @@ const isAdminSettingsShell = computed(
 )
 
 const collapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
+const viewportCollapsed = ref(false)
+const effectiveCollapsed = computed(() => collapsed.value || viewportCollapsed.value)
+
+function updateResponsiveSidebar() {
+  viewportCollapsed.value = route.path.startsWith('/platform-ops') && window.innerWidth <= 900
+}
+
+onMounted(() => {
+  updateResponsiveSidebar()
+  window.addEventListener('resize', updateResponsiveSidebar)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateResponsiveSidebar)
+})
 
 // Convert side items to menu format if side prop is provided
 const menuItems = computed<MenuItem[]>(() => {
@@ -115,13 +130,13 @@ function toggleSidebar() {
 <template>
   <div class="module-page" :class="{ 'module-page--admin': isAdminSettingsShell }">
     <div class="sidebar-wrapper">
-      <Sidebar v-if="menuItems.length > 0" :collapsed="collapsed" :menus="menuItems" @toggle="toggleSidebar">
+      <Sidebar v-if="menuItems.length > 0" :collapsed="effectiveCollapsed" :menus="menuItems" @toggle="toggleSidebar">
         <template v-if="slots.sidebarPrepend" #prepend>
           <slot name="sidebar-prepend" />
         </template>
       </Sidebar>
     </div>
-    <div :class="{ 'sidebar-collapsed': collapsed || menuItems.length === 0 }" class="main-content">
+    <div :class="{ 'sidebar-collapsed': effectiveCollapsed || menuItems.length === 0 }" class="main-content">
       <div class="main-content-route-surface">
         <div v-if="!hidePageTitle" class="page-header">
           <div class="page-title-row">

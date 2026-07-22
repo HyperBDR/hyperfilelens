@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Activity, CircleCheck, CircleX, Clock3, RefreshCw, Search } from 'lucide-vue-next'
+import { CheckCircle2, CircleX, Clock3, RefreshCw, Search, Send } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
-import TaskTypeLabel from '../../../components/TaskTypeLabel.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
 import { apiErrorMessage } from '../../../lib/api'
@@ -17,10 +16,10 @@ import PlatformOpsOrgLink from '../../components/PlatformOpsOrgLink.vue'
 import PlatformOpsStatusPill from '../../components/PlatformOpsStatusPill.vue'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
 import {
-  fetchMonitoringTasks,
-  runMonitoringTaskAction,
-  type MonitoringTask,
-  type TaskStats,
+  fetchMonitoringDeliveries,
+  retryMonitoringDelivery,
+  type DeliveryStats,
+  type MonitoringDelivery,
 } from '../../lib/platformOpsApi'
 
 const { t } = useI18n()
@@ -28,34 +27,32 @@ const route = useRoute()
 const router = useRouter()
 const sideNav = usePlatformOpsSideNav()
 const { drawerSize } = useResponsiveDrawerWidth(3)
-const rows = ref<MonitoringTask[]>([])
-const stats = ref<TaskStats>({ total: 0, running: 0, failed: 0, timeout: 0, success_rate: 0 })
+const rows = ref<MonitoringDelivery[]>([])
+const stats = ref<DeliveryStats>({ total: 0, delivered: 0, failed: 0, pending: 0, delivery_rate: 0 })
 const loading = ref(false)
-const actionLoading = ref(false)
-const selected = ref<MonitoringTask | null>(null)
+const retrying = ref(false)
+const selected = ref<MonitoringDelivery | null>(null)
 const drawerOpen = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 const filters = reactive({
   search: String(route.query.search || ''),
   status: String(route.query.status || ''),
-  task_type: String(route.query.task_type || ''),
+  channel_type: String(route.query.channel_type || ''),
+  event_type: String(route.query.event_type || ''),
   org: String(route.query.org || ''),
 })
 const { schedule: scheduleSearch, runNow: runSearchNow } = useDebouncedAction(applyFilters)
-const canCancel = computed(() => selected.value?.status === 'pending' || selected.value?.status === 'running')
-const canRetry = computed(() => ['failed', 'timeout', 'cancelled'].includes(selected.value?.status || ''))
 
 function displayTime(value?: string | null) {
   return formatLocalDateTime(value, '—')
 }
 
-function duration(row: MonitoringTask) {
-  if (!row.started_at) return '—'
-  const end = row.finished_at ? new Date(row.finished_at).getTime() : Date.now()
-  const seconds = Math.max(0, Math.floor((end - new Date(row.started_at).getTime()) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+function payloadTitle(row: MonitoringDelivery) {
+  return String(row.payload?.title || row.payload?.subject || row.event_type || '—')
+}
+
+function payloadResource(row: MonitoringDelivery) {
+  return String(row.payload?.resource_name || row.payload?.alert_id || row.event_type || '—')
 }
 
 async function syncQuery() {
@@ -67,7 +64,7 @@ async function syncQuery() {
 async function load() {
   loading.value = true
   try {
-    const data = await fetchMonitoringTasks({ page: pagination.page, page_size: pagination.pageSize, ...filters })
+    const data = await fetchMonitoringDeliveries({ page: pagination.page, page_size: pagination.pageSize, ...filters })
     rows.value = data.results
     stats.value = data.stats || stats.value
     pagination.count = data.count
@@ -85,42 +82,42 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  Object.assign(filters, { search: '', status: '', task_type: '', org: '' })
+  Object.assign(filters, { search: '', status: '', channel_type: '', event_type: '', org: '' })
   runSearchNow()
 }
 
-function openDrawer(row: MonitoringTask) {
+function openDrawer(row: MonitoringDelivery) {
   selected.value = row
   drawerOpen.value = true
 }
 
-async function performAction(action: 'cancel' | 'retry') {
-  if (!selected.value) return
+async function retryDelivery() {
+  if (!selected.value || selected.value.status !== 'failed') return
   try {
     await ElMessageBox.confirm(
-      t(`platformOps.monitoring.confirmTask${action === 'cancel' ? 'Cancel' : 'Retry'}Message`),
-      t(`platformOps.monitoring.confirmTask${action === 'cancel' ? 'Cancel' : 'Retry'}Title`),
-      { type: action === 'cancel' ? 'warning' : 'info', confirmButtonText: t(`platformOps.monitoring.${action}Task`) },
+      t('platformOps.monitoring.confirmRetryDeliveryMessage'),
+      t('platformOps.monitoring.confirmRetryDeliveryTitle'),
+      { type: 'warning', confirmButtonText: t('platformOps.monitoring.retryDelivery') },
     )
   } catch {
     return
   }
-  actionLoading.value = true
+  retrying.value = true
   try {
-    await runMonitoringTaskAction(selected.value.task_uuid, action)
-    ElMessage.success({ message: t(`platformOps.monitoring.${action}TaskSuccess`), grouping: true })
+    await retryMonitoringDelivery(selected.value.id)
+    ElMessage.success({ message: t('platformOps.monitoring.retryDeliverySuccess'), grouping: true })
     drawerOpen.value = false
     await load()
   } catch (error) {
-    ElMessage.error({ message: apiErrorMessage(error, t('platformOps.monitoring.actionFailed')), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(error, t('platformOps.monitoring.retryDeliveryFailed')), grouping: true })
   } finally {
-    actionLoading.value = false
+    retrying.value = false
   }
 }
 
 onMounted(load)
 watch(() => filters.search, scheduleSearch)
-watch(() => [filters.status, filters.task_type, filters.org], runSearchNow)
+watch(() => [filters.status, filters.channel_type, filters.event_type, filters.org], runSearchNow)
 watch(() => [pagination.page, pagination.pageSize], load)
 </script>
 
@@ -132,53 +129,50 @@ watch(() => [pagination.page, pagination.pageSize], load)
     <div class="platform-monitoring-page">
       <div class="platform-monitoring-page__lead">
         <p class="platform-monitoring-page__subtitle">
-          {{ t('platformOps.monitoring.tasksSubtitle') }}
-        </p>
-        <span class="platform-monitoring-page__updated">{{ t('platformOps.monitoring.last24Hours') }}</span>
+          {{ t('platformOps.monitoring.deliveriesSubtitle') }}
+        </p><span class="platform-monitoring-page__updated">{{ t('platformOps.monitoring.last24Hours') }}</span>
       </div>
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
         <OpsStatCard
-          :label="t('platformOps.monitoring.runningTasks')"
-          :value="stats.running"
-          accent="blue"
+          :label="t('platformOps.monitoring.totalDeliveries')"
+          :value="stats.total"
+          accent="indigo"
           accent-side="left"
-          :pulse="stats.running > 0"
         >
           <template #icon>
-            <Activity :size="16" />
+            <Send :size="16" />
           </template>
         </OpsStatCard>
         <OpsStatCard
-          :label="t('platformOps.monitoring.failedTasks')"
+          :label="t('platformOps.monitoring.delivered')"
+          :value="stats.delivered"
+          accent="green"
+          accent-side="left"
+        >
+          <template #icon>
+            <CheckCircle2 :size="16" />
+          </template>
+        </OpsStatCard>
+        <OpsStatCard
+          :label="t('platformOps.monitoring.failedDeliveries')"
           :value="stats.failed"
-          :sub="t('platformOps.monitoring.last24Hours')"
           accent="red"
           accent-side="left"
+          :pulse="stats.failed > 0"
         >
           <template #icon>
             <CircleX :size="16" />
           </template>
         </OpsStatCard>
         <OpsStatCard
-          :label="t('platformOps.monitoring.timedOutTasks')"
-          :value="stats.timeout"
-          :sub="t('platformOps.monitoring.last24Hours')"
-          accent="orange"
+          :label="t('platformOps.monitoring.deliveryRate')"
+          :value="`${stats.delivery_rate}%`"
+          :sub="t('platformOps.monitoring.pendingCount', { count: stats.pending })"
+          accent="blue"
           accent-side="left"
         >
           <template #icon>
             <Clock3 :size="16" />
-          </template>
-        </OpsStatCard>
-        <OpsStatCard
-          :label="t('platformOps.monitoring.taskSuccessRate')"
-          :value="`${stats.success_rate}%`"
-          :sub="t('platformOps.monitoring.last24Hours')"
-          accent="green"
-          accent-side="left"
-        >
-          <template #icon>
-            <CircleCheck :size="16" />
           </template>
         </OpsStatCard>
       </div>
@@ -189,7 +183,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               v-model="filters.search"
               clearable
               class="platform-monitoring-page__search"
-              :placeholder="t('platformOps.monitoring.searchTasks')"
+              :placeholder="t('platformOps.monitoring.searchDeliveries')"
             >
               <template #prefix>
                 <Search :size="15" />
@@ -203,26 +197,43 @@ watch(() => [pagination.page, pagination.pageSize], load)
               :placeholder="t('platformOps.monitoring.filterStatus')"
             >
               <el-option
-                v-for="status in ['pending', 'running', 'success', 'failed', 'timeout', 'cancelled']"
-                :key="status"
-                :value="status"
-                :label="status"
+                value="sent"
+                label="Delivered"
+              /><el-option
+                value="failed"
+                label="Failed"
+              /><el-option
+                value="pending"
+                label="Pending"
               />
             </el-select>
             <el-select
-              v-model="filters.task_type"
+              v-model="filters.channel_type"
               clearable
               class="platform-monitoring-page__filter"
-              :aria-label="t('platformOps.monitoring.filterTaskType')"
-              :placeholder="t('platformOps.monitoring.filterTaskType')"
+              :aria-label="t('platformOps.monitoring.filterChannel')"
+              :placeholder="t('platformOps.monitoring.filterChannel')"
             >
               <el-option
-                v-for="type in ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'repository_operation']"
-                :key="type"
-                :value="type"
-                :label="type"
+                value="email"
+                label="Email"
+              /><el-option
+                value="webhook"
+                label="Webhook"
+              /><el-option
+                value="dingtalk"
+                label="DingTalk"
+              /><el-option
+                value="wecom"
+                label="WeCom"
               />
             </el-select>
+            <el-input
+              v-model="filters.event_type"
+              clearable
+              class="platform-monitoring-page__filter"
+              :placeholder="t('platformOps.monitoring.filterEventType')"
+            />
             <el-input
               v-model="filters.org"
               clearable
@@ -230,7 +241,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               :placeholder="t('platformOps.monitoring.filterAccount')"
             />
             <el-button
-              v-if="filters.search || filters.status || filters.task_type || filters.org"
+              v-if="filters.search || filters.status || filters.channel_type || filters.event_type || filters.org"
               text
               @click="resetFilters"
             >
@@ -263,7 +274,15 @@ watch(() => [pagination.page, pagination.pageSize], load)
             :max-height="tableMaxHeight"
           >
             <el-table-column
-              :label="t('platformOps.monitoring.colTask')"
+              :label="t('platformOps.monitoring.colStatus')"
+              width="115"
+            >
+              <template #default="{ row }">
+                  <PlatformOpsStatusPill :status="row.status === 'sent' ? 'Delivered' : row.status" />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('platformOps.monitoring.notification')"
               min-width="260"
             >
               <template #default="{ row }">
@@ -272,24 +291,16 @@ watch(() => [pagination.page, pagination.pageSize], load)
                   class="platform-monitoring-page__title-button"
                   @click="openDrawer(row)"
                 >
-                  {{ row.display_name }}
-                </button><span class="platform-monitoring-page__cell-meta">{{ row.current_step || row.task_uuid }}</span>
+                  {{ payloadTitle(row) }}
+                </button><span class="platform-monitoring-page__cell-meta">{{ payloadResource(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('platformOps.monitoring.colTaskType')"
+              :label="t('platformOps.monitoring.colChannel')"
               min-width="150"
             >
               <template #default="{ row }">
-                <TaskTypeLabel :type="row.task_type" />
-              </template>
-            </el-table-column>
-            <el-table-column
-              :label="t('platformOps.monitoring.colStatus')"
-              width="120"
-            >
-              <template #default="{ row }">
-                <PlatformOpsStatusPill :status="row.status" />
+                {{ row.channel_name }}<span class="platform-monitoring-page__cell-meta">{{ row.channel_type }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -304,38 +315,21 @@ watch(() => [pagination.page, pagination.pageSize], load)
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('platformOps.monitoring.progress')"
-              width="145"
-            >
-              <template #default="{ row }">
-                <div class="platform-monitoring-page__progress">
-                  <el-progress
-                    :percentage="Number(row.progress || 0)"
-                    :show-text="false"
-                    :stroke-width="6"
-                  /><span>{{ Number(row.progress || 0) }}%</span>
-                </div>
-              </template>
-            </el-table-column>
+              prop="event_type"
+              :label="t('platformOps.monitoring.eventType')"
+              min-width="170"
+            />
             <el-table-column
-              :label="t('platformOps.monitoring.duration')"
-              width="100"
-            >
-              <template #default="{ row }">
-                {{ duration(row) }}
-              </template>
-            </el-table-column>
-            <el-table-column
-              :label="t('platformOps.monitoring.colFinished')"
+              :label="t('platformOps.monitoring.lastAttempt')"
               width="170"
             >
               <template #default="{ row }">
-                {{ displayTime(row.finished_at || row.created_at) }}
+                {{ displayTime(row.sent_at || row.created_at) }}
               </template>
             </el-table-column>
             <template #empty>
               <el-empty
-                :description="t('platformOps.monitoring.emptyTasks')"
+                :description="t('platformOps.monitoring.emptyDeliveries')"
                 :image-size="72"
               />
             </template>
@@ -358,56 +352,47 @@ watch(() => [pagination.page, pagination.pageSize], load)
     >
       <template #header>
         <div class="platform-monitoring-drawer__header">
-          <h2>{{ selected?.display_name }}</h2><p>{{ selected?.status }} · {{ selected?.task_uuid }}</p>
+          <h2>{{ selected ? payloadTitle(selected) : '' }}</h2><p>{{ selected?.status }} · {{ selected?.channel_type }}</p>
         </div>
       </template>
       <template v-if="selected">
         <div class="platform-monitoring-drawer__actions">
           <el-button
-            v-if="canCancel"
-            type="danger"
-            plain
-            :loading="actionLoading"
-            @click="performAction('cancel')"
-          >
-            {{ t('platformOps.monitoring.cancelTask') }}
-          </el-button><el-button
-            v-if="canRetry"
+            v-if="selected.status === 'failed'"
             type="primary"
-            :loading="actionLoading"
-            @click="performAction('retry')"
+            :loading="retrying"
+            @click="retryDelivery"
           >
-            {{ t('platformOps.monitoring.retryTask') }}
+            {{ t('platformOps.monitoring.retryDelivery') }}
           </el-button>
         </div>
         <section class="platform-monitoring-drawer__section">
-          <h3>{{ t('platformOps.monitoring.taskDetails') }}</h3><div class="platform-monitoring-drawer__grid">
+          <h3>{{ t('platformOps.monitoring.deliveryDetails') }}</h3><div class="platform-monitoring-drawer__grid">
             <div class="platform-monitoring-drawer__field">
               <span>{{ t('platformOps.monitoring.account') }}</span><strong>{{ selected.organization_key }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.colTaskType') }}</span><strong>{{ selected.task_type }}</strong>
+              <span>{{ t('platformOps.monitoring.colChannel') }}</span><strong>{{ selected.channel_name }} · {{ selected.channel_type }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.started') }}</span><strong>{{ displayTime(selected.started_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.eventType') }}</span><strong>{{ selected.event_type }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.finished') }}</span><strong>{{ displayTime(selected.finished_at) }}</strong>
-            </div>
-            <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.duration') }}</span><strong>{{ duration(selected) }}</strong>
-            </div>
-            <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.retryCount') }}</span><strong>{{ selected.retry_count }}</strong>
+              <span>{{ t('platformOps.monitoring.lastAttempt') }}</span><strong>{{ displayTime(selected.sent_at || selected.created_at) }}</strong>
             </div>
           </div>
         </section>
         <section
-          v-if="selected.error_message"
+          v-if="selected.error"
           class="platform-monitoring-drawer__section"
         >
-          <h3>{{ t('platformOps.monitoring.errorDetails') }}</h3><p class="platform-monitoring-drawer__message">
-            {{ selected.error_code ? `${selected.error_code}: ` : '' }}{{ selected.error_message }}
+          <h3>{{ t('platformOps.monitoring.failureDetails') }}</h3><p class="platform-monitoring-drawer__message">
+            {{ selected.error }}
+          </p>
+        </section>
+        <section class="platform-monitoring-drawer__section">
+          <h3>{{ t('platformOps.monitoring.payload') }}</h3><p class="platform-monitoring-drawer__message">
+            {{ JSON.stringify(selected.payload, null, 2) }}
           </p>
         </section>
       </template>

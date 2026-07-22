@@ -9,10 +9,13 @@ from apps.platform_ops.api.views.billing import (
 )
 from apps.platform_ops.api.views.monitoring import (
     PlatformOpsMonitoringAlertsView,
+    PlatformOpsMonitoringAlertActionView,
     PlatformOpsMonitoringHostView,
     PlatformOpsMonitoringHostsView,
     PlatformOpsMonitoringNodesView,
     PlatformOpsMonitoringNotificationsView,
+    PlatformOpsMonitoringNotificationRetryView,
+    PlatformOpsMonitoringTaskActionView,
     PlatformOpsMonitoringTasksView,
 )
 from apps.platform_ops.api.views.orgs import (
@@ -97,12 +100,27 @@ urlpatterns = [
     ),
     path("staff-activity", PlatformOpsStaffActivityView.as_view(), name="platform-ops-staff-activity"),
     path("monitoring/alerts", PlatformOpsMonitoringAlertsView.as_view(), name="platform-ops-monitoring-alerts"),
+    path(
+        "monitoring/alerts/<uuid:alert_id>/<str:action>",
+        PlatformOpsMonitoringAlertActionView.as_view(),
+        name="platform-ops-monitoring-alert-action",
+    ),
     path("monitoring/tasks", PlatformOpsMonitoringTasksView.as_view(), name="platform-ops-monitoring-tasks"),
+    path(
+        "monitoring/tasks/<uuid:task_uuid>/<str:action>",
+        PlatformOpsMonitoringTaskActionView.as_view(),
+        name="platform-ops-monitoring-task-action",
+    ),
     path("monitoring/nodes", PlatformOpsMonitoringNodesView.as_view(), name="platform-ops-monitoring-nodes"),
     path(
         "monitoring/notifications",
         PlatformOpsMonitoringNotificationsView.as_view(),
         name="platform-ops-monitoring-notifications",
+    ),
+    path(
+        "monitoring/notifications/<int:delivery_id>/retry",
+        PlatformOpsMonitoringNotificationRetryView.as_view(),
+        name="platform-ops-monitoring-notification-retry",
     ),
     path("monitoring/hosts", PlatformOpsMonitoringHostsView.as_view(), name="platform-ops-monitoring-hosts"),
     path("monitoring/host", PlatformOpsMonitoringHostView.as_view(), name="platform-ops-monitoring-host"),

@@ -10,6 +10,8 @@ const STATUS_ALIASES: Record<string, string> = {
   active: 'success',
   ok: 'success',
   healthy: 'success',
+  sent: 'success',
+  delivered: 'success',
   failure: 'failed',
   failed: 'failed',
   error: 'failed',

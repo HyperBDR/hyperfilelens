@@ -28,10 +28,16 @@ export const platformOpsRoutes = [
     component: lazyRoute(() => import('./pages/orgs/OrgDetail.vue')),
   },
   {
-    path: 'monitoring/host',
-    name: 'PlatformOpsMonitoringHost',
+    path: 'monitoring/incidents',
+    name: 'PlatformOpsMonitoringIncidents',
+    component: lazyRoute(() => import('./pages/monitoring/MonitoringIncidents.vue')),
+  },
+  {
+    path: 'monitoring/system-health',
+    name: 'PlatformOpsMonitoringSystemHealth',
     component: lazyRoute(() => import('./pages/monitoring/MonitoringHost.vue')),
   },
+  { path: 'monitoring/host', redirect: '/platform-ops/monitoring/system-health' },
   {
     path: 'monitoring/tasks',
     name: 'PlatformOpsMonitoringTasks',
@@ -42,6 +48,12 @@ export const platformOpsRoutes = [
     name: 'PlatformOpsMonitoringNodes',
     component: lazyRoute(() => import('./pages/monitoring/MonitoringNodes.vue')),
   },
+  {
+    path: 'monitoring/notification-deliveries',
+    name: 'PlatformOpsMonitoringDeliveries',
+    component: lazyRoute(() => import('./pages/monitoring/MonitoringDeliveries.vue')),
+  },
+  { path: 'monitoring/notifications', redirect: '/platform-ops/monitoring/notification-deliveries' },
   {
     path: 'platform/settings/email',
     name: 'PlatformOpsSettingsEmail',

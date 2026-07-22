@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, RefreshCw, Search, Server } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
@@ -6,10 +7,23 @@ import SystemMonitorDashboard from '../../../components/monitor/SystemMonitorDas
 import HflDateTimeRangePicker from '../../../components/HflDateTimeRangePicker.vue'
 import { useDeploymentHostMonitor } from '../../composables/useDeploymentHostMonitor'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
-import { fetchPlatformDeploymentHosts, fetchPlatformHostMonitor } from '../../lib/platformOpsApi'
+import {
+  fetchPlatformDeploymentHosts,
+  fetchPlatformHostMonitor,
+  fetchPlatformOverview,
+  type PlatformOverviewPayload,
+} from '../../lib/platformOpsApi'
 
 const { t } = useI18n()
 const sideNav = usePlatformOpsSideNav()
+const healthPayload = ref<PlatformOverviewPayload | null>(null)
+const healthLoading = ref(false)
+const health = computed(() => healthPayload.value?.system_health)
+const overallLabel = computed(() => (
+  health.value
+    ? t(`platformOps.overview.health.${health.value.overall_status}`)
+    : t('platformOps.monitoring.serviceHealthUnavailable')
+))
 
 const {
   loading,
@@ -52,20 +66,50 @@ const {
   fetchPlatformDeploymentHosts,
   'platformOps.monitoring.hostLoadFailed',
 )
+
+async function loadHealth() {
+  healthLoading.value = true
+  try {
+    healthPayload.value = await fetchPlatformOverview(1)
+  } catch {
+    healthPayload.value = null
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([onManualRefresh(), loadHealth()])
+}
+
+onMounted(loadHealth)
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" body-fill>
-    <div v-loading="loading" class="platform-host-monitor">
+  <ModulePage
+    :menus="sideNav"
+    body-fill
+  >
+    <div
+      v-loading="loading"
+      class="platform-host-monitor"
+    >
       <header class="platform-host-monitor__toolbar">
-        <div ref="entityDropdownRef" class="platform-host-monitor__host">
+        <div
+          ref="entityDropdownRef"
+          class="platform-host-monitor__host"
+        >
           <button
             type="button"
             class="platform-host-monitor__host-btn"
             :disabled="loading"
             @click.stop="showEntityDropdown = !showEntityDropdown"
           >
-            <Server :size="16" class="platform-host-monitor__host-icon" aria-hidden="true" />
+            <Server
+              :size="16"
+              class="platform-host-monitor__host-icon"
+              aria-hidden="true"
+            />
             <span class="platform-host-monitor__host-btn-main">
               <span class="platform-host-monitor__host-text">
                 <span class="platform-host-monitor__host-label">{{ t('platformOps.monitoring.hostTarget') }}</span>
@@ -85,7 +129,10 @@ const {
                     : 'platform-host-monitor__host-status--offline'
                 "
               >
-                <span class="platform-host-monitor__host-status-dot" aria-hidden="true" />
+                <span
+                  class="platform-host-monitor__host-status-dot"
+                  aria-hidden="true"
+                />
                 {{ hostStatusLabel(selectedHost.status) }}
               </span>
             </span>
@@ -96,17 +143,26 @@ const {
             />
           </button>
 
-          <div v-if="showEntityDropdown" class="platform-host-monitor__host-panel">
+          <div
+            v-if="showEntityDropdown"
+            class="platform-host-monitor__host-panel"
+          >
             <div class="platform-host-monitor__host-search">
-              <Search :size="16" class="platform-host-monitor__search-icon" />
+              <Search
+                :size="16"
+                class="platform-host-monitor__search-icon"
+              />
               <input
                 v-model="entitySearch"
                 type="text"
                 :placeholder="t('platformOps.monitoring.hostSearchPlaceholder')"
-              />
+              >
             </div>
             <div class="platform-host-monitor__host-list">
-              <p v-if="!filteredEntities.length" class="platform-host-monitor__host-empty">
+              <p
+                v-if="!filteredEntities.length"
+                class="platform-host-monitor__host-empty"
+              >
                 {{ t('platformOps.monitoring.hostNoHosts') }}
               </p>
               <button
@@ -119,7 +175,10 @@ const {
               >
                 <span class="platform-host-monitor__host-item-main">
                   <span class="platform-host-monitor__host-item-label">{{ entity.label }}</span>
-                  <span v-if="entity.detail" class="platform-host-monitor__host-item-detail">{{ entity.detail }}</span>
+                  <span
+                    v-if="entity.detail"
+                    class="platform-host-monitor__host-item-detail"
+                  >{{ entity.detail }}</span>
                 </span>
                 <span
                   class="platform-host-monitor__host-status"
@@ -129,7 +188,10 @@ const {
                       : 'platform-host-monitor__host-status--offline'
                   "
                 >
-                  <span class="platform-host-monitor__host-status-dot" aria-hidden="true" />
+                  <span
+                    class="platform-host-monitor__host-status-dot"
+                    aria-hidden="true"
+                  />
                   {{ hostStatusLabel(entity.status) }}
                 </span>
               </button>
@@ -158,14 +220,46 @@ const {
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
             :disabled="loading"
-            @click="onManualRefresh"
+            @click="refreshAll"
           >
-            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': loading }"
+            />
           </el-button>
         </div>
       </header>
 
-      <p class="platform-host-monitor__subtitle">{{ t('platformOps.monitoring.hostSubtitle') }}</p>
+      <p class="platform-host-monitor__subtitle">
+        {{ t('platformOps.monitoring.hostSubtitle') }}
+      </p>
+
+      <section
+        v-loading="healthLoading"
+        class="platform-health-summary"
+        :aria-label="t('platformOps.monitoring.serviceHealth')"
+      >
+        <div class="platform-health-summary__state">
+          <strong>{{ overallLabel }}</strong>
+          <span v-if="health">{{ t('platformOps.overview.healthSummary', {
+            healthy: health.healthy_count,
+            degraded: health.degraded_count,
+            unavailable: health.unavailable_count,
+          }) }}</span>
+          <span v-else>{{ t('platformOps.monitoring.serviceHealthUnavailableHint') }}</span>
+        </div>
+        <div class="platform-health-summary__services">
+          <div
+            v-for="service in health?.services || []"
+            :key="service.key"
+            class="platform-health-summary__service"
+            :class="`is-${service.status}`"
+          >
+            <i aria-hidden="true" />
+            <span>{{ service.label }}<span v-if="service.detail"> · {{ service.detail }}</span></span>
+          </div>
+        </div>
+      </section>
 
       <SystemMonitorDashboard
         :kpi-cards="kpiCards"
