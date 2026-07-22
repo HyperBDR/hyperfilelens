@@ -17,7 +17,12 @@ from apps.lens_bridge.api.serializers import (
     LensKnowledgeSourceSerializer,
     LensKnowledgeSourceUpdateSerializer,
 )
-from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+from apps.iam.models import Organization
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensOrgModelLink,
+)
 from apps.lens_bridge.services import (
     gateway_readiness,
     knowledge_source_sync,
@@ -63,6 +68,42 @@ from common.deploy.site import enrollment_tls_verify
 
 def _platform_org():
     return platform_lens.get_or_create_platform_org()
+
+
+def _deployment_managed_model_link(
+    org: Organization,
+    config_uuid: uuid.UUID,
+) -> LensOrgModelLink | None:
+    return (
+        org_models.org_model_links(org)
+        .filter(sl_config_uuid=config_uuid)
+        .exclude(management_key="")
+        .first()
+    )
+
+
+def _deployment_managed_model_error() -> Response:
+    return Response(
+        {
+            "code": "AI_MODEL_MANAGED_BY_DEPLOYMENT",
+            "detail": (
+                "This AI model is managed by deployment configuration. "
+                "Connection settings are read-only."
+            ),
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
+def _set_platform_default_model_ref(
+    org: Organization,
+    config_uuid: uuid.UUID | None,
+) -> None:
+    link = provisioning.get_or_create_org_link(org)
+    if link.default_agent_model_ref == config_uuid:
+        return
+    link.default_agent_model_ref = config_uuid
+    link.save(update_fields=["default_agent_model_ref", "updated_at"])
 
 
 def _platform_gateway(gateway_id: int) -> Node | None:
@@ -392,10 +433,18 @@ class PlatformOpsLensModelProxyView(APIView):
             )
             org_models.set_model_display_name(link, display_name)
             data = org_models.merge_model_display_name(data, link)
+            if body.get("is_default") is True:
+                _set_platform_default_model_ref(
+                    org,
+                    uuid.UUID(str(config_uuid_created)),
+                )
         return Response(data, status=status.HTTP_201_CREATED)
 
     def put(self, request, config_uuid):
         org = _platform_org()
+        managed_link = _deployment_managed_model_link(org, config_uuid)
+        if managed_link is not None and set(request.data) - {"is_default"}:
+            return _deployment_managed_model_error()
         body = dict(request.data)
         display_name = body.pop("name", None)
         data = sl_client.request_json(
@@ -417,6 +466,8 @@ class PlatformOpsLensModelProxyView(APIView):
         if link is not None:
             org_models.set_model_display_name(link, display_name)
             link.refresh_from_db(fields=["display_name"])
+        if body.get("is_default") is True:
+            _set_platform_default_model_ref(org, config_uuid)
         return Response(org_models.merge_model_display_name(data, link))
 
     def patch(self, request, config_uuid):
@@ -424,13 +475,16 @@ class PlatformOpsLensModelProxyView(APIView):
 
     def delete(self, request, config_uuid):
         org = _platform_org()
+        if _deployment_managed_model_link(org, config_uuid) is not None:
+            return _deployment_managed_model_error()
         sl_client.request_json("DELETE", f"/api/v1/admin/llm-config/{config_uuid}/")
-        from apps.lens_bridge.models import LensOrgModelLink
-
         LensOrgModelLink.objects.filter(
             organization=org,
             sl_config_uuid=config_uuid,
         ).update(is_deleted=True)
+        platform_defaults = provisioning.get_or_create_org_link(org)
+        if platform_defaults.default_agent_model_ref == config_uuid:
+            _set_platform_default_model_ref(org, None)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

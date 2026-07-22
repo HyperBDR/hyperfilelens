@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, CirclePlay, CircleStop, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-vue-next'
+import { ChevronDown, CirclePlay, CircleStop, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-vue-next'
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
@@ -74,6 +74,12 @@ const filteredModels = computed(() => {
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => selectedRows.value.length === 1 ? selectedRows.value[0]! : null)
+const selectedIsManaged = computed(() => Boolean(singleSelected.value?.deployment_managed))
+const selectedCanSetDefault = computed(() => Boolean(
+  singleSelected.value &&
+  singleSelected.value.is_active !== false &&
+  !singleSelected.value.is_default,
+))
 
 function modelName(row: LensLlmConfig) {
   if (row.name?.trim()) return row.name.trim()
@@ -124,10 +130,22 @@ function onSelectionChange(rows: LensLlmConfig[]) {
 }
 
 async function setActive(row: LensLlmConfig, isActive: boolean) {
+  if (row.deployment_managed) return
   if (row.is_active === isActive) return
   try {
     await patchLensModel(row.uuid, { is_active: isActive })
     ElMessage.success({ message: t('insight.aiSettings.saveSuccess'), grouping: true })
+    await load()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+  }
+}
+
+async function setDefault(row: LensLlmConfig) {
+  if (row.is_default || row.is_active === false) return
+  try {
+    await patchLensModel(row.uuid, { is_default: true })
+    ElMessage.success({ message: t('insight.aiSettings.defaultModelSaved'), grouping: true })
     await load()
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
@@ -159,26 +177,32 @@ async function confirmDelete() {
 
 async function deleteSelected() {
   const row = singleSelected.value
-  if (!row) return
+  if (!row || row.deployment_managed) return
   await deleteRow(row)
 }
 
 async function enableSelected() {
   const row = singleSelected.value
-  if (!row) return
+  if (!row || row.deployment_managed) return
   await setActive(row, true)
 }
 
 async function disableSelected() {
   const row = singleSelected.value
-  if (!row) return
+  if (!row || row.deployment_managed) return
   await setActive(row, false)
 }
 
 function editSelected() {
   const row = singleSelected.value
-  if (!row) return
+  if (!row || row.deployment_managed) return
   openEdit(row)
+}
+
+async function setSelectedDefault() {
+  const row = singleSelected.value
+  if (!row) return
+  await setDefault(row)
 }
 
 onMounted(() => {
@@ -210,19 +234,25 @@ onMounted(() => {
           </ElButton>
           <template #dropdown>
             <ElDropdownMenu>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="editSelected">
+              <ElDropdownItem :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="editSelected">
                 <span class="el-dropdown-menu__item-content">
                   <Pencil :size="14" class="shrink-0" />
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem divided :disabled="batchDisabled || !singleSelected" @click="enableSelected">
+              <ElDropdownItem :disabled="!selectedCanSetDefault" @click="setSelectedDefault">
+                <span class="el-dropdown-menu__item-content">
+                  <Star :size="14" class="shrink-0" />
+                  <span>{{ t('insight.aiSettings.setDefault') }}</span>
+                </span>
+              </ElDropdownItem>
+              <ElDropdownItem divided :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="enableSelected">
                 <span class="el-dropdown-menu__item-content">
                   <CirclePlay :size="14" class="shrink-0" />
                   <span>{{ t('insight.aiSettings.enable') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="batchDisabled || !singleSelected" @click="disableSelected">
+              <ElDropdownItem :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="disableSelected">
                 <span class="el-dropdown-menu__item-content">
                   <CircleStop :size="14" class="shrink-0" />
                   <span>{{ t('insight.aiSettings.disable') }}</span>
@@ -231,7 +261,7 @@ onMounted(() => {
               <ElDropdownItem
                 divided
                 class="el-dropdown-menu__item--danger"
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || selectedIsManaged"
                 @click="deleteSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -289,9 +319,19 @@ onMounted(() => {
             class-name="hfl-table-name-col"
           >
             <template #default="{ row }">
-              <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
-                {{ modelName(row) }}
-              </button>
+              <div class="insight-ai-models-name">
+                <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
+                  {{ modelName(row) }}
+                </button>
+                <div v-if="row.is_default || row.deployment_managed" class="insight-ai-models-badges">
+                  <ElTag v-if="row.is_default" size="small" type="success" effect="plain">
+                    {{ t('insight.aiSettings.defaultBadge') }}
+                  </ElTag>
+                  <ElTag v-if="row.deployment_managed" size="small" type="info" effect="plain">
+                    {{ t('insight.aiSettings.deploymentManagedBadge') }}
+                  </ElTag>
+                </div>
+              </div>
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.aiSettings.labelProvider')" min-width="120">
@@ -349,5 +389,19 @@ onMounted(() => {
 .insight-ai-models-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+}
+
+.insight-ai-models-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.insight-ai-models-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 </style>

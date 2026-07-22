@@ -69,6 +69,8 @@ export type LensLlmConfig = {
     api_key?: string
   }
   is_active?: boolean
+  is_default?: boolean
+  deployment_managed?: boolean
   order?: number
   scope?: string
 }
@@ -448,6 +450,15 @@ export async function testLensModel(body: Record<string, unknown>): Promise<unkn
     method: 'POST',
     headers: lensHeaders(),
     body: JSON.stringify(body),
+  })
+  return lensPayload(raw)
+}
+
+export async function testSavedLensModel(uuid: string): Promise<unknown> {
+  const raw = await api(lensUrl(`models/${uuid}/test-call/`), {
+    method: 'POST',
+    headers: lensHeaders(),
+    body: JSON.stringify({}),
   })
   return lensPayload(raw)
 }

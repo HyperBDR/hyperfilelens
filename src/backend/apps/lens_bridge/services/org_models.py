@@ -39,7 +39,19 @@ def merge_model_display_name(data: dict[str, Any], link: LensOrgModelLink | None
     out = dict(data)
     stored = (link.display_name if link else "") or ""
     out["name"] = stored.strip() or default_model_display_name(out)
+    out["deployment_managed"] = bool(link and link.management_key)
     return out
+
+
+def deployment_managed_model_uuid(org: Organization) -> uuid.UUID | None:
+    """Return the active deployment-managed model UUID for an organization."""
+
+    return (
+        org_model_links(org)
+        .exclude(management_key="")
+        .values_list("sl_config_uuid", flat=True)
+        .first()
+    )
 
 
 def set_model_display_name(link: LensOrgModelLink, name: str | None) -> None:

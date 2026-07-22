@@ -35,6 +35,9 @@ class LensOrgModelLink(OrganizationScopedModel):
 
     sl_config_uuid = models.UUIDField(db_index=True)
     display_name = models.CharField(max_length=160, blank=True, default="")
+    management_key = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -54,6 +57,11 @@ class LensOrgModelLink(OrganizationScopedModel):
             models.UniqueConstraint(
                 fields=["sl_config_uuid"],
                 name="uniq_lens_bridge_org_model_uuid",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "management_key"],
+                condition=~models.Q(management_key=""),
+                name="uniq_lens_borgmdl_org_mgmt_key",
             ),
         ]
         indexes = [

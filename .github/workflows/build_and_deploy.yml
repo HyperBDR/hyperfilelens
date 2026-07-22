@@ -600,10 +600,15 @@ jobs:
       smtp_username: ${{ vars.PREPROD_SMTP_USERNAME }}
       smtp_security: ${{ vars.PREPROD_SMTP_SECURITY }}
       email_from: ${{ vars.PREPROD_EMAIL_FROM }}
+      ai_model_provider: ${{ vars.PREPROD_AI_MODEL_PROVIDER }}
+      ai_model_id: ${{ vars.PREPROD_AI_MODEL_ID }}
+      ai_model_display_name: ${{ vars.PREPROD_AI_MODEL_DISPLAY_NAME }}
     secrets:
       ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}
       smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}
+      ai_model_api_base: ${{ secrets.PREPROD_AI_MODEL_API_BASE }}
+      ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
 
   deploy-prod:
     needs: [prepare, publish-release, deploy-preprod]
@@ -631,7 +636,12 @@ jobs:
       smtp_username: ${{ vars.PROD_SMTP_USERNAME }}
       smtp_security: ${{ vars.PROD_SMTP_SECURITY }}
       email_from: ${{ vars.PROD_EMAIL_FROM }}
+      ai_model_provider: ${{ vars.PROD_AI_MODEL_PROVIDER }}
+      ai_model_id: ${{ vars.PROD_AI_MODEL_ID }}
+      ai_model_display_name: ${{ vars.PROD_AI_MODEL_DISPLAY_NAME }}
     secrets:
       ssh_private_key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}
       smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}
+      ai_model_api_base: ${{ secrets.PROD_AI_MODEL_API_BASE }}
+      ai_model_api_key: ${{ secrets.PROD_AI_MODEL_API_KEY }}
