@@ -635,13 +635,14 @@
 }
 
 .el-table__empty-text {
-  position: sticky;
-  left: 50%;
-  display: inline-flex;
-  width: max-content;
-  max-width: calc(100vw - 48px);
-  transform: translateX(-50%);
+  position: static;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  transform: none;
+  align-items: center;
   justify-content: center;
+  text-align: center;
   color: var(--el-text-color-secondary, #A6A6A6) !important;
   font-size: 14px;
   line-height: normal;

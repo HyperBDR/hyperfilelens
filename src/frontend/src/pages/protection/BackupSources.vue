@@ -1781,7 +1781,7 @@ onUnmounted(() => {
               clearable
               size="small"
               class="hfl-list-search hfl-list-search-group"
-              @search="runFilterSearch"
+              @keyup.enter="runFilterSearch"
               @clear="clearSearch"
             >
               <template #prepend>
