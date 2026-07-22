@@ -24,7 +24,7 @@ const sideNav = usePlatformOpsSideNav()
 const { drawerSize } = useResponsiveDrawerWidth(3)
 const rows = ref<MonitoringNode[]>([])
 const stats = ref<NodeStats>({ total: 0, online: 0, offline: 0, outdated: 0, latest_version: '' })
-const loading = ref(false)
+const busy = ref(false)
 const selected = ref<MonitoringNode | null>(null)
 const drawerOpen = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
@@ -56,7 +56,7 @@ async function syncQuery() {
 }
 
 async function load() {
-  loading.value = true
+  busy.value = true
   try {
     const data = await fetchMonitoringNodes({ page: pagination.page, page_size: pagination.pageSize, ...filters })
     rows.value = data.results
@@ -65,7 +65,7 @@ async function load() {
   } catch (error) {
     ElMessage.error({ message: apiErrorMessage(error, t('platformOps.monitoring.loadFailed')), grouping: true })
   } finally {
-    loading.value = false
+    busy.value = false
   }
 }
 
@@ -212,18 +212,18 @@ watch(() => [pagination.page, pagination.pageSize], load)
             class="hfl-refresh-button"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
-            :disabled="loading"
+            :disabled="busy"
             @click="load"
           >
             <RefreshCw
               :size="16"
-              :class="{ 'is-spinning': loading }"
+              :class="{ 'is-spinning': busy }"
             />
           </el-button>
         </template>
         <template #table="{ tableMaxHeight }">
           <el-table
-            v-loading="loading"
+            v-loading="busy"
             :data="rows"
             stripe
             flexible

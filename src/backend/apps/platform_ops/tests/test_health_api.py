@@ -164,9 +164,16 @@ class PlatformOpsMonitoringApiTest(TestCase):
             delivery.save(update_fields=["status", "sent_at"])
             return SimpleNamespace(ok=True)
 
-        with patch(
-            "apps.platform_ops.api.views.monitoring.attempt_delivery",
-            side_effect=deliver,
+        with (
+            patch.object(
+                NotificationDelivery.objects,
+                "select_for_update",
+                wraps=NotificationDelivery.objects.select_for_update,
+            ) as select_for_update,
+            patch(
+                "apps.platform_ops.api.views.monitoring.attempt_delivery",
+                side_effect=deliver,
+            ),
         ):
             response = self.client.post(
                 f"/api/v1/platform-ops/monitoring/notifications/{delivery.id}/retry",
@@ -174,8 +181,20 @@ class PlatformOpsMonitoringApiTest(TestCase):
                 format="json",
             )
         self.assertEqual(response.status_code, 200)
+        select_for_update.assert_called_once_with()
         delivery.refresh_from_db()
         self.assertEqual(delivery.status, NotificationDelivery.Status.SENT)
+
+        with patch(
+            "apps.platform_ops.api.views.monitoring.attempt_delivery",
+        ) as attempt_again:
+            response = self.client.post(
+                f"/api/v1/platform-ops/monitoring/notifications/{delivery.id}/retry",
+                {},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 400)
+        attempt_again.assert_not_called()
 
     def test_platform_environment_ok(self):
         response = self.client.get("/api/v1/platform-ops/platform/settings/environment")

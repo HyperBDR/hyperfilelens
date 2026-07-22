@@ -2,8 +2,9 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Activity, CircleCheck, CircleX, Clock3, RefreshCw, Search } from 'lucide-vue-next'
+import DangerConfirmDialog, { type DangerConfirmItem } from '../../../components/DangerConfirmDialog.vue'
 import ModulePage from '../../../components/ModulePage.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
@@ -30,10 +31,13 @@ const sideNav = usePlatformOpsSideNav()
 const { drawerSize } = useResponsiveDrawerWidth(3)
 const rows = ref<MonitoringTask[]>([])
 const stats = ref<TaskStats>({ total: 0, running: 0, failed: 0, timeout: 0, success_rate: 0 })
-const loading = ref(false)
+const busy = ref(false)
 const actionLoading = ref(false)
 const selected = ref<MonitoringTask | null>(null)
 const drawerOpen = ref(false)
+const actionConfirmOpen = ref(false)
+const pendingAction = ref<'cancel' | 'retry' | null>(null)
+const pendingTask = ref<MonitoringTask | null>(null)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 const filters = reactive({
   search: String(route.query.search || ''),
@@ -44,6 +48,25 @@ const filters = reactive({
 const { schedule: scheduleSearch, runNow: runSearchNow } = useDebouncedAction(applyFilters)
 const canCancel = computed(() => selected.value?.status === 'pending' || selected.value?.status === 'running')
 const canRetry = computed(() => ['failed', 'timeout', 'cancelled'].includes(selected.value?.status || ''))
+const actionConfirmTitle = computed(() => t(
+  `platformOps.monitoring.confirmTask${pendingAction.value === 'cancel' ? 'Cancel' : 'Retry'}Title`,
+))
+const actionConfirmMessage = computed(() => t(
+  `platformOps.monitoring.confirmTask${pendingAction.value === 'cancel' ? 'Cancel' : 'Retry'}Message`,
+))
+const actionConfirmText = computed(() => t(
+  `platformOps.monitoring.${pendingAction.value === 'cancel' ? 'cancel' : 'retry'}Task`,
+))
+const actionConfirmItems = computed<DangerConfirmItem[]>(() => (
+  pendingTask.value
+    ? [{
+        key: pendingTask.value.task_uuid,
+        name: pendingTask.value.display_name,
+        description: pendingTask.value.organization_key,
+        status: { label: pendingTask.value.status, tone: pendingAction.value === 'cancel' ? 'danger' : 'info' },
+      }]
+    : []
+))
 
 function displayTime(value?: string | null) {
   return formatLocalDateTime(value, '—')
@@ -65,7 +88,7 @@ async function syncQuery() {
 }
 
 async function load() {
-  loading.value = true
+  busy.value = true
   try {
     const data = await fetchMonitoringTasks({ page: pagination.page, page_size: pagination.pageSize, ...filters })
     rows.value = data.results
@@ -74,7 +97,7 @@ async function load() {
   } catch (error) {
     ElMessage.error({ message: apiErrorMessage(error, t('platformOps.monitoring.loadFailed')), grouping: true })
   } finally {
-    loading.value = false
+    busy.value = false
   }
 }
 
@@ -94,21 +117,30 @@ function openDrawer(row: MonitoringTask) {
   drawerOpen.value = true
 }
 
-async function performAction(action: 'cancel' | 'retry') {
+function requestAction(action: 'cancel' | 'retry') {
   if (!selected.value) return
-  try {
-    await ElMessageBox.confirm(
-      t(`platformOps.monitoring.confirmTask${action === 'cancel' ? 'Cancel' : 'Retry'}Message`),
-      t(`platformOps.monitoring.confirmTask${action === 'cancel' ? 'Cancel' : 'Retry'}Title`),
-      { type: action === 'cancel' ? 'warning' : 'info', confirmButtonText: t(`platformOps.monitoring.${action}Task`) },
-    )
-  } catch {
-    return
-  }
+  pendingAction.value = action
+  pendingTask.value = selected.value
+  actionConfirmOpen.value = true
+}
+
+function cancelAction() {
+  if (actionLoading.value) return
+  pendingAction.value = null
+  pendingTask.value = null
+}
+
+async function performAction() {
+  const action = pendingAction.value
+  const task = pendingTask.value
+  if (!action || !task) return
   actionLoading.value = true
   try {
-    await runMonitoringTaskAction(selected.value.task_uuid, action)
+    await runMonitoringTaskAction(task.task_uuid, action)
     ElMessage.success({ message: t(`platformOps.monitoring.${action}TaskSuccess`), grouping: true })
+    actionConfirmOpen.value = false
+    pendingAction.value = null
+    pendingTask.value = null
     drawerOpen.value = false
     await load()
   } catch (error) {
@@ -243,18 +275,18 @@ watch(() => [pagination.page, pagination.pageSize], load)
             class="hfl-refresh-button"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
-            :disabled="loading"
+            :disabled="busy"
             @click="load"
           >
             <RefreshCw
               :size="16"
-              :class="{ 'is-spinning': loading }"
+              :class="{ 'is-spinning': busy }"
             />
           </el-button>
         </template>
         <template #table="{ tableMaxHeight }">
           <el-table
-            v-loading="loading"
+            v-loading="busy"
             :data="rows"
             stripe
             flexible
@@ -368,14 +400,14 @@ watch(() => [pagination.page, pagination.pageSize], load)
             type="danger"
             plain
             :loading="actionLoading"
-            @click="performAction('cancel')"
+            @click="requestAction('cancel')"
           >
             {{ t('platformOps.monitoring.cancelTask') }}
           </el-button><el-button
             v-if="canRetry"
             type="primary"
             :loading="actionLoading"
-            @click="performAction('retry')"
+            @click="requestAction('retry')"
           >
             {{ t('platformOps.monitoring.retryTask') }}
           </el-button>
@@ -412,5 +444,17 @@ watch(() => [pagination.page, pagination.pageSize], load)
         </section>
       </template>
     </el-drawer>
+    <DangerConfirmDialog
+      v-model="actionConfirmOpen"
+      :title="actionConfirmTitle"
+      :message="actionConfirmMessage"
+      :items="actionConfirmItems"
+      :level="pendingAction === 'cancel' ? 'high' : 'low'"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="actionConfirmText"
+      :loading="actionLoading"
+      @confirm="performAction"
+      @cancel="cancelAction"
+    />
   </ModulePage>
 </template>
