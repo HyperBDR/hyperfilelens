@@ -41,11 +41,15 @@ import CopilotMessageList from './copilot/CopilotMessageList.vue'
 import CopilotSessionSidebar, { type SessionGroupKey, type SessionRow } from './copilot/CopilotSessionSidebar.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import type { CopilotDisplayMessage } from './copilot/types'
+import { Menu } from 'lucide-vue-next'
+import { useResponsiveLayout } from '../../composables/useResponsiveLayout'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const copilotStore = useCopilotRunStore()
+const { isPhone } = useResponsiveLayout()
+const mobileSessionsOpen = ref(false)
 
 const bridgeReady = ref(false)
 const loading = ref(false)
@@ -592,6 +596,7 @@ onUnmounted(() => {
 <template>
   <div class="copilot-root">
     <CopilotSessionSidebar
+      v-if="!isPhone"
       :sessions="sessions"
       :active-id="activeSessionId"
       :loading="loading"
@@ -603,7 +608,35 @@ onUnmounted(() => {
       @new-chat="openNewChatFlow"
     />
 
+    <ElDrawer
+      v-else
+      v-model="mobileSessionsOpen"
+      class="copilot-session-drawer"
+      direction="ltr"
+      size="min(88vw, 360px)"
+      :title="t('insight.copilot.sessions')"
+      append-to-body
+    >
+      <CopilotSessionSidebar
+        :sessions="sessions"
+        :active-id="activeSessionId"
+        :loading="loading"
+        :pending-notifications="copilotStore.pendingNotifications.value"
+        @select="selectSession($event); mobileSessionsOpen = false"
+        @delete="deleteSession"
+        @rename="renameSession"
+        @retry="retryProvision"
+        @new-chat="mobileSessionsOpen = false; openNewChatFlow()"
+      />
+    </ElDrawer>
+
     <div class="copilot-main flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-card-bg)]">
+      <div class="copilot-mobile-navigation">
+        <button type="button" :aria-label="t('insight.copilot.sessions')" @click="mobileSessionsOpen = true">
+          <Menu :size="20" aria-hidden="true" />
+          <span>{{ t('insight.copilot.sessions') }}</span>
+        </button>
+      </div>
       <template v-if="showActiveChat">
         <CopilotContextBar
           v-if="activeSession"
@@ -677,5 +710,45 @@ onUnmounted(() => {
 
 .copilot-main {
   min-height: 0;
+}
+
+.copilot-mobile-navigation {
+  display: none;
+}
+
+@media (max-width: 767.98px) {
+  .copilot-mobile-navigation {
+    display: flex;
+    min-height: 52px;
+    flex: 0 0 auto;
+    align-items: center;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--color-border-light);
+    background: var(--color-card-bg);
+  }
+
+  .copilot-mobile-navigation button {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--el-fill-color-light);
+    color: var(--color-text-title);
+    font: inherit;
+    font-weight: 600;
+  }
+}
+
+:global(.copilot-session-drawer .el-drawer__body) {
+  padding: 0 !important;
+}
+
+:global(.copilot-session-drawer .copilot-aside) {
+  width: 100%;
+  height: 100%;
+  border-right: 0;
 }
 </style>

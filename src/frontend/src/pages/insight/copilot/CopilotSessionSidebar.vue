@@ -219,4 +219,9 @@ function handleAction(command: string, row: SessionRow) {
 @keyframes copilot-sidebar-spin { to { transform: rotate(360deg); } }
 @keyframes copilot-dot { 0%,60%,100% { opacity: .28; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
 @media (max-width: 900px) { .copilot-aside { width: 240px; } }
+@media (hover: none), (pointer: coarse) {
+  .copilot-session-item__actions { opacity: 1; pointer-events: auto; }
+  .copilot-session-item__more { opacity: 1; }
+  .copilot-session-item__state-slot { right: 30px; }
+}
 </style>
