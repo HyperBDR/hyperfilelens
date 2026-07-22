@@ -48,10 +48,16 @@ const isAdminSettingsShell = computed(
 
 const collapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
 const viewportCollapsed = ref(false)
-const effectiveCollapsed = computed(() => collapsed.value || viewportCollapsed.value)
+const responsiveCollapsedOverride = ref<boolean | null>(null)
+const effectiveCollapsed = computed(
+  () => responsiveCollapsedOverride.value ?? (collapsed.value || viewportCollapsed.value),
+)
 
 function updateResponsiveSidebar() {
-  viewportCollapsed.value = route.path.startsWith('/platform-ops') && window.innerWidth <= 900
+  const nextViewportCollapsed = route.path.startsWith('/platform-ops') && window.innerWidth <= 900
+  if (nextViewportCollapsed === viewportCollapsed.value) return
+  viewportCollapsed.value = nextViewportCollapsed
+  responsiveCollapsedOverride.value = null
 }
 
 onMounted(() => {
@@ -122,6 +128,10 @@ const displayTitle = computed(() => {
 })
 
 function toggleSidebar() {
+  if (viewportCollapsed.value) {
+    responsiveCollapsedOverride.value = !effectiveCollapsed.value
+    return
+  }
   collapsed.value = !collapsed.value
   localStorage.setItem('sidebar-collapsed', String(collapsed.value))
 }

@@ -2,8 +2,9 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { AlertTriangle, CheckCircle2, CircleAlert, RefreshCw, Search, ShieldCheck } from 'lucide-vue-next'
+import DangerConfirmDialog, { type DangerConfirmItem } from '../../../components/DangerConfirmDialog.vue'
 import ModulePage from '../../../components/ModulePage.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
@@ -35,6 +36,8 @@ const actionLoading = ref(false)
 const selected = ref<MonitoringIncident | null>(null)
 const drawerOpen = ref(false)
 const selectedRows = ref<MonitoringIncident[]>([])
+const resolveConfirmOpen = ref(false)
+const pendingResolveTargets = ref<MonitoringIncident[]>([])
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 const filters = reactive({
   search: String(route.query.search || ''),
@@ -46,6 +49,12 @@ const { schedule: scheduleSearch, runNow: runSearchNow } = useDebouncedAction(ap
 
 const canAcknowledge = computed(() => selectedRows.value.some((row) => row.status === 'firing'))
 const canResolve = computed(() => selectedRows.value.some((row) => row.status !== 'resolved'))
+const resolveConfirmItems = computed<DangerConfirmItem[]>(() => pendingResolveTargets.value.map((row) => ({
+  key: row.id,
+  name: row.title,
+  description: `${row.organization_key} · ${resourceLabel(row)}`,
+  status: { label: row.status, tone: 'warning' },
+})))
 
 function severityClass(value: string) {
   if (value === 'critical') return 'hfl-ops-severity-pill--critical'
@@ -109,35 +118,51 @@ function openDrawer(row: MonitoringIncident) {
   drawerOpen.value = true
 }
 
-async function performAction(action: 'acknowledge' | 'resolve', targets: MonitoringIncident[]) {
-  if (!targets.length) return
-  if (action === 'resolve') {
-    try {
-      await ElMessageBox.confirm(
-        t('platformOps.monitoring.confirmResolveMessage', { count: targets.length }),
-        t('platformOps.monitoring.confirmResolveTitle'),
-        { type: 'warning', confirmButtonText: t('platformOps.monitoring.resolve') },
-      )
-    } catch {
-      return
-    }
-  }
-  actionLoading.value = true
+async function executeAction(action: 'acknowledge' | 'resolve', targets: MonitoringIncident[]) {
   const validTargets = targets.filter((row) => (
     action === 'acknowledge' ? row.status === 'firing' : row.status !== 'resolved'
   ))
-  const settled = await Promise.allSettled(
-    validTargets.map((row) => runMonitoringIncidentAction(row.id, action)),
-  )
-  const failed = settled.filter((result) => result.status === 'rejected').length
-  actionLoading.value = false
-  if (failed) {
-    ElMessage.warning({ message: t('platformOps.monitoring.partialAction', { failed }), grouping: true })
-  } else {
-    ElMessage.success({ message: t(`platformOps.monitoring.${action}Success`), grouping: true })
+  if (!validTargets.length) return
+  actionLoading.value = true
+  try {
+    const settled = await Promise.allSettled(
+      validTargets.map((row) => runMonitoringIncidentAction(row.id, action)),
+    )
+    const failed = settled.filter((result) => result.status === 'rejected').length
+    if (failed) {
+      ElMessage.warning({ message: t('platformOps.monitoring.partialAction', { failed }), grouping: true })
+    } else {
+      ElMessage.success({ message: t(`platformOps.monitoring.${action}Success`), grouping: true })
+    }
+    drawerOpen.value = false
+    await load()
+  } finally {
+    actionLoading.value = false
   }
-  drawerOpen.value = false
-  await load()
+}
+
+async function performAction(action: 'acknowledge' | 'resolve', targets: MonitoringIncident[]) {
+  const validTargets = targets.filter((row) => (
+    action === 'acknowledge' ? row.status === 'firing' : row.status !== 'resolved'
+  ))
+  if (!validTargets.length) return
+  if (action === 'resolve') {
+    pendingResolveTargets.value = validTargets
+    resolveConfirmOpen.value = true
+    return
+  }
+  await executeAction(action, validTargets)
+}
+
+function cancelResolve() {
+  if (actionLoading.value) return
+  pendingResolveTargets.value = []
+}
+
+async function confirmResolve() {
+  await executeAction('resolve', pendingResolveTargets.value)
+  resolveConfirmOpen.value = false
+  cancelResolve()
 }
 
 onMounted(load)
@@ -442,5 +467,17 @@ watch(() => [pagination.page, pagination.pageSize], load)
         </section>
       </template>
     </el-drawer>
+    <DangerConfirmDialog
+      v-model="resolveConfirmOpen"
+      :title="t('platformOps.monitoring.confirmResolveTitle')"
+      :message="t('platformOps.monitoring.confirmResolveMessage', { count: pendingResolveTargets.length })"
+      :items="resolveConfirmItems"
+      level="high"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="t('platformOps.monitoring.resolve')"
+      :loading="actionLoading"
+      @confirm="confirmResolve"
+      @cancel="cancelResolve"
+    />
   </ModulePage>
 </template>

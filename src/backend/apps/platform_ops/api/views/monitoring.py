@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
@@ -258,21 +259,28 @@ class PlatformOpsMonitoringNotificationRetryView(APIView):
     permission_classes = [IsPlatformOpsStaff]
 
     def post(self, request, delivery_id):
-        delivery = get_object_or_404(
-            NotificationDelivery.objects.select_related("organization", "channel"),
-            id=delivery_id,
-        )
-        if delivery.status != NotificationDelivery.Status.FAILED:
-            return Response({"detail": "Only failed deliveries can be retried."}, status=400)
-        result = attempt_delivery(delivery=delivery)
-        write_platform_audit_log(
-            request=request,
-            action="monitoring.notification.retry",
-            target_type="notification_delivery",
-            target_id=str(delivery.id),
-            org_key=delivery.organization.key,
-            details={"status": delivery.status, "delivered": result.ok},
-        )
+        with transaction.atomic():
+            delivery = get_object_or_404(
+                NotificationDelivery.objects.select_for_update().select_related(
+                    "organization",
+                    "channel",
+                ),
+                id=delivery_id,
+            )
+            if delivery.status != NotificationDelivery.Status.FAILED:
+                return Response(
+                    {"detail": "Only failed deliveries can be retried."},
+                    status=400,
+                )
+            result = attempt_delivery(delivery=delivery)
+            write_platform_audit_log(
+                request=request,
+                action="monitoring.notification.retry",
+                target_type="notification_delivery",
+                target_id=str(delivery.id),
+                org_key=delivery.organization.key,
+                details={"status": delivery.status, "delivered": result.ok},
+            )
         return Response(
             PlatformNotificationDeliveryRowSerializer(delivery).data,
             status=200 if result.ok else 502,

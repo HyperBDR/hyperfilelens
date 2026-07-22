@@ -2,8 +2,9 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { CheckCircle2, CircleX, Clock3, RefreshCw, Search, Send } from 'lucide-vue-next'
+import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
 import ModulePage from '../../../components/ModulePage.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
@@ -33,6 +34,7 @@ const loading = ref(false)
 const retrying = ref(false)
 const selected = ref<MonitoringDelivery | null>(null)
 const drawerOpen = ref(false)
+const retryConfirmOpen = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 const filters = reactive({
   search: String(route.query.search || ''),
@@ -93,19 +95,11 @@ function openDrawer(row: MonitoringDelivery) {
 
 async function retryDelivery() {
   if (!selected.value || selected.value.status !== 'failed') return
-  try {
-    await ElMessageBox.confirm(
-      t('platformOps.monitoring.confirmRetryDeliveryMessage'),
-      t('platformOps.monitoring.confirmRetryDeliveryTitle'),
-      { type: 'warning', confirmButtonText: t('platformOps.monitoring.retryDelivery') },
-    )
-  } catch {
-    return
-  }
   retrying.value = true
   try {
     await retryMonitoringDelivery(selected.value.id)
     ElMessage.success({ message: t('platformOps.monitoring.retryDeliverySuccess'), grouping: true })
+    retryConfirmOpen.value = false
     drawerOpen.value = false
     await load()
   } catch (error) {
@@ -361,7 +355,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
             v-if="selected.status === 'failed'"
             type="primary"
             :loading="retrying"
-            @click="retryDelivery"
+            @click="retryConfirmOpen = true"
           >
             {{ t('platformOps.monitoring.retryDelivery') }}
           </el-button>
@@ -397,5 +391,15 @@ watch(() => [pagination.page, pagination.pageSize], load)
         </section>
       </template>
     </el-drawer>
+    <DangerConfirmDialog
+      v-model="retryConfirmOpen"
+      :title="t('platformOps.monitoring.confirmRetryDeliveryTitle')"
+      :message="t('platformOps.monitoring.confirmRetryDeliveryMessage')"
+      level="low"
+      :cancel-text="t('common.cancel')"
+      :confirm-text="t('platformOps.monitoring.retryDelivery')"
+      :loading="retrying"
+      @confirm="retryDelivery"
+    />
   </ModulePage>
 </template>
