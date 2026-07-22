@@ -8,17 +8,19 @@ import pytest
 from apps.node.exceptions import AgentUpgradeError
 from apps.node.models import Node
 from apps.node.services.internal.agent_upgrade import node_platform_arch, validate_agent_upgrade
+from apps.node.services.internal import agent_release as release_service
 
 
 @pytest.fixture
-def releases_root(tmp_path, settings, monkeypatch):
+def releases_root(tmp_path, monkeypatch):
     media = tmp_path / "media" / "agent-releases"
     media.mkdir(parents=True)
     version_dir = media / "1.0.1"
     version_dir.mkdir()
     (version_dir / "hfl-agent-1.0.1-linux-amd64.tar.gz").write_bytes(b"x")
     (version_dir / "hfl-agent-1.0.1-linux-amd64-ubuntu2404.tar.gz").write_bytes(b"x")
-    settings.MEDIA_ROOT = tmp_path / "media"
+    (version_dir / "hfl-agent-1.0.1-linux-amd64-ubuntu2004.tar.gz").write_bytes(b"x")
+    monkeypatch.setattr(release_service, "agent_releases_root", lambda: media)
     monkeypatch.delenv("AGENT_VERSION", raising=False)
     return media
 

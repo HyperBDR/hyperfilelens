@@ -183,11 +183,32 @@ func roleConstraints(role model.Role) error {
 		if runtime.GOOS != "linux" {
 			return fmt.Errorf("role %s is Linux-only", role)
 		}
-		if !isUbuntuMin(20, 4) {
-			return fmt.Errorf("role %s requires Ubuntu 20.04 LTS or newer", role)
+		if !isSupportedGatewayUbuntu() {
+			return fmt.Errorf("role %s requires Ubuntu 20.04 LTS or 24.04 LTS", role)
 		}
 	}
 	return nil
+}
+
+func isSupportedGatewayUbuntu() bool {
+	f, err := os.Open("/etc/os-release")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	id := ""
+	versionID := ""
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "ID=") {
+			id = strings.Trim(strings.TrimPrefix(line, "ID="), `"`)
+		}
+		if strings.HasPrefix(line, "VERSION_ID=") {
+			versionID = strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), `"`)
+		}
+	}
+	return id == "ubuntu" && (versionID == "20.04" || versionID == "24.04")
 }
 
 func detectServiceManager(ctx context.Context) string {

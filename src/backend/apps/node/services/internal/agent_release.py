@@ -11,7 +11,8 @@ from django.conf import settings
 from apps.node.models.base import NodeRole
 
 AGENT_RELEASES_URL_PREFIX = "/media/agent-releases"
-UBUNTU2404_LINUX_ROLES = frozenset({"proxy", "gateway"})
+UBUNTU_BUNDLED_LINUX_ROLES = frozenset({"proxy", "gateway"})
+SUPPORTED_UBUNTU_BUNDLE_RELEASES = frozenset({"20.04", "24.04"})
 UPGRADEABLE_AGENT_ROLES = frozenset(
     {
         NodeRole.AGENT,
@@ -58,8 +59,26 @@ def semver_compare(left: str, right: str) -> int:
     return 0
 
 
-def use_ubuntu2404_bundle(role: str | None, platform: str) -> bool:
-    return platform == "linux" and (role or "") in UBUNTU2404_LINUX_ROLES
+def normalize_ubuntu_bundle_release(os_version: str | None) -> str | None:
+    value = str(os_version or "").strip()
+    for release in SUPPORTED_UBUNTU_BUNDLE_RELEASES:
+        if value == release or value.startswith(f"{release}."):
+            return release
+    return None
+
+
+def ubuntu_bundle_release(
+    role: str | None,
+    platform: str,
+    os_version: str | None = None,
+) -> str | None:
+    if platform != "linux" or (role or "") not in UBUNTU_BUNDLED_LINUX_ROLES:
+        return None
+    # Older enrollment helpers did not report the OS version and historically
+    # received the Ubuntu 24.04 bundle. Preserve that behavior during upgrades.
+    if not str(os_version or "").strip():
+        return "24.04"
+    return normalize_ubuntu_bundle_release(os_version)
 
 
 def dist_filename(
@@ -67,10 +86,12 @@ def dist_filename(
     platform: str,
     arch: str,
     *,
-    ubuntu2404: bool = False,
+    ubuntu_release: str | None = None,
 ) -> str:
-    if ubuntu2404 and platform == "linux":
-        return f"hfl-agent-{version}-linux-{arch}-ubuntu2404.tar.gz"
+    ubuntu_release = normalize_ubuntu_bundle_release(ubuntu_release)
+    if ubuntu_release and platform == "linux":
+        suffix = "ubuntu" + ubuntu_release.replace(".", "")
+        return f"hfl-agent-{version}-linux-{arch}-{suffix}.tar.gz"
     ext = "zip" if platform == "windows" else "tar.gz"
     return f"hfl-agent-{version}-{platform}-{arch}.{ext}"
 
@@ -82,9 +103,10 @@ def version_has_dist(
     arch: str,
     *,
     role: str | None = None,
+    os_version: str | None = None,
 ) -> bool:
-    ubuntu2404 = use_ubuntu2404_bundle(role, platform)
-    filename = dist_filename(version, platform, arch, ubuntu2404=ubuntu2404)
+    ubuntu_release = ubuntu_bundle_release(role, platform, os_version)
+    filename = dist_filename(version, platform, arch, ubuntu_release=ubuntu_release)
     return (root / version / filename).is_file()
 
 
@@ -130,11 +152,23 @@ def latest_published_agent_version() -> str:
     return preferred or "0.0.0"
 
 
-def resolve_agent_version(platform: str, arch: str, role: str | None = None) -> str:
+def resolve_agent_version(
+    platform: str,
+    arch: str,
+    role: str | None = None,
+    os_version: str | None = None,
+) -> str:
     """Pick newest release dir that contains a dist archive for platform/arch."""
     root = agent_releases_root()
     preferred = os.getenv("AGENT_VERSION", "").strip()
-    if preferred and version_has_dist(root, preferred, platform, arch, role=role):
+    if preferred and version_has_dist(
+        root,
+        preferred,
+        platform,
+        arch,
+        role=role,
+        os_version=os_version,
+    ):
         return preferred
     candidates = [
         path.name
@@ -142,7 +176,14 @@ def resolve_agent_version(platform: str, arch: str, role: str | None = None) -> 
         if path.is_dir()
         and path.name not in ("dev",)
         and not path.name.startswith(".")
-        and version_has_dist(root, path.name, platform, arch, role=role)
+        and version_has_dist(
+            root,
+            path.name,
+            platform,
+            arch,
+            role=role,
+            os_version=os_version,
+        )
     ]
     if not candidates:
         return preferred or latest_published_agent_version()

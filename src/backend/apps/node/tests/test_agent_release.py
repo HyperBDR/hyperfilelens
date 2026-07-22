@@ -10,13 +10,14 @@ from apps.node.services.internal.agent_release import (
     resolve_agent_version,
     semver_compare,
 )
+from apps.node.services.internal import agent_release as release_service
 
 
 @pytest.fixture
-def releases_root(tmp_path, settings, monkeypatch):
+def releases_root(tmp_path, monkeypatch):
     media = tmp_path / "media" / "agent-releases"
     media.mkdir(parents=True)
-    settings.MEDIA_ROOT = tmp_path / "media"
+    monkeypatch.setattr(release_service, "agent_releases_root", lambda: media)
     monkeypatch.delenv("AGENT_VERSION", raising=False)
     return media
 
@@ -38,11 +39,19 @@ def test_latest_published_agent_version_honors_agent_version_env(releases_root, 
     assert latest_published_agent_version() == "1.0.0"
 
 
-def test_resolve_agent_version_prefers_ubuntu2404_for_proxy(releases_root):
+@pytest.mark.parametrize(
+    ("os_version", "suffix"),
+    [("20.04", "ubuntu2004"), ("24.04", "ubuntu2404")],
+)
+def test_resolve_agent_version_uses_matching_ubuntu_bundle(
+    releases_root,
+    os_version,
+    suffix,
+):
     version_dir = releases_root / "1.0.0"
     version_dir.mkdir()
-    (version_dir / "hfl-agent-1.0.0-linux-amd64-ubuntu2404.tar.gz").write_bytes(b"x")
-    assert resolve_agent_version("linux", "amd64", "proxy") == "1.0.0"
+    (version_dir / f"hfl-agent-1.0.0-linux-amd64-{suffix}.tar.gz").write_bytes(b"x")
+    assert resolve_agent_version("linux", "amd64", "proxy", os_version) == "1.0.0"
 
 
 def test_semver_compare_orders_versions():
