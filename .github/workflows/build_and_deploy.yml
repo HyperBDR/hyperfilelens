@@ -453,7 +453,7 @@ jobs:
 
   build-host-debs:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     needs: [prepare, agent-release-gate]
     permissions:
       contents: write
