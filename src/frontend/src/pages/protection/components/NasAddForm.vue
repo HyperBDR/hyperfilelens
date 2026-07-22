@@ -261,63 +261,63 @@ defineExpose({
 
                 <div class="add-nas-control-field add-nas-select-row">
                   <div class="add-nas-select-row__controls">
-                  <ElSelect
-                    :model-value="bindNodeId"
-                    class="add-nas-select-row__select"
-                    :class="{ 'is-error': !!bindNodeError }"
-                    :placeholder="t('protection.sourceResources.selectSourceProxy')"
-                    :disabled="onlineProxyNodes.length === 0"
-                    :loading="proxyNodesRefreshing"
-                    filterable
-                    fit-input-width
-                    popper-class="nas-add-proxy-select-popper"
-                    @update:model-value="emit('update:bindNodeId', $event as number)"
-                    @change="emit('clearBindNodeError')"
-                  >
-                    <ElOption
-                      v-for="node in onlineProxyNodes"
-                      :key="node.id"
-                      :value="node.id"
-                      :label="proxyNodeSelectLine(node)"
+                    <ElSelect
+                      :model-value="bindNodeId"
+                      class="add-nas-select-row__select"
+                      :class="{ 'is-error': !!bindNodeError }"
+                      :placeholder="t('protection.sourceResources.selectSourceProxy')"
+                      :disabled="onlineProxyNodes.length === 0"
+                      :loading="proxyNodesRefreshing"
+                      filterable
+                      fit-input-width
+                      popper-class="nas-add-proxy-select-popper"
+                      @update:model-value="emit('update:bindNodeId', $event as number)"
+                      @change="emit('clearBindNodeError')"
                     >
-                      <div class="nas-add-proxy-option">
-                        <span class="nas-add-proxy-option__name">{{ proxyNodeSelectLine(node) }}</span>
-                        <ElTag
-                          size="small"
-                          :type="proxyNodeStatusTagType(node)"
-                          effect="plain"
-                        >
-                          {{ proxyNodeStatusLabel(node) }}
-                        </ElTag>
-                      </div>
-                    </ElOption>
-                  </ElSelect>
-                  <ElButton
-                    class="hfl-refresh-button add-nas-select-row__refresh"
-                    :title="t('protection.sourceResources.proxyRefresh')"
-                    :aria-label="t('protection.sourceResources.proxyRefresh')"
-                    :disabled="proxyNodesRefreshing"
-                    @click="emit('refreshProxyNodes')"
-                  >
-                    <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
-                  </ElButton>
-                  <ElButton
-                    class="fullscreen-form-icon-btn add-nas-select-row__deploy"
-                    :title="t('protection.sourceResources.nasDeployProxy')"
-                    :aria-label="t('protection.sourceResources.nasDeployProxy')"
-                    @click="emit('openProxyDeploy')"
-                  >
-                    <Plus :size="14" />
-                  </ElButton>
+                      <ElOption
+                        v-for="node in onlineProxyNodes"
+                        :key="node.id"
+                        :value="node.id"
+                        :label="proxyNodeSelectLine(node)"
+                      >
+                        <div class="nas-add-proxy-option">
+                          <span class="nas-add-proxy-option__name">{{ proxyNodeSelectLine(node) }}</span>
+                          <ElTag
+                            size="small"
+                            :type="proxyNodeStatusTagType(node)"
+                            effect="plain"
+                          >
+                            {{ proxyNodeStatusLabel(node) }}
+                          </ElTag>
+                        </div>
+                      </ElOption>
+                    </ElSelect>
+                    <ElButton
+                      class="hfl-refresh-button add-nas-select-row__refresh"
+                      :title="t('protection.sourceResources.proxyRefresh')"
+                      :aria-label="t('protection.sourceResources.proxyRefresh')"
+                      :disabled="proxyNodesRefreshing"
+                      @click="emit('refreshProxyNodes')"
+                    >
+                      <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
+                    </ElButton>
+                    <ElButton
+                      class="fullscreen-form-icon-btn add-nas-select-row__deploy"
+                      :title="t('protection.sourceResources.nasDeployProxy')"
+                      :aria-label="t('protection.sourceResources.nasDeployProxy')"
+                      @click="emit('openProxyDeploy')"
+                    >
+                      <Plus :size="14" />
+                    </ElButton>
                   </div>
                 </div>
+                <p
+                  class="add-nas-field-hint add-nas-bind-row__proxy-hint"
+                  :class="{ 'add-nas-bind-row__proxy-hint--warn': !!(bindNodeError || proxySelectEmptyHint()) }"
+                >
+                  {{ bindNodeError || proxySelectEmptyHint() || t('protection.sourceResources.nasHintBindProxy') }}
+                </p>
               </ElFormItem>
-              <p
-                class="add-nas-field-hint add-nas-bind-row__proxy-hint"
-                :class="{ 'add-nas-bind-row__proxy-hint--warn': !!(bindNodeError || proxySelectEmptyHint()) }"
-              >
-                {{ bindNodeError || proxySelectEmptyHint() || t('protection.sourceResources.nasHintBindProxy') }}
-              </p>
               <ElFormItem :label="t('protection.sourceResources.nasFieldDir')" required class="add-nas-dir-form-item flex-1">
                 <div class="add-nas-control-field">
                   <ElInput
@@ -327,8 +327,8 @@ defineExpose({
                     @input="emit('dirTouched')"
                   />
                 </div>
+                <p class="add-nas-field-hint add-nas-bind-row__dir-hint">{{ t('protection.sourceResources.nasFieldDirHint') }}</p>
               </ElFormItem>
-              <p class="add-nas-field-hint add-nas-bind-row__dir-hint">{{ t('protection.sourceResources.nasFieldDirHint') }}</p>
             </div>
           </ElForm>
         </section>
@@ -513,52 +513,14 @@ defineExpose({
 }
 
 .add-nas-bind-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 32px;
-  row-gap: 0;
-  grid-template-rows: auto minmax(32px, auto) auto;
-  align-items: center;
-}
-
-.add-nas-bind-row :deep(.add-nas-bind-form-item.el-form-item),
-.add-nas-bind-row :deep(.add-nas-dir-form-item.el-form-item) {
-  display: contents;
-}
-
-.add-nas-bind-row :deep(.add-nas-bind-form-item > .el-form-item__label) {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: center;
-}
-
-.add-nas-bind-row :deep(.add-nas-dir-form-item > .el-form-item__label) {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-}
-
-.add-nas-bind-row :deep(.add-nas-bind-form-item > .el-form-item__content) {
-  grid-column: 1;
-  grid-row: 2;
-  align-self: center;
-}
-
-.add-nas-bind-row :deep(.add-nas-dir-form-item > .el-form-item__content) {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: center;
+  align-items: start;
 }
 
 .add-nas-bind-row__dir-hint {
-  grid-column: 2;
-  grid-row: 3;
   margin: 6px 0 0;
 }
 
 .add-nas-bind-row__proxy-hint {
-  grid-column: 1;
-  grid-row: 3;
   margin: 6px 92px 0 0;
   color: #86909c;
 }
@@ -681,12 +643,7 @@ defineExpose({
   }
 
   .add-nas-bind-row {
-    display: block;
-  }
-
-  .add-nas-bind-row :deep(.add-nas-bind-form-item.el-form-item),
-  .add-nas-bind-row :deep(.add-nas-dir-form-item.el-form-item) {
-    display: block;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .add-nas-bind-row__dir-hint {
@@ -698,11 +655,12 @@ defineExpose({
   }
 
   .add-nas-select-row__controls {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .add-nas-select-row__select {
-    flex-basis: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .add-nas-select-row__deploy {
@@ -712,6 +670,10 @@ defineExpose({
   .add-nas-form-row--triple :deep(.el-form-item),
   .add-nas-form-row--pair :deep(.el-form-item) {
     margin-bottom: 20px;
+  }
+
+  .add-nas-bind-row :deep(.el-form-item:last-child) {
+    margin-bottom: 0;
   }
 }
 </style>

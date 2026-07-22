@@ -2072,6 +2072,7 @@ html[data-theme='hybrid'] .add-form-preview-row__dot--muted {
 }
 
 @media (max-width: 1023px) {
+  .resource-add-fullscreen .add-form-preview-sidebar,
   .add-form-preview-sidebar {
     display: none;
   }
