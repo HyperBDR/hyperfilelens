@@ -299,12 +299,15 @@ export interface PlatformEmailSettings {
   password_configured: boolean
   password_hint: string
   from_email: string
+  delivery_configured: boolean
+  configuration_error: string
+  managed_by_deployment: boolean
+  source: 'deployment' | 'runtime' | 'default'
   sources?: Record<string, string>
 }
 
 export interface PlatformIdentitySettings {
   email_signup_enabled: boolean
-  self_service_password_reset: boolean
   platform_ops_enabled: boolean
   platform_ops_allowed_cidrs: string[]
   turnstile_enabled: boolean

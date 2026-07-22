@@ -14,6 +14,7 @@ import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useD
 import { appConfig } from '../../lib/appConfig'
 
 const emailSignupEnabled = ref(false)
+const passwordResetAvailable = ref(false)
 const showEula = appConfig.showEula
 const { t, locale } = useI18n()
 const {
@@ -468,6 +469,7 @@ function goRegister() {
 }
 
 function goForgetPwd() {
+  if (!passwordResetAvailable.value) return
   cardView.value = 'reset'
   resetStep.value = 'request'
 }
@@ -533,6 +535,7 @@ onMounted(async () => {
   void loadGoogleConfig()
   const profile = await fetchDeployProfile()
   emailSignupEnabled.value = !!profile?.email_signup_enabled
+  passwordResetAvailable.value = !!profile?.password_reset_available
   await loadTurnstileConfig()
 })
 </script>
@@ -687,7 +690,7 @@ onMounted(async () => {
           </ElButton>
 
           <!-- Forgot Password -->
-          <div class="forgot-row">
+          <div v-if="passwordResetAvailable" class="forgot-row">
             <a href="#" class="forgot-link" @click.prevent="goForgetPwd">{{ t('login.forgotPwd') }}</a>
           </div>
         </div>

@@ -9,6 +9,10 @@ from rest_framework.test import APIClient
     HFL_PLATFORM_OPS_ENABLED=True,
     HFL_ADMIN_PORT=11444,
     FRONTEND_URL="https://127.0.0.1:11443",
+    EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    EMAIL_HOST="",
+    EMAIL_HOST_USER="",
+    EMAIL_HOST_PASSWORD="",
 )
 @patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})
 class DeployProfileViewTest(TestCase):
@@ -38,6 +42,12 @@ class DeployProfileViewTest(TestCase):
         self.assertFalse(response.data["admin_console_entry_visible"])
         self.assertFalse(response.data["platform_ops_access_allowed"])
         self.assertFalse(response.data["email_signup_enabled"])
+        self.assertFalse(response.data["password_reset_available"])
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_password_reset_is_available_with_deliverable_test_backend(self):
+        response = self.client.get("/api/v1/meta/deploy-profile")
+        self.assertTrue(response.data["password_reset_available"])
 
     def test_ops_listener_hides_tenant_registration(self):
         response = self.client.get(

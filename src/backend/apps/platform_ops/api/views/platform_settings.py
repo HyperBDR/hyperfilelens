@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from django.core.mail import EmailMessage, get_connection
 from django.http import Http404
 from rest_framework import status
@@ -39,7 +41,6 @@ from apps.platform_ops.services.internal.runtime_settings import (
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
     KEY_IDENTITY_OPS_CIDRS,
-    KEY_IDENTITY_PASSWORD_RESET,
     KEY_IDENTITY_PLATFORM_OPS,
     KEY_IDENTITY_TURNSTILE_SITE,
     SECRET_KEY_AZURE,
@@ -50,8 +51,10 @@ from apps.platform_ops.services.internal.runtime_settings import (
     SECRET_KEY_LANGFUSE_SECRET,
     SECRET_KEY_OPENAI,
     SECRET_KEY_TURNSTILE,
+    email_delivery_configured,
     email_signup_enabled,
     email_connection_kwargs,
+    email_settings_managed_by_deployment,
     gemini_api_key,
     get_source,
     google_client_id,
@@ -62,13 +65,13 @@ from apps.platform_ops.services.internal.runtime_settings import (
     platform_ops_allowed_cidrs,
     platform_ops_enabled,
     secret_configured,
-    self_service_password_reset_enabled,
     set_bool,
     set_str_list,
     set_value,
     sync_google_social_app,
     turnstile_site_key,
     turnstile_enabled,
+    validate_email_connection_config,
 )
 from apps.platform_ops.services.internal.runtime_settings import (
     azure_openai_api_base as runtime_azure_base,
@@ -86,6 +89,8 @@ from apps.configuration.tenant_conf import CONFIG_KEY_DR_TASK_CONCURRENCY, DEFAU
 from apps.storage import conf as storage_conf
 from apps.subscription.services.interface import activate_license, get_or_create_machine_code
 from common.deploy.site import tenant_public_url
+
+logger = logging.getLogger(__name__)
 
 
 def _audit(request, action: str, details: dict | None = None) -> None:
@@ -115,22 +120,53 @@ class PlatformOpsSettingsEmailView(APIView):
                 "use_tls": cfg["use_tls"],
                 "use_ssl": cfg["use_ssl"],
                 "host_user": cfg["username"],
-                "password_configured": secret_configured(
-                    SECRET_KEY_EMAIL_PASSWORD,
-                    env_name="EMAIL_HOST_PASSWORD",
-                    settings_attr="EMAIL_HOST_PASSWORD",
-                ),
+                "password_configured": bool(cfg["password"]),
                 "password_hint": mask_secret(cfg["password"]) if cfg["password"] else "",
                 "from_email": cfg["from_email"],
+                "delivery_configured": not bool(cfg["configuration_error"]),
+                "configuration_error": cfg["configuration_error"],
+                "managed_by_deployment": cfg["managed_by_deployment"],
+                "source": cfg["source"],
                 "sources": {
-                    "host": get_source(KEY_EMAIL_HOST),
-                    "from_email": get_source(KEY_EMAIL_FROM),
+                    "host": cfg["source"],
+                    "from_email": cfg["source"],
                 },
             }
         )
 
     def patch(self, request):
+        if email_settings_managed_by_deployment():
+            return Response(
+                {
+                    "detail": "Email settings are managed by deployment configuration.",
+                    "code": "EMAIL_SETTINGS_MANAGED_BY_DEPLOYMENT",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         data = request.data or {}
+        current = email_connection_kwargs()
+        try:
+            candidate = {
+                "backend": str(data.get("backend", current["backend"]) or ""),
+                "host": str(data.get("host", current["host"]) or ""),
+                "port": int(data.get("port", current["port"])),
+                "use_tls": bool(data.get("use_tls", current["use_tls"])),
+                "use_ssl": bool(data.get("use_ssl", current["use_ssl"])),
+                "username": str(data.get("host_user", current["username"]) or ""),
+                "password": str(data.get("password", current["password"]) or ""),
+                "from_email": str(data.get("from_email", current["from_email"]) or ""),
+            }
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "SMTP port must be an integer between 1 and 65535."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        configuration_error = validate_email_connection_config(candidate)
+        if configuration_error:
+            return Response(
+                {"detail": configuration_error, "code": "EMAIL_CONFIGURATION_INVALID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         mapping = {
             "backend": KEY_EMAIL_BACKEND,
             "host": KEY_EMAIL_HOST,
@@ -160,6 +196,15 @@ class PlatformOpsSettingsEmailTestView(APIView):
         if not recipient:
             return Response({"detail": "recipient is required"}, status=status.HTTP_400_BAD_REQUEST)
         cfg = email_connection_kwargs()
+        if cfg["configuration_error"]:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "Email delivery is not configured.",
+                    "code": "EMAIL_SERVICE_UNAVAILABLE",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         try:
             connection = get_connection(
                 backend=cfg["backend"],
@@ -178,7 +223,15 @@ class PlatformOpsSettingsEmailTestView(APIView):
                 connection=connection,
             ).send()
         except Exception as exc:
-            return Response({"ok": False, "error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.warning("platform email test failed: %s", exc, exc_info=True)
+            return Response(
+                {
+                    "ok": False,
+                    "error": "Email service is temporarily unavailable.",
+                    "code": "EMAIL_SERVICE_UNAVAILABLE",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         _audit(request, "platform_settings.email.test", {"recipient": recipient})
         return Response({"ok": True, "recipient": recipient})
 
@@ -190,7 +243,6 @@ class PlatformOpsSettingsIdentityView(APIView):
         return Response(
             {
                 "email_signup_enabled": email_signup_enabled(),
-                "self_service_password_reset": self_service_password_reset_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
                 "turnstile_enabled": turnstile_enabled(),
@@ -222,7 +274,6 @@ class PlatformOpsSettingsIdentityView(APIView):
         bool_map = {
             "email_signup_enabled": KEY_IDENTITY_EMAIL_SIGNUP,
             "google_oauth_enabled": KEY_IDENTITY_GOOGLE_OAUTH,
-            "self_service_password_reset": KEY_IDENTITY_PASSWORD_RESET,
             "platform_ops_enabled": KEY_IDENTITY_PLATFORM_OPS,
         }
         for field, key in bool_map.items():
@@ -472,7 +523,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 "effective": {
                     "tenant_public_url": tenant_public_url(),
                     "email_signup_enabled": email_signup_enabled(),
-                    "self_service_password_reset": self_service_password_reset_enabled(),
+                    "password_reset_available": email_delivery_configured(),
                     "platform_ops_enabled": platform_ops_enabled(),
                     "turnstile_enabled": turnstile_enabled(),
                     "google_oauth_enabled": google_oauth_enabled(),
@@ -484,7 +535,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                     "email_signup_enabled": get_source(KEY_IDENTITY_EMAIL_SIGNUP),
                     "google_oauth_enabled": get_source(KEY_IDENTITY_GOOGLE_OAUTH),
                     "turnstile_enabled": "env",
-                    "email_host": get_source(KEY_EMAIL_HOST),
+                    "email_host": cfg["source"],
                 },
                 "health": system_health_payload(),
             }

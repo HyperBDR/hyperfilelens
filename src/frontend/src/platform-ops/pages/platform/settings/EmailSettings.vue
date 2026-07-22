@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
@@ -20,6 +20,10 @@ const saving = ref(false)
 const testing = ref(false)
 const testRecipient = ref('')
 const meta = ref<PlatformEmailSettings | null>(null)
+const managedByDeployment = computed(() => !!meta.value?.managed_by_deployment)
+const deliveryStatusType = computed(() => (
+  meta.value?.delivery_configured ? 'success' : 'warning'
+))
 const form = reactive({
   backend: '',
   host: '',
@@ -103,13 +107,39 @@ onMounted(load)
     <div v-loading="busy" class="platform-settings">
       <div class="platform-settings__toolbar">
         <p class="platform-settings__intro">{{ t('platformOps.settings.email.intro') }}</p>
-        <el-button type="primary" :loading="saving" @click="save">
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="managedByDeployment"
+          @click="save"
+        >
           {{ t('platformOps.settings.saveChanges') }}
         </el-button>
       </div>
 
       <div class="platform-settings__panel">
-        <el-form label-position="top" class="platform-settings__form">
+        <el-alert
+          v-if="meta"
+          :type="deliveryStatusType"
+          :closable="false"
+          show-icon
+          :title="meta.delivery_configured
+            ? t('platformOps.settings.email.deliveryReady')
+            : t('platformOps.settings.email.deliveryUnavailable')"
+        >
+          <template #default>
+            <p v-if="managedByDeployment">
+              {{ t('platformOps.settings.email.managedByDeployment') }}
+            </p>
+            <p v-if="meta.configuration_error">{{ meta.configuration_error }}</p>
+          </template>
+        </el-alert>
+
+        <el-form
+          label-position="top"
+          class="platform-settings__form"
+          :disabled="managedByDeployment"
+        >
           <el-form-item :label="t('platformOps.settings.email.backend')">
             <el-input v-model="form.backend" autocomplete="off" />
           </el-form-item>

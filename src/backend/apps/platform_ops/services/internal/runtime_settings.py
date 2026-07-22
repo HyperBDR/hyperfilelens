@@ -21,7 +21,6 @@ KEY_EMAIL_HOST_USER = "email.host_user"
 KEY_EMAIL_FROM = "email.from_email"
 
 KEY_IDENTITY_EMAIL_SIGNUP = "identity.email_signup_enabled"
-KEY_IDENTITY_PASSWORD_RESET = "identity.self_service_password_reset"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
 KEY_IDENTITY_TURNSTILE_SITE = "identity.turnstile_site_key"
@@ -56,6 +55,26 @@ SECRET_KEY_LANGFUSE_PUBLIC = "ai.langfuse_public_key"
 SECRET_KEY_LANGFUSE_SECRET = "ai.langfuse_secret_key"
 
 _CACHE: dict[str, PlatformRuntimeSetting] | None = None
+
+SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DUMMY_EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
+IN_MEMORY_EMAIL_BACKENDS = frozenset(
+    {
+        "django.core.mail.backends.locmem.EmailBackend",
+        "django.core.mail.backends.filebased.EmailBackend",
+    }
+)
+EMAIL_RUNTIME_KEYS = (
+    KEY_EMAIL_BACKEND,
+    KEY_EMAIL_HOST,
+    KEY_EMAIL_PORT,
+    KEY_EMAIL_USE_TLS,
+    KEY_EMAIL_USE_SSL,
+    KEY_EMAIL_HOST_USER,
+    SECRET_KEY_EMAIL_PASSWORD,
+    KEY_EMAIL_FROM,
+)
 
 
 def invalidate_runtime_settings_cache() -> None:
@@ -267,15 +286,6 @@ def email_signup_enabled() -> bool:
     )
 
 
-def self_service_password_reset_enabled() -> bool:
-    return get_bool(
-        KEY_IDENTITY_PASSWORD_RESET,
-        env_name="HFL_SELF_SERVICE_PASSWORD_RESET",
-        settings_attr="HFL_SELF_SERVICE_PASSWORD_RESET",
-        default=True,
-    )
-
-
 def platform_ops_enabled() -> bool:
     return get_bool(
         KEY_IDENTITY_PLATFORM_OPS,
@@ -337,35 +347,129 @@ def google_oauth_enabled() -> bool:
     return bool(policy_enabled and google_client_id() and google_client_secret())
 
 
-def email_backend() -> str:
-    return get_str(
-        KEY_EMAIL_BACKEND,
-        env_name="EMAIL_BACKEND",
-        settings_attr="EMAIL_BACKEND",
-        default="django.core.mail.backends.smtp.EmailBackend",
-    )
-
-
-def email_connection_kwargs() -> dict[str, Any]:
+def _settings_email_connection_kwargs() -> dict[str, Any]:
+    """Return process environment-backed Django mail settings without DB overlays."""
     return {
-        "backend": email_backend(),
-        "host": get_str(KEY_EMAIL_HOST, env_name="EMAIL_HOST", settings_attr="EMAIL_HOST"),
-        "port": get_int(KEY_EMAIL_PORT, env_name="EMAIL_PORT", settings_attr="EMAIL_PORT", default=587),
-        "username": get_str(KEY_EMAIL_HOST_USER, env_name="EMAIL_HOST_USER", settings_attr="EMAIL_HOST_USER"),
+        "backend": _settings_str("EMAIL_BACKEND", CONSOLE_EMAIL_BACKEND),
+        "host": _settings_str("EMAIL_HOST"),
+        "port": int(getattr(settings, "EMAIL_PORT", 587) or 0),
+        "username": _settings_str("EMAIL_HOST_USER"),
+        "password": _settings_str("EMAIL_HOST_PASSWORD"),
+        "use_tls": bool(getattr(settings, "EMAIL_USE_TLS", False)),
+        "use_ssl": bool(getattr(settings, "EMAIL_USE_SSL", False)),
+        "from_email": _settings_str(
+            "DEFAULT_FROM_EMAIL",
+            "HyperFileLens <noreply@hyperfilelens.local>",
+        ),
+    }
+
+
+def _runtime_email_connection_kwargs() -> dict[str, Any]:
+    return {
+        "backend": get_str(
+            KEY_EMAIL_BACKEND,
+            settings_attr="EMAIL_BACKEND",
+            default=CONSOLE_EMAIL_BACKEND,
+        ),
+        "host": get_str(KEY_EMAIL_HOST, settings_attr="EMAIL_HOST"),
+        "port": get_int(
+            KEY_EMAIL_PORT,
+            settings_attr="EMAIL_PORT",
+            default=587,
+        ),
+        "username": get_str(
+            KEY_EMAIL_HOST_USER,
+            settings_attr="EMAIL_HOST_USER",
+        ),
         "password": get_secret(
             SECRET_KEY_EMAIL_PASSWORD,
-            env_name="EMAIL_HOST_PASSWORD",
             settings_attr="EMAIL_HOST_PASSWORD",
         ),
-        "use_tls": get_bool(KEY_EMAIL_USE_TLS, env_name="EMAIL_USE_TLS", settings_attr="EMAIL_USE_TLS", default=True),
-        "use_ssl": get_bool(KEY_EMAIL_USE_SSL, env_name="EMAIL_USE_SSL", settings_attr="EMAIL_USE_SSL", default=False),
+        "use_tls": get_bool(
+            KEY_EMAIL_USE_TLS,
+            settings_attr="EMAIL_USE_TLS",
+            default=False,
+        ),
+        "use_ssl": get_bool(
+            KEY_EMAIL_USE_SSL,
+            settings_attr="EMAIL_USE_SSL",
+            default=False,
+        ),
         "from_email": get_str(
             KEY_EMAIL_FROM,
-            env_name="DEFAULT_FROM_EMAIL",
             settings_attr="DEFAULT_FROM_EMAIL",
             default="HyperFileLens <noreply@hyperfilelens.local>",
         ),
     }
+
+
+def validate_email_connection_config(config: dict[str, Any]) -> str:
+    """Return a stable configuration error, or an empty string when deliverable."""
+    backend = str(config.get("backend") or "").strip()
+    if backend in IN_MEMORY_EMAIL_BACKENDS:
+        return ""
+    if backend in {"", CONSOLE_EMAIL_BACKEND, DUMMY_EMAIL_BACKEND}:
+        return "SMTP email delivery is not configured."
+    if backend != SMTP_EMAIL_BACKEND:
+        return "Unsupported email backend."
+
+    missing = [
+        label
+        for label, value in (
+            ("host", config.get("host")),
+            ("username", config.get("username")),
+            ("password", config.get("password")),
+            ("from_email", config.get("from_email")),
+        )
+        if not str(value or "").strip()
+    ]
+    if missing:
+        return f"SMTP configuration is missing: {', '.join(missing)}."
+    try:
+        port = int(config.get("port") or 0)
+    except (TypeError, ValueError):
+        return "SMTP port must be an integer between 1 and 65535."
+    if port < 1 or port > 65535:
+        return "SMTP port must be an integer between 1 and 65535."
+    if bool(config.get("use_tls")) and bool(config.get("use_ssl")):
+        return "SMTP SSL and STARTTLS cannot both be enabled."
+    return ""
+
+
+def _deployment_email_has_intent(config: dict[str, Any]) -> bool:
+    backend = str(config.get("backend") or "").strip()
+    return bool(
+        backend == SMTP_EMAIL_BACKEND
+        or str(config.get("host") or "").strip()
+        or str(config.get("username") or "").strip()
+        or str(config.get("password") or "").strip()
+    )
+
+
+def email_settings_managed_by_deployment() -> bool:
+    """Whether process environment SMTP values own the effective configuration."""
+    return _deployment_email_has_intent(_settings_email_connection_kwargs())
+
+
+def _runtime_email_configured() -> bool:
+    return any(_row(key) is not None for key in EMAIL_RUNTIME_KEYS)
+
+
+def email_connection_kwargs() -> dict[str, Any]:
+    environment = _settings_email_connection_kwargs()
+    managed = _deployment_email_has_intent(environment)
+    config = environment if managed else _runtime_email_connection_kwargs()
+    source = "deployment" if managed else ("runtime" if _runtime_email_configured() else "default")
+    return {
+        **config,
+        "source": source,
+        "managed_by_deployment": managed,
+        "configuration_error": validate_email_connection_config(config),
+    }
+
+
+def email_delivery_configured() -> bool:
+    return not bool(email_connection_kwargs()["configuration_error"])
 
 
 def openai_api_key() -> str | None:

@@ -3,6 +3,7 @@ Registration and password reset services.
 """
 
 import hashlib
+import logging
 import re
 from datetime import timedelta
 
@@ -19,6 +20,7 @@ from apps.iam.config import (
 from apps.iam.models import Membership, Organization
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def unique_org_key_for_email(email: str) -> str:
@@ -167,9 +169,15 @@ def generate_registration_verification_code(user: User) -> tuple[str, str | None
     try:
         _send_registration_verification_email(user.email, plain_code)
         return plain_code, None
-    except Exception as e:
+    except Exception as exc:
         email_code.delete()
-        return "", f"Failed to send email: {e}"
+        logger.warning(
+            "registration verification email delivery failed user_id=%s: %s",
+            user.id,
+            exc,
+            exc_info=True,
+        )
+        return "", "EMAIL_SERVICE_UNAVAILABLE"
 
 
 def _send_registration_verification_email(email: str, code: str) -> None:
@@ -211,9 +219,15 @@ def generate_password_reset_code(user: User) -> tuple[str, str | None]:
     try:
         _send_password_reset_email(user.email, plain_code)
         return plain_code, None
-    except Exception as e:
+    except Exception as exc:
         email_code.delete()
-        return "", f"Failed to send email: {e}"
+        logger.warning(
+            "password reset email delivery failed user_id=%s: %s",
+            user.id,
+            exc,
+            exc_info=True,
+        )
+        return "", "EMAIL_SERVICE_UNAVAILABLE"
 
 
 def _send_password_reset_email(email: str, code: str) -> None:

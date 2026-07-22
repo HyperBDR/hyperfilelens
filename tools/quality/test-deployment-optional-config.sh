@@ -27,17 +27,28 @@ TURNSTILE_SITE_KEY=old-site
 TURNSTILE_SECRET_KEY=old-secret
 ENV
 cat >"${runtime_file}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
 TURNSTILE_SITE_KEY=new-site
 TURNSTILE_SECRET_KEY=new-secret
+SMTP_HOST=smtp.example.com
+SMTP_PORT=465
+SMTP_USERNAME=mailer@example.com
+SMTP_PASSWORD=pa$$ word'with\slashes
+SMTP_SECURITY=ssl
+EMAIL_FROM=HyperFileLens <mailer@example.com>
 ENV
 
-python3 "${helper}" \
+runtime_output="$(python3 "${helper}" \
 	--env-file "${env_file}" \
 	--runtime-env-file "${runtime_file}" \
 	--public-url "https://hyperfilelens.com" \
-	--direct-host "47.237.161.194"
+	--direct-host "47.237.161.194")"
+if grep -F "pa\$\$ word" <<<"${runtime_output}" >/dev/null; then
+	printf 'ERROR: runtime configuration output exposed the SMTP password\n' >&2
+	exit 1
+fi
 grep -Fx 'FRONTEND_URL=https://hyperfilelens.com' "${env_file}" >/dev/null
 grep -Fx 'LENS_GATEWAY_BASE_URL=https://hyperfilelens.com/sourcelens' "${env_file}" >/dev/null
 grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://47.237.161.194:11444' "${env_file}" >/dev/null
@@ -48,12 +59,31 @@ grep -E '^CORS_ALLOWED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperf
 grep -Fx 'TURNSTILE_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${env_file}" >/dev/null
+grep -Fx 'HFL_EMAIL_SIGNUP_ENABLED=false' "${env_file}" >/dev/null
+grep -Fx 'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend' "${env_file}" >/dev/null
+grep -Fx 'EMAIL_HOST=smtp.example.com' "${env_file}" >/dev/null
+grep -Fx 'EMAIL_PORT=465' "${env_file}" >/dev/null
+grep -Fx 'EMAIL_HOST_USER=mailer@example.com' "${env_file}" >/dev/null
+grep -Fx 'EMAIL_USE_TLS=false' "${env_file}" >/dev/null
+grep -Fx 'EMAIL_USE_SSL=true' "${env_file}" >/dev/null
+grep -Fx 'DEFAULT_FROM_EMAIL=HyperFileLens <mailer@example.com>' "${env_file}" >/dev/null
+python3 - "${env_file}" <<'PY'
+import pathlib
+import sys
+
+password_line = next(
+    line for line in pathlib.Path(sys.argv[1]).read_text().splitlines()
+    if line.startswith("EMAIL_HOST_PASSWORD=")
+)
+assert password_line == 'EMAIL_HOST_PASSWORD="pa$$$$ word\'with\\\\slashes"'
+PY
 [[ "$(stat -c '%a' "${env_file}")" == "600" ]]
 
 invalid_env="${tmp}/invalid.env"
 invalid_runtime="${tmp}/invalid-runtime.env"
 cp "${env_file}" "${invalid_env}"
 cat >"${invalid_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=invalid
 TURNSTILE_SITE_KEY=
@@ -68,6 +98,49 @@ grep -Fx 'FRONTEND_URL=https://hyperfilelens.com' "${invalid_env}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${invalid_env}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${invalid_env}" >/dev/null
 grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${invalid_env}" >/dev/null
+
+preserved_env="${tmp}/preserved.env"
+empty_smtp_runtime="${tmp}/empty-smtp-runtime.env"
+cp "${env_file}" "${preserved_env}"
+cat >"${empty_smtp_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
+TURNSTILE_ENABLED=true
+HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
+TURNSTILE_SITE_KEY=new-site
+TURNSTILE_SECRET_KEY=new-secret
+SMTP_HOST=
+SMTP_PORT=
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_SECURITY=
+EMAIL_FROM=
+ENV
+python3 "${helper}" \
+	--env-file "${preserved_env}" \
+	--runtime-env-file "${empty_smtp_runtime}" >/dev/null
+grep -Fx 'EMAIL_HOST=smtp.example.com' "${preserved_env}" >/dev/null
+grep -F 'EMAIL_HOST_PASSWORD="pa$$$$ word' "${preserved_env}" >/dev/null
+
+partial_env="${tmp}/partial.env"
+partial_runtime="${tmp}/partial-runtime.env"
+cp "${env_file}" "${partial_env}"
+cat >"${partial_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
+SMTP_HOST=smtp.example.com
+SMTP_PORT=465
+SMTP_USERNAME=mailer@example.com
+SMTP_PASSWORD=
+SMTP_SECURITY=ssl
+EMAIL_FROM=HyperFileLens <mailer@example.com>
+ENV
+before_partial="$(sha256sum "${partial_env}" | awk '{print $1}')"
+if python3 "${helper}" --env-file "${partial_env}" \
+	--runtime-env-file "${partial_runtime}" >/dev/null 2>&1; then
+	printf 'ERROR: partial SMTP deployment configuration must fail\n' >&2
+	exit 1
+fi
+after_partial="$(sha256sum "${partial_env}" | awk '{print $1}')"
+[[ "${before_partial}" == "${after_partial}" ]]
 
 ln -s "${runtime_file}" "${tmp}/runtime-link.env"
 if python3 "${helper}" --env-file "${invalid_env}" \

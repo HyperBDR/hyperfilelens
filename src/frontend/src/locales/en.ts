@@ -3557,6 +3557,7 @@ export const en = {
     passwordFormatError: 'Password must be at least 8 characters with uppercase, lowercase and digits',
     resetFailed: 'Failed to reset password',
     sendFailed: 'Failed to send reset code',
+    emailServiceUnavailable: 'Email service is temporarily unavailable. Please try again later or contact your administrator.',
     sendMailBtn: 'Send Reset Code',
     pendingRegistration: 'This account has not completed registration. A verification code has been sent — please finish signing up.',
     emailNotRegisteredHint: "Don't have an account?",
@@ -3904,6 +3905,9 @@ export const en = {
       source: 'Source: {source}',
       email: {
         intro: 'Configure outbound SMTP for platform notifications and verification emails.',
+        deliveryReady: 'Email delivery is configured',
+        deliveryUnavailable: 'Email delivery is unavailable',
+        managedByDeployment: 'SMTP settings are managed by deployment configuration and are read-only here. Test email remains available.',
         passwordHint: 'Leave blank to keep the current password.',
         testSectionTitle: 'Send Test Email',
         backend: 'Email Backend',
@@ -3922,7 +3926,6 @@ export const en = {
       },
       identity: {
         emailSignup: 'Allow email sign-up',
-        passwordReset: 'Self-service password reset',
         platformOps: 'Enable Admin Console',
         opsCidrs: 'Admin Console allowed CIDRs',
         opsCidrsHint: 'Comma-separated, e.g. 10.0.0.0/8',

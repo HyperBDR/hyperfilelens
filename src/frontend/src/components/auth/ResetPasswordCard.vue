@@ -272,6 +272,13 @@ function handleSendResetFieldsError(fields?: Record<string, string[]>, errorCode
   }
 }
 
+function resetRequestErrorMessage(errorCode?: string, fallback?: string): string {
+  if (errorCode === 'EMAIL_SERVICE_UNAVAILABLE') {
+    return t('findPwd.emailServiceUnavailable')
+  }
+  return fallback || t('findPwd.sendFailed')
+}
+
 async function sendResetCode() {
   if (submitLoading.value) return
   if (!validateRequestForm()) return
@@ -308,7 +315,10 @@ async function sendResetCode() {
     } else if (res.error?.fields) {
       handleSendResetFieldsError(res.error.fields, res.error.error_code)
     } else {
-      ElMessage.error({ message: res.error?.message || t('findPwd.sendFailed'), grouping: true })
+      ElMessage.error({
+        message: resetRequestErrorMessage(res.error?.error_code, res.error?.message),
+        grouping: true,
+      })
     }
   } catch (err: unknown) {
     const errObj = err as {
@@ -319,7 +329,10 @@ async function sendResetCode() {
     if (errObj.fields && Object.keys(errObj.fields).length > 0) {
       handleSendResetFieldsError(errObj.fields, errObj.errorCode)
     } else {
-      ElMessage.error({ message: errObj.message || t('findPwd.sendFailed'), grouping: true })
+      ElMessage.error({
+        message: resetRequestErrorMessage(errObj.errorCode, errObj.message),
+        grouping: true,
+      })
     }
   } finally {
     resetTurnstile()
