@@ -34,6 +34,7 @@ class PlatformOpsLensGatewayEnrollmentTest(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["api_base"], "https://console.example.com:11443")
+        self.assertFalse(response.data["tls_verify"])
         self.assertEqual(response.data["org_key"], "__platform_lens__")
         self.assertEqual(
             response.data["gateway_scope"],
@@ -43,6 +44,13 @@ class PlatformOpsLensGatewayEnrollmentTest(TestCase):
         token = NodeToken.objects.get(pk=response.data["token_id"])
         self.assertEqual(token.organization.key, "__platform_lens__")
         self.assertEqual(token.gateway_scope, LensGatewayLink.GatewayScope.PLATFORM)
+
+    @override_settings(HFL_INSECURE_TLS=False)
+    def test_requires_tls_verification_for_strict_deployments(self):
+        response = self._enroll()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["tls_verify"])
 
     @override_settings(FRONTEND_URL="https://console.example.com:11443/tenant")
     def test_rejects_invalid_frontend_url_without_creating_token(self):

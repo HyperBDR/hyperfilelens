@@ -101,6 +101,11 @@ def tenant_public_url() -> str:
     return str(getattr(settings, "FRONTEND_URL", "")).strip().rstrip("/")
 
 
+def enrollment_tls_verify() -> bool:
+    """Return whether generated Agent enrollment clients must verify TLS."""
+    return not bool(getattr(settings, "HFL_INSECURE_TLS", True))
+
+
 def admin_console_public_url(request: HttpRequest) -> str:
     """Build the Admin Console origin from the current host and configured port."""
     configured = str(getattr(settings, "HFL_ADMIN_PUBLIC_URL", "")).strip()

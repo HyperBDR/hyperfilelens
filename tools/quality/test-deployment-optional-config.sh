@@ -21,6 +21,7 @@ CSRF_TRUSTED_ORIGINS=https://127.0.0.1:11443
 CORS_ALLOWED_ORIGINS=
 LENS_GATEWAY_BASE_URL=https://47.237.161.194:11443/sourcelens
 HFL_ADMIN_PUBLIC_URL=
+HFL_INSECURE_TLS=1
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false
 TURNSTILE_ENABLED=true
 TURNSTILE_SITE_KEY=old-site
@@ -28,6 +29,7 @@ TURNSTILE_SECRET_KEY=old-secret
 ENV
 cat >"${runtime_file}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
 TURNSTILE_SITE_KEY=new-site
@@ -53,6 +55,7 @@ grep -Fx 'FRONTEND_URL=https://hyperfilelens.com' "${env_file}" >/dev/null
 grep -Fx 'LENS_GATEWAY_BASE_URL=https://hyperfilelens.com/sourcelens' "${env_file}" >/dev/null
 grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://47.237.161.194:11444' "${env_file}" >/dev/null
 grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${env_file}" >/dev/null
+grep -Fx 'HFL_INSECURE_TLS=0' "${env_file}" >/dev/null
 grep -E '^DJANGO_ALLOWED_HOSTS=.*47\.237\.161\.194.*hyperfilelens\.com' "${env_file}" >/dev/null
 grep -E '^CSRF_TRUSTED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperfilelens\.com' "${env_file}" >/dev/null
 grep -E '^CORS_ALLOWED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperfilelens\.com' "${env_file}" >/dev/null
@@ -84,6 +87,7 @@ invalid_runtime="${tmp}/invalid-runtime.env"
 cp "${env_file}" "${invalid_env}"
 cat >"${invalid_runtime}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=invalid
 TURNSTILE_SITE_KEY=
@@ -104,6 +108,7 @@ empty_smtp_runtime="${tmp}/empty-smtp-runtime.env"
 cp "${env_file}" "${preserved_env}"
 cat >"${empty_smtp_runtime}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
 TURNSTILE_SITE_KEY=new-site
@@ -126,6 +131,7 @@ partial_runtime="${tmp}/partial-runtime.env"
 cp "${env_file}" "${partial_env}"
 cat >"${partial_runtime}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=0
 SMTP_HOST=smtp.example.com
 SMTP_PORT=465
 SMTP_USERNAME=mailer@example.com
@@ -141,6 +147,22 @@ if python3 "${helper}" --env-file "${partial_env}" \
 fi
 after_partial="$(sha256sum "${partial_env}" | awk '{print $1}')"
 [[ "${before_partial}" == "${after_partial}" ]]
+
+insecure_env="${tmp}/insecure.env"
+insecure_runtime="${tmp}/insecure-runtime.env"
+cp "${env_file}" "${insecure_env}"
+cat >"${insecure_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=1
+ENV
+before_insecure="$(sha256sum "${insecure_env}" | awk '{print $1}')"
+if python3 "${helper}" --env-file "${insecure_env}" \
+	--runtime-env-file "${insecure_runtime}" >/dev/null 2>&1; then
+	printf 'ERROR: SaaS runtime configuration must reject insecure TLS\n' >&2
+	exit 1
+fi
+after_insecure="$(sha256sum "${insecure_env}" | awk '{print $1}')"
+[[ "${before_insecure}" == "${after_insecure}" ]]
 
 ln -s "${runtime_file}" "${tmp}/runtime-link.env"
 if python3 "${helper}" --env-file "${invalid_env}" \

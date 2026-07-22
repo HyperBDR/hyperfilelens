@@ -1,6 +1,6 @@
 """Tests for enrollment bootstrap API."""
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
@@ -41,7 +41,30 @@ class BootstrapViewTests(TestCase):
         self.assertIn("bootstrap-token-abc", body)
         self.assertIn("hfl-enroll-linux-${HFL_ARCH}", body)
         self.assertIn("https://console.example", body)
+        self.assertIn('HFL_INSECURE_TLS="1"', body)
         self.assertIn('HFL_ENROLL_ARGS=(--yes "$@")', body)
+
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://console.example",
+    )
+    def test_linux_bootstrap_enforces_strict_tls_when_configured(self):
+        response = self._get("linux")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('HFL_INSECURE_TLS="0"', response.content.decode("utf-8"))
+
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://console.example",
+    )
+    def test_strict_bootstrap_rejects_a_different_api_base(self):
+        response = self._get("linux", api_base="http://attacker.example")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("[FAIL ]", body)
+        self.assertIn("configured HTTPS tenant origin", body)
 
     def test_windows_bootstrap_renders(self):
         response = self._get("windows")
@@ -49,6 +72,19 @@ class BootstrapViewTests(TestCase):
         body = response.content.decode("utf-8")
         self.assertIn("$bin install", body)
         self.assertIn("bootstrap-token-abc", body)
+
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://console.example",
+    )
+    def test_windows_bootstrap_enforces_strict_tls_when_configured(self):
+        response = self._get("windows")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            '$env:HFL_INSECURE_TLS = "0"',
+            response.content.decode("utf-8"),
+        )
 
     def test_used_token_still_returns_bootstrap_script(self):
         self.token_row.is_active = False

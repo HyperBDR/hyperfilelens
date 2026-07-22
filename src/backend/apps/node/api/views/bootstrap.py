@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from django.http import HttpResponse
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -21,6 +23,19 @@ from apps.node.api.views.enrollment_helpers import (
     token_usable_for_bootstrap,
 )
 from apps.node.models import Node
+from common.deploy.site import enrollment_tls_verify, tenant_public_url
+
+
+def _strict_api_base_valid(api_base: str) -> bool:
+    """Return whether strict enrollment targets the configured HTTPS origin."""
+    if not enrollment_tls_verify():
+        return True
+    canonical = tenant_public_url()
+    return bool(
+        api_base
+        and api_base == canonical
+        and urlsplit(api_base).scheme == "https"
+    )
 
 
 def _bootstrap_error_response(script_type: str, message: str) -> HttpResponse:
@@ -74,6 +89,12 @@ def _parse_enrollment_query(
             )
         return Response({"error": "org/role/token required"}, status=400)
 
+    if not _strict_api_base_valid(api_base):
+        return _bootstrap_error_response(
+            script_type,
+            "api_base must match the configured HTTPS tenant origin",
+        )
+
     org = Organization.objects.filter(key=org_key, is_active=True).first()
     if org is None:
         if script_type in ("linux", "sh", "darwin", "macos", "windows", "windows_ps1", "ps1"):
@@ -92,13 +113,14 @@ def _parse_enrollment_query(
 
 
 def _template_values(org_key: str, role: str, token: str, api_base: str) -> dict[str, str]:
+    insecure_tls = "0" if enrollment_tls_verify() else "1"
     return {
         "HFL_ORG_KEY": org_key,
         "HFL_NODE_ROLE": role,
         "HFL_NODE_TOKEN": token,
         "HFL_API_BASE": api_base,
         "HFL_WSS_URL": agent_control_plane_ws_url(api_base),
-        "HFL_INSECURE_TLS": "1",
+        "HFL_INSECURE_TLS": insecure_tls,
     }
 
 
@@ -149,6 +171,12 @@ def _parse_gateway_bootstrap_query(
         return _bootstrap_error_response(
             "linux",
             "org and token are required in the gateway enrollment link",
+        )
+
+    if not _strict_api_base_valid(api_base):
+        return _bootstrap_error_response(
+            "linux",
+            "api_base must match the configured HTTPS tenant origin",
         )
 
     org = Organization.objects.filter(key=org_key, is_active=True).first()

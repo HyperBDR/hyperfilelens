@@ -8,6 +8,10 @@ const WIN_INSTALL_CMD = '& "$env:ProgramFiles\\HyperFileLens\\Agent\\install.cmd
 
 export type NodeLifecycleTab = 'install' | 'upgrade' | 'uninstall' | 'service'
 
+function curlDownloadOptions(tlsVerify: boolean): string {
+  return tlsVerify ? "--proto '=https' --tlsv1.2 -fL" : '-k -fL'
+}
+
 /** Proxy and gateway nodes are supported on Linux only (NAS mount deps). */
 export const LINUX_ONLY_ROLES: NodeRole[] = ['proxy', 'gateway']
 
@@ -30,25 +34,27 @@ export function buildLocalUpgradeCommand(
   withDownload = false,
   downloadUrl = '',
   role?: NodeRole,
+  tlsVerify = true,
 ) {
   const pkg = packagePath.trim() || '/path/to/hfl-agent-*.tar.gz'
   if (role === 'gateway' && os === 'linux') {
     const archive = pkg.endsWith('.tar.gz') ? pkg : '/tmp/hfl-agent.tar.gz'
     if (withDownload && downloadUrl) {
-      return `curl -k -fL -o ${archive} '${downloadUrl}'\nsudo hfl-enroll gateway-upgrade --from ${archive}`
+      return `curl ${curlDownloadOptions(tlsVerify)} -o ${archive} '${downloadUrl}'\nsudo hfl-enroll gateway-upgrade --from ${archive}`
     }
     return `sudo hfl-enroll gateway-upgrade --from ${archive}`
   }
   if (os === 'windows') {
     const zip = pkg.endsWith('.zip') ? pkg : 'C:\\path\\to\\hfl-agent-*.zip'
     if (withDownload && downloadUrl) {
-      return `curl.exe -k -L -o "${zip}" "${downloadUrl}"\r\n${WIN_INSTALL_CMD} upgrade -From "${zip}"`
+      const insecure = tlsVerify ? '' : ' -k'
+      return `curl.exe${insecure} -fL -o "${zip}" "${downloadUrl}"\r\n${WIN_INSTALL_CMD} upgrade -From "${zip}"`
     }
     return `${WIN_INSTALL_CMD} upgrade -From "${zip}"`
   }
   const archive = pkg.endsWith('.tar.gz') ? pkg : '/tmp/hfl-agent.tar.gz'
   if (withDownload && downloadUrl) {
-    return `curl -k -fL -o ${archive} '${downloadUrl}'\nsudo ${linuxInstallScriptPath()} upgrade --from ${archive}`
+    return `curl ${curlDownloadOptions(tlsVerify)} -o ${archive} '${downloadUrl}'\nsudo ${linuxInstallScriptPath()} upgrade --from ${archive}`
   }
   return `sudo ${linuxInstallScriptPath()} upgrade --from ${archive}`
 }

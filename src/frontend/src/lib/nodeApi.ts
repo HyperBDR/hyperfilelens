@@ -271,7 +271,7 @@ export async function getNodeToken(tokenId: number): Promise<ApiNodeToken> {
 export async function createEnrollmentToken(params: {
   role: NodeRole
   note?: string
-}): Promise<{ token: string; tokenId: number }> {
+}): Promise<{ token: string; tokenId: number; tlsVerify: boolean }> {
   const org = orgKey()
   if (!org) {
     throw new Error('Missing organization key')
@@ -288,7 +288,11 @@ export async function createEnrollmentToken(params: {
     throw new Error('Enrollment token missing in API response')
   }
   const row = unwrapApiPayload<ApiNodeToken>(raw)
-  return { token, tokenId: row.id }
+  return {
+    token,
+    tokenId: row.id,
+    tlsVerify: typeof row.tls_verify === 'boolean' ? row.tls_verify : true,
+  }
 }
 
 export type EnrollmentOs = 'linux' | 'windows' | 'macos'
@@ -343,16 +347,35 @@ function psSingleQuoted(value: string): string {
  * Windows one-liner: pure PowerShell download + run (no curl).
  * Avoids $variables so pasting works from elevated CMD or PowerShell.
  */
-function buildWindowsEnrollmentInstallCommand(url: string): string {
+function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): string {
   const bootstrapPath =
     "[System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),'hfl-bootstrap.ps1')"
   const psBody = [
     '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12',
-    '[Net.ServicePointManager]::ServerCertificateValidationCallback={[bool]1}',
+    ...(tlsVerify
+      ? []
+      : [
+          "Write-Warning 'TLS certificate verification is disabled. Use only on a trusted private network.'",
+          '[Net.ServicePointManager]::ServerCertificateValidationCallback={[bool]1}',
+        ]),
     `(New-Object Net.WebClient).DownloadFile(${psSingleQuoted(url)},${bootstrapPath})`,
     `& (${bootstrapPath})`,
   ].join(';')
   return `powershell -NoProfile -ExecutionPolicy Bypass -Command "${psBody}"`
+}
+
+function buildPosixEnrollmentInstallCommand(
+  url: string,
+  bootstrapName: string,
+  tlsVerify: boolean,
+): string {
+  const tlsOptions = tlsVerify
+    ? "--proto '=https' --tlsv1.2"
+    : '-k'
+  const warning = tlsVerify
+    ? ''
+    : "echo 'WARNING: TLS certificate verification is disabled. Use only on a trusted private network.' >&2\n"
+  return `${warning}tmp="$(mktemp /tmp/${bootstrapName}.XXXXXX)" && (\n  trap 'rm -f "$tmp"' EXIT\n  curl ${tlsOptions} --fail --show-error --location '${url}' -o "$tmp"\n  sudo bash "$tmp"\n)`
 }
 
 /** One-liner for target host (curl pipe / download + run). Shown on deploy pages only. */
@@ -362,15 +385,17 @@ export function buildEnrollmentInstallCommand(params: {
   token: string
   apiBase?: string
   os: EnrollmentOs
+  tlsVerify?: boolean
 }): string {
   const url = buildEnrollmentDownloadUrl({ ...params, os: params.os })
+  const tlsVerify = params.tlsVerify !== false
   if (params.os === 'windows') {
-    return buildWindowsEnrollmentInstallCommand(url)
+    return buildWindowsEnrollmentInstallCommand(url, tlsVerify)
   }
   if (params.os === 'macos') {
-    return `curl -k '${url}' | (cd ~ && sudo bash)`
+    return buildPosixEnrollmentInstallCommand(url, 'hfl-agent-bootstrap', tlsVerify)
   }
-  return `curl -k '${url}' | (cd ~ && sudo bash)`
+  return buildPosixEnrollmentInstallCommand(url, 'hfl-agent-bootstrap', tlsVerify)
 }
 
 /** One-liner for Data Gateway host (Linux): installs agent + LensNode sidecar. */
@@ -378,31 +403,36 @@ export function buildGatewayEnrollmentInstallCommand(params: {
   org: string
   token: string
   apiBase?: string
+  tlsVerify?: boolean
 }): string {
   const url = buildGatewayEnrollmentDownloadUrl(params)
-  return `curl -k '${url}' | (cd ~ && sudo bash)`
+  return buildPosixEnrollmentInstallCommand(
+    url,
+    'hfl-gateway-bootstrap',
+    params.tlsVerify !== false,
+  )
 }
 
 /** Create gateway token + build copy-paste install command. */
 export async function issueGatewayEnrollmentInstall(params: {
   note?: string
   orgKey?: string
-}): Promise<{ token: string; tokenId: number; command: string }> {
+}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean }> {
   const org = params.orgKey || orgKey()
   if (!org) {
     throw new Error('Missing organization key')
   }
-  const { token, tokenId } = await createEnrollmentToken({
+  const { token, tokenId, tlsVerify } = await createEnrollmentToken({
     role: 'gateway',
     note: params.note ?? 'deploy:gateway',
   })
-  const command = buildGatewayEnrollmentInstallCommand({ org, token })
-  return { token, tokenId, command }
+  const command = buildGatewayEnrollmentInstallCommand({ org, token, tlsVerify })
+  return { token, tokenId, command, tlsVerify }
 }
 
 export async function issuePlatformGatewayEnrollmentInstall(params?: {
   note?: string
-}): Promise<{ token: string; tokenId: number; command: string }> {
+}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean }> {
   const raw = await api<unknown>('/api/v1/platform-ops/lens/gateways/enrollment', {
     method: 'POST',
     body: JSON.stringify({ note: params?.note ?? 'deploy:platform-gateway' }),
@@ -412,8 +442,14 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
     token_id: number
     org_key: string
     api_base: string
+    tls_verify: boolean
   }>(raw)
-  if (!payload.token || !payload.org_key || !payload.api_base) {
+  if (
+    !payload.token ||
+    !payload.org_key ||
+    !payload.api_base ||
+    typeof payload.tls_verify !== 'boolean'
+  ) {
     throw new Error('Platform gateway enrollment response is incomplete')
   }
   return {
@@ -423,7 +459,9 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
       org: payload.org_key,
       token: payload.token,
       apiBase: payload.api_base,
+      tlsVerify: payload.tls_verify,
     }),
+    tlsVerify: payload.tls_verify,
   }
 }
 
@@ -432,19 +470,20 @@ export async function issueEnrollmentInstall(params: {
   role: NodeRole
   os: EnrollmentOs
   note?: string
-}): Promise<{ token: string; tokenId: number; command: string }> {
+}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean }> {
   const org = orgKey()
   if (!org) {
     throw new Error('Missing organization key')
   }
-  const { token, tokenId } = await createEnrollmentToken(params)
+  const { token, tokenId, tlsVerify } = await createEnrollmentToken(params)
   const command = buildEnrollmentInstallCommand({
     org,
     role: params.role,
     token,
     os: params.os,
+    tlsVerify,
   })
-  return { token, tokenId, command }
+  return { token, tokenId, command, tlsVerify }
 }
 
 import { formatAppTime } from './dateTime'

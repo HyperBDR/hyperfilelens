@@ -7,9 +7,12 @@ from rest_framework import serializers
 
 from apps.node import conf as node_conf
 from apps.node.models import Node, NodeToken
+from common.deploy.site import enrollment_tls_verify
 
 
 class NodeTokenSerializer(serializers.ModelSerializer):
+    tls_verify = serializers.SerializerMethodField()
+
     class Meta:
         model = NodeToken
         fields = [
@@ -24,6 +27,7 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "expires_at",
             "used_at",
             "gateway_scope",
+            "tls_verify",
             "is_deleted",
             "deleted_at",
         ]
@@ -36,6 +40,10 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "is_deleted",
             "deleted_at",
         ]
+
+    def get_tls_verify(self, _instance: NodeToken) -> bool:
+        """Return the deployment TLS policy used by generated install commands."""
+        return enrollment_tls_verify()
 
 
 class NodeTokenCreateSerializer(serializers.ModelSerializer):

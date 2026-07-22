@@ -38,6 +38,14 @@ class LocalPlatformGatewayConfigTests(SimpleTestCase):
         with self.assertRaisesMessage(ValueError, "FRONTEND_URL"):
             platform_gateway_api_base()
 
+    @override_settings(
+        FRONTEND_URL="http://console.example.com:11443",
+        HFL_INSECURE_TLS=False,
+    )
+    def test_platform_gateway_api_base_requires_https_in_strict_mode(self):
+        with self.assertRaisesMessage(ValueError, "must use HTTPS"):
+            platform_gateway_api_base()
+
     def test_registration_metadata_requires_trusted_installer_state(self):
         untrusted = registration_metadata(LOCAL_PLATFORM_GATEWAY_METADATA)
         self.assertNotIn("install_key", untrusted)

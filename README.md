@@ -186,6 +186,7 @@ Common settings include:
 | `SOURCELENS_MODE` | `bundled` | Use the bundled or an external SourceLens deployment |
 | `HFL_EMAIL_SIGNUP_ENABLED` | `false` | Enable public email/password sign-up |
 | `HFL_GOOGLE_OAUTH_ENABLED` | `false` | Enable Google OAuth sign-in when credentials are configured |
+| `HFL_INSECURE_TLS` | `1` | Allow self-signed enrollment TLS; SaaS automation forces strict verification |
 | `TURNSTILE_ENABLED` | `false` | Require configured Cloudflare Turnstile verification on public auth flows |
 | `VITE_ENABLE_DEMO_DATA` | `false` | Enable development-only demo records |
 

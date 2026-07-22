@@ -1,6 +1,6 @@
 """Tests for Data Gateway enrollment bootstrap API."""
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
@@ -38,9 +38,32 @@ class BootstrapGatewayViewTests(TestCase):
         self.assertIn("gw-bootstrap-org", body)
         self.assertIn("gw-bootstrap-token", body)
         self.assertIn('HFL_NODE_ROLE="gateway"', body)
+        self.assertIn('HFL_INSECURE_TLS="1"', body)
         self.assertIn("gateway-install", body)
         self.assertIn('HFL_ENROLL_ARGS=(--yes "$@")', body)
         self.assertNotIn('" install', body)
+
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://console.example",
+    )
+    def test_gateway_bootstrap_enforces_strict_tls_when_configured(self):
+        response = self._get()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('HFL_INSECURE_TLS="0"', response.content.decode("utf-8"))
+
+    @override_settings(
+        HFL_INSECURE_TLS=False,
+        FRONTEND_URL="https://console.example",
+    )
+    def test_strict_gateway_bootstrap_rejects_a_different_api_base(self):
+        response = self._get(api_base="https://other.example")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("[FAIL ]", body)
+        self.assertIn("configured HTTPS tenant origin", body)
 
     def test_agent_token_rejected_for_gateway_bootstrap(self):
         agent_token = NodeToken.objects.create(
