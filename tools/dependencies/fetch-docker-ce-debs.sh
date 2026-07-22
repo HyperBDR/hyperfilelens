@@ -268,8 +268,22 @@ bootstrap_apt=(
   -o Acquire::https::Verify-Host=false
 )
 "${bootstrap_apt[@]}" update -qq
-"${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates curl gnupg apt-utils
+"${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates
 "${apt_network[@]}" update -qq
+
+bootstrap_tools_ok=0
+for attempt in 1 2 3; do
+  if "${apt_network[@]}" install -y --no-install-recommends curl gnupg apt-utils; then
+    bootstrap_tools_ok=1
+    break
+  fi
+  echo "WARN: host dependency tool download attempt ${attempt}/3 failed; retrying cached remainder" >&2
+  sleep $((attempt * 5))
+done
+[[ "${bootstrap_tools_ok}" -eq 1 ]] || {
+  echo "ERROR: host dependency tools failed after 3 attempts" >&2
+  exit 1
+}
 
 docker_apt="${DOCKER_APT_MIRROR:-https://download.docker.com/linux/ubuntu}"
 docker_apt="${docker_apt%/}"
