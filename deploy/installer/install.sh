@@ -951,15 +951,18 @@ backup_postgresql_dump() {
 
 	if sourcelens_installed; then
 		local sl_cid sl_dump sl_globals
-		sl_cid="$(sourcelens_compose ps -q postgresql 2>/dev/null | head -1)"
+		if ! sl_cid="$(sourcelens_compose ps -q postgres 2>/dev/null | head -1)"; then
+			warn "Unable to inspect bundled SourceLens PostgreSQL; skipping its logical database backup"
+			return 0
+		fi
 		if [[ -n "${sl_cid}" ]]; then
 			sl_dump="${ROOT}/backup/sourcelens-postgresql-${stamp}.dump"
 			sl_globals="${ROOT}/backup/sourcelens-postgresql-globals-${stamp}.sql"
 			step "Creating consistent bundled SourceLens PostgreSQL backup ..."
-			sourcelens_compose exec -T postgresql sh -ec \
+			sourcelens_compose exec -T postgres sh -ec \
 				'exec pg_dump -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-backend}" -Fc' \
 				>"${sl_dump}.part"
-			sourcelens_compose exec -T postgresql sh -ec \
+			sourcelens_compose exec -T postgres sh -ec \
 				'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --globals-only' \
 				>"${sl_globals}.part"
 			mv "${sl_dump}.part" "${sl_dump}"
