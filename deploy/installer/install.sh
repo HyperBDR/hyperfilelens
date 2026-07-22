@@ -919,8 +919,18 @@ backup_env_and_data() {
 
 backup_postgresql_dump() {
 	[[ -f "${ROOT}/.env" ]] || return 0
+	if ! command -v docker >/dev/null 2>&1 \
+		|| ! docker info >/dev/null 2>&1 \
+		|| ! docker compose version >/dev/null 2>&1; then
+		warn "Docker Compose is unavailable; skipping logical database backup before file backup"
+		return 0
+	fi
+	COMPOSE=(docker compose)
 	local cid
-	cid="$(compose_in_root ps -q postgres 2>/dev/null | head -1)"
+	if ! cid="$(compose_in_root ps -q postgres 2>/dev/null | head -1)"; then
+		warn "Unable to inspect PostgreSQL with Docker Compose; skipping logical database backup"
+		return 0
+	fi
 	[[ -n "${cid}" ]] || { warn "PostgreSQL is not running; skipping logical database dump"; return 0; }
 	local stamp dump globals
 	stamp="$(date +%Y%m%d-%H%M%S)"

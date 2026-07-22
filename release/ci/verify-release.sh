@@ -85,23 +85,29 @@ available_kib="$(df -Pk / | awk 'NR == 2 {print $4}')"
 }
 
 smoke_host="${SMOKE_HOST:-host.docker.internal}"
-sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
-	bash "${pkg_root}/install.sh" install
-
-deadline=$((SECONDS + 600))
-while ((SECONDS < deadline)); do
-	if curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null \
-		&& curl -kfsS https://127.0.0.1:11444/ >/dev/null \
-		&& curl -kfsS https://127.0.0.1:11445/ >/dev/null; then
-		break
-	fi
-	sleep 5
-done
-((SECONDS < deadline)) || {
+wait_for_release_services() {
+	local deadline=$((SECONDS + 600))
+	while ((SECONDS < deadline)); do
+		if curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null \
+			&& curl -kfsS https://127.0.0.1:11444/ >/dev/null \
+			&& curl -kfsS https://127.0.0.1:11445/ >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
 	docker compose -f /opt/hyperfilelens/docker-compose.yml --env-file /opt/hyperfilelens/.env ps || true
 	printf 'ERROR: release services did not become ready\n' >&2
-	exit 1
+	return 1
 }
+
+sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
+	bash "${pkg_root}/install.sh" install
+wait_for_release_services
+
+printf 'Running same-version in-place upgrade verification\n'
+sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
+	bash "${pkg_root}/install.sh" upgrade --from "${pkg_root}" --yes
+wait_for_release_services
 
 export HFL_TENANT_PORT=11443
 export HFL_ADMIN_PORT=11444
@@ -123,4 +129,4 @@ sudo env \
 	SMOKE_REQUIRE_HMR="${SMOKE_REQUIRE_HMR}" \
 	SMOKE_SOURCELENS_ENV_FILE="${SMOKE_SOURCELENS_ENV_FILE}" \
 	"${ROOT}/tools/dev/browser-smoke.sh"
-printf 'Full release install and login verification passed\n'
+printf 'Full release install, upgrade, and login verification passed\n'
