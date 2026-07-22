@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError
 
 class S3ClientUrlStyleTests(TestCase):
     @mock.patch("apps.storage.services.internal.s3_client.boto3.client")
-    def test_list_s3_buckets_uses_virtual_hosted_style_by_default(self, boto_client):
+    def test_list_s3_buckets_uses_auto_style_by_default(self, boto_client):
         client = mock.Mock()
         client.list_buckets.return_value = {"Buckets": [{"Name": "bucket-a"}]}
         boto_client.return_value = client
@@ -24,7 +24,7 @@ class S3ClientUrlStyleTests(TestCase):
 
         self.assertEqual(buckets, ["bucket-a"])
         config = boto_client.call_args.kwargs["config"]
-        self.assertEqual(config.s3["addressing_style"], "virtual")
+        self.assertEqual(config.s3["addressing_style"], "auto")
         self.assertEqual(config.request_checksum_calculation, "when_required")
         self.assertEqual(config.response_checksum_validation, "when_required")
 

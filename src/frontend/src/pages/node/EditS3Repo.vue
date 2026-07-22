@@ -16,9 +16,13 @@ import {
 } from '../../lib/s3PlatformDisplay'
 import S3PlatformBrandIcon from '../../components/S3PlatformBrandIcon.vue'
 import { apiErrorMessage } from '../../lib/api'
+import {
+  defaultS3UrlStyle,
+  normalizeS3UrlStyle,
+  type S3StoragePlatform as StoragePlatform,
+  type S3UrlStyle,
+} from '../../lib/s3ProviderProfiles'
 
-type S3UrlStyle = 'virtual_hosted' | 'path'
-type StoragePlatform = 'aliyun' | 'huawei' | 'tencent' | 'aws' | 'gcp' | 'azure' | 'other' | 'custom'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -43,7 +47,7 @@ const prefixDisplay = computed(() => prefix.value || '\u2014')
 /* editable fields */
 const name = ref('')
 const region = ref('')
-const s3UrlStyle = ref<S3UrlStyle>('virtual_hosted')
+const s3UrlStyle = ref<S3UrlStyle>(defaultS3UrlStyle('custom'))
 const useTls = ref(true)
 const quotaGb = ref(0)
 const quotaAlertEnabled = ref(false)
@@ -62,7 +66,7 @@ const secretMasked = computed(() => (hasSecret.value ? credentialMask : '\u2014'
 
 /* original values for change detection */
 const originRegion = ref('')
-const originS3UrlStyle = ref<S3UrlStyle>('virtual_hosted')
+const originS3UrlStyle = ref<S3UrlStyle>(defaultS3UrlStyle('custom'))
 const originUseTls = ref(true)
 
 /* verify-access state machine */
@@ -169,9 +173,11 @@ const authChanged = computed(() => {
 })
 
 const urlStyleLabel = computed(() =>
-  s3UrlStyle.value === 'virtual_hosted'
-    ? t('addS3Repo.s3UrlStyleVirtualHosted')
-    : t('addS3Repo.s3UrlStylePath'),
+  s3UrlStyle.value === 'auto'
+    ? t('addS3Repo.s3UrlStyleAuto')
+    : s3UrlStyle.value === 'virtual_hosted'
+      ? t('addS3Repo.s3UrlStyleVirtualHosted')
+      : t('addS3Repo.s3UrlStylePath'),
 )
 
 const quotaThresholdValid = computed(() => {
@@ -181,6 +187,7 @@ const quotaThresholdValid = computed(() => {
 })
 
 const urlStyleOptions = computed(() => [
+  { value: 'auto', label: t('addS3Repo.s3UrlStyleAuto') },
   { value: 'virtual_hosted', label: t('addS3Repo.s3UrlStyleVirtualHosted') },
   { value: 'path', label: t('addS3Repo.s3UrlStylePath') },
 ])
@@ -209,7 +216,7 @@ function hydrate(data: StorageRepository) {
   name.value = data.name || ''
   const plat = String(data.s3_platform || 'custom').toLowerCase()
   platform.value = (
-    ['aliyun', 'huawei', 'tencent', 'aws', 'gcp', 'azure', 'other', 'custom'].includes(plat)
+    ['aliyun', 'huawei', 'aws', 'custom'].includes(plat)
       ? (plat as StoragePlatform)
       : 'custom'
   )
@@ -217,7 +224,7 @@ function hydrate(data: StorageRepository) {
   endpoint.value = (cfg.endpoint as string) || ''
   prefix.value = (cfg.prefix as string) || ''
   region.value = (cfg.region as string) || ''
-  s3UrlStyle.value = ((cfg.s3_url_style as S3UrlStyle) || 'virtual_hosted') as S3UrlStyle
+  s3UrlStyle.value = normalizeS3UrlStyle(cfg.s3_url_style, platform.value)
   useTls.value = cfg.use_tls !== false
   quotaGb.value = Number(cfg.quota_gb || 0)
   quotaAlertEnabled.value = Boolean(cfg.quota_alert_enabled)
@@ -277,14 +284,14 @@ function buildPayload() {
 
 function buildVerifyOverrides(): {
   region?: string
-  s3_url_style?: 'virtual_hosted' | 'path'
+  s3_url_style?: S3UrlStyle
   use_tls?: boolean
   access_key_id?: string
   secret_access_key?: string
 } {
   const overrides: {
     region?: string
-    s3_url_style?: 'virtual_hosted' | 'path'
+    s3_url_style?: S3UrlStyle
     use_tls?: boolean
     access_key_id?: string
     secret_access_key?: string

@@ -218,6 +218,8 @@ if grep -F 'celery -A common inspect ping' <<<"${worker_healthcheck}" >/dev/null
 fi
 
 backend_dockerfile="${ROOT}/deploy/docker/backend.Dockerfile"
+grep -F 'ARG KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia' "${backend_dockerfile}" >/dev/null
+grep -F 'COPY --chmod=0755 ${KOPIA_BINARY} /usr/local/bin/kopia' "${backend_dockerfile}" >/dev/null
 grep -F '/etc/apt/sources.list.d/ubuntu.sources' "${backend_dockerfile}" >/dev/null
 grep -F 'uv export --quiet --locked --no-dev --no-emit-project --output-file /tmp/runtime-requirements.txt' \
 	"${backend_dockerfile}" >/dev/null

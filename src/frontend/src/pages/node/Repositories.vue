@@ -84,7 +84,7 @@ export type RepositoryRow = {
   s3_platform?: string
 }
 
-export type S3UrlStyle = 'virtual_hosted' | 'path'
+export type S3UrlStyle = 'auto' | 'virtual_hosted' | 'path'
 
 export type RepositoryConfig = {
   server_address?: string
@@ -319,10 +319,11 @@ function normalizeHealth(raw: string | undefined | null, statusHint?: string): R
   return 'online'
 }
 
-function normalizeS3UrlStyle(raw: string | undefined | null): S3UrlStyle {
+function normalizeS3UrlStyle(raw: string | undefined | null, platform?: string): S3UrlStyle {
   const s = (raw || '').toString().toLowerCase().trim().replace(/-/g, '_')
   if (s === 'path' || s === 'path_style') return 'path'
-  return 'virtual_hosted'
+  if (s === 'virtual_hosted' || s === 'virtual') return 'virtual_hosted'
+  return platform === 'huawei' ? 'virtual_hosted' : 'auto'
 }
 
 function mapApiToRow(r: ApiRepository): RepositoryRow {
@@ -401,7 +402,10 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
         prefix,
         access_key_id: configString(config, 'access_key_id') || r.access_key_id || '',
         secret_access_key: configString(config, 'secret_access_key') || '',
-        s3_url_style: normalizeS3UrlStyle(configString(config, 's3_url_style') || r.s3_url_style),
+        s3_url_style: normalizeS3UrlStyle(
+          configString(config, 's3_url_style') || r.s3_url_style,
+          r.s3_platform,
+        ),
         use_tls: configBoolean(config, 'use_tls') ?? r.use_tls !== false,
         quota_gb: configNumber(config, 'quota_gb') ?? 0,
         quota_alert_enabled: configBoolean(config, 'quota_alert_enabled') ?? false,
@@ -613,7 +617,7 @@ const form = ref({
   prefix: DEFAULT_S3_OBJECT_PREFIX,
   access_key_id: '',
   secret_access_key: '',
-  s3_url_style: 'virtual_hosted' as S3UrlStyle,
+  s3_url_style: 'auto' as S3UrlStyle,
   use_tls: true,
   mount_path: '',
 })
@@ -725,9 +729,10 @@ const deleteConfirmDisabled = computed(() => (
 ))
 
 function s3UrlStyleLabel(style: S3UrlStyle | string | undefined) {
-  return normalizeS3UrlStyle(style ?? undefined) === 'path'
-    ? t('addS3Repo.s3UrlStylePath')
-    : t('addS3Repo.s3UrlStyleVirtualHosted')
+  const normalized = normalizeS3UrlStyle(style ?? undefined)
+  if (normalized === 'auto') return t('addS3Repo.s3UrlStyleAuto')
+  if (normalized === 'path') return t('addS3Repo.s3UrlStylePath')
+  return t('addS3Repo.s3UrlStyleVirtualHosted')
 }
 
 function tlsConnectionLabel(useTls: boolean | undefined) {
@@ -1526,7 +1531,7 @@ function resetForm() {
     prefix: DEFAULT_S3_OBJECT_PREFIX,
     access_key_id: '',
     secret_access_key: '',
-    s3_url_style: 'virtual_hosted',
+    s3_url_style: 'auto',
     use_tls: true,
     mount_path: '',
   }
@@ -3041,6 +3046,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
           </ElFormItem>
           <ElFormItem :label="t('repositoriesPage.fieldS3UrlStyle')">
             <ElSelect v-model="form.s3_url_style" style="width: 100%">
+              <ElOption value="auto" :label="t('repositoriesPage.s3UrlStyleAuto')" />
               <ElOption value="virtual_hosted" :label="t('repositoriesPage.s3UrlStyleVirtualHosted')" />
               <ElOption value="path" :label="t('repositoriesPage.s3UrlStylePath')" />
             </ElSelect>

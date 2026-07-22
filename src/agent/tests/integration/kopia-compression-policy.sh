@@ -3,9 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
-# shellcheck source=../../../../tools/dependencies/versions/kopia.env
-source "${REPO_ROOT}/tools/dependencies/versions/kopia.env"
-EXPECTED_KOPIA_VERSION="${KOPIA_VERSION#v}"
+# shellcheck source=../../../../tools/kopia/common.sh
+source "${REPO_ROOT}/tools/kopia/common.sh"
+kopia_load_config
+EXPECTED_KOPIA_VERSION="${KOPIA_VERSION}"
 
 KOPIA_BIN="${HFL_KOPIA_PATH:-${1:-}}"
 if [[ -z "${KOPIA_BIN}" ]]; then

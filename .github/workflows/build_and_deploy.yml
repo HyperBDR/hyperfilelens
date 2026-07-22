@@ -144,6 +144,7 @@ jobs:
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-payload-tree-hash.sh
           ./tools/quality/test-ci-release-assembly.sh
+          ./tools/quality/test-kopia-build-config.sh
           git diff --check
           while IFS= read -r script; do bash -n "$script"; done < <(find . -path './build' -prune -o -path './data' -prune -o -type f -name '*.sh' -print)
 
@@ -193,6 +194,11 @@ jobs:
             needs_kopia: false
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        if: matrix.needs_kopia
+        with:
+          go-version: stable
+          cache: false
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -200,9 +206,9 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Fetch pinned Kopia package
+      - name: Prepare pinned Kopia binary
         if: matrix.needs_kopia
-        run: ./tools/dependencies/fetch-kopia-deb.sh
+        run: ./tools/kopia/prepare.sh --matrix linux:amd64
 
       - name: Build and push image
         id: build
@@ -215,7 +221,7 @@ jobs:
           provenance: false
           tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
           build-args: |
-            KOPIA_DEB=build/dependencies/kopia/kopia_linux_amd64.deb
+            KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia
             PIP_TIMEOUT=600
             SENTRY_ENABLED=false
             SENTRY_ENVIRONMENT=production

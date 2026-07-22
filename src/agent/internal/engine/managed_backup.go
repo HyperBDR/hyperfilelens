@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -50,6 +51,8 @@ type repositorySpec struct {
 	Prefix          string
 	AccessKeyID     string
 	SecretAccessKey string
+	S3URLStyle      string
+	S3URLStyleFlag  bool
 	KopiaPassword   string
 	UseTLS          bool
 	ConfigFile      string
@@ -76,6 +79,7 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 		Prefix:          strings.TrimSpace(stringValue(data["prefix"])),
 		AccessKeyID:     strings.TrimSpace(stringValue(data["access_key_id"])),
 		SecretAccessKey: strings.TrimSpace(stringValue(data["secret_access_key"])),
+		S3URLStyle:      strings.ToLower(strings.TrimSpace(stringValue(data["s3_url_style"]))),
 		KopiaPassword:   strings.TrimSpace(stringValue(data["kopia_password"])),
 		ConfigFile:      strings.TrimSpace(stringValue(data["config_file"])),
 		Subdir:          strings.TrimSpace(stringValue(data["subdir"])),
@@ -108,6 +112,14 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 		if spec.Bucket == "" {
 			return repositorySpec{}, false, fmt.Errorf("repository.bucket is required for s3 repositories")
 		}
+		if spec.S3URLStyle == "" {
+			spec.S3URLStyle = "auto"
+		}
+		switch spec.S3URLStyle {
+		case "auto", "virtual_hosted", "path":
+		default:
+			return repositorySpec{}, false, fmt.Errorf("unsupported repository.s3_url_style %q", spec.S3URLStyle)
+		}
 	case "proxy_fs":
 		if spec.Path == "" {
 			return repositorySpec{}, false, fmt.Errorf("repository.path is required for proxy_fs repositories")
@@ -124,6 +136,103 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 		return repositorySpec{}, false, fmt.Errorf("unsupported repository type %q", spec.Type)
 	}
 	return spec, true, nil
+}
+
+func resolveKopiaS3URLStyleCapability(ctx context.Context, bin string, spec *repositorySpec) error {
+	if spec == nil || spec.Type != "s3" || spec.S3URLStyle == "auto" {
+		return nil
+	}
+	res, err := runProcessWithTimeout(
+		ctx,
+		10*time.Second,
+		bin,
+		[]string{"repository", "create", "s3", "--help"},
+		nil,
+		"",
+	)
+	supports := strings.Contains(res.Stdout+"\n"+res.Stderr, "--url-style")
+	if err == nil && supports {
+		spec.S3URLStyleFlag = true
+		return nil
+	}
+	if spec.S3URLStyle == "virtual_hosted" {
+		return fmt.Errorf(
+			"repository requires virtual-hosted S3 URLs, but Kopia does not support --url-style; use the HyperFileLens-built Kopia artifact",
+		)
+	}
+	return nil
+}
+
+func s3ConnectionFingerprint(spec repositorySpec) (string, error) {
+	payload := struct {
+		Bucket          string `json:"bucket"`
+		Region          string `json:"region"`
+		Endpoint        string `json:"endpoint"`
+		Prefix          string `json:"prefix"`
+		AccessKeyID     string `json:"access_key_id"`
+		SecretAccessKey string `json:"secret_access_key"`
+		KopiaPassword   string `json:"kopia_password"`
+		UseTLS          bool   `json:"use_tls"`
+		S3URLStyle      string `json:"s3_url_style"`
+	}{
+		Bucket:          spec.Bucket,
+		Region:          spec.Region,
+		Endpoint:        spec.Endpoint,
+		Prefix:          spec.Prefix,
+		AccessKeyID:     spec.AccessKeyID,
+		SecretAccessKey: spec.SecretAccessKey,
+		KopiaPassword:   spec.KopiaPassword,
+		UseTLS:          spec.UseTLS,
+		S3URLStyle:      spec.S3URLStyle,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func s3ConnectionFingerprintPath(configFile string) string {
+	return configFile + ".connection.sha256"
+}
+
+func invalidateChangedS3Connection(configFile string, cacheDir string, spec repositorySpec) error {
+	if _, err := os.Stat(configFile); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	want, err := s3ConnectionFingerprint(spec)
+	if err != nil {
+		return err
+	}
+	current, _ := os.ReadFile(s3ConnectionFingerprintPath(configFile))
+	if strings.TrimSpace(string(current)) == want {
+		return nil
+	}
+	if err := os.Remove(configFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if strings.TrimSpace(cacheDir) != "" {
+		if err := os.RemoveAll(cacheDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeS3ConnectionFingerprint(configFile string, spec repositorySpec) error {
+	fingerprint, err := s3ConnectionFingerprint(spec)
+	if err != nil {
+		return err
+	}
+	path := s3ConnectionFingerprintPath(configFile)
+	temporary := path + ".part"
+	if err := os.WriteFile(temporary, []byte(fingerprint+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
 }
 
 func repositoryNASPath(spec repositorySpec) (string, error) {
@@ -284,6 +393,9 @@ func (e *Engine) prepareManagedRepository(
 	if err != nil {
 		return "", nil, nil, repositorySpec{}, err.Error()
 	}
+	if err := resolveKopiaS3URLStyleCapability(ctx, bin, &spec); err != nil {
+		return "", nil, nil, repositorySpec{}, err.Error()
+	}
 
 	configFile := e.repositoryConfigPath(spec)
 	if mkErr := os.MkdirAll(filepath.Dir(configFile), 0o700); mkErr != nil {
@@ -326,6 +438,9 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if spec.Type == "s3" {
 		env["AWS_ACCESS_KEY_ID"] = spec.AccessKeyID
 		env["AWS_SECRET_ACCESS_KEY"] = spec.SecretAccessKey
+		if err := invalidateChangedS3Connection(configFile, env["KOPIA_CACHE_DIRECTORY"], spec); err != nil {
+			return "", nil, nil, repositorySpec{}, err.Error()
+		}
 	}
 	if spec.Type == "kopia_server" {
 		if spec.ServerUsername != "" {
@@ -447,6 +562,11 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		}
 	}
 	slog.Info("managed_repository", "event", "status_ok", "task_id", taskID, "repo_type", spec.Type)
+	if spec.Type == "s3" {
+		if err := writeS3ConnectionFingerprint(configFile, spec); err != nil {
+			return "", nil, result, spec, err.Error()
+		}
+	}
 
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"repository_ready",
@@ -1603,6 +1723,13 @@ func repositoryArgs(configFile string, spec repositorySpec, create bool) []strin
 		}
 		if !spec.UseTLS {
 			args = append(args, "--disable-tls")
+		}
+		if spec.S3URLStyleFlag {
+			style := spec.S3URLStyle
+			if style == "virtual_hosted" {
+				style = "virtual-hosted"
+			}
+			args = append(args, "--url-style="+style)
 		}
 	case "proxy_fs":
 		args = append(args, "filesystem", "--path="+spec.Path)

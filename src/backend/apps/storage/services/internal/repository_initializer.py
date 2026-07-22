@@ -23,6 +23,7 @@ from apps.storage.services.internal.repository_secrets import (
     scrub_secrets,
     secret_values_for_scrub,
 )
+from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
 
 class RepositoryInitializationError(Exception):
@@ -39,7 +40,9 @@ def initialize_s3_repository(repository: Repository) -> None:
             bucket=str(repository.s3_bucket or ""),
             access_key_id=str(config.get("access_key_id") or ""),
             secret_access_key=str(secrets_payload.get("secret_access_key") or ""),
-            s3_url_style=str(config.get("s3_url_style") or "virtual_hosted"),
+            s3_url_style=normalize_s3_url_style(
+                config.get("s3_url_style"), platform=repository.s3_platform
+            ),
             use_tls=config.get("use_tls") is not False,
         )
         create_s3_repository(repository)
@@ -111,7 +114,9 @@ def check_s3_repository(repository: Repository) -> None:
             bucket=str(repository.s3_bucket or ""),
             access_key_id=str(config.get("access_key_id") or ""),
             secret_access_key=str(secrets_payload.get("secret_access_key") or ""),
-            s3_url_style=str(config.get("s3_url_style") or "virtual_hosted"),
+            s3_url_style=normalize_s3_url_style(
+                config.get("s3_url_style"), platform=repository.s3_platform
+            ),
             use_tls=config.get("use_tls") is not False,
         )
         connect_s3_repository(repository)

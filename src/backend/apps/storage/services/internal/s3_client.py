@@ -7,6 +7,8 @@ import boto3
 from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
+from apps.storage.services.internal.s3_url_style import boto3_s3_addressing_style
+
 
 DEFAULT_S3_ENDPOINT = "https://s3.amazonaws.com"
 
@@ -349,7 +351,10 @@ def _client(
 ):
     endpoint_url = endpoint_for_requests(endpoint, use_tls=use_tls)
     normalized_region = (region or "").strip() or "us-east-1"
-    address_style = "path" if s3_url_style == "path" else "virtual"
+    try:
+        address_style = boto3_s3_addressing_style(s3_url_style)
+    except ValueError as exc:
+        raise S3ClientError(str(exc)) from exc
     config = Config(
         signature_version="s3v4",
         connect_timeout=timeout_seconds,

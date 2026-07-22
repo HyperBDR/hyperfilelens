@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
+import json
 import os
 import shutil
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.s3_client import endpoint_for_kopia
 from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
+from apps.storage.services.internal.s3_url_style import (
+    S3_URL_STYLE_AUTO,
+    S3_URL_STYLE_VIRTUAL_HOSTED,
+    kopia_s3_url_style,
+    normalize_s3_url_style,
+)
 
 
 class KopiaCliError(Exception):
@@ -172,8 +183,26 @@ def _run_repository_command(
     timeout_seconds: int | None,
     config_file: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    resolved_config_file = config_file or _config_file(repository)
+    with _repository_config_lock(resolved_config_file):
+        return _run_repository_command_unlocked(
+            repository,
+            args,
+            timeout_seconds=timeout_seconds,
+            config_file=resolved_config_file,
+        )
+
+
+def _run_repository_command_unlocked(
+    repository: Repository,
+    args: list[str],
+    *,
+    timeout_seconds: int | None,
+    config_file: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     kopia_path = _kopia_path()
     config_file = config_file or _config_file(repository)
+    _invalidate_changed_s3_connection(repository, config_file)
     env = _environment(repository)
     timeout = timeout_seconds or int(os.environ.get("HFL_KOPIA_TIMEOUT_SECONDS", "120"))
     command = [
@@ -184,7 +213,7 @@ def _run_repository_command(
         *args,
     ]
     try:
-        return subprocess.run(
+        result = subprocess.run(
             command,
             env=env,
             capture_output=True,
@@ -192,6 +221,12 @@ def _run_repository_command(
             timeout=timeout,
             check=False,
         )
+        if result.returncode == 0 and args[:3] in (
+            ["repository", "create", "s3"],
+            ["repository", "connect", "s3"],
+        ):
+            _write_s3_connection_fingerprint(repository, config_file)
+        return result
     except subprocess.TimeoutExpired as exc:
         raise KopiaCliError(f"Kopia CLI timed out after {timeout} seconds") from exc
     except OSError as exc:
@@ -217,9 +252,93 @@ def _s3_flags(repository: Repository) -> list[str]:
         flags.append(f"--prefix={prefix}")
     if config.get("use_tls") is False:
         flags.append("--disable-tls")
-    # Kopia 0.22.3 does not expose a URL-style flag; S3-compatible endpoints
-    # decide path-style behavior internally. Keep config.s3_url_style for S3 API checks.
+    try:
+        url_style = normalize_s3_url_style(
+            config.get("s3_url_style"), platform=repository.s3_platform
+        )
+    except ValueError as exc:
+        raise KopiaCliError(str(exc)) from exc
+    if url_style != S3_URL_STYLE_AUTO:
+        supports_url_style = _kopia_supports_s3_url_style(_kopia_path())
+        if supports_url_style:
+            flags.append(
+                f"--url-style={kopia_s3_url_style(url_style, platform=repository.s3_platform)}"
+            )
+        elif url_style == S3_URL_STYLE_VIRTUAL_HOSTED:
+            raise KopiaCliError(
+                "This repository requires virtual-hosted S3 URLs, but the installed "
+                "Kopia binary does not support --url-style. Use the HyperFileLens-built "
+                "Kopia artifact mode."
+            )
     return flags
+
+
+def _kopia_supports_s3_url_style(kopia_path: str) -> bool:
+    try:
+        modified_ns = os.stat(kopia_path).st_mtime_ns
+    except OSError:
+        modified_ns = 0
+    return _probe_kopia_s3_url_style(kopia_path, modified_ns)
+
+
+@lru_cache(maxsize=8)
+def _probe_kopia_s3_url_style(kopia_path: str, _modified_ns: int) -> bool:
+    try:
+        result = subprocess.run(
+            [kopia_path, "repository", "create", "s3", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "--url-style" in f"{result.stdout}\n{result.stderr}"
+
+
+def _s3_connection_fingerprint(repository: Repository) -> str:
+    config = repository.config or {}
+    secrets_payload = resolve_repository_secrets(repository)
+    payload = {
+        "bucket": str(repository.s3_bucket or ""),
+        "region": str(config.get("region") or ""),
+        "endpoint": str(config.get("endpoint") or ""),
+        "prefix": str(config.get("prefix") or ""),
+        "access_key_id": str(config.get("access_key_id") or ""),
+        "secret_access_key": str(secrets_payload.get("secret_access_key") or ""),
+        "kopia_password": str(secrets_payload.get("kopia_password") or ""),
+        "use_tls": config.get("use_tls") is not False,
+        "s3_url_style": normalize_s3_url_style(
+            config.get("s3_url_style"), platform=repository.s3_platform
+        ),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _connection_fingerprint_file(config_file: Path) -> Path:
+    return config_file.with_name(f"{config_file.name}.connection.sha256")
+
+
+def _invalidate_changed_s3_connection(repository: Repository, config_file: Path) -> None:
+    if repository.repo_type != Repository.Type.S3 or not config_file.exists():
+        return
+    fingerprint_file = _connection_fingerprint_file(config_file)
+    try:
+        current = fingerprint_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        current = ""
+    if current == _s3_connection_fingerprint(repository):
+        return
+    config_file.unlink(missing_ok=True)
+
+
+def _write_s3_connection_fingerprint(repository: Repository, config_file: Path) -> None:
+    fingerprint_file = _connection_fingerprint_file(config_file)
+    temporary = fingerprint_file.with_suffix(f"{fingerprint_file.suffix}.tmp")
+    temporary.write_text(_s3_connection_fingerprint(repository) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(fingerprint_file)
 
 
 def _kopia_path() -> str:
@@ -230,6 +349,21 @@ def _kopia_path() -> str:
     if found:
         return found
     raise KopiaCliError("Kopia CLI not found. Set HFL_KOPIA_PATH or install kopia in PATH.")
+
+
+@contextmanager
+def _repository_config_lock(config_file: Path):
+    lock_file = config_file.parent / ".repository.lock"
+    lock_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with lock_file.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.truncate(0)
+        handle.write(f"{os.getpid()}\n")
+        handle.flush()
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _config_file(repository: Repository) -> Path:
