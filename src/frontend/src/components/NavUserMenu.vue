@@ -67,7 +67,11 @@ async function confirmLogout() {
     :offset="8"
   >
     <template #reference>
-      <button type="button" class="nav-user-trigger" :aria-label="t('account.userMenuAria')">
+      <button
+        type="button"
+        class="nav-user-trigger"
+        :aria-label="`${displayLabel} · ${t('account.userMenuAria')}`"
+      >
         <span class="nav-user-trigger__label">{{ displayLabel }}</span>
         <ChevronDown :size="14" class="nav-user-trigger__caret" stroke-width="2" aria-hidden="true" />
       </button>

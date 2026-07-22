@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElPagination } from 'element-plus'
 
 defineOptions({
@@ -35,10 +35,28 @@ const emit = defineEmits<{
 const mergedPopperClass = computed(() =>
   ['hfl-pagination-size-popper', props.popperClass].filter(Boolean).join(' '),
 )
+
+const paginationRef = ref<{ $el?: HTMLElement } | null>(null)
+
+function applyInputLabels() {
+  const root = paginationRef.value?.$el
+  root?.querySelector<HTMLInputElement>('.el-pagination__sizes input')?.setAttribute(
+    'aria-label',
+    'Rows per page',
+  )
+  root?.querySelector<HTMLInputElement>('.el-pagination__jump input')?.setAttribute(
+    'aria-label',
+    'Page',
+  )
+}
+
+onMounted(() => void nextTick(applyInputLabels))
+watch(() => [props.currentPage, props.pageSize, props.total], () => void nextTick(applyInputLabels))
 </script>
 
 <template>
   <ElPagination
+    ref="paginationRef"
     v-bind="$attrs"
     class="hfl-pagination"
     :current-page="currentPage"

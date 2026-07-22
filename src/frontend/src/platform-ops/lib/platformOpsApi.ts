@@ -2,7 +2,13 @@ import { api, type ApiError } from '../../lib/api'
 import { unwrapApiPayload } from '../../lib/parse'
 import { fetchSystemMonitor, type SystemMonitorPayload } from '../../lib/monitorApi'
 
-export type Paginated<T> = { count: number; page: number; page_size: number; results: T[] }
+export type Paginated<T, S = never> = {
+  count: number
+  page: number
+  page_size: number
+  results: T[]
+  stats?: S
+}
 
 export type PlatformOverviewMetricValue = string | number | null
 
@@ -74,12 +80,144 @@ export async function fetchPlatformOverview(hours = 24) {
   return get<PlatformOverviewPayload>(`/api/v1/platform-ops/?hours=${hours}`)
 }
 
+export interface MonitoringIncident extends PlatformOverviewAlert {
+  message: string
+  type: string
+  resource_id: string
+  current_value: number | null
+  threshold_value: number | null
+  unit: string
+  metadata: Record<string, unknown>
+  first_triggered_at: string | null
+  acknowledged_at: string | null
+  acknowledged_by: number | null
+  resolved_at: string | null
+  duration_seconds: number | null
+  updated_at: string
+}
+
+export type IncidentStats = {
+  total: number
+  firing: number
+  critical: number
+  acknowledged: number
+  resolved: number
+}
+
+export interface MonitoringTask extends PlatformOverviewTask {
+  progress: number
+  current_step: string | null
+  retry_count: number
+  trigger_type: string
+  error_code: string | null
+  started_at: string | null
+  updated_at: string
+}
+
+export type TaskStats = {
+  total: number
+  running: number
+  failed: number
+  timeout: number
+  success_rate: number
+}
+
+export interface MonitoringNode {
+  id: number
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  hostname: string
+  role: string
+  status: string
+  agent_version: string
+  is_outdated: boolean
+  os_name: string
+  ip_address: string
+  last_seen_at: string | null
+  metadata: Record<string, unknown>
+  updated_at: string | null
+}
+
+export type NodeStats = {
+  total: number
+  online: number
+  offline: number
+  outdated: number
+  latest_version: string
+}
+
+export interface MonitoringDelivery {
+  id: number
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  channel_id: number
+  channel_name: string
+  channel_type: string
+  event_type: string
+  payload: Record<string, unknown>
+  status: string
+  error: string
+  sent_at: string | null
+  created_at: string
+}
+
+export type DeliveryStats = {
+  total: number
+  delivered: number
+  failed: number
+  pending: number
+  delivery_rate: number
+}
+
+export async function fetchMonitoringIncidents(params: Record<string, string | number | undefined>) {
+  return get<Paginated<MonitoringIncident, IncidentStats>>(
+    `/api/v1/platform-ops/monitoring/alerts${qs(params)}`,
+  )
+}
+
+export async function runMonitoringIncidentAction(
+  incidentId: string,
+  action: 'acknowledge' | 'resolve',
+  note = '',
+) {
+  return send<MonitoringIncident>(`/api/v1/platform-ops/monitoring/alerts/${incidentId}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
 export async function fetchMonitoringTasks(params: Record<string, string | number | undefined>) {
-  return get<Paginated<unknown>>(`/api/v1/platform-ops/monitoring/tasks${qs(params)}`)
+  return get<Paginated<MonitoringTask, TaskStats>>(`/api/v1/platform-ops/monitoring/tasks${qs(params)}`)
+}
+
+export async function runMonitoringTaskAction(
+  taskUuid: string,
+  action: 'cancel' | 'retry',
+  reason = '',
+) {
+  return send<MonitoringTask>(`/api/v1/platform-ops/monitoring/tasks/${taskUuid}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
 }
 
 export async function fetchMonitoringNodes(params: Record<string, string | number | undefined>) {
-  return get<Paginated<unknown>>(`/api/v1/platform-ops/monitoring/nodes${qs(params)}`)
+  return get<Paginated<MonitoringNode, NodeStats>>(`/api/v1/platform-ops/monitoring/nodes${qs(params)}`)
+}
+
+export async function fetchMonitoringDeliveries(params: Record<string, string | number | undefined>) {
+  return get<Paginated<MonitoringDelivery, DeliveryStats>>(
+    `/api/v1/platform-ops/monitoring/notifications${qs(params)}`,
+  )
+}
+
+export async function retryMonitoringDelivery(deliveryId: number) {
+  return send<MonitoringDelivery>(
+    `/api/v1/platform-ops/monitoring/notifications/${deliveryId}/retry`,
+    { method: 'POST', body: '{}' },
+  )
 }
 
 export type DeploymentHostItem = {

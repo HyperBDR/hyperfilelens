@@ -11,6 +11,7 @@ import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { applyThemeVars } from '../composables/applyThemeVars'
 import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
 import '../styles/platform-ops-ui.css'
+import '../styles/monitoring.css'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -77,7 +78,13 @@ watch(
         <span>{{ t('platformOps.nav.title') }}</span>
       </div>
       <div class="platform-ops-header__actions">
-        <button type="button" class="platform-ops-return" :disabled="!tenantUrl" @click="goTenantConsole">
+        <button
+          type="button"
+          class="platform-ops-return"
+          :aria-label="t('platformOps.nav.backToConsole')"
+          :disabled="!tenantUrl"
+          @click="goTenantConsole"
+        >
           <ArrowLeft :size="16" aria-hidden="true" />
           <span>{{ t('platformOps.nav.backToConsole') }}</span>
         </button>
@@ -176,6 +183,7 @@ watch(
   font-weight: 600;
   font-size: 15px;
   color: var(--tnav-text, #f8fafc);
+  white-space: nowrap;
 }
 
 .platform-ops-header__actions {
@@ -424,6 +432,22 @@ watch(
   }
 
   .platform-ops-route-skeleton__rows i:nth-child(n + 3) {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .platform-ops-header {
+    padding-right: 8px;
+  }
+
+  .platform-ops-return {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .platform-ops-return span {
     display: none;
   }
 }

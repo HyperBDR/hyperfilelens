@@ -151,6 +151,7 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
             <RouterLink
               :to="nav.to"
               :class="{ active: isActive(nav.to) }"
+              :aria-label="nav.label"
               class="collapsed-icon-btn"
               @click="handleNavClick($event, nav.to)"
             >
