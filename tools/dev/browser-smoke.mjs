@@ -15,6 +15,7 @@ const hflPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin@123'
 const sourceLensUser = process.env.SOURCELENS_USER || 'admin'
 const sourceLensPassword = process.env.SOURCELENS_PASSWORD || 'adminpassword'
 const requireHmr = process.env.SMOKE_REQUIRE_HMR !== '0'
+const skipSourceLens = process.env.SMOKE_SKIP_SOURCELENS === '1'
 
 function fail(message) {
   throw new Error(message)
@@ -47,6 +48,7 @@ async function waitForHflLogin(page, baseUrl, expectedPathPrefix) {
   if (requireHmr && !webSockets.some(url => url.includes('/__vite_hmr'))) {
     fail(`dedicated Vite HMR WebSocket was not observed at ${baseUrl}`)
   }
+  return page
 }
 
 async function waitForPlatformOps(page, baseUrl) {
@@ -69,6 +71,148 @@ async function waitForPlatformOps(page, baseUrl) {
   }
   if (unauthorized.length) {
     fail(`authenticated Platform Operations returned 401 response(s): ${unauthorized.join(', ')}`)
+  }
+  return page
+}
+
+async function assertNoDocumentOverflow(page, label) {
+  const result = await page.evaluate(() => {
+    const root = document.documentElement
+    const overflow = root.scrollWidth - root.clientWidth
+    const offenders = [...document.querySelectorAll('body *')]
+      .map(element => {
+        const rect = element.getBoundingClientRect()
+        return { tag: element.tagName, className: String(element.className || ''), left: rect.left, right: rect.right }
+      })
+      .filter(item => item.left < -1 || item.right > root.clientWidth + 1)
+      .slice(0, 8)
+    return { clientWidth: root.clientWidth, scrollWidth: root.scrollWidth, overflow, offenders }
+  })
+  if (result.overflow > 1) {
+    fail(`${label} has document-level horizontal overflow: ${JSON.stringify(result)}`)
+  }
+}
+
+async function assertInsideViewport(page, locator, label) {
+  await locator.waitFor({ state: 'visible', timeout: 30_000 })
+  const box = await locator.boundingBox()
+  const viewport = page.viewportSize()
+  if (!box || !viewport) fail(`${label} has no measurable viewport box`)
+  if (box.x < -1 || box.y < -1 || box.x + box.width > viewport.width + 1 || box.y + box.height > viewport.height + 1) {
+    fail(`${label} is outside the viewport: box=${JSON.stringify(box)} viewport=${JSON.stringify(viewport)}`)
+  }
+}
+
+async function waitForResponsiveRoute(page, url, label) {
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(350)
+  await page.locator('.main-content, .platform-ops-main, .login-form-box, .register-form-box').first()
+    .waitFor({ state: 'visible', timeout: 30_000 })
+  await assertNoDocumentOverflow(page, label)
+
+  const table = page.locator('.el-table:visible').first()
+  if (await table.count()) {
+    await assertInsideViewport(page, table, `${label} table`)
+  }
+}
+
+async function verifyMobileTenantNavigation(page, baseUrl) {
+  await page.goto(`${baseUrl}/`, { waitUntil: 'domcontentloaded' })
+  const menuButton = page.locator('.mobile-menu-button')
+  await menuButton.click()
+  const drawer = page.locator('.hfl-mobile-navigation')
+  await drawer.waitFor({ state: 'visible' })
+  await drawer.locator('a[href="/protection"]').first().click()
+  await page.waitForURL(url => url.pathname.startsWith('/protection'))
+  await drawer.waitFor({ state: 'hidden' })
+}
+
+async function verifyMobilePlatformNavigation(page, baseUrl) {
+  await page.goto(`${baseUrl}/platform-ops/monitoring/host`, { waitUntil: 'domcontentloaded' })
+  const menuButton = page.locator('.platform-ops-header__menu')
+  await menuButton.click()
+  const drawer = page.locator('.hfl-mobile-navigation')
+  await drawer.waitFor({ state: 'visible' })
+  const organizations = drawer.locator('a[href="/platform-ops/orgs"]').first()
+  await organizations.click()
+  await page.waitForURL(url => url.pathname.startsWith('/platform-ops/orgs'))
+  await drawer.waitFor({ state: 'hidden' })
+}
+
+async function verifyResponsiveDialogs(page, adminBaseUrl) {
+  await page.goto(`${adminBaseUrl}/platform-ops/orgs`, { waitUntil: 'domcontentloaded' })
+  await page.locator('.hfl-list-toolbar .el-button').first().click()
+  const dialog = page.locator('.el-dialog:visible').first()
+  await assertInsideViewport(page, dialog, 'Create Organization dialog')
+  await assertNoDocumentOverflow(page, 'Create Organization dialog')
+  await page.keyboard.press('Escape')
+}
+
+async function verifyAuthenticationViewport(browser, baseUrl, viewport) {
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: true,
+    viewport,
+    screen: viewport,
+    hasTouch: true,
+    isMobile: true,
+  })
+  try {
+    const page = await context.newPage()
+    for (const path of ['/login', '/register']) {
+      await page.goto(`${baseUrl}${path}`, { waitUntil: 'domcontentloaded' })
+      await page.locator(path === '/login' ? '.login-form-box' : '.register-form-box').waitFor({ state: 'visible' })
+      await assertNoDocumentOverflow(page, `${path} at ${viewport.width}x${viewport.height}`)
+    }
+  } finally {
+    await context.close()
+  }
+}
+
+async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, adminBaseUrl) {
+  const profiles = [
+    { name: 'mobile-375', viewport: { width: 375, height: 812 }, mobile: true },
+    { name: 'mobile-390', viewport: { width: 390, height: 844 }, mobile: true },
+    { name: 'tablet-768', viewport: { width: 768, height: 1024 }, mobile: true },
+    { name: 'desktop-1280', viewport: { width: 1280, height: 800 }, mobile: false },
+  ]
+  const tenantRoutes = [
+    '/',
+    '/protection/backup-sources',
+    '/protection/backups',
+    '/node/repositories',
+    '/ops/task',
+    '/insight/copilot',
+  ]
+  const platformRoutes = ['/platform-ops/monitoring/host', '/platform-ops/orgs']
+
+  await verifyAuthenticationViewport(browser, tenantBaseUrl, profiles[0].viewport)
+  await verifyAuthenticationViewport(browser, tenantBaseUrl, profiles[2].viewport)
+
+  for (const profile of profiles) {
+    const context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      storageState,
+      viewport: profile.viewport,
+      screen: profile.viewport,
+      hasTouch: profile.mobile,
+      isMobile: profile.mobile,
+    })
+    try {
+      const page = await context.newPage()
+      for (const path of tenantRoutes) {
+        await waitForResponsiveRoute(page, `${tenantBaseUrl}${path}`, `${profile.name} ${path}`)
+      }
+      for (const path of platformRoutes) {
+        await waitForResponsiveRoute(page, `${adminBaseUrl}${path}`, `${profile.name} ${path}`)
+      }
+      if (profile.mobile) {
+        await verifyMobileTenantNavigation(page, tenantBaseUrl)
+        await verifyMobilePlatformNavigation(page, adminBaseUrl)
+      }
+      if (profile.name === 'mobile-375') await verifyResponsiveDialogs(page, adminBaseUrl)
+    } finally {
+      await context.close()
+    }
   }
 }
 
@@ -102,29 +246,36 @@ async function waitForSourceLensLogin(page, baseUrl) {
 async function run() {
   const browser = await chromium.launch({ headless: true })
   try {
-    const hfl = await browser.newContext({ ignoreHTTPSErrors: true })
+    const tenantBaseUrl = `https://${smokeHost}:${tenantPort}`
+    const adminBaseUrl = `https://${smokeHost}:${adminPort}`
+    const hfl = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
     await waitForHflLogin(
       await hfl.newPage(),
-      `https://${smokeHost}:${tenantPort}`,
+      tenantBaseUrl,
       '/',
     )
     await waitForPlatformOps(
       await hfl.newPage(),
-      `https://${smokeHost}:${adminPort}`,
+      adminBaseUrl,
     )
+    const storageState = await hfl.storageState()
     await hfl.close()
 
-    const sourceLens = await browser.newContext({ ignoreHTTPSErrors: true })
-    await waitForSourceLensLogin(
-      await sourceLens.newPage(),
-      `https://${smokeHost}:${sourceLensPort}`,
-    )
-    await sourceLens.close()
+    await verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, adminBaseUrl)
+
+    if (!skipSourceLens) {
+      const sourceLens = await browser.newContext({ ignoreHTTPSErrors: true })
+      await waitForSourceLensLogin(
+        await sourceLens.newPage(),
+        `https://${smokeHost}:${sourceLensPort}`,
+      )
+      await sourceLens.close()
+    }
   } finally {
     await browser.close()
   }
   process.stdout.write(
-    `browser smoke: tenant, Platform Ops, SourceLens${requireHmr ? ', and HMR' : ''} passed\n`,
+    `browser smoke: tenant, Platform Ops, responsive viewports${skipSourceLens ? '' : ', SourceLens'}${requireHmr ? ', and HMR' : ''} passed\n`,
   )
 }
 
