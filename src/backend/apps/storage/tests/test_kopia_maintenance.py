@@ -1,14 +1,64 @@
 from subprocess import CompletedProcess
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.kopia_cli import (
+    KopiaCliError,
     KopiaRepositoryAlreadyExistsError,
+    _connection_fingerprint_file,
+    _invalidate_changed_s3_connection,
+    _s3_flags,
     create_s3_repository,
     run_maintenance,
 )
+
+
+class KopiaS3URLStyleCommandTests(SimpleTestCase):
+    @patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value="/usr/local/bin/kopia")
+    @patch("apps.storage.services.internal.kopia_cli._kopia_supports_s3_url_style", return_value=True)
+    def test_huawei_virtual_hosted_style_uses_patched_flag(self, _supports, _path):
+        repository = Repository(
+            repo_type=Repository.Type.S3,
+            s3_platform=Repository.S3Platform.HUAWEI,
+            s3_bucket="bucket",
+            config={"endpoint": "obs.cn-north-5.myhuaweicloud.com"},
+        )
+
+        self.assertIn("--url-style=virtual-hosted", _s3_flags(repository))
+
+    @patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value="/usr/bin/kopia")
+    @patch("apps.storage.services.internal.kopia_cli._kopia_supports_s3_url_style", return_value=False)
+    def test_official_binary_rejects_virtual_hosted_requirement(self, _supports, _path):
+        repository = Repository(
+            repo_type=Repository.Type.S3,
+            s3_platform=Repository.S3Platform.HUAWEI,
+            s3_bucket="bucket",
+            config={"s3_url_style": "virtual_hosted"},
+        )
+
+        with self.assertRaisesMessage(KopiaCliError, "does not support --url-style"):
+            _s3_flags(repository)
+
+    @patch(
+        "apps.storage.services.internal.kopia_cli._s3_connection_fingerprint",
+        return_value="new-fingerprint",
+    )
+    def test_changed_connection_fingerprint_invalidates_local_config(self, _fingerprint):
+        repository = Repository(repo_type=Repository.Type.S3)
+        with TemporaryDirectory() as temporary:
+            config_file = Path(temporary) / "repository.config"
+            config_file.write_text("configured", encoding="utf-8")
+            _connection_fingerprint_file(config_file).write_text(
+                "old-fingerprint\n", encoding="utf-8"
+            )
+
+            _invalidate_changed_s3_connection(repository, config_file)
+
+            self.assertFalse(config_file.exists())
 
 
 class KopiaRepositoryCreateCommandTests(SimpleTestCase):

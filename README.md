@@ -80,7 +80,7 @@ On the first run, the script:
 
 1. Creates `.env` from `.env.example` when it is missing.
 2. Validates the repository-pinned default TLS certificates.
-3. Fetches the pinned Kopia package and other build dependencies.
+3. Builds the pinned, HyperFileLens-patched Kopia matrix and fetches other build dependencies.
 4. Builds and publishes Agent packages under `data/media/`.
 5. Builds and starts the image-only SourceLens stack.
 6. Starts the bind-mounted HFL backend and frontend development services.
@@ -290,6 +290,39 @@ Build and package the default Agent platform matrix:
 ```
 
 The default matrix is Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+Backend and Agent packaging consume the same verified binaries from
+`build/kopia/dist/`; they do not resolve Kopia independently.
+
+### Kopia artifacts and S3 compatibility
+
+Kopia build defaults are committed in `tools/kopia/defaults.env`:
+
+```dotenv
+KOPIA_ARTIFACT_MODE="${KOPIA_ARTIFACT_MODE:-build}"
+KOPIA_GIT_URL="${KOPIA_GIT_URL:-https://github.com/kopia/kopia.git}"
+KOPIA_GIT_REF="${KOPIA_GIT_REF:-v0.23.1}"
+```
+
+The default `build` mode checks out the pinned ref in the ignored build cache,
+applies the repository-owned S3 URL-style patch, and compiles the full platform
+matrix. `download` mode fetches official upstream Release archives, verifies
+`checksums.txt`, and is intended for diagnostics or upstream comparison.
+
+```bash
+./tools/kopia/prepare.sh
+./tools/kopia/prepare.sh --kopia-mode download
+./tools/kopia/prepare.sh --kopia-ref v0.23.1 --matrix "linux:amd64"
+```
+
+CLI options override environment variables, which override
+`tools/kopia/defaults.env`. `KOPIA_INFO.json` records the resolved upstream
+commit, Go toolchain, patch SHA256, capabilities, and per-platform binary
+checksums. HyperFileLens supports AWS S3, Alibaba Cloud OSS, Huawei Cloud OBS,
+and general S3-compatible storage. Huawei OBS defaults to virtual-hosted URLs;
+AWS, Alibaba Cloud, and custom endpoints default to automatic URL selection.
+Official `download` artifacts do not expose `--url-style`; HyperFileLens rejects
+Huawei OBS and explicit virtual-hosted custom endpoints with a clear capability
+error instead of silently ignoring the repository setting.
 Run each script with `--help` for version, platform, mirror, logging, and output
 options.
 

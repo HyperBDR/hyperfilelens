@@ -16,6 +16,15 @@ import {
   s3EndpointDisplay,
 } from '../../lib/s3PlatformDisplay'
 import { buildS3RepositoryName } from '../../lib/s3RepositoryName'
+import {
+  S3_PROVIDER_OPTIONS,
+  defaultS3UrlStyle,
+  normalizeS3StoragePlatform,
+  s3ProviderRegions,
+  type S3PlatformSelection as StoragePlatform,
+  type S3RegionPreset as RegionPreset,
+  type S3UrlStyle,
+} from '../../lib/s3ProviderProfiles'
 import S3PlatformBrandIcon from '../../components/S3PlatformBrandIcon.vue'
 import {
   ArrowLeft,
@@ -24,66 +33,9 @@ import {
   ShieldCheck,
 } from 'lucide-vue-next'
 
-type S3UrlStyle = 'virtual_hosted' | 'path'
-type StoragePlatform = 'aliyun' | 'huawei' | 'tencent' | 'aws' | 'gcp' | 'azure' | 'other'
 type S3AuthStatus = 'idle' | 'validating' | 'valid' | 'invalid'
 
 const S3_AUTH_VALIDATE_ENDPOINT = '/api/v1/storage/repositories/validate/s3/'
-
-interface RegionPreset {
-  key: string
-  labelKey: string
-  endpoint: string
-  region: string
-}
-
-const ALIYUN_REGIONS: RegionPreset[] = [
-  { key: 'cn-hangzhou', labelKey: 'addS3Repo.regionLabels.aliyunCnHangzhou', endpoint: 'https://oss-cn-hangzhou.aliyuncs.com', region: 'cn-hangzhou' },
-  { key: 'cn-shanghai', labelKey: 'addS3Repo.regionLabels.aliyunCnShanghai', endpoint: 'https://oss-cn-shanghai.aliyuncs.com', region: 'cn-shanghai' },
-  { key: 'cn-qingdao', labelKey: 'addS3Repo.regionLabels.aliyunCnQingdao', endpoint: 'https://oss-cn-qingdao.aliyuncs.com', region: 'cn-qingdao' },
-  { key: 'cn-beijing', labelKey: 'addS3Repo.regionLabels.aliyunCnBeijing', endpoint: 'https://oss-cn-beijing.aliyuncs.com', region: 'cn-beijing' },
-  { key: 'cn-shenzhen', labelKey: 'addS3Repo.regionLabels.aliyunCnShenzhen', endpoint: 'https://oss-cn-shenzhen.aliyuncs.com', region: 'cn-shenzhen' },
-  { key: 'cn-heyuan', labelKey: 'addS3Repo.regionLabels.aliyunCnHeyuan', endpoint: 'https://oss-cn-heyuan.aliyuncs.com', region: 'cn-heyuan' },
-  { key: 'cn-guangzhou', labelKey: 'addS3Repo.regionLabels.aliyunCnGuangzhou', endpoint: 'https://oss-cn-guangzhou.aliyuncs.com', region: 'cn-guangzhou' },
-  { key: 'cn-chengdu', labelKey: 'addS3Repo.regionLabels.aliyunCnChengdu', endpoint: 'https://oss-cn-chengdu.aliyuncs.com', region: 'cn-chengdu' },
-  { key: 'cn-hongkong', labelKey: 'addS3Repo.regionLabels.aliyunCnHongkong', endpoint: 'https://oss-cn-hongkong.aliyuncs.com', region: 'cn-hongkong' },
-  { key: 'ap-southeast-1', labelKey: 'addS3Repo.regionLabels.aliyunApSoutheast1', endpoint: 'https://oss-ap-southeast-1.aliyuncs.com', region: 'ap-southeast-1' },
-  { key: 'ap-southeast-2', labelKey: 'addS3Repo.regionLabels.aliyunApSoutheast2', endpoint: 'https://oss-ap-southeast-2.aliyuncs.com', region: 'ap-southeast-2' },
-  { key: 'ap-southeast-3', labelKey: 'addS3Repo.regionLabels.aliyunApSoutheast3', endpoint: 'https://oss-ap-southeast-3.aliyuncs.com', region: 'ap-southeast-3' },
-  { key: 'ap-southeast-5', labelKey: 'addS3Repo.regionLabels.aliyunApSoutheast5', endpoint: 'https://oss-ap-southeast-5.aliyuncs.com', region: 'ap-southeast-5' },
-  { key: 'us-east-1', labelKey: 'addS3Repo.regionLabels.aliyunUsEast1', endpoint: 'https://oss-us-east-1.aliyuncs.com', region: 'us-east-1' },
-  { key: 'us-west-1', labelKey: 'addS3Repo.regionLabels.aliyunUsWest1', endpoint: 'https://oss-us-west-1.aliyuncs.com', region: 'us-west-1' },
-]
-
-const HUAWEI_REGIONS: RegionPreset[] = [
-  { key: 'cn-north-1', labelKey: 'addS3Repo.regionLabels.huaweiCnNorth1', endpoint: 'https://obs.cn-north-1.myhuaweicloud.com', region: 'cn-north-1' },
-  { key: 'cn-north-5', labelKey: 'addS3Repo.regionLabels.huaweiCnNorth5', endpoint: 'https://obs.cn-north-5.myhuaweicloud.com', region: 'cn-north-5' },
-  { key: 'cn-north-9', labelKey: 'addS3Repo.regionLabels.huaweiCnNorth9', endpoint: 'https://obs.cn-north-9.myhuaweicloud.com', region: 'cn-north-9' },
-  { key: 'cn-east-3', labelKey: 'addS3Repo.regionLabels.huaweiCnEast3', endpoint: 'https://obs.cn-east-3.myhuaweicloud.com', region: 'cn-east-3' },
-  { key: 'cn-south-1', labelKey: 'addS3Repo.regionLabels.huaweiCnSouth1', endpoint: 'https://obs.cn-south-1.myhuaweicloud.com', region: 'cn-south-1' },
-]
-
-const TENCENT_REGIONS: RegionPreset[] = [
-  { key: 'ap-guangzhou', labelKey: 'addS3Repo.regionLabels.tencentApGuangzhou', endpoint: 'https://cos.ap-guangzhou.myqcloud.com', region: 'ap-guangzhou' },
-  { key: 'ap-shanghai', labelKey: 'addS3Repo.regionLabels.tencentApShanghai', endpoint: 'https://cos.ap-shanghai.myqcloud.com', region: 'ap-shanghai' },
-  { key: 'ap-beijing', labelKey: 'addS3Repo.regionLabels.tencentApBeijing', endpoint: 'https://cos.ap-beijing.myqcloud.com', region: 'ap-beijing' },
-  { key: 'ap-nanjing', labelKey: 'addS3Repo.regionLabels.tencentApNanjing', endpoint: 'https://cos.ap-nanjing.myqcloud.com', region: 'ap-nanjing' },
-  { key: 'ap-chengdu', labelKey: 'addS3Repo.regionLabels.tencentApChengdu', endpoint: 'https://cos.ap-chengdu.myqcloud.com', region: 'ap-chengdu' },
-  { key: 'ap-chongqing', labelKey: 'addS3Repo.regionLabels.tencentApChongqing', endpoint: 'https://cos.ap-chongqing.myqcloud.com', region: 'ap-chongqing' },
-  { key: 'ap-hongkong', labelKey: 'addS3Repo.regionLabels.tencentApHongkong', endpoint: 'https://cos.ap-hongkong.myqcloud.com', region: 'ap-hongkong' },
-  { key: 'ap-singapore', labelKey: 'addS3Repo.regionLabels.tencentApSingapore', endpoint: 'https://cos.ap-singapore.myqcloud.com', region: 'ap-singapore' },
-]
-
-const AWS_REGIONS: RegionPreset[] = [
-  { key: 'us-east-1', labelKey: 'addS3Repo.regionLabels.awsUsEast1', endpoint: 'https://s3.amazonaws.com', region: 'us-east-1' },
-  { key: 'us-east-2', labelKey: 'addS3Repo.regionLabels.awsUsEast2', endpoint: 'https://s3.us-east-2.amazonaws.com', region: 'us-east-2' },
-  { key: 'us-west-1', labelKey: 'addS3Repo.regionLabels.awsUsWest1', endpoint: 'https://s3.us-west-1.amazonaws.com', region: 'us-west-1' },
-  { key: 'us-west-2', labelKey: 'addS3Repo.regionLabels.awsUsWest2', endpoint: 'https://s3.us-west-2.amazonaws.com', region: 'us-west-2' },
-  { key: 'eu-west-1', labelKey: 'addS3Repo.regionLabels.awsEuWest1', endpoint: 'https://s3.eu-west-1.amazonaws.com', region: 'eu-west-1' },
-  { key: 'eu-central-1', labelKey: 'addS3Repo.regionLabels.awsEuCentral1', endpoint: 'https://s3.eu-central-1.amazonaws.com', region: 'eu-central-1' },
-  { key: 'ap-southeast-1', labelKey: 'addS3Repo.regionLabels.awsApSoutheast1', endpoint: 'https://s3.ap-southeast-1.amazonaws.com', region: 'ap-southeast-1' },
-  { key: 'ap-northeast-1', labelKey: 'addS3Repo.regionLabels.awsApNortheast1', endpoint: 'https://s3.ap-northeast-1.amazonaws.com', region: 'ap-northeast-1' },
-]
 
 const { t } = useI18n()
 const router = useRouter()
@@ -100,15 +52,7 @@ const busy = ref(false)
 const platformSearch = ref('')
 const regionSearch = ref('')
 
-const STORAGE_PLATFORMS: Array<{ value: StoragePlatform; labelKey: string }> = [
-  { value: 'other', labelKey: 'addS3Repo.platformOtherS3' },
-  { value: 'aliyun', labelKey: 'addS3Repo.platformAliyun' },
-  { value: 'huawei', labelKey: 'addS3Repo.platformHuawei' },
-  { value: 'tencent', labelKey: 'addS3Repo.platformTencent' },
-  { value: 'aws', labelKey: 'addS3Repo.platformAws' },
-  { value: 'azure', labelKey: 'addS3Repo.platformAzure' },
-  { value: 'gcp', labelKey: 'addS3Repo.platformGcp' },
-]
+const STORAGE_PLATFORMS = S3_PROVIDER_OPTIONS
 
 const storagePlatform = ref<StoragePlatform | undefined>('other')
 const platformRegionKey = ref<string | undefined>(undefined)
@@ -116,7 +60,7 @@ const endpoint = ref('')
 const region = ref('')
 const accessKeyId = ref('')
 const accessKeySecret = ref('')
-const s3UrlStyle = ref<S3UrlStyle>('virtual_hosted')
+const s3UrlStyle = ref<S3UrlStyle>(defaultS3UrlStyle('other'))
 const useTls = ref(true)
 
 const repoName = ref('')
@@ -136,11 +80,7 @@ let bucketSelectLoadAttemptAt = 0
 
 /* ---------- computed ---------- */
 const currentRegions = computed<RegionPreset[]>(() => {
-  if (storagePlatform.value === 'aliyun') return ALIYUN_REGIONS
-  if (storagePlatform.value === 'huawei') return HUAWEI_REGIONS
-  if (storagePlatform.value === 'tencent') return TENCENT_REGIONS
-  if (storagePlatform.value === 'aws') return AWS_REGIONS
-  return []
+  return s3ProviderRegions(storagePlatform.value)
 })
 
 const filteredPlatforms = computed(() => {
@@ -189,9 +129,9 @@ const endpointPlaceholder = computed(() =>
 )
 
 const s3UrlStyleLabel = computed(() => {
-  return s3UrlStyle.value === 'virtual_hosted'
-    ? t('addS3Repo.s3UrlStyleVirtualHosted')
-    : t('addS3Repo.s3UrlStylePath')
+  if (s3UrlStyle.value === 'auto') return t('addS3Repo.s3UrlStyleAuto')
+  if (s3UrlStyle.value === 'virtual_hosted') return t('addS3Repo.s3UrlStyleVirtualHosted')
+  return t('addS3Repo.s3UrlStylePath')
 })
 
 const authStatusText = computed(() => {
@@ -275,7 +215,7 @@ function applyRegionPreset(key: string) {
 }
 
 function isPlatformEnabled(platform: StoragePlatform): boolean {
-  return platform === 'other'
+  return STORAGE_PLATFORMS.some((item) => item.value === platform)
 }
 
 function onPlatformChange(p: StoragePlatform) {
@@ -287,15 +227,11 @@ function onPlatformChange(p: StoragePlatform) {
     return
   }
   storagePlatform.value = p
+  s3UrlStyle.value = defaultS3UrlStyle(p)
   regionSearch.value = ''
   bucket.value = ''
   bucketOptions.value = []
-  const presets =
-    p === 'aliyun' ? ALIYUN_REGIONS
-      : p === 'huawei' ? HUAWEI_REGIONS
-        : p === 'tencent' ? TENCENT_REGIONS
-          : p === 'aws' ? AWS_REGIONS
-            : []
+  const presets = s3ProviderRegions(p)
   if (presets.length > 0) {
     applyRegionPreset(presets[0].key)
   } else {
@@ -461,8 +397,7 @@ async function onSubmit() {
 }
 
 function normalizeS3Platform(platform: StoragePlatform | undefined): 'aliyun' | 'huawei' | 'aws' | 'custom' {
-  if (platform === 'aliyun' || platform === 'huawei' || platform === 'aws') return platform
-  return 'custom'
+  return normalizeS3StoragePlatform(platform)
 }
 
 function buildCreatePayload() {
@@ -683,6 +618,7 @@ function handleBack() {
                         {{ t('addS3Repo.fieldS3UrlStyle') }} <span class="fullscreen-form-field__required">*</span>
                       </label>
                       <ElSelect v-model="s3UrlStyle" class="add-s3-element-field">
+                        <ElOption :label="t('addS3Repo.s3UrlStyleAuto')" value="auto" />
                         <ElOption :label="t('addS3Repo.s3UrlStylePath')" value="path" />
                         <ElOption :label="t('addS3Repo.s3UrlStyleVirtualHosted')" value="virtual_hosted" />
                       </ElSelect>

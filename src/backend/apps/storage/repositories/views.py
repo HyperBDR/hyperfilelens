@@ -48,6 +48,7 @@ from apps.storage.services.internal.repository_initializer import (
     validate_s3_connection,
     verify_s3_bucket_access,
 )
+from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 from apps.task.api.serializers.task import TaskSerializer
 from apps.task.models import Task
 
@@ -461,7 +462,9 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         saved_access_key_id = str(saved_config.get("access_key_id") or "")
         saved_secret_access_key = str(saved_secrets.get("secret_access_key") or "")
         saved_region = str(saved_config.get("region") or "")
-        saved_s3_url_style = str(saved_config.get("s3_url_style") or "virtual_hosted")
+        saved_s3_url_style = normalize_s3_url_style(
+            saved_config.get("s3_url_style"), platform=repository.s3_platform
+        )
         saved_use_tls = saved_config.get("use_tls") is not False
 
         # Accept optional draft overrides from the client. We still strip any

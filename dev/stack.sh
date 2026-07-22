@@ -21,8 +21,8 @@ source "${ROOT}/tools/lib/logging.sh"
 source "${ROOT}/tools/lib/env-file.sh"
 # shellcheck source=../tools/lib/docker-images.sh
 source "${ROOT}/tools/lib/docker-images.sh"
-# shellcheck source=../tools/dependencies/versions/kopia.env
-source "${ROOT}/tools/dependencies/versions/kopia.env"
+# shellcheck source=../tools/kopia/common.sh
+source "${ROOT}/tools/kopia/common.sh"
 
 COMPOSE=()
 
@@ -71,7 +71,7 @@ Commands:
 Prepare (up / restart) always includes:
   .env (create from .env.example if missing)
   Repository-pinned default TLS certificates
-  Kopia .deb for the backend development dependency image
+  Unified Kopia binary matrix for Backend and Agent packages
   backend source bind mount with automatic API/worker/scheduler restart
   frontend source bind mount with Vite HMR and persistent node_modules
   agent publish (full bundle) → data/media/agent-releases/
@@ -89,7 +89,9 @@ Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallb
   --docker-download-mirror URL     Docker Hub mirror for NAS ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
   --ubuntu2404-arch ARCH           NAS deb arch for agent bundle: amd64 | arm64 | all (default: amd64)
-  --kopia-version VERSION          Kopia version without v prefix (default: version pin file)
+  --kopia-mode MODE                build or download
+  --kopia-git-url URL              Kopia source repository URL
+  --kopia-ref REF                  Kopia release ref in vX.Y.Z form
   --go-proxy URL                   Go module proxy (env: GOPROXY)
   --go-sumdb VALUE                 Go checksum database (env: GOSUMDB)
   --pip-index-url URL              Python package index (env: PIP_INDEX_URL)
@@ -142,7 +144,7 @@ load_repo_env_defaults() {
 		NPM_REGISTRY BUILD_SOURCELENS SOURCELENS_GIT_REF SOURCELENS_GIT_URL \
 		DOCKER_PULL_TIMEOUT_SECONDS DOCKER_PULL_RETRIES DEV_OFFLINE \
 		DEV_SMOKE_PLAYWRIGHT_VERSION SOURCELENS_GIT_TIMEOUT_SECONDS \
-		SOURCELENS_GIT_RETRIES; do
+		SOURCELENS_GIT_RETRIES KOPIA_ARTIFACT_MODE KOPIA_GIT_URL KOPIA_GIT_REF; do
 		hfl_env_load_default "${key}"
 	done
 	DOCKER_PULL_TIMEOUT="${DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
@@ -185,6 +187,9 @@ sourcelens_git_url=${SOURCELENS_GIT_URL:-<default>}
 sourcelens_upstream_image_prefix=${SOURCELENS_UPSTREAM_IMAGE_PREFIX}
 sourcelens_image_registry=${SOURCELENS_IMAGE_REGISTRY:-<local>}
 ubuntu2404_arch=${UBUNTU2404_ARCH}
+kopia_mode=${KOPIA_ARTIFACT_MODE}
+kopia_git_url=${KOPIA_GIT_URL}
+kopia_ref=${KOPIA_GIT_REF}
 kopia_version=${KOPIA_VERSION}
 github_download_mirror=${MIRROR_GITHUB_DOWNLOAD:-<official>}
 github_token=$(hfl_redact "${MIRROR_GITHUB_TOKEN}")
@@ -365,9 +370,9 @@ build_dev_images() {
 	local force=$1 backend_fingerprint frontend_fingerprint
 	backend_fingerprint="$(cache_fingerprint \
 		deploy/docker/backend.Dockerfile deploy/docker/backend-entrypoint.sh deploy/bootstrap \
-		pyproject.toml uv.lock build/dependencies/kopia/kopia_linux_amd64.deb -- \
+		pyproject.toml uv.lock build/kopia/KOPIA_INFO.json build/kopia/dist/linux/amd64/kopia -- \
 		"apt=${MIRROR_APT}" "pip=${OPT_PIP_INDEX_URL}" \
-		"pip_host=${OPT_PIP_TRUSTED_HOST}" "kopia=${KOPIA_VERSION}")"
+		"pip_host=${OPT_PIP_TRUSTED_HOST}" "kopia=${KOPIA_GIT_REF}" "kopia_mode=${KOPIA_ARTIFACT_MODE}")"
 	frontend_fingerprint="$(cache_fingerprint \
 		deploy/docker/frontend.Dockerfile deploy/docker/frontend-dev-entrypoint.sh \
 		src/frontend/package.json \
@@ -404,21 +409,21 @@ build_dev_images() {
 	fi
 }
 
-fetch_kopia_deb() {
+prepare_kopia_artifacts() {
 	local force=$1
-	local cached="${ROOT}/build/dependencies/kopia/kopia_linux_amd64.deb"
-	if [[ "${DEV_OFFLINE}" -eq 1 ]]; then
-		[[ -s "${cached}" ]] || die "Kopia dependency is missing and offline mode forbids downloading it"
-		log "Offline mode: reusing cached Kopia deb"
-		return 0
-	fi
-	local args=(--kopia-version "${KOPIA_VERSION}")
+	local args=(
+		--kopia-mode "${KOPIA_ARTIFACT_MODE}"
+		--kopia-git-url "${KOPIA_GIT_URL}"
+		--kopia-ref "${KOPIA_GIT_REF}"
+	)
 	[[ "${force}" -eq 1 ]] && args+=(--force)
+	[[ "${DEV_OFFLINE}" -eq 0 ]] || args+=(--offline)
 	if [[ -n "${MIRROR_GITHUB_DOWNLOAD}" ]]; then
 		args+=(--github-download-mirror "${MIRROR_GITHUB_DOWNLOAD}")
 	fi
-	log "Fetching Kopia deb (force=${force})"
-	"${ROOT}/tools/dependencies/fetch-kopia-deb.sh" "${args[@]}"
+	[[ -z "${MIRROR_GITHUB_TOKEN}" ]] || args+=(--github-token "${MIRROR_GITHUB_TOKEN}")
+	log "Preparing unified Kopia artifacts (mode=${KOPIA_ARTIFACT_MODE}, force=${force})"
+	"${ROOT}/tools/kopia/prepare.sh" "${args[@]}"
 }
 
 # Remove artifacts left by older multilingual development builds.
@@ -503,9 +508,9 @@ stop_sourcelens_dev() {
 publish_agent() {
 	local force=$1
 	local fingerprint
-	fingerprint="$(cache_fingerprint src/agent tools/agent tools/dependencies/versions deploy/bootstrap \
+	fingerprint="$(cache_fingerprint src/agent tools/agent tools/kopia deploy/bootstrap \
 		tools/lib/version.sh tools/lib/logging.sh -- \
-		"arch=${UBUNTU2404_ARCH}" "kopia=${KOPIA_VERSION}" \
+		"arch=${UBUNTU2404_ARCH}" "kopia=${KOPIA_GIT_REF}" "kopia_mode=${KOPIA_ARTIFACT_MODE}" \
 		"commit=$(git -C "${ROOT}" rev-parse HEAD)" \
 		"github_mirror=${MIRROR_GITHUB_DOWNLOAD}" \
 		"docker_mirror=${MIRROR_DOCKER_DOWNLOAD}" "apt=${MIRROR_APT}" \
@@ -525,7 +530,9 @@ publish_agent() {
 		"${ROOT}/src/agent/scripts/build.sh" --clean
 	fi
 	local args=(--bundle all --ubuntu2404-arch "${UBUNTU2404_ARCH}")
-	args+=(--kopia-version "${KOPIA_VERSION}")
+	args+=(--kopia-mode "${KOPIA_ARTIFACT_MODE}")
+	args+=(--kopia-git-url "${KOPIA_GIT_URL}")
+	args+=(--kopia-ref "${KOPIA_GIT_REF}")
 	[[ "${force}" -eq 1 ]] && args+=(--force-fetch)
 	local mirror
 	while IFS= read -r -d '' mirror; do
@@ -549,7 +556,7 @@ prepare_dev() {
 	ensure_env_file
 	ensure_tls_certs
 	ensure_data_dirs
-	fetch_kopia_deb "${force}"
+	prepare_kopia_artifacts "${force}"
 	strip_bundled_lang_packs "${ROOT}/src/frontend"
 	publish_agent "${force}"
 	build_dev_images "${force}"
@@ -871,12 +878,22 @@ parse_common_option() {
 		UBUNTU2404_ARCH="$2"
 		return 0
 		;;
-	--kopia-version)
+	--kopia-mode)
 		require_value "$1" "${2:-}"
-		KOPIA_VERSION="${2#v}"
-		[[ "${KOPIA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-			|| die "invalid Kopia version: ${KOPIA_VERSION}" 2
-		export KOPIA_VERSION
+		KOPIA_ARTIFACT_MODE="$2"
+		case "${KOPIA_ARTIFACT_MODE}" in build | download) ;; *) die "invalid Kopia mode: ${KOPIA_ARTIFACT_MODE}" 2 ;; esac
+		return 0
+		;;
+	--kopia-git-url)
+		require_value "$1" "${2:-}"
+		KOPIA_GIT_URL="$2"
+		return 0
+		;;
+	--kopia-ref)
+		require_value "$1" "${2:-}"
+		KOPIA_GIT_REF="$2"
+		[[ "${KOPIA_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || die "invalid Kopia ref: ${KOPIA_GIT_REF}" 2
+		KOPIA_VERSION="${BASH_REMATCH[1]}"
 		return 0
 		;;
 	--no-sourcelens)
@@ -950,6 +967,7 @@ main() {
 		exit 2
 	}
 	load_repo_env_defaults
+	kopia_load_config
 	# shellcheck source=../tools/sourcelens/defaults.env
 	source "${ROOT}/tools/sourcelens/defaults.env"
 	WITH_SOURCELENS="${BUILD_SOURCELENS:-1}"
@@ -994,7 +1012,7 @@ main() {
 			LOG_FILE="$2"
 			shift 2
 			;;
-		--github-download-mirror | --github-token | --docker-download-mirror | --apt-mirror | --ubuntu2404-arch | --kopia-version | --sourcelens-ref | --sourcelens-git-url | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry | --pull-timeout | --pull-retries | --no-sourcelens | --hfl-only | --pull | --offline)
+		--github-download-mirror | --github-token | --docker-download-mirror | --apt-mirror | --ubuntu2404-arch | --kopia-mode | --kopia-git-url | --kopia-ref | --sourcelens-ref | --sourcelens-git-url | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry | --pull-timeout | --pull-retries | --no-sourcelens | --hfl-only | --pull | --offline)
 			parse_common_option "$@" || die "failed to parse option: $1"
 			if [[ "$1" == "--no-sourcelens" || "$1" == "--hfl-only" \
 				|| "$1" == "--pull" || "$1" == "--offline" ]]; then

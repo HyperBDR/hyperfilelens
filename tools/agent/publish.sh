@@ -41,7 +41,9 @@ Build (passed to build.sh):
   --go-sumdb VALUE                 Go checksum database (env: GOSUMDB)
 
 Fetch (passed to fetch-deps.sh):
-  --kopia-version VERSION          Kopia version without v prefix (env: KOPIA_VERSION)
+  --kopia-mode MODE               build or download
+  --kopia-git-url URL             Kopia source repository URL
+  --kopia-ref REF                 Kopia release ref in vX.Y.Z form
   --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for NAS Ubuntu images (env: DOCKER_DOWNLOAD_MIRROR)
@@ -78,6 +80,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${ROOT}/tools/lib/version.sh"
 # shellcheck source=../lib/logging.sh
 source "${ROOT}/tools/lib/logging.sh"
+# shellcheck source=../kopia/common.sh
+source "${ROOT}/tools/kopia/common.sh"
+kopia_load_config
 AGENT_DIR="${ROOT}/src/agent"
 BUILD_DIR="${ROOT}/build/agent"
 DEFAULT_RELEASES_DIR="${ROOT}/data/media/agent-releases"
@@ -98,7 +103,6 @@ OPT_GITHUB_TOKEN=""
 OPT_DOCKER_DOWNLOAD_MIRROR=""
 OPT_DOCKER_PULL_TIMEOUT=""
 OPT_APT_MIRROR=""
-OPT_KOPIA_VERSION=""
 LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
@@ -153,9 +157,19 @@ while [[ $# -gt 0 ]]; do
 		OPT_GO_SUMDB="$2"
 		shift 2
 		;;
-	--kopia-version)
+	--kopia-mode)
 		require_value "$1" "${2:-}"
-		OPT_KOPIA_VERSION="${2#v}"
+		KOPIA_ARTIFACT_MODE="$2"
+		shift 2
+		;;
+	--kopia-git-url)
+		require_value "$1" "${2:-}"
+		KOPIA_GIT_URL="$2"
+		shift 2
+		;;
+	--kopia-ref)
+		require_value "$1" "${2:-}"
+		KOPIA_GIT_REF="$2"
 		shift 2
 		;;
 	--github-download-mirror)
@@ -241,11 +255,10 @@ DOCKER_PULL_TIMEOUT_SECONDS="${OPT_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SE
 [[ "${DOCKER_PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] \
 	|| hfl_die "DOCKER_PULL_TIMEOUT_SECONDS must be a positive integer" 2
 APT_MIRROR="${OPT_APT_MIRROR:-${APT_MIRROR:-}}"
-# shellcheck source=../dependencies/versions/kopia.env
-source "${ROOT}/tools/dependencies/versions/kopia.env"
-KOPIA_VERSION="${OPT_KOPIA_VERSION:-${KOPIA_VERSION}}"
-[[ "${KOPIA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-	|| hfl_die "Invalid Kopia version: ${KOPIA_VERSION}" 2
+case "${KOPIA_ARTIFACT_MODE}" in build | download) ;; *) hfl_die "Invalid Kopia mode: ${KOPIA_ARTIFACT_MODE}" 2 ;; esac
+[[ "${KOPIA_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
+	|| hfl_die "Invalid Kopia ref: ${KOPIA_GIT_REF}" 2
+KOPIA_VERSION="${BASH_REMATCH[1]}"
 
 ubuntu2404_matrix() {
 	case "${UBUNTU2404_ARCH}" in
@@ -282,6 +295,9 @@ build_dir=${BUILD_DIR}/${VERSION}
 releases_dir=${RELEASES_DIR}
 force_fetch=${FORCE_FETCH}
 force_pull=${FORCE_PULL}
+kopia_mode=${KOPIA_ARTIFACT_MODE}
+kopia_git_url=${KOPIA_GIT_URL}
+kopia_ref=${KOPIA_GIT_REF}
 kopia_version=${KOPIA_VERSION}
 go_proxy=${GO_PROXY:-<official>}
 go_sumdb=${GO_SUMDB:-<official>}
@@ -375,7 +391,9 @@ ubuntu_archive_matches() {
 }
 
 fetch_common_args=()
-fetch_common_args+=(--kopia-version "${KOPIA_VERSION}")
+fetch_common_args+=(--kopia-mode "${KOPIA_ARTIFACT_MODE}")
+fetch_common_args+=(--kopia-git-url "${KOPIA_GIT_URL}")
+fetch_common_args+=(--kopia-ref "${KOPIA_GIT_REF}")
 if [[ "${FORCE_FETCH}" -eq 1 ]]; then
 	fetch_common_args+=(--force)
 fi
@@ -560,7 +578,7 @@ build_args=(--release \
 [[ -n "${GO_SUMDB}" ]] && build_args+=(--go-sumdb "${GO_SUMDB}")
 "${AGENT_DIR}/scripts/build.sh" "${build_args[@]}"
 
-hfl_log_step "Fetching Kopia CLI archives"
+hfl_log_step "Preparing the unified Kopia artifact matrix"
 "${AGENT_DIR}/scripts/fetch-deps.sh" --kopia "${fetch_common_args[@]}" \
 	--version "${VERSION}" \
 	--matrix "${MATRIX}"

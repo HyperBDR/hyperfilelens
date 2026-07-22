@@ -96,7 +96,7 @@ export type StorageRepositoryUpdatePayload = {
   name?: string
   config?: {
     region?: string
-    s3_url_style?: 'virtual_hosted' | 'path'
+    s3_url_style?: 'auto' | 'virtual_hosted' | 'path'
     use_tls?: boolean
     quota_gb?: number
     quota_alert_enabled?: boolean
@@ -400,7 +400,7 @@ export type StorageRepositoryVerifyAccessResult = {
  */
 export type StorageRepositoryVerifyAccessOverrides = {
   region?: string
-  s3_url_style?: 'virtual_hosted' | 'path'
+  s3_url_style?: 'auto' | 'virtual_hosted' | 'path'
   use_tls?: boolean
   access_key_id?: string
   secret_access_key?: string

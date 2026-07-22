@@ -136,6 +136,32 @@ class StorageRepositoryApiTests(TestCase):
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
     @mock.patch("apps.storage.services.interface.initialize_s3_repository")
+    def test_create_s3_applies_provider_url_style_defaults(self, _initialize, _sync):
+        expected = {
+            Repository.S3Platform.AWS: "auto",
+            Repository.S3Platform.ALIYUN: "auto",
+            Repository.S3Platform.HUAWEI: "virtual_hosted",
+            Repository.S3Platform.CUSTOM: "auto",
+        }
+        for index, (platform, url_style) in enumerate(expected.items(), start=1):
+            payload = self._s3_payload()
+            payload["name"] = f"provider-{platform}"
+            payload["s3_platform"] = platform
+            payload["s3_bucket"] = f"provider-bucket-{index}"
+            payload["config"].pop("s3_url_style")
+
+            response = self.client.post(
+                "/api/v1/storage/repositories/",
+                payload,
+                format="json",
+                **self._headers(),
+            )
+
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+            self.assertEqual(response.data["config"]["s3_url_style"], url_style)
+
+    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
+    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
     def test_create_s3_generates_kopia_password_in_credential(self, initialize, _sync):
         response = self.client.post(
             "/api/v1/storage/repositories/",

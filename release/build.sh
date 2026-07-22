@@ -22,6 +22,8 @@ source "${ROOT}/tools/lib/version.sh"
 source "${ROOT}/tools/lib/logging.sh"
 # shellcheck source=../tools/lib/env-file.sh
 source "${ROOT}/tools/lib/env-file.sh"
+# shellcheck source=../tools/kopia/common.sh
+source "${ROOT}/tools/kopia/common.sh"
 
 MIRROR_GITHUB_DOWNLOAD=""
 MIRROR_GITHUB_TOKEN=""
@@ -38,7 +40,6 @@ VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
 OPT_VERSION=""
 SOURCELENS_BUILD_ENV="${ROOT}/tools/sourcelens/defaults.env"
-KOPIA_VERSION_ENV="${ROOT}/tools/dependencies/versions/kopia.env"
 
 log() { hfl_log_info "$@"; }
 die() { hfl_die "$1" "${2:-1}"; }
@@ -140,6 +141,7 @@ load_repo_env_defaults() {
 		DOCKER_APT_MIRROR APT_MIRROR PIP_INDEX_URL PIP_TRUSTED_HOST \
 		PIP_TIMEOUT NPM_REGISTRY GOPROXY GOSUMDB BUILD_SOURCELENS \
 		DOCKER_PULL_TIMEOUT_SECONDS \
+		KOPIA_ARTIFACT_MODE KOPIA_GIT_URL KOPIA_GIT_REF \
 		SOURCELENS_GIT_REF SOURCELENS_GIT_URL SENTRY_ENABLED SENTRY_DSN \
 		SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE \
 		SENTRY_SEND_DEFAULT_PII VITE_SHOW_EULA; do
@@ -209,7 +211,6 @@ Build hyperfilelens-<version>-<commit7>.tar.gz into build/release/dist/
 Version:
   --version VERSION                  Local untagged build version (default: 0.1.0)
                                      A matching exact Git tag is authoritative when present.
-  --kopia-version VERSION            Kopia version without v prefix (default: version pin file)
 
   - Full agent bundle (all platforms)
   - Host Docker CE debs for Ubuntu 20.04/24.04 amd64 (offline install)
@@ -229,6 +230,11 @@ Mirror options (Kopia fetch + Agent publishing + runtime image pull; env fallbac
   --pip-index-url URL              Python package index (env: PIP_INDEX_URL)
   --pip-trusted-host HOST          Trusted pip host (env: PIP_TRUSTED_HOST)
   --npm-registry URL               npm registry (env: NPM_REGISTRY)
+
+Kopia artifacts (tools/kopia/defaults.env; default: build patched source):
+  --kopia-mode MODE               build or download
+  --kopia-git-url URL             Kopia source repository URL
+  --kopia-ref REF                 Kopia release ref in vX.Y.Z form
 
   --pull                           Re-check registry and pull runtime images (default: use local if present)
   --no-cache                       Rebuild HFL and SourceLens Docker layers without BuildKit cache
@@ -268,6 +274,9 @@ release_dir=${DIST_DIR}
 staging_dir=${STAGING_BASE}
 hfl_version=${resolved_version}
 agent_version=${resolved_version}
+kopia_mode=${KOPIA_ARTIFACT_MODE}
+kopia_git_url=${KOPIA_GIT_URL}
+kopia_ref=${KOPIA_GIT_REF}
 kopia_version=${KOPIA_VERSION}
 with_sourcelens=${BUILD_SOURCELENS:-1}
 sourcelens_ref=${SOURCELENS_GIT_REF}
@@ -305,15 +314,6 @@ load_sourcelens_build_config() {
 	elif [[ -z "${BUILD_SOURCELENS:-}" ]]; then
 		export BUILD_SOURCELENS=1
 	fi
-}
-
-load_kopia_version_config() {
-	[[ -f "${KOPIA_VERSION_ENV}" ]] || die "missing Kopia version file: ${KOPIA_VERSION_ENV}" 3
-	# shellcheck disable=SC1090
-	source "${KOPIA_VERSION_ENV}"
-	[[ "${KOPIA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-		|| die "invalid Kopia version: ${KOPIA_VERSION}" 2
-	export KOPIA_VERSION
 }
 
 parse_common_option() {
@@ -386,7 +386,7 @@ parse_common_option() {
 parse_args() {
 	load_repo_env_defaults
 	load_sourcelens_build_config
-	load_kopia_version_config
+	kopia_load_config
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		-h | --help)
@@ -399,11 +399,22 @@ parse_args() {
 			export RELEASE_VERSION="${OPT_VERSION}"
 			shift 2
 			;;
-		--kopia-version)
+		--kopia-mode)
 			require_value "$1" "${2:-}"
-			export KOPIA_VERSION="${2#v}"
-			[[ "${KOPIA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-				|| die "invalid Kopia version: ${KOPIA_VERSION}" 2
+			export KOPIA_ARTIFACT_MODE="$2"
+			case "${KOPIA_ARTIFACT_MODE}" in build | download) ;; *) die "invalid Kopia mode: ${KOPIA_ARTIFACT_MODE}" 2 ;; esac
+			shift 2
+			;;
+		--kopia-git-url)
+			require_value "$1" "${2:-}"
+			export KOPIA_GIT_URL="$2"
+			shift 2
+			;;
+		--kopia-ref)
+			require_value "$1" "${2:-}"
+			export KOPIA_GIT_REF="$2"
+			[[ "${KOPIA_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || die "invalid Kopia ref: ${KOPIA_GIT_REF}" 2
+			KOPIA_VERSION="${BASH_REMATCH[1]}"
 			shift 2
 			;;
 		--no-sourcelens)
@@ -456,16 +467,20 @@ parse_args() {
 	done
 }
 
-fetch_kopia_deb() {
-	local args=(--kopia-version "${KOPIA_VERSION}")
+prepare_kopia_artifacts() {
+	local args=(
+		--kopia-mode "${KOPIA_ARTIFACT_MODE}"
+		--kopia-git-url "${KOPIA_GIT_URL}"
+		--kopia-ref "${KOPIA_GIT_REF}"
+	)
 	if [[ -n "${MIRROR_GITHUB_DOWNLOAD}" ]]; then
 		args+=(--github-download-mirror "${MIRROR_GITHUB_DOWNLOAD}")
 	fi
 	if [[ -n "${MIRROR_GITHUB_TOKEN}" ]]; then
 		args+=(--github-token "${MIRROR_GITHUB_TOKEN}")
 	fi
-	log "Fetching Kopia deb"
-	"${ROOT}/tools/dependencies/fetch-kopia-deb.sh" "${args[@]}"
+	log "Preparing unified Kopia artifact matrix"
+	"${ROOT}/release/build-kopia.sh" "${args[@]}"
 }
 
 fetch_host_docker_debs() {
@@ -505,7 +520,9 @@ publish_agent() {
 	)
 	args+=(--commit "${RELEASE_COMMIT}")
 	args+=(--version "${HFL_VERSION}")
-	args+=(--kopia-version "${KOPIA_VERSION}")
+	args+=(--kopia-mode "${KOPIA_ARTIFACT_MODE}")
+	args+=(--kopia-git-url "${KOPIA_GIT_URL}")
+	args+=(--kopia-ref "${KOPIA_GIT_REF}")
 	[[ "${FORCE_PULL}" -eq 1 ]] && args+=(--pull)
 	[[ -n "${GOPROXY:-}" ]] && args+=(--go-proxy "${GOPROXY}")
 	[[ -n "${GOSUMDB:-}" ]] && args+=(--go-sumdb "${GOSUMDB}")
@@ -589,7 +606,7 @@ build_control_plane_images() {
 		--build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-}" \
 		--build-arg "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST:-}" \
 		--build-arg "PIP_TIMEOUT=${PIP_TIMEOUT:-600}" \
-		--build-arg "KOPIA_DEB=${KOPIA_DEB:-build/dependencies/kopia/kopia_linux_amd64.deb}" \
+		--build-arg "KOPIA_BINARY=${KOPIA_BINARY:-build/kopia/dist/linux/amd64/kopia}" \
 		"${ROOT}"
 
 	log "Building hyperfilelens-frontend:${HFL_VERSION} (alias: latest)"
@@ -1101,8 +1118,8 @@ main() {
 	mkdir -p "${images_dir}"
 	mkdir -p "${pkg_root}/deploy/nginx/certs"
 
-	log "Fetching Kopia deb for backend image"
-	fetch_kopia_deb
+	log "Preparing Kopia artifacts for Backend and Agent packaging"
+	prepare_kopia_artifacts
 
 	log "Fetching host Docker CE debs (ubuntu 20.04/24.04 amd64)"
 	fetch_host_docker_debs

@@ -1,0 +1,175 @@
+diff --git a/cli/storage_s3.go b/cli/storage_s3.go
+index 3325017..0532676 100644
+--- a/cli/storage_s3.go
++++ b/cli/storage_s3.go
+@@ -23,6 +23,7 @@ func (c *storageS3Flags) Setup(svc StorageProviderServices, cmd *kingpin.CmdClau
+ 	cmd.Flag("bucket", "Name of the S3 bucket").Required().StringVar(&c.s3options.BucketName)
+ 	cmd.Flag("endpoint", "Endpoint to use").Default("s3.amazonaws.com").StringVar(&c.s3options.Endpoint)
+ 	cmd.Flag("region", "S3 Region").Default("").StringVar(&c.s3options.Region)
++	cmd.Flag("url-style", "S3 bucket URL style").Default(s3.URLStyleAuto).EnumVar(&c.s3options.URLStyle, s3.URLStyleAuto, s3.URLStyleVirtualHosted, s3.URLStylePath)
+ 	cmd.Flag("access-key", "Access key ID (overrides AWS_ACCESS_KEY_ID environment variable)").Required().Envar(svc.EnvName("AWS_ACCESS_KEY_ID")).StringVar(&c.s3options.AccessKeyID)
+ 	cmd.Flag("secret-access-key", "Secret access key (overrides AWS_SECRET_ACCESS_KEY environment variable)").Required().Envar(svc.EnvName("AWS_SECRET_ACCESS_KEY")).StringVar(&c.s3options.SecretAccessKey)
+ 	cmd.Flag("session-token", "Session token (overrides AWS_SESSION_TOKEN environment variable)").Envar(svc.EnvName("AWS_SESSION_TOKEN")).StringVar(&c.s3options.SessionToken)
+diff --git a/repo/blob/s3/s3_options.go b/repo/blob/s3/s3_options.go
+index 9b2473b..2798332 100644
+--- a/repo/blob/s3/s3_options.go
++++ b/repo/blob/s3/s3_options.go
+@@ -7,6 +7,15 @@ import (
+ 	"github.com/kopia/kopia/repo/jsonencoding"
+ )
+ 
++const (
++	// URLStyleAuto lets the S3 client select the bucket lookup style from the endpoint.
++	URLStyleAuto = "auto"
++	// URLStyleVirtualHosted places the bucket name in the request hostname.
++	URLStyleVirtualHosted = "virtual-hosted"
++	// URLStylePath places the bucket name in the request path.
++	URLStylePath = "path"
++)
++
+ // Options defines options for S3-based storage.
+ type Options struct {
+ 	// BucketName is the name of the bucket where data is stored.
+@@ -34,6 +43,9 @@ type Options struct {
+ 	// Region is an optional region to pass in authorization header.
+ 	Region string `json:"region,omitempty"`
+ 
++	// URLStyle controls whether the bucket is addressed through the hostname or request path.
++	URLStyle string `json:"urlStyle,omitempty"`
++
+ 	throttling.Limits
+ 
+ 	// PointInTime specifies a view of the (versioned) store at that time
+diff --git a/repo/blob/s3/s3_storage.go b/repo/blob/s3/s3_storage.go
+index 493c511..40c4b03 100644
+--- a/repo/blob/s3/s3_storage.go
++++ b/repo/blob/s3/s3_storage.go
+@@ -393,13 +393,17 @@ func newStorageWithCredentials(ctx context.Context, creds *credentials.Credentia
+ 		return nil, errors.New("bucket name must be specified")
+ 	}
+ 
+-	minioOpts := &minio.Options{
+-		Creds:  creds,
+-		Secure: !opt.DoNotUseTLS,
+-		Region: opt.Region,
++	bucketLookup, err := bucketLookupForURLStyle(opt.URLStyle)
++	if err != nil {
++		return nil, err
+ 	}
+ 
+-	var err error
++	minioOpts := &minio.Options{
++		Creds:        creds,
++		Secure:       !opt.DoNotUseTLS,
++		Region:       opt.Region,
++		BucketLookup: bucketLookup,
++	}
+ 
+ 	minioOpts.Transport, err = getCustomTransport(opt)
+ 	if err != nil {
+@@ -430,6 +434,19 @@ func newStorageWithCredentials(ctx context.Context, creds *credentials.Credentia
+ 	return &s, nil
+ }
+ 
++func bucketLookupForURLStyle(urlStyle string) (minio.BucketLookupType, error) {
++	switch urlStyle {
++	case "", URLStyleAuto:
++		return minio.BucketLookupAuto, nil
++	case URLStyleVirtualHosted:
++		return minio.BucketLookupDNS, nil
++	case URLStylePath:
++		return minio.BucketLookupPath, nil
++	default:
++		return minio.BucketLookupAuto, errors.Errorf("invalid S3 URL style: %q", urlStyle)
++	}
++}
++
+ func init() {
+ 	blob.AddSupportedStorage(s3storageType, Options{}, New)
+ }
+diff --git a/repo/blob/s3/s3_storage_test.go b/repo/blob/s3/s3_storage_test.go
+index 0ad693b..cfc8d7d 100644
+--- a/repo/blob/s3/s3_storage_test.go
++++ b/repo/blob/s3/s3_storage_test.go
+@@ -190,6 +190,81 @@ func TestS3StorageAWS(t *testing.T) {
+ 	testStorage(t, options, false, blob.PutOptions{})
+ }
+ 
++func TestBucketLookupForURLStyle(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name      string
++		urlStyle  string
++		expected  minio.BucketLookupType
++		wantError bool
++	}{
++		{"empty defaults to auto", "", minio.BucketLookupAuto, false},
++		{"auto", URLStyleAuto, minio.BucketLookupAuto, false},
++		{"virtual hosted", URLStyleVirtualHosted, minio.BucketLookupDNS, false},
++		{"path", URLStylePath, minio.BucketLookupPath, false},
++		{"invalid", "invalid", minio.BucketLookupAuto, true},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			actual, err := bucketLookupForURLStyle(tc.urlStyle)
++			if tc.wantError {
++				require.Error(t, err)
++				return
++			}
++			require.NoError(t, err)
++			require.Equal(t, tc.expected, actual)
++		})
++	}
++}
++
++func TestOptionsURLStyleJSONRoundTrip(t *testing.T) {
++	t.Parallel()
++
++	original := Options{URLStyle: URLStyleVirtualHosted}
++	encoded, err := json.Marshal(original)
++	require.NoError(t, err)
++
++	var decoded Options
++	require.NoError(t, json.Unmarshal(encoded, &decoded))
++	require.Equal(t, original.URLStyle, decoded.URLStyle)
++}
++
++func TestURLStyleRequestAddressing(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name         string
++		urlStyle     string
++		expectedHost string
++		expectedPath string
++	}{
++		{"virtual hosted", URLStyleVirtualHosted, "backup-bucket.s3.example.test", "/object"},
++		{"path", URLStylePath, "s3.example.test", "/backup-bucket/object"},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			lookup, err := bucketLookupForURLStyle(tc.urlStyle)
++			require.NoError(t, err)
++			client, err := minio.New("s3.example.test", &minio.Options{
++				Creds:        credentials.NewStaticV4("access-key", "secret-key", ""),
++				Secure:       false,
++				Region:       "us-east-1",
++				BucketLookup: lookup,
++			})
++			require.NoError(t, err)
++			requestURL, err := client.PresignedGetObject(
++				context.Background(), "backup-bucket", "object", time.Hour, nil,
++			)
++			require.NoError(t, err)
++			require.Equal(t, tc.expectedHost, requestURL.Host)
++			require.Equal(t, tc.expectedPath, requestURL.Path)
++		})
++	}
++}
++
+ func TestS3StorageAWSSTS(t *testing.T) {
+ 	t.Parallel()
+ 	testutil.ProviderTest(t)

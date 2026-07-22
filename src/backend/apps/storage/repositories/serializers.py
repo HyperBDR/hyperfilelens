@@ -10,6 +10,7 @@ from apps.storage.services.internal.repository_secrets import (
     credential_hint,
     sanitize_repository_config,
 )
+from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
 
 FORBIDDEN_CONFIG_FIELDS = {
@@ -233,6 +234,12 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"config.secret_access_key": "Secret access key is required."})
 
         config["prefix"] = normalize_s3_object_prefix(config.get("prefix"))
+        try:
+            config["s3_url_style"] = normalize_s3_url_style(
+                config.get("s3_url_style"), platform=s3_platform
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"config.s3_url_style": str(exc)}) from exc
         if instance is None and not config["prefix"]:
             raise serializers.ValidationError({"config.prefix": "S3 object prefix is required."})
 

@@ -261,7 +261,7 @@ build_release() {
 		[[ "${goos}" == windows ]] && name+=".exe"
 		log_step "Building hfl-agent for ${goos}/${goarch}"
 		if ! GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
-			go build -trimpath -ldflags "${ldflags}" -o "${dir}/${name}" ./cmd/agent; then
+			go build -buildvcs=false -trimpath -ldflags "${ldflags}" -o "${dir}/${name}" ./cmd/agent; then
 			log_fail "Failed to build hfl-agent for ${goos}/${goarch}"
 		fi
 		log_ok "Built ${dir}/${name}"
@@ -270,7 +270,7 @@ build_release() {
 		[[ "${goos}" == windows ]] && enroll_name+=".exe"
 		log_step "Building hfl-enroll for ${goos}/${goarch}"
 		if ! GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
-			go build -trimpath -ldflags "${ldflags}" -o "${dir}/${enroll_name}" ./cmd/enroll; then
+			go build -buildvcs=false -trimpath -ldflags "${ldflags}" -o "${dir}/${enroll_name}" ./cmd/enroll; then
 			log_fail "Failed to build hfl-enroll for ${goos}/${goarch}"
 		fi
 		log_ok "Built ${dir}/${enroll_name}"

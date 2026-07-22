@@ -38,6 +38,7 @@ from apps.storage.services.internal.repository_task_naming import (
     repository_operation_display_name,
 )
 from apps.storage.services.internal.s3_client import S3ClientError, delete_s3_prefix
+from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task, create_task, start_task
 from apps.task.services.recovery import (
@@ -843,7 +844,9 @@ def _execute_physical_cleanup(
             prefix=str(config.get("prefix") or ""),
             access_key_id=str(config.get("access_key_id") or ""),
             secret_access_key=str(secrets_payload.get("secret_access_key") or ""),
-            s3_url_style=str(config.get("s3_url_style") or "virtual_hosted"),
+            s3_url_style=normalize_s3_url_style(
+                config.get("s3_url_style"), platform=repository.s3_platform
+            ),
             use_tls=config.get("use_tls") is not False,
         )
         _remove_controller_repository_state(repository.id)

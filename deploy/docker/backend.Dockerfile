@@ -8,7 +8,7 @@ ARG APT_MIRROR
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 ARG PIP_TIMEOUT=600
-ARG KOPIA_DEB=build/dependencies/kopia/kopia_linux_amd64.deb
+ARG KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -19,7 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/venv \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_LINK_MODE=copy \
-    HFL_KOPIA_PATH=/usr/bin/kopia \
+    HFL_KOPIA_PATH=/usr/local/bin/kopia \
     PATH="/opt/venv/bin:${PATH}"
 
 RUN if [ -n "${APT_MIRROR}" ]; then \
@@ -45,12 +45,8 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
  && rm -rf /var/lib/apt/lists/* \
  && python3 -m venv /opt/venv
 
-COPY ${KOPIA_DEB} /tmp/kopia.deb
-RUN apt-get update \
- && apt-get install -y --no-install-recommends /tmp/kopia.deb \
- && rm -f /tmp/kopia.deb \
- && rm -rf /var/lib/apt/lists/* \
- && kopia --version
+COPY --chmod=0755 ${KOPIA_BINARY} /usr/local/bin/kopia
+RUN kopia --version
 
 WORKDIR /opt/backend
 

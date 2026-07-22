@@ -90,7 +90,8 @@ Bundle kinds (default: all):
 
 Inputs:
   build/agent/<version>/BUILD_INFO.json
-  build/agent/<version>/KOPIA_INFO.json
+  build/kopia/KOPIA_INFO.json
+  build/kopia/dist/<os>/<arch>/kopia[.exe]
   build/agent/<version>/<os>/<arch>/hfl-agent-*
   build/dependencies/agent/ubuntu-{20.04,24.04}/<arch>/MANIFEST.json
   src/agent/packaging/
@@ -157,6 +158,7 @@ UBUNTU2404_ARCH="${OPT_UBUNTU2404_ARCH:-${AGENT_UBUNTU2404_ARCH:-}}"
 WORK_ROOT="${REPO_ROOT}/build/agent/${AGENT_VERSION}"
 PACKAGE_DIR="${WORK_ROOT}/package"
 NAS_DEPS_BASE="${REPO_ROOT}/build/dependencies/agent"
+KOPIA_ROOT="${REPO_ROOT}/build/kopia"
 INSTALL_DIR="${AGENT_ROOT}/packaging/install"
 SYSTEMD_UNIT="${AGENT_ROOT}/packaging/systemd/hyperfilelens-agent.service"
 
@@ -199,6 +201,7 @@ matrix=${MATRIX}
 ubuntu2404_arch=${UBUNTU2404_ARCH:-<from-matrix>}
 build_input=${WORK_ROOT}
 nas_input=${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}
+kopia_input=${KOPIA_ROOT}
 output=${PACKAGE_DIR}
 CONFIG
 }
@@ -213,6 +216,7 @@ package_archives() {
 	VERSION="${AGENT_VERSION}" MATRIX_VALUE="${MATRIX}" COMMIT_VALUE="${COMMIT}" \
 		BUNDLE_VALUE="${BUNDLE}" UBUNTU_ARCH_VALUE="${UBUNTU2404_ARCH}" \
 		WORK_ROOT_VALUE="${WORK_ROOT}" PACKAGE_DIR_VALUE="${PACKAGE_DIR}" \
+		KOPIA_ROOT_VALUE="${KOPIA_ROOT}" \
 		NAS_BASE_VALUE="${NAS_DEPS_BASE}" INSTALL_DIR_VALUE="${INSTALL_DIR}" \
 		SYSTEMD_UNIT_VALUE="${SYSTEMD_UNIT}" DO_STANDARD_VALUE="${DO_STANDARD}" \
 		UBUNTU_RELEASES_VALUE="${UBUNTU_RELEASES}" python3 - <<'PY'
@@ -234,6 +238,7 @@ commit = os.environ["COMMIT_VALUE"]
 bundle = os.environ["BUNDLE_VALUE"]
 ubuntu_arch = os.environ["UBUNTU_ARCH_VALUE"]
 work_root = Path(os.environ["WORK_ROOT_VALUE"])
+kopia_root = Path(os.environ["KOPIA_ROOT_VALUE"])
 package_dir = Path(os.environ["PACKAGE_DIR_VALUE"])
 nas_base = Path(os.environ["NAS_BASE_VALUE"])
 install_dir = Path(os.environ["INSTALL_DIR_VALUE"])
@@ -291,19 +296,10 @@ def validate_build_info() -> None:
 
 
 def validate_kopia_info() -> dict:
-    info = read_json(work_root / "KOPIA_INFO.json", "Kopia metadata")
-    if info.get("agent_version") != version:
-        raise PrerequisiteError(
-            f"KOPIA_INFO.json Agent version mismatch: expected {version}, "
-            f"got {info.get('agent_version')!r}"
-        )
+    info = read_json(kopia_root / "KOPIA_INFO.json", "Kopia metadata")
     files = info.get("files")
     if not isinstance(files, dict):
         raise PrerequisiteError("KOPIA_INFO.json does not contain a files object")
-    if info.get("matrix") != matrix:
-        raise PrerequisiteError(
-            f"KOPIA_INFO.json matrix mismatch: expected {matrix!r}, got {info.get('matrix')!r}"
-        )
     missing = [entry for entry in matrix if entry not in files]
     if missing:
         raise PrerequisiteError(f"KOPIA_INFO.json is missing matrix entries: {' '.join(missing)}")
@@ -329,34 +325,6 @@ def archive_name(goos: str, goarch: str, flavor: str = "standard") -> str:
 
 def executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
-def extract_kopia(archive: Path, destination: Path) -> None:
-    if archive.name.endswith(".zip"):
-        with zipfile.ZipFile(archive) as source:
-            members = [name for name in source.namelist() if name == "kopia.exe" or name.endswith("/kopia.exe")]
-            if len(members) != 1:
-                raise PrerequisiteError(
-                    f"expected one kopia.exe in {archive}, found {len(members)}"
-                )
-            with source.open(members[0]) as src, destination.open("wb") as dest:
-                shutil.copyfileobj(src, dest)
-    else:
-        with tarfile.open(archive, "r:gz") as source:
-            members = [
-                member for member in source.getmembers()
-                if member.isfile() and (member.name == "kopia" or member.name.endswith("/kopia"))
-            ]
-            if len(members) != 1:
-                raise PrerequisiteError(
-                    f"expected one Kopia binary in {archive}, found {len(members)}"
-                )
-            extracted = source.extractfile(members[0])
-            if extracted is None:
-                raise PrerequisiteError(f"could not extract Kopia binary from {archive}")
-            with extracted, destination.open("wb") as dest:
-                shutil.copyfileobj(extracted, dest)
-    executable(destination)
 
 
 def manifest_files(root: Path) -> dict[str, str]:
@@ -401,11 +369,11 @@ def assemble_standard(goos: str, goarch: str, kopia_info: dict) -> None:
         raise PrerequisiteError(f"missing Agent binary: {agent_source}")
 
     item = kopia_info["files"][key]
-    if not isinstance(item, dict) or not item.get("name") or not item.get("sha256"):
+    if not isinstance(item, dict) or not item.get("path") or not item.get("sha256"):
         raise PrerequisiteError(f"invalid Kopia metadata for {key}")
-    kopia_source = platform_dir / item["name"]
+    kopia_source = kopia_root / item["path"]
     if not kopia_source.is_file():
-        raise PrerequisiteError(f"missing Kopia archive: {kopia_source}")
+        raise PrerequisiteError(f"missing Kopia binary: {kopia_source}")
     actual_sha = sha256_file(kopia_source)
     if actual_sha != item["sha256"]:
         raise PrerequisiteError(
@@ -421,7 +389,8 @@ def assemble_standard(goos: str, goarch: str, kopia_info: dict) -> None:
         kopia_destination = bin_dir / ("kopia.exe" if goos == "windows" else "kopia")
         shutil.copy2(agent_source, agent_destination)
         executable(agent_destination)
-        extract_kopia(kopia_source, kopia_destination)
+        shutil.copy2(kopia_source, kopia_destination)
+        executable(kopia_destination)
 
         if goos == "windows":
             for filename in ("install.ps1", "install.cmd", "uninstall.cmd"):
@@ -450,9 +419,11 @@ def assemble_standard(goos: str, goarch: str, kopia_info: dict) -> None:
             "arch": goarch,
             "bundle_flavor": "standard",
             "kopia_version": kopia_info.get("version", ""),
-            "kopia_upstream": f"{kopia_info.get('repository', '')}@{kopia_info.get('tag', '')}",
-            "kopia_archive": item["name"],
-            "kopia_archive_sha256": f"sha256:{item['sha256']}",
+            "kopia_mode": kopia_info.get("mode", ""),
+            "kopia_upstream": f"{kopia_info.get('git_url', '')}@{kopia_info.get('git_ref', '')}",
+            "kopia_git_commit": kopia_info.get("git_commit", ""),
+            "kopia_patch_sha256": kopia_info.get("patch_sha256", ""),
+            "kopia_binary_sha256": f"sha256:{item['sha256']}",
             "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         write_manifest(root, manifest)

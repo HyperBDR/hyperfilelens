@@ -96,6 +96,86 @@ func TestRepositoryArgsDisableCredentialPersistence(t *testing.T) {
 	}
 }
 
+func TestParseS3RepositoryURLStyle(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     any
+		expected  string
+		wantError bool
+	}{
+		{name: "missing defaults to auto", expected: "auto"},
+		{name: "virtual hosted", value: "virtual_hosted", expected: "virtual_hosted"},
+		{name: "path", value: "path", expected: "path"},
+		{name: "invalid", value: "dns", wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, ok, err := parseRepositorySpec(map[string]any{
+				"type":         "s3",
+				"bucket":       "backup-bucket",
+				"s3_url_style": tc.value,
+			})
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected invalid URL style to fail")
+				}
+				return
+			}
+			if err != nil || !ok || spec.S3URLStyle != tc.expected {
+				t.Fatalf("expected URL style %q, got ok=%v spec=%#v err=%v", tc.expected, ok, spec, err)
+			}
+		})
+	}
+}
+
+func TestRepositoryArgsIncludePatchedS3URLStyle(t *testing.T) {
+	spec := repositorySpec{
+		Type:           "s3",
+		Bucket:         "backup-bucket",
+		S3URLStyle:     "virtual_hosted",
+		S3URLStyleFlag: true,
+	}
+	args := repositoryArgs("/tmp/repo.config", spec, false)
+	if !slices.Contains(args, "--url-style=virtual-hosted") {
+		t.Fatalf("expected virtual-hosted URL style in args: %#v", args)
+	}
+	spec.S3URLStyle = "path"
+	args = repositoryArgs("/tmp/repo.config", spec, true)
+	if !slices.Contains(args, "--url-style=path") {
+		t.Fatalf("expected path URL style in args: %#v", args)
+	}
+}
+
+func TestS3ConnectionFingerprintChangesWithURLStyleAndCredentials(t *testing.T) {
+	spec := repositorySpec{
+		Type:            "s3",
+		Bucket:          "backup-bucket",
+		AccessKeyID:     "access",
+		SecretAccessKey: "secret-one",
+		S3URLStyle:      "auto",
+	}
+	first, err := s3ConnectionFingerprint(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.S3URLStyle = "virtual_hosted"
+	second, err := s3ConnectionFingerprint(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("URL style must change the connection fingerprint")
+	}
+	spec.SecretAccessKey = "secret-two"
+	third, err := s3ConnectionFingerprint(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("credentials must change the connection fingerprint")
+	}
+}
+
 func TestRepositoryCreateAlreadyExists(t *testing.T) {
 	for _, output := range []string{
 		"repository already exists in storage",

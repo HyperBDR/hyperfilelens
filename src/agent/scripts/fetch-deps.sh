@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Download external Agent runtime resources only (Kopia CLI and Ubuntu NAS debs).
-# Does not compile source or assemble distribution archives.
+# Prepare Agent runtime resources (Kopia CLI and Ubuntu NAS debs).
 set -euo pipefail
 umask 022
 
@@ -9,6 +8,9 @@ AGENT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${AGENT_ROOT}/../.." && pwd)"
 # shellcheck source=../../../tools/lib/version.sh
 source "${REPO_ROOT}/tools/lib/version.sh"
+# shellcheck source=../../../tools/kopia/common.sh
+source "${REPO_ROOT}/tools/kopia/common.sh"
+kopia_load_config
 
 DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 VERBOSE="${AGENT_VERBOSE:-0}"
@@ -72,20 +74,20 @@ usage() {
 Usage: ./src/agent/scripts/fetch-deps.sh [--all|--kopia|--nas-deps] [options]
 
 Purpose:
-  Fetch external Agent runtime resources only. This script does not compile HFL
-  source or assemble customer-facing archives. With no component, --all is used.
+  Prepare external Agent runtime resources. This script does not compile HFL
+  Agent source or assemble customer-facing archives. With no component, --all is used.
 
 Components:
-  --all                  Fetch Kopia CLI archives and Ubuntu 24.04 NAS debs
-  --kopia                Fetch Kopia CLI archives only
+  --all                  Prepare Kopia CLI binaries and Ubuntu NAS debs
+  --kopia                Prepare the canonical Kopia binary matrix only
   --nas-deps             Fetch nfs-common/cifs-utils offline debs through Docker
 
 Inputs:
-  tools/dependencies/versions/kopia.env, GitHub Releases, ubuntu:24.04, Ubuntu apt repositories
+  tools/kopia/defaults.env, Kopia Git/Release, ubuntu:24.04, Ubuntu apt repositories
 
 Outputs:
-  build/agent/<version>/<os>/<arch>/kopia-*
-  build/agent/<version>/KOPIA_INFO.json
+  build/kopia/dist/<os>/<arch>/kopia[.exe]
+  build/kopia/KOPIA_INFO.json
   build/dependencies/agent/ubuntu-24.04/<arch>/*.deb
   build/dependencies/agent/ubuntu-24.04/<arch>/MANIFEST.json
 
@@ -94,7 +96,9 @@ Options:
   --matrix MATRIX                  Space-separated os:arch list (env: AGENT_MATRIX)
   --force                          Refresh cached inputs (env: AGENT_FORCE_FETCH=1)
   --pull                           Refresh the NAS Ubuntu image even when a matching local image exists
-  --kopia-version VERSION          Kopia version without v prefix (env: KOPIA_VERSION)
+  --kopia-mode MODE                build or download
+  --kopia-git-url URL              Kopia source repository URL
+  --kopia-ref REF                  Kopia release ref in vX.Y.Z form
   --github-download-mirror URL     Explicit GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN; environment recommended)
   --ubuntu2404-arch ARCH           amd64 | arm64 | all (env: AGENT_UBUNTU2404_ARCH)
@@ -110,7 +114,7 @@ Supported matrix entries:
   linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64
 
 Precedence:
-  CLI option > environment variable > tools/dependencies/versions/kopia.env > built-in default
+  CLI option > environment variable > tools/kopia/defaults.env
 
 Exit codes:
   0 success; 1 fetch failure; 2 invalid input or missing tool; 130 interrupted
@@ -126,8 +130,8 @@ Examples:
     --docker-download-mirror docker.m.daocloud.io \
     --apt-mirror https://mirrors.tuna.tsinghua.edu.cn
 
-Mirror examples are not operated by HyperFileLens. Kopia archives are verified
-against the checksums.txt published with the selected upstream release.
+Mirror examples are not operated by HyperFileLens. Download-mode artifacts are
+verified against checksums.txt published with the selected upstream release.
 USAGE
 }
 
@@ -138,7 +142,6 @@ FORCE_PULL=0
 EXPLICIT=0
 OPT_VERSION=""
 OPT_MATRIX=""
-OPT_KOPIA_VERSION=""
 OPT_UBUNTU2404_ARCH=""
 OPT_GITHUB_DOWNLOAD_MIRROR=""
 OPT_GITHUB_TOKEN=""
@@ -195,9 +198,19 @@ while [[ $# -gt 0 ]]; do
 		OPT_MATRIX="$2"
 		shift 2
 		;;
-	--kopia-version)
+	--kopia-mode)
 		require_value "$1" "${2:-}"
-		OPT_KOPIA_VERSION="${2#v}"
+		KOPIA_ARTIFACT_MODE="$2"
+		shift 2
+		;;
+	--kopia-git-url)
+		require_value "$1" "${2:-}"
+		KOPIA_GIT_URL="$2"
+		shift 2
+		;;
+	--kopia-ref)
+		require_value "$1" "${2:-}"
+		KOPIA_GIT_REF="$2"
 		shift 2
 		;;
 	--ubuntu2404-arch)
@@ -265,11 +278,10 @@ case "${AGENT_FORCE_PULL:-0}" in
 esac
 
 AGENT_VERSION="$(normalize_release_version "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
-# shellcheck source=../../../tools/dependencies/versions/kopia.env
-source "${REPO_ROOT}/tools/dependencies/versions/kopia.env"
-KOPIA_VERSION="${OPT_KOPIA_VERSION:-${KOPIA_VERSION}}"
-[[ "${KOPIA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-	|| { printf 'ERROR: invalid Kopia version: %s\n' "${KOPIA_VERSION}" >&2; exit 2; }
+case "${KOPIA_ARTIFACT_MODE}" in build | download) ;; *) printf 'ERROR: invalid Kopia mode: %s\n' "${KOPIA_ARTIFACT_MODE}" >&2; exit 2 ;; esac
+[[ "${KOPIA_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
+	|| { printf 'ERROR: invalid Kopia ref: %s\n' "${KOPIA_GIT_REF}" >&2; exit 2; }
+KOPIA_VERSION="${BASH_REMATCH[1]}"
 MATRIX="${OPT_MATRIX:-${AGENT_MATRIX:-${DEFAULT_MATRIX}}}"
 AGENT_ARTIFACTS_DIR="${REPO_ROOT}/build/agent"
 WORK_ROOT="${AGENT_ARTIFACTS_DIR}/${AGENT_VERSION}"
@@ -282,8 +294,6 @@ DOCKER_PULL_TIMEOUT_SECONDS="${OPT_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SE
 [[ "${DOCKER_PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] \
 	|| { printf 'ERROR: DOCKER_PULL_TIMEOUT_SECONDS must be a positive integer\n' >&2; exit 2; }
 OPT_UBUNTU2404_ARCH="${OPT_UBUNTU2404_ARCH:-${AGENT_UBUNTU2404_ARCH:-}}"
-KOPIA_GITHUB_REPO="kopia/kopia"
-
 if [[ "${EXPLICIT}" -eq 0 ]]; then
 	DO_KOPIA=1
 	DO_NAS=1
@@ -319,6 +329,9 @@ print_config() {
 components=$(components_label)
 version=${AGENT_VERSION}
 matrix=${MATRIX}
+kopia_mode=${KOPIA_ARTIFACT_MODE}
+kopia_git_url=${KOPIA_GIT_URL}
+kopia_ref=${KOPIA_GIT_REF}
 kopia_version=${KOPIA_VERSION}
 github_download_mirror=${GITHUB_DOWNLOAD_MIRROR:-<official>}
 docker_download_mirror=${DOCKER_DOWNLOAD_MIRROR:-<official>}
@@ -327,7 +340,7 @@ ubuntu2404_arch=${OPT_UBUNTU2404_ARCH:-<from-matrix>}
 force=${FORCE}
 force_pull=${FORCE_PULL}
 docker_pull_timeout_seconds=${DOCKER_PULL_TIMEOUT_SECONDS}
-kopia_output=${WORK_ROOT}
+kopia_output=${KOPIA_BUILD_DIR}
 nas_output=${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}
 CONFIG
 }
@@ -339,356 +352,18 @@ setup_log_file() {
 }
 
 fetch_kopia() {
-	command -v python3 >/dev/null 2>&1 || log_fail "python3 is required to fetch Kopia" 2
-	log_step "Resolving Kopia v${KOPIA_VERSION}"
-
-	local tag="v${KOPIA_VERSION}" semver="${KOPIA_VERSION}"
-
-	local expected
-	expected="$(TAG="${tag}" SEMVER="${semver}" MATRIX="${MATRIX}" python3 - <<'PY'
-import json
-import os
-
-semver = os.environ["SEMVER"]
-matrix = os.environ.get("MATRIX", "").split()
-
-
-def cli_archive_name(goos: str, goarch: str) -> str:
-    if goos == "linux":
-        if goarch == "amd64":
-            return f"kopia-{semver}-linux-x64.tar.gz"
-        if goarch == "arm64":
-            return f"kopia-{semver}-linux-arm64.tar.gz"
-    if goos == "darwin":
-        if goarch == "amd64":
-            return f"kopia-{semver}-macOS-x64.tar.gz"
-        if goarch == "arm64":
-            return f"kopia-{semver}-macOS-arm64.tar.gz"
-    if goos == "windows":
-        if goarch == "amd64":
-            return f"kopia-{semver}-windows-x64.zip"
-    raise KeyError((goos, goarch))
-
-
-items = []
-for entry in matrix:
-    entry = entry.strip()
-    if not entry:
-        continue
-    goos, _, goarch = entry.partition(":")
-    key = (goos.strip(), goarch.strip())
-    try:
-        name = cli_archive_name(*key)
-    except KeyError:
-        raise SystemExit(f"unsupported MATRIX entry {entry!r} (no kopia CLI archive mapping)") from None
-    items.append({"goos": key[0], "goarch": key[1], "name": name})
-
-print(json.dumps(items))
-PY
-)"
-
-	mkdir -p "${WORK_ROOT}"
-
-	local api_headers=(-fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: hyperfilelens-kopia-download/1.0")
-	if [[ -n "${GITHUB_TOKEN}" ]]; then
-		api_headers+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-	fi
-
-	local release_json=""
-	if release_json="$(curl "${api_headers[@]}" "https://api.github.com/repos/${KOPIA_GITHUB_REPO}/releases/tags/${tag}" 2>/dev/null)"; then
-		:
-	else
-		release_json=""
-	fi
-
-	if [[ "${FORCE}" -eq 1 ]]; then
-		EXPECTED="${expected}" OUT="${WORK_ROOT}" python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-expected = json.loads(os.environ["EXPECTED"])
-out_root = Path(os.environ["OUT"])
-for item in expected:
-    dest = out_root / item["goos"] / item["goarch"] / item["name"]
-    if dest.is_file():
-        dest.unlink()
-PY
-	fi
-
-	EXPECTED="${expected}" RELEASE_JSON="${release_json}" TAG="${tag}" SEMVER="${semver}" \
-		OUT="${WORK_ROOT}" AGENT_VERSION="${AGENT_VERSION}" \
-		FORCE_VALUE="${FORCE}" \
-		GITHUB_DOWNLOAD_MIRROR="${GITHUB_DOWNLOAD_MIRROR}" \
-		python3 - <<'PY'
-import hashlib
-import json
-import os
-import shutil
-import ssl
-import subprocess
-import sys
-import urllib.error
-import urllib.request
-from datetime import datetime, timezone
-from pathlib import Path
-from urllib.parse import quote, urlparse
-
-USER_AGENT = "hyperfilelens-kopia-download/1.0"
-expected = json.loads(os.environ["EXPECTED"])
-tag = os.environ["TAG"]
-semver = os.environ["SEMVER"]
-repo = "kopia/kopia"
-out_root = os.environ["OUT"]
-release_json = os.environ.get("RELEASE_JSON", "")
-force = os.environ.get("FORCE_VALUE", "0") == "1"
-
-
-def log(level: str, message: str) -> None:
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    message = message.rstrip()
-    if message and message[-1] not in ".?!":
-        message += "."
-    print(f"[{timestamp}] [{level}] {message}", file=sys.stderr, flush=True)
-
-
-def proxy_env() -> dict[str, str]:
-    out: dict[str, str] = {}
-    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
-        val = os.environ.get(key, "").strip()
-        if val:
-            out[key] = val
-    return out
-
-
-def fallback_url(name: str) -> str:
-    return (
-        f"https://github.com/{repo}/releases/download/"
-        f"{quote(tag, safe='')}/{quote(name, safe='')}"
-    )
-
-
-assets_by_name: dict[str, str] = {}
-if release_json.strip():
-    try:
-        data = json.loads(release_json)
-        for asset in data.get("assets") or []:
-            name = asset.get("name") or ""
-            url = asset.get("browser_download_url") or ""
-            if name and url:
-                assets_by_name[name] = url
-    except json.JSONDecodeError:
-        pass
-
-
-def candidate_urls(url: str) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-
-    def add(u: str) -> None:
-        if u not in seen:
-            seen.add(u)
-            ordered.append(u)
-
-    custom = os.environ.get("GITHUB_DOWNLOAD_MIRROR", "").strip().rstrip("/")
-    if custom:
-        add(f"{custom.rstrip('/')}/{url}")
-    add(url)
-    return ordered
-
-
-def short_url(url: str) -> str:
-    if len(url) <= 88:
-        return url
-    parsed = urlparse(url)
-    if parsed.netloc in ("github.com", "release-assets.githubusercontent.com"):
-        return f"...github.com/.../{parsed.path.rsplit('/', 1)[-1]}"
-    return url[:40] + "..." + url[-40:]
-
-
-def download_curl(url: str, dest: str) -> None:
-    cmd = [
-        "curl",
-        "-fsSL",
-        "--http1.1",
-        "--connect-timeout",
-        "30",
-        "--max-time",
-        "0",
-        "--retry",
-        "2",
-        "--retry-delay",
-        "2",
-        "-H",
-        f"User-Agent: {USER_AGENT}",
-        "-o",
-        dest,
-        url,
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, env={**os.environ, **proxy_env()})
-
-
-def download_wget(url: str, dest: str) -> None:
-    if not shutil.which("wget"):
-        raise FileNotFoundError("wget not found")
-    subprocess.run(
-        ["wget", "-q", "--timeout=30", "-O", dest, url],
-        check=True,
-        capture_output=True,
-        env={**os.environ, **proxy_env()},
-    )
-
-
-def download_urllib(url: str, dest: str) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=300, context=ctx) as resp:
-        with open(dest, "wb") as fh:
-            while True:
-                chunk = resp.read(1024 * 1024)
-                if not chunk:
-                    break
-                fh.write(chunk)
-
-
-def download_file(url: str, dest: str) -> str:
-    errors: list[str] = []
-    for candidate in candidate_urls(url):
-        tmp = dest + ".part"
-        for attempt, fn in (
-            ("curl", download_curl),
-            ("wget", download_wget),
-            ("urllib", download_urllib),
-        ):
-            try:
-                if os.path.isfile(tmp):
-                    os.remove(tmp)
-                fn(candidate, tmp)
-                if os.path.getsize(tmp) <= 0:
-                    raise OSError("empty download")
-                os.replace(tmp, dest)
-                return candidate
-            except FileNotFoundError:
-                continue
-            except (subprocess.CalledProcessError, OSError, urllib.error.URLError) as exc:
-                if os.path.isfile(tmp):
-                    os.remove(tmp)
-                errors.append(f"{attempt}@{short_url(candidate)}: {exc}")
-    detail = "; ".join(errors[-6:]) if errors else "download failed"
-    raise RuntimeError(detail)
-
-
-errors = []
-checksum_name = "checksums.txt"
-checksum_url = assets_by_name.get(checksum_name) or fallback_url(checksum_name)
-checksum_path = os.path.join(out_root, f"kopia-{semver}-checksums.txt")
-
-
-def sha256_file(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-metadata_path = Path(out_root) / "KOPIA_INFO.json"
-cached_checksum_valid = False
-if not force and Path(checksum_path).is_file() and metadata_path.is_file():
-    try:
-        cached_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        cached_checksum_valid = (
-            cached_metadata.get("repository") == repo
-            and cached_metadata.get("tag") == tag
-            and cached_metadata.get("checksums_sha256") == sha256_file(checksum_path)
-        )
-    except (OSError, json.JSONDecodeError):
-        cached_checksum_valid = False
-
-if cached_checksum_valid:
-    checksum_source = "cache"
-    log("SKIP ", f"Verified cached Kopia checksums {checksum_path}")
-else:
-    try:
-        checksum_source = download_file(checksum_url, checksum_path)
-    except RuntimeError as exc:
-        log("FAIL ", f"Unable to download upstream Kopia checksums: {exc}")
-        raise SystemExit(1) from exc
-
-checksums: dict[str, str] = {}
-for raw_line in Path(checksum_path).read_text(encoding="utf-8").splitlines():
-    fields = raw_line.strip().split(None, 1)
-    if len(fields) == 2 and len(fields[0]) == 64:
-        checksums[fields[1].lstrip("*")] = fields[0].lower()
-
-resolved_files: dict[str, dict[str, str]] = {}
-for item in expected:
-    goos, goarch, name = item["goos"], item["goarch"], item["name"]
-    dest_dir = os.path.join(out_root, goos, goarch)
-    dest_path = os.path.join(dest_dir, name)
-    os.makedirs(dest_dir, exist_ok=True)
-
-    url = assets_by_name.get(name) or fallback_url(name)
-    expected_sha = checksums.get(name)
-    if not expected_sha:
-        errors.append(f"{name}: missing from upstream checksums.txt")
-        continue
-
-    log("STEP ", f"Fetching Kopia for {goos}/{goarch} ({name})")
-    used = "cache"
-    if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
-        actual_sha = sha256_file(dest_path)
-        if actual_sha == expected_sha:
-            log("SKIP ", f"Verified cached Kopia archive {dest_path}")
-        else:
-            log("WARN ", f"Removing Kopia archive with checksum mismatch: {dest_path}")
-            os.remove(dest_path)
-
-    if not os.path.isfile(dest_path):
-        try:
-            used = download_file(url, dest_path)
-        except RuntimeError as exc:
-            errors.append(f"{name}: {exc}")
-            continue
-
-    actual_sha = sha256_file(dest_path)
-    if actual_sha != expected_sha:
-        os.remove(dest_path)
-        errors.append(f"{name}: checksum mismatch (expected {expected_sha}, got {actual_sha})")
-        continue
-    log(" OK  ", f"Verified Kopia archive {dest_path}")
-    resolved_files[f"{goos}:{goarch}"] = {
-        "name": name,
-        "sha256": actual_sha,
-        "source_url": used,
-    }
-
-if errors:
-    log("FAIL ", "One or more Kopia archives failed")
-    for line in errors:
-        log("FAIL ", line)
-    log("INFO ", "Use --github-download-mirror explicitly or configure HTTP_PROXY/HTTPS_PROXY when required")
-    sys.exit(1)
-
-metadata = {
-    "schema": 1,
-    "agent_version": os.environ.get("AGENT_VERSION", ""),
-    "repository": repo,
-    "version": semver,
-    "tag": tag,
-    "matrix": [f"{item['goos']}:{item['goarch']}" for item in expected],
-    "checksums_name": checksum_name,
-    "checksums_sha256": sha256_file(checksum_path),
-    "checksums_source_url": checksum_source,
-    "files": resolved_files,
-}
-temporary_path = metadata_path.with_suffix(".json.tmp")
-temporary_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-temporary_path.replace(metadata_path)
-log(" OK  ", f"Wrote {metadata_path}")
-PY
-
-	log_ok "Kopia archives are ready for matrix ${MATRIX}"
+	local -a args=(
+		--kopia-mode "${KOPIA_ARTIFACT_MODE}"
+		--kopia-git-url "${KOPIA_GIT_URL}"
+		--kopia-ref "${KOPIA_GIT_REF}"
+		--matrix "${MATRIX}"
+	)
+	[[ "${FORCE}" -eq 0 ]] || args+=(--force)
+	[[ -z "${GITHUB_DOWNLOAD_MIRROR}" ]] || args+=(--github-download-mirror "${GITHUB_DOWNLOAD_MIRROR}")
+	[[ -z "${GITHUB_TOKEN}" ]] || args+=(--github-token "${GITHUB_TOKEN}")
+	log_step "Preparing the unified Kopia artifact matrix"
+	"${REPO_ROOT}/tools/kopia/prepare.sh" "${args[@]}"
+	log_ok "Kopia binaries are ready under ${KOPIA_DIST_DIR}"
 }
 
 matrix_has_linux_arch() {

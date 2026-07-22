@@ -159,6 +159,8 @@ def build_repository_runtime_payload(
     if repository.repo_type == Repository.Type.S3:
         if repository.status != Repository.Status.CREATED:
             raise ValidationError({"repository_id": "S3 repository has not been initialized."})
+        from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
+
         return {
             "id": repository.id,
             "type": Repository.Type.S3,
@@ -170,7 +172,9 @@ def build_repository_runtime_payload(
             "secret_access_key": str(secrets_payload.get("secret_access_key") or "").strip(),
             "kopia_password": kopia_password,
             "use_tls": config.get("use_tls") is not False,
-            "s3_url_style": str(config.get("s3_url_style") or "virtual_hosted"),
+            "s3_url_style": normalize_s3_url_style(
+                config.get("s3_url_style"), platform=repository.s3_platform
+            ),
         }
     if repository.repo_type == Repository.Type.PROXY_FS:
         if execution_target is None:

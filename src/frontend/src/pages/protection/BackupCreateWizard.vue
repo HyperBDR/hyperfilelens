@@ -98,6 +98,12 @@ import {
   listAllStorageRepositories,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
+import {
+  defaultS3UrlStyle,
+  s3ProviderRegions,
+  type S3PlatformSelection as AddTargetS3Platform,
+  type S3UrlStyle as AddTargetS3UrlStyle,
+} from '../../lib/s3ProviderProfiles'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
 import { booleanStatusTag } from '../../lib/statusTag'
 import { DEFAULT_S3_OBJECT_PREFIX } from '../../lib/s3PlatformDisplay'
@@ -544,8 +550,6 @@ type TargetPickerState = {
 type NasTargetMode = 'single_repo' | 'per_directory_repo'
 type AddTargetRepoKind = 's3' | 'nas' | 'proxy_fs'
 type AddTargetNasProtocol = 'smb' | 'nfs'
-type AddTargetS3Platform = 'aliyun' | 'huawei' | 'other'
-type AddTargetS3UrlStyle = 'virtual_hosted' | 'path'
 type CreateRecoveryTargetMode = '' | 'original' | 'new'
 type CreateRecoveryConflictMode = '' | 'skip' | 'overwrite'
 type AddTargetDirTreeNode = {
@@ -1055,7 +1059,7 @@ const addTargetS3BucketMode = ref<'existing' | 'new'>('existing')
 const addTargetS3Prefix = ref(DEFAULT_S3_OBJECT_PREFIX)
 const addTargetS3AccessKey = ref('')
 const addTargetS3SecretKey = ref('')
-const addTargetS3UrlStyle = ref<AddTargetS3UrlStyle>('virtual_hosted')
+const addTargetS3UrlStyle = ref<AddTargetS3UrlStyle>(defaultS3UrlStyle(undefined))
 const addTargetS3UseTls = ref(true)
 const addTargetNasProtocol = ref<AddTargetNasProtocol>('smb')
 const addTargetNasHost = ref('')
@@ -1221,22 +1225,6 @@ const selectableTargets = computed(() =>
   realTargets.value.filter((target) => isSelectableTarget(target)),
 )
 
-const ADD_TARGET_ALIYUN_REGIONS = [
-  { key: 'cn-hangzhou', labelKey: 'protection.backupsPage.regionAliyunHangzhou', endpoint: 'https://oss-cn-hangzhou.aliyuncs.com', region: 'cn-hangzhou' },
-  { key: 'cn-shanghai', labelKey: 'protection.backupsPage.regionAliyunShanghai', endpoint: 'https://oss-cn-shanghai.aliyuncs.com', region: 'cn-shanghai' },
-  { key: 'cn-qingdao', labelKey: 'protection.backupsPage.regionAliyunQingdao', endpoint: 'https://oss-cn-qingdao.aliyuncs.com', region: 'cn-qingdao' },
-  { key: 'cn-beijing', labelKey: 'protection.backupsPage.regionAliyunBeijing', endpoint: 'https://oss-cn-beijing.aliyuncs.com', region: 'cn-beijing' },
-  { key: 'cn-shenzhen', labelKey: 'protection.backupsPage.regionAliyunShenzhen', endpoint: 'https://oss-cn-shenzhen.aliyuncs.com', region: 'cn-shenzhen' },
-]
-
-const ADD_TARGET_HUAWEI_REGIONS = [
-  { key: 'cn-north-1', labelKey: 'protection.backupsPage.regionHuaweiNorth1', endpoint: 'https://obs.cn-north-1.myhuaweicloud.com', region: 'cn-north-1' },
-  { key: 'cn-north-5', labelKey: 'protection.backupsPage.regionHuaweiNorth5', endpoint: 'https://obs.cn-north-5.myhuaweicloud.com', region: 'cn-north-5' },
-  { key: 'cn-north-9', labelKey: 'protection.backupsPage.regionHuaweiNorth9', endpoint: 'https://obs.cn-north-9.myhuaweicloud.com', region: 'cn-north-9' },
-  { key: 'cn-east-3', labelKey: 'protection.backupsPage.regionHuaweiEast3', endpoint: 'https://obs.cn-east-3.myhuaweicloud.com', region: 'cn-east-3' },
-  { key: 'cn-south-1', labelKey: 'protection.backupsPage.regionHuaweiSouth1', endpoint: 'https://obs.cn-south-1.myhuaweicloud.com', region: 'cn-south-1' },
-]
-
 const addTargetTypeOptions = computed(() => [
   {
     value: 's3' as const,
@@ -1288,24 +1276,24 @@ const addTargetNextButtonLabel = computed(() =>
 )
 
 const addTargetS3Regions = computed(() => {
-  const withLabels = (regions: typeof ADD_TARGET_ALIYUN_REGIONS) =>
-    regions.map((region) => ({ ...region, label: t(region.labelKey) }))
-  if (addTargetS3Platform.value === 'aliyun') return withLabels(ADD_TARGET_ALIYUN_REGIONS)
-  if (addTargetS3Platform.value === 'huawei') return withLabels(ADD_TARGET_HUAWEI_REGIONS)
-  return []
+  return s3ProviderRegions(addTargetS3Platform.value)
+    .map((region) => ({ ...region, label: t(region.labelKey) }))
 })
 
 const addTargetS3PlatformLabel = computed(() => {
   if (addTargetS3Platform.value === 'aliyun') return t('addS3Repo.platformAliyun')
   if (addTargetS3Platform.value === 'huawei') return t('addS3Repo.platformHuawei')
+  if (addTargetS3Platform.value === 'aws') return t('addS3Repo.platformAws')
   if (addTargetS3Platform.value === 'other') return t('addS3Repo.platformOther')
   return ''
 })
 
 const addTargetS3UrlStyleLabel = computed(() =>
-  addTargetS3UrlStyle.value === 'virtual_hosted'
-    ? t('repositoriesPage.s3UrlStyleVirtualHosted')
-    : t('repositoriesPage.s3UrlStylePath'),
+  addTargetS3UrlStyle.value === 'auto'
+    ? t('repositoriesPage.s3UrlStyleAuto')
+    : addTargetS3UrlStyle.value === 'virtual_hosted'
+      ? t('repositoriesPage.s3UrlStyleVirtualHosted')
+      : t('repositoriesPage.s3UrlStylePath'),
 )
 
 const addTargetNasProtocolLabel = computed(() =>
@@ -2425,6 +2413,7 @@ function applyAddTargetS3RegionPreset(key: string) {
 
 function onAddTargetS3PlatformChange(platform: AddTargetS3Platform) {
   addTargetS3Platform.value = platform
+  addTargetS3UrlStyle.value = defaultS3UrlStyle(platform)
   addTargetS3RegionPreset.value = undefined
   addTargetS3Endpoint.value = ''
   addTargetS3Region.value = ''
@@ -2486,7 +2475,7 @@ function resetAddTargetForm(kind: AddTargetRepoKind = addTargetKind.value) {
   addTargetS3Prefix.value = DEFAULT_S3_OBJECT_PREFIX
   addTargetS3AccessKey.value = ''
   addTargetS3SecretKey.value = ''
-  addTargetS3UrlStyle.value = 'virtual_hosted'
+  addTargetS3UrlStyle.value = defaultS3UrlStyle(undefined)
   addTargetS3UseTls.value = true
   addTargetNasProtocol.value = 'smb'
   addTargetNasHost.value = ''
@@ -7887,6 +7876,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                         v-for="platform in ([
                           { value: 'aliyun', label: t('addS3Repo.platformAliyun') },
                           { value: 'huawei', label: t('addS3Repo.platformHuawei') },
+                          { value: 'aws', label: t('addS3Repo.platformAws') },
                           { value: 'other', label: t('addS3Repo.platformOther') },
                         ] as const)"
                         :key="platform.value"
@@ -7943,6 +7933,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                       </ElFormItem>
                       <ElFormItem :label="t('repositoriesPage.fieldS3UrlStyle')">
                         <ElSelect v-model="addTargetS3UrlStyle" class="w-full">
+                          <ElOption :label="t('repositoriesPage.s3UrlStyleAuto')" value="auto" />
                           <ElOption :label="t('repositoriesPage.s3UrlStyleVirtualHosted')" value="virtual_hosted" />
                           <ElOption :label="t('repositoriesPage.s3UrlStylePath')" value="path" />
                         </ElSelect>

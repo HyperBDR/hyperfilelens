@@ -44,7 +44,7 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
         PIP_TIMEOUT: ${PIP_TIMEOUT:-600}
-        KOPIA_DEB: ${KOPIA_DEB:-build/dependencies/kopia/kopia_linux_amd64.deb}
+        KOPIA_BINARY: ${KOPIA_BINARY:-build/kopia/dist/linux/amd64/kopia}
     environment:
       <<: *backend-environment
       LOG_FILE: /var/log/hyperfilelens/worker.log
