@@ -46,6 +46,8 @@ cache_dir="${ROOT}/build/cache/playwright-node-${version}"
 mkdir -p "${cache_dir}"
 source_lens_env="${SMOKE_SOURCELENS_ENV_FILE:-${ROOT}/data/sourcelens/config/.env}"
 smoke_host="${SMOKE_HOST:-host.docker.internal}"
+tenant_port="$(read_default HFL_TENANT_PORT 11443)"
+login_port="$(read_default HFL_LOGIN_PORT "${tenant_port}")"
 
 docker run --rm \
 	--add-host host.docker.internal:host-gateway \
@@ -54,8 +56,9 @@ docker run --rm \
 	-e PLAYWRIGHT_VERSION="${version}" \
 	-e DEV_OFFLINE="${offline}" \
 	-e SMOKE_HOST="${smoke_host}" \
-	-e HFL_TENANT_PORT="$(read_default HFL_TENANT_PORT 11443)" \
+	-e HFL_TENANT_PORT="${tenant_port}" \
 	-e HFL_ADMIN_PORT="$(read_default HFL_ADMIN_PORT 11444)" \
+	-e HFL_LOGIN_PORT="${login_port}" \
 	-e SOURCELENS_CONSOLE_PORT="$(read_default SOURCELENS_CONSOLE_PORT 11445)" \
 	-e SEED_ADMIN_EMAIL="$(read_default SEED_ADMIN_EMAIL admin@hyperfilelens.com)" \
 	-e SEED_ADMIN_PASSWORD="$(read_default SEED_ADMIN_PASSWORD 'Admin@123')" \
