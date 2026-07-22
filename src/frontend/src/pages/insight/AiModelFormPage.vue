@@ -261,7 +261,7 @@ onMounted(() => {
 <style src="../../styles/resource-add.css"></style>
 <style scoped>
 .ai-model-form-fullscreen .fullscreen-form-page {
-  min-height: calc(100vh - 52px);
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
 }
 
 .ai-model-form-fullscreen .fullscreen-form-card {

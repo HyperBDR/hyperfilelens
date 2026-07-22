@@ -1346,7 +1346,7 @@ function closeDeleteSnapshotDialog() {
     :title="t('protection.backupsPage.modalCreateRestoreTitle')"
     size="xxlarge"
     fixed
-    min-height="min(820px, calc(100vh - 3rem))"
+    min-height="min(820px, calc(var(--app-viewport-height) - 3rem))"
     @close="closeRecoveryWizard"
   >
     <div v-if="recSnapshotForRecover && backup" class="dp-restore-wizard-body space-y-4">

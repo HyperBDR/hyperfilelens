@@ -10977,7 +10977,7 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-table-info-popover--dirs {
-  max-height: min(360px, calc(100vh - 180px));
+  max-height: min(360px, calc(var(--app-viewport-height) - 180px));
   overflow: auto;
 }
 

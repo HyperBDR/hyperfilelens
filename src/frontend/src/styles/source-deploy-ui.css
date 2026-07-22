@@ -302,7 +302,9 @@
   bottom: 0;
   left: 0;
   z-index: 2100;
-  height: 60px;
+  box-sizing: border-box;
+  min-height: calc(60px + var(--app-safe-bottom));
+  padding-bottom: var(--app-safe-bottom);
   border-top: 1px solid var(--fullscreen-form-footer-border);
   background: var(--fullscreen-form-footer-bg);
   box-shadow: var(--fullscreen-form-footer-shadow);

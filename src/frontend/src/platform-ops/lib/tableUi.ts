@@ -8,4 +8,4 @@ export const PLATFORM_OPS_TABLE_HEADER_STYLE: Record<string, string> = {
   textAlign: 'left',
 }
 
-export const PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT = 'calc(100vh - 320px)'
+export const PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT = 'calc(var(--app-viewport-height) - 320px)'

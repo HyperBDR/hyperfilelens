@@ -55,19 +55,19 @@ const shellStyle = computed(() => {
     }
     return {
       height: '100%',
-      maxHeight: '100vh',
+      maxHeight: 'var(--app-viewport-height)',
     }
   }
   if (props.fixed) {
-    const h = props.minHeight ?? 'min(840px, calc(100vh - 3rem))'
+    const h = props.minHeight ?? 'min(840px, calc(var(--app-viewport-height) - 3rem))'
     return {
       height: h,
-      maxHeight: 'calc(100vh - 3rem)',
+      maxHeight: 'calc(var(--app-viewport-height) - 3rem)',
       width,
     }
   }
   return {
-    maxHeight: 'min(calc(100vh - 3.5rem), 92vh)',
+    maxHeight: 'calc(var(--app-viewport-height) - 3.5rem)',
     minHeight: props.minHeight,
     width,
   }

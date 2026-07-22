@@ -21,7 +21,7 @@ import { toastState } from '../../lib/toast/store'
   flex-direction: column;
   gap: 12px;
   align-items: flex-end;
-  max-height: calc(100vh - 84px);
+  max-height: calc(var(--app-viewport-height) - 84px);
   pointer-events: none;
 }
 

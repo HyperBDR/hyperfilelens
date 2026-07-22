@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
         :data="snapshotRows"
         stripe
         :row-key="snapshotRowKey"
-        max-height="calc(100vh - 260px)"
+        max-height="calc(var(--app-viewport-height) - 260px)"
         :header-cell-style="TABLE_HEADER_STYLE"
         class="hfl-list-table"
         :row-class-name="snapshotRowClassName"
@@ -275,7 +275,7 @@ onBeforeUnmount(() => {
         :data="taskRows"
         stripe
         :row-key="taskRowKey"
-        max-height="calc(100vh - 260px)"
+        max-height="calc(var(--app-viewport-height) - 260px)"
         :header-cell-style="TABLE_HEADER_STYLE"
         class="hfl-list-table"
       >
@@ -369,7 +369,7 @@ onBeforeUnmount(() => {
             :data="activeSnapshot.dirs"
             stripe
             :row-key="snapshotDirRowKey"
-            max-height="calc(100vh - 250px)"
+            max-height="calc(var(--app-viewport-height) - 250px)"
             :header-cell-style="TABLE_HEADER_STYLE"
             class="hfl-list-table"
           >

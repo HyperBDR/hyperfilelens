@@ -46,7 +46,7 @@ export function useListTableLayout(
     const footerHeight = footer?.offsetHeight ?? footerReserve
     const pageBody = block.closest('.page-body') as HTMLElement | null
     const top = block.getBoundingClientRect().top
-    const bottom = pageBody?.getBoundingClientRect().bottom ?? window.innerHeight
+    const bottom = pageBody?.getBoundingClientRect().bottom ?? window.visualViewport?.height ?? window.innerHeight
     const next = Math.max(280, Math.floor(bottom - top - footerHeight - 8))
 
     if (tableMaxHeight.value !== next) {
