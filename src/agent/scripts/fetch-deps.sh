@@ -475,8 +475,14 @@ done
 # Minimal Ubuntu images do not ship ca-certificates. Disable TLS peer checks
 # only while installing that package; APT repository signatures remain
 # enforced. The next update runs with normal strict TLS verification.
-bootstrap_apt=(
+apt_network=(
   apt-get
+  -o Acquire::Retries=5
+  -o Acquire::http::Timeout=30
+  -o Acquire::https::Timeout=30
+)
+bootstrap_apt=(
+  "${apt_network[@]}"
   -o Acquire::https::Verify-Peer=false
   -o Acquire::https::Verify-Host=false
 )
@@ -489,14 +495,26 @@ if ! "${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates; t
   echo "ERROR: bootstrap ca-certificates install failed (${arch})" >&2
   exit 1
 fi
-if ! apt-get update -qq; then
+if ! "${apt_network[@]}" update -qq; then
   echo "ERROR: apt-get update failed after secure source configuration (${arch})" >&2
   exit 1
 fi
 
 echo "  download: nfs-common cifs-utils (+dependencies)"
 rm -f /var/cache/apt/archives/*.deb 2>/dev/null || true
-apt-get install -y --download-only --no-install-recommends nfs-common cifs-utils
+download_ok=0
+for attempt in 1 2 3; do
+  if "${apt_network[@]}" install -y --download-only --no-install-recommends nfs-common cifs-utils; then
+    download_ok=1
+    break
+  fi
+  echo "WARN: apt dependency download attempt ${attempt}/3 failed; retrying cached remainder" >&2
+  sleep $((attempt * 5))
+done
+if [[ "${download_ok}" -ne 1 ]]; then
+  echo "ERROR: apt dependency download failed after 3 attempts (${arch})" >&2
+  exit 1
+fi
 
 decode_apt_deb_name() {
   local encoded=$1 len i c h decoded=""
