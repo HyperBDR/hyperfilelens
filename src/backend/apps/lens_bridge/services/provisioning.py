@@ -38,15 +38,47 @@ def _slugify_assistant(name: str, org: Organization) -> str:
 
 
 def default_model_ref_for_org(org: Organization) -> str | None:
-    """Return the first active Admin Console model, falling back to legacy org defaults."""
-    for row in org_models.active_llm_configs(org=org):
+    """Resolve an explicit, deployment-managed, or stable active model."""
+
+    rows = org_models.active_llm_configs(org=org)
+    from apps.lens_bridge.services import platform_lens
+
+    platform_org = platform_lens.get_or_create_platform_org()
+    org_models.ensure_org_default_model(org)
+    org_link = get_or_create_org_link(org)
+    if org.pk != platform_org.pk and org_link.default_agent_model_ref:
+        tenant_ref = str(org_link.default_agent_model_ref)
+        if any(str(row.get("uuid") or "") == tenant_ref for row in rows):
+            return tenant_ref
+
+    platform_defaults = get_or_create_org_link(platform_org)
+    if platform_defaults.default_agent_model_ref:
+        platform_ref = str(platform_defaults.default_agent_model_ref)
+        if any(str(row.get("uuid") or "") == platform_ref for row in rows):
+            return platform_ref
+
+    managed_uuid = org_models.deployment_managed_model_uuid(platform_org)
+    if managed_uuid is not None:
+        managed_ref = str(managed_uuid)
+        if any(str(row.get("uuid") or "") == managed_ref for row in rows):
+            return managed_ref
+
+    for row in rows:
+        if not row.get("is_default"):
+            continue
         model_uuid = row.get("uuid")
         if model_uuid:
             return str(model_uuid)
-    org_models.ensure_org_default_model(org)
-    org_link = get_or_create_org_link(org)
+
     if org_link.default_agent_model_ref:
-        return str(org_link.default_agent_model_ref)
+        legacy_ref = str(org_link.default_agent_model_ref)
+        if any(str(row.get("uuid") or "") == legacy_ref for row in rows):
+            return legacy_ref
+
+    for row in rows:
+        model_uuid = row.get("uuid")
+        if model_uuid:
+            return str(model_uuid)
     return None
 
 

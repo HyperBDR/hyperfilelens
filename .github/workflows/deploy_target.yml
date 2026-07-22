@@ -67,6 +67,21 @@ on:
         required: false
         default: ''
         type: string
+      ai_model_provider:
+        description: Optional deployment-managed SourceLens model provider
+        required: false
+        default: ''
+        type: string
+      ai_model_id:
+        description: Optional deployment-managed SourceLens model identifier
+        required: false
+        default: ''
+        type: string
+      ai_model_display_name:
+        description: Optional deployment-managed model display name
+        required: false
+        default: ''
+        type: string
     secrets:
       ssh_private_key:
         description: SSH private key for the deployment target
@@ -76,6 +91,12 @@ on:
         required: false
       smtp_password:
         description: Optional SMTP account password
+        required: false
+      ai_model_api_base:
+        description: Optional HTTPS API base for the deployment-managed model
+        required: false
+      ai_model_api_key:
+        description: Optional API key for the deployment-managed model
         required: false
 
 permissions:
@@ -103,6 +124,11 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.smtp_password }}
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
+          AI_MODEL_PROVIDER: ${{ inputs.ai_model_provider }}
+          AI_MODEL_ID: ${{ inputs.ai_model_id }}
+          AI_MODEL_DISPLAY_NAME: ${{ inputs.ai_model_display_name }}
+          AI_MODEL_API_BASE: ${{ secrets.ai_model_api_base }}
+          AI_MODEL_API_KEY: ${{ secrets.ai_model_api_key }}
         shell: bash
         run: |
           set -euo pipefail
@@ -129,6 +155,27 @@ jobs:
             [[ "$SMTP_PORT" =~ ^[0-9]+$ ]] && (( SMTP_PORT >= 1 && SMTP_PORT <= 65535 ))
             [[ "$SMTP_SECURITY" =~ ^(ssl|starttls|none)$ ]]
             [[ "$SMTP_PASSWORD" != *$'\n'* && "$SMTP_PASSWORD" != *$'\r'* ]]
+          fi
+
+          ai_model_values=(
+            "$AI_MODEL_PROVIDER" "$AI_MODEL_ID" "$AI_MODEL_DISPLAY_NAME"
+            "$AI_MODEL_API_BASE" "$AI_MODEL_API_KEY"
+          )
+          ai_model_configured=0
+          for value in "${ai_model_values[@]}"; do
+            [[ -z "$value" ]] || ai_model_configured=$((ai_model_configured + 1))
+          done
+          if (( ai_model_configured != 0 && ai_model_configured != ${#ai_model_values[@]} )); then
+            echo 'AI model deployment configuration is partial; configure all AI model variables and secrets, or leave all of them empty' >&2
+            exit 1
+          fi
+          if (( ai_model_configured > 0 )); then
+            [[ "$AI_MODEL_PROVIDER" =~ ^[a-z0-9_]+$ ]]
+            [[ "$AI_MODEL_ID" != *$'\n'* && "$AI_MODEL_ID" != *$'\r'* ]]
+            [[ "$AI_MODEL_DISPLAY_NAME" != *$'\n'* && "$AI_MODEL_DISPLAY_NAME" != *$'\r'* ]]
+            [[ "$AI_MODEL_API_BASE" == https://* ]]
+            [[ "$AI_MODEL_API_BASE" != *$'\n'* && "$AI_MODEL_API_BASE" != *$'\r'* ]]
+            [[ "$AI_MODEL_API_KEY" != *$'\n'* && "$AI_MODEL_API_KEY" != *$'\r'* ]]
           fi
 
       - name: Install SSH credentials
@@ -226,6 +273,64 @@ jobs:
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             'curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null && curl -kfsS https://127.0.0.1:11444/ >/dev/null && curl -kfsS https://127.0.0.1:11445/ >/dev/null'
+
+      - name: Apply deployment-managed AI model
+        env:
+          AI_MODEL_PROVIDER: ${{ inputs.ai_model_provider }}
+          AI_MODEL_ID: ${{ inputs.ai_model_id }}
+          AI_MODEL_DISPLAY_NAME: ${{ inputs.ai_model_display_name }}
+          AI_MODEL_API_BASE: ${{ secrets.ai_model_api_base }}
+          AI_MODEL_API_KEY: ${{ secrets.ai_model_api_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$AI_MODEL_PROVIDER" ]]; then
+            printf '### AI model deployment\n\nSkipped: deployment-managed AI model is not configured.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          payload="$RUNNER_TEMP/hyperfilelens-ai-model.json"
+          trap 'rm -f -- "$payload"' EXIT
+          umask 077
+          python3 - "$payload" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          payload = {
+              "provider": os.environ["AI_MODEL_PROVIDER"],
+              "model_id": os.environ["AI_MODEL_ID"],
+              "display_name": os.environ["AI_MODEL_DISPLAY_NAME"],
+              "api_base": os.environ["AI_MODEL_API_BASE"],
+              "api_key": os.environ["AI_MODEL_API_KEY"],
+          }
+          pathlib.Path(sys.argv[1]).write_text(json.dumps(payload), encoding="utf-8")
+          PY
+          chmod 0600 "$payload"
+
+          set +e
+          output="$(ssh -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            'cd /opt/hyperfilelens && docker compose exec -T api python manage.py ensure_platform_ai_model' \
+            < "$payload" 2>&1)"
+          command_status=$?
+          set -e
+          printf '%s\n' "$output"
+          if (( command_status != 0 )); then
+            echo '::warning title=AI model deployment::Unable to apply the deployment-managed model; core deployment remains healthy.'
+            printf '### AI model deployment\n\nWarning: model configuration could not be applied. Core deployment remains healthy.\n' >> "$GITHUB_STEP_SUMMARY"
+          elif grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' <<<"$output" >/dev/null; then
+            echo '::warning title=AI model connectivity::The model was saved, but its connectivity test failed.'
+            printf '### AI model deployment\n\nWarning: model configuration was applied, but the connectivity test failed.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '### AI model deployment\n\nPassed: deployment-managed model was applied and tested successfully.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
 
       - name: Optional public endpoint check
         shell: bash

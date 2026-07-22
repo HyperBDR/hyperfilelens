@@ -9,9 +9,13 @@ import { defaultAiModelDisplayName } from '../../lib/aiModelDisplay'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { capabilityClass, lookupModelCapabilities } from '../../lib/aiModelCapabilities'
 import { DETAIL_EMPTY, isDetailEmpty } from '../../lib/nodeInventoryDisplay'
-import { fetchLensModelCatalog, fetchLensModelDetail, type LensLlmConfig } from '../../lib/lensApi'
+import {
+  fetchLensModelCatalog,
+  fetchLensModelDetail,
+  testSavedLensModel,
+  type LensLlmConfig,
+} from '../../lib/lensApi'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
-import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 
 const props = defineProps<{
@@ -34,6 +38,7 @@ const open = computed({
 
 const detail = ref<LensLlmConfig | null>(null)
 const busy = ref(false)
+const testing = ref(false)
 const modelCapabilities = ref<string[]>([])
 const capabilityLabels = ref<Record<string, string>>({})
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
@@ -122,6 +127,24 @@ function onEdit() {
   if (!uuid) return
   open.value = false
   emit('edit', uuid)
+}
+
+async function testConnection() {
+  const uuid = detail.value?.uuid || props.modelUuid
+  if (!uuid) return
+  testing.value = true
+  try {
+    const response = await testSavedLensModel(uuid)
+    const result = response as { ok?: boolean; success?: boolean }
+    if (result.ok === false || result.success === false) {
+      throw new Error(t('insight.aiSettings.connectivityFail', { detail: '' }))
+    }
+    ElMessage.success({ message: t('insight.aiSettings.connectivityOk'), grouping: true })
+  } catch {
+    ElMessage.error({ message: t('insight.aiSettings.connectivityFail', { detail: '' }), grouping: true })
+  } finally {
+    testing.value = false
+  }
 }
 
 function detailValueClass(text: string, mono = false) {
@@ -237,6 +260,21 @@ onUnmounted(() => {
                   />
                 </span>
               </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelDefault') }}</span>
+                <span class="hfl-detail-row__value">
+                  <HflBooleanStatusTag
+                    :value="detail.is_default === true"
+                    :label="detail.is_default ? t('insight.aiSettings.defaultBadge') : t('common.no')"
+                  />
+                </span>
+              </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelManagedBy') }}</span>
+                <span class="hfl-detail-row__value">
+                  {{ detail.deployment_managed ? t('insight.aiSettings.deploymentManagedBadge') : t('insight.aiSettings.manuallyManagedBadge') }}
+                </span>
+              </div>
 
               <div class="hfl-detail-row ai-model-drawer__divider" aria-hidden="true" />
 
@@ -286,11 +324,15 @@ onUnmounted(() => {
     </div>
 
     <template v-if="detail" #footer>
-      <HflDetailDrawerFooter
-        :save-label="t('common.edit')"
-        @cancel="open = false"
-        @save="onEdit"
-      />
+      <div class="el-drawer__footer-actions">
+        <ElButton :disabled="testing" @click="open = false">{{ t('common.cancel') }}</ElButton>
+        <ElButton :loading="testing" @click="testConnection">
+          {{ t('insight.aiSettings.testConnection') }}
+        </ElButton>
+        <ElButton v-if="!detail.deployment_managed" type="primary" :disabled="testing" @click="onEdit">
+          {{ t('common.edit') }}
+        </ElButton>
+      </div>
     </template>
   </ElDrawer>
 </template>

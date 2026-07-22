@@ -173,6 +173,32 @@ for variable in \
 done
 grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
 grep -F 'smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
+	grep -F "PROD_${variable}" "${workflow}" >/dev/null
+	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
+done
+for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
+	grep -F "secrets.PROD_${secret}" "${workflow}" >/dev/null
+	grep -F "secrets.PREPROD_${secret}" "${workflow}" >/dev/null
+done
+manual_deploy_workflow="${ROOT}/.github/workflows/deploy_release.yml"
+for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
+	grep -F "PROD_${variable}" "${manual_deploy_workflow}" >/dev/null
+	grep -F "PREPROD_${variable}" "${manual_deploy_workflow}" >/dev/null
+done
+for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
+	grep -F "secrets.PROD_${secret}" "${manual_deploy_workflow}" >/dev/null
+	grep -F "secrets.PREPROD_${secret}" "${manual_deploy_workflow}" >/dev/null
+done
+grep -F 'python manage.py ensure_platform_ai_model' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
+	printf 'ERROR: AI model API key must not be persisted in the runtime .env\n' >&2
+	exit 1
+fi
 grep -F '"HFL_EMAIL_SIGNUP_ENABLED=false"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F '"SMTP_PASSWORD=$SMTP_PASSWORD"' \
