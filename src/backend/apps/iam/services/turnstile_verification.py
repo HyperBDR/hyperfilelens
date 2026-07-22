@@ -10,6 +10,7 @@ from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
 from apps.iam.services.turnstile_service import get_client_ip, validate_turnstile
+from common.deploy.site import resolve_site_role
 
 TURNSTILE_FIELD = "turnstile_token"
 
@@ -29,21 +30,30 @@ def turnstile_configured() -> bool:
     return bool(turnstile_site_key() and turnstile_secret_key())
 
 
-def missing_turnstile_fields(data: Mapping[str, Any]) -> dict[str, list[str]]:
-    """Return required-field errors when Turnstile is enabled."""
-    if not turnstile_enabled() or str(data.get(TURNSTILE_FIELD) or "").strip():
+def turnstile_required(request: Any) -> bool:
+    """Require Turnstile only on the tenant-facing authentication endpoint."""
+    return turnstile_enabled() and resolve_site_role(request) == "tenant"
+
+
+def missing_turnstile_fields(
+    data: Mapping[str, Any],
+    request: Any,
+) -> dict[str, list[str]]:
+    """Return required-field errors when this request requires Turnstile."""
+    if not turnstile_required(request) or str(data.get(TURNSTILE_FIELD) or "").strip():
         return {}
-    return {TURNSTILE_FIELD: [_('Required')]}
+    return {TURNSTILE_FIELD: [_("Required")]}
 
 
 def credentials_and_turnstile_present(
     data: Mapping[str, Any],
     credential_fields: list[str],
+    request: Any,
 ) -> bool:
     """Return whether credentials and any required Turnstile token are present."""
     if any(not data.get(field) for field in credential_fields):
         return False
-    return not missing_turnstile_fields(data)
+    return not missing_turnstile_fields(data, request)
 
 
 def expected_turnstile_hostname(request) -> str:
@@ -61,7 +71,7 @@ def verify_turnstile_for_action(
     action: str,
 ) -> bool:
     """Verify Turnstile for an action, or allow it when explicitly disabled."""
-    if not turnstile_enabled():
+    if not turnstile_required(request):
         return True
     if not turnstile_configured():
         return False
@@ -79,4 +89,4 @@ def verify_turnstile_for_action(
 
 def invalid_turnstile_fields() -> dict[str, list[str]]:
     """Return a consistent validation error for rejected Turnstile tokens."""
-    return {TURNSTILE_FIELD: [_('Invalid or expired human verification')]}
+    return {TURNSTILE_FIELD: [_("Invalid or expired human verification")]}

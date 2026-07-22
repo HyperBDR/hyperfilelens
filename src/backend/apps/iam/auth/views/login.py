@@ -26,7 +26,7 @@ from apps.iam.services.turnstile_verification import (
     invalid_turnstile_fields,
     missing_turnstile_fields,
     turnstile_configured,
-    turnstile_enabled,
+    turnstile_required,
     verify_turnstile_for_action,
 )
 from apps.iam.services.token_service import (
@@ -201,8 +201,9 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
         if not credentials_and_turnstile_present(
             request.data,
             ["email", "password"],
+            request,
         ):
-            missing_fields = missing_turnstile_fields(request.data)
+            missing_fields = missing_turnstile_fields(request.data, request)
             return _build_error_response(
                 "VALIDATION_ERROR",
                 _("Missing required fields"),
@@ -213,7 +214,7 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
                 },
             )
 
-        if turnstile_enabled() and not turnstile_configured():
+        if turnstile_required(request) and not turnstile_configured():
             return _build_error_response(
                 "TURNSTILE_MISCONFIGURED",
                 _("Human verification is temporarily unavailable"),
