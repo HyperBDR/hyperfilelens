@@ -19,8 +19,10 @@ import { buildS3RepositoryName } from '../../lib/s3RepositoryName'
 import {
   S3_PROVIDER_OPTIONS,
   defaultS3UrlStyle,
+  isS3ProviderEnabled,
   normalizeS3StoragePlatform,
   s3ProviderRegions,
+  type S3PlatformCapability as StoragePlatformCapability,
   type S3PlatformSelection as StoragePlatform,
   type S3RegionPreset as RegionPreset,
   type S3UrlStyle,
@@ -214,11 +216,11 @@ function applyRegionPreset(key: string) {
   }
 }
 
-function isPlatformEnabled(platform: StoragePlatform): boolean {
-  return STORAGE_PLATFORMS.some((item) => item.value === platform)
+function isPlatformEnabled(platform: StoragePlatformCapability): platform is StoragePlatform {
+  return isS3ProviderEnabled(platform)
 }
 
-function onPlatformChange(p: StoragePlatform) {
+function onPlatformChange(p: StoragePlatformCapability) {
   if (!isPlatformEnabled(p)) {
     ElMessage.info({
       message: t('addS3Repo.platformComingSoon'),
