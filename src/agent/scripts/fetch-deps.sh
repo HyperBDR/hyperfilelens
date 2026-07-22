@@ -446,22 +446,14 @@ mkdir -p "${work}" "${dest}"
 chmod 777 "${work}"
 cd "${work}"
 
-# Use HTTP for apt inside the ephemeral container (HTTPS needs ca-certificates first).
-apt_mirror_http=""
+# Preserve an explicitly configured mirror and its scheme. Without one, use
+# Ubuntu's official HTTPS endpoints after bootstrapping ca-certificates.
+apt_mirror_url=""
 if [[ -n "${apt_mirror}" ]]; then
-  apt_mirror_http="${apt_mirror%/}"
-  apt_mirror_http="${apt_mirror_http#https://}"
-  apt_mirror_http="${apt_mirror_http#http://}"
-  apt_mirror_http="http://${apt_mirror_http}"
+  apt_mirror_url="${apt_mirror%/}"
 fi
 
-if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-  sed -i 's|https://ports.ubuntu.com/ubuntu-ports|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list.d/ubuntu.sources
-  sed -i 's|https://archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-  sed -i 's|https://security.ubuntu.com/ubuntu|http://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-fi
-
-echo "  bootstrap: ca-certificates (default Ubuntu HTTP sources)"
+echo "  bootstrap: ca-certificates (base-image Ubuntu sources)"
 if ! apt-get update -qq; then
   echo "ERROR: bootstrap apt-get update failed (${arch})" >&2
   exit 1
@@ -471,20 +463,27 @@ if ! apt-get install -y --no-install-recommends ca-certificates; then
   exit 1
 fi
 
-if [[ -n "${apt_mirror_http}" ]]; then
-  m="${apt_mirror_http}"
+if [[ -n "${apt_mirror_url}" ]]; then
+  m="${apt_mirror_url}"
   echo "  apt mirror: ${m} (${arch})"
-  if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-    if grep -q 'ports.ubuntu.com/ubuntu-ports' /etc/apt/sources.list.d/ubuntu.sources; then
-      sed -i "s|http://ports.ubuntu.com/ubuntu-ports|${m}/ubuntu-ports|g" /etc/apt/sources.list.d/ubuntu.sources
-    fi
-    sed -i "s|http://archive.ubuntu.com/ubuntu|${m}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources
-    sed -i "s|http://security.ubuntu.com/ubuntu|${m}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources
+else
+  echo "  apt source: official Ubuntu HTTPS (${arch})"
+fi
+for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+  [[ -f "${source_file}" ]] || continue
+  if [[ -n "${apt_mirror_url}" ]]; then
+    sed -E -i "s|https?://ports.ubuntu.com/ubuntu-ports|${m}/ubuntu-ports|g" "${source_file}"
+    sed -E -i "s|https?://archive.ubuntu.com/ubuntu|${m}/ubuntu|g" "${source_file}"
+    sed -E -i "s|https?://security.ubuntu.com/ubuntu|${m}/ubuntu|g" "${source_file}"
+  else
+    sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "${source_file}"
+    sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "${source_file}"
+    sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "${source_file}"
   fi
-  if ! apt-get update -qq; then
-    echo "ERROR: apt-get update failed after mirror switch (${arch})" >&2
-    exit 1
-  fi
+done
+if ! apt-get update -qq; then
+  echo "ERROR: apt-get update failed after secure source configuration (${arch})" >&2
+  exit 1
 fi
 
 echo "  download: nfs-common cifs-utils (+dependencies)"
