@@ -160,8 +160,10 @@ async function verifyAuthenticationViewport(browser, baseUrl, viewport) {
     const page = await context.newPage()
     for (const path of ['/login', '/register']) {
       await page.goto(`${baseUrl}${path}`, { waitUntil: 'domcontentloaded' })
-      await page.locator(path === '/login' ? '.login-form-box' : '.register-form-box').waitFor({ state: 'visible' })
+      const form = page.locator(path === '/login' ? '.login-form-box' : '.register-form-box')
+      await form.waitFor({ state: 'visible' })
       await assertNoDocumentOverflow(page, `${path} at ${viewport.width}x${viewport.height}`)
+      await assertInsideViewport(page, form, `${path} form at ${viewport.width}x${viewport.height}`)
     }
   } finally {
     await context.close()
@@ -187,6 +189,7 @@ async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, ad
 
   await verifyAuthenticationViewport(browser, tenantBaseUrl, profiles[0].viewport)
   await verifyAuthenticationViewport(browser, tenantBaseUrl, profiles[2].viewport)
+  await verifyAuthenticationViewport(browser, tenantBaseUrl, { width: 1024, height: 768 })
 
   for (const profile of profiles) {
     const context = await browser.newContext({
