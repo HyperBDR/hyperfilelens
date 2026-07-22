@@ -160,7 +160,12 @@ async function verifyAuthenticationViewport(browser, baseUrl, viewport) {
     const page = await context.newPage()
     for (const path of ['/login', '/register']) {
       await page.goto(`${baseUrl}${path}`, { waitUntil: 'domcontentloaded' })
-      const form = page.locator(path === '/login' ? '.login-form-box' : '.register-form-box')
+      // Self-service signup is disabled in release and SaaS deployments, so
+      // /register legitimately redirects to the login form. When signup is
+      // enabled, keep validating the dedicated registration form.
+      const form = page.locator(
+        path === '/login' ? '.login-form-box' : '.register-form-box, .login-form-box',
+      ).first()
       await form.waitFor({ state: 'visible' })
       await assertNoDocumentOverflow(page, `${path} at ${viewport.width}x${viewport.height}`)
       await assertInsideViewport(page, form, `${path} form at ${viewport.width}x${viewport.height}`)

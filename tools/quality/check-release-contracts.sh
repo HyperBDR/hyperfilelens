@@ -250,6 +250,8 @@ grep -F 'uv run --isolated --no-project --python 3.8 python tools/quality/check-
 	"${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
+grep -F "'.register-form-box, .login-form-box'" \
+	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
 grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${workflow}" >/dev/null
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
