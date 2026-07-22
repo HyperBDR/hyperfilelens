@@ -24,6 +24,8 @@ export const en = {
     dotSeparator: '·',
     retry: 'Retry',
     close: 'Close',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
     stop: 'Stop',
     deleteKeyword: 'DELETE',
     deleteKeywordHint: 'To confirm this deletion, type DELETE below.',

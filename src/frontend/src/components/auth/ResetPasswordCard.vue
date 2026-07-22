@@ -514,9 +514,9 @@ onUnmounted(() => {
             <button
               type="button"
               class="eye-btn"
-              @mousedown.prevent="showNewPassword = true"
-              @mouseup="showNewPassword = false"
-              @mouseleave="showNewPassword = false"
+              :aria-label="showNewPassword ? t('common.hidePassword') : t('common.showPassword')"
+              :aria-pressed="showNewPassword"
+              @click="showNewPassword = !showNewPassword"
             >
               <EyeOff v-if="showNewPassword" :size="16" />
               <Eye v-else :size="16" />
@@ -540,9 +540,9 @@ onUnmounted(() => {
             <button
               type="button"
               class="eye-btn"
-              @mousedown.prevent="showConfirmPassword = true"
-              @mouseup="showConfirmPassword = false"
-              @mouseleave="showConfirmPassword = false"
+              :aria-label="showConfirmPassword ? t('common.hidePassword') : t('common.showPassword')"
+              :aria-pressed="showConfirmPassword"
+              @click="showConfirmPassword = !showConfirmPassword"
             >
               <EyeOff v-if="showConfirmPassword" :size="16" />
               <Eye v-else :size="16" />
