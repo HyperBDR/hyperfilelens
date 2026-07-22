@@ -712,7 +712,7 @@ onMounted(() => {
 .ks-form-fullscreen .fullscreen-form-page {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 52px);
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
 }
 
 .ks-section-desc {

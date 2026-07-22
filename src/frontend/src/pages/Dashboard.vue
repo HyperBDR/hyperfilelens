@@ -1083,7 +1083,7 @@ onMounted(refresh)
   --dashboard-info-border: color-mix(in srgb, var(--dashboard-info) 22%, #fff);
   box-sizing: border-box;
   width: 100%;
-  min-height: calc(100vh - var(--topnav-height, 52px) - 2 * var(--page-gutter));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)) - 2 * var(--page-gutter));
   padding: var(--page-gutter);
   background: #f2f3f5;
   color: #1d2129;

@@ -37,7 +37,7 @@
 
 .alert-policy-editor-event-types-tooltip .el-select__selection {
   width: 100%;
-  max-height: min(280px, calc(100vh - 64px));
+  max-height: min(280px, calc(var(--app-viewport-height) - 64px));
   box-sizing: border-box;
   flex-direction: column;
   flex-wrap: nowrap;

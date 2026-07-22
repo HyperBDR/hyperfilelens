@@ -886,7 +886,7 @@ watch(
 
 <style scoped>
 .assistant-form-fullscreen .fullscreen-form-page {
-  min-height: calc(100vh - 52px);
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
 }
 
 .assistant-form-fullscreen .fullscreen-form-card,

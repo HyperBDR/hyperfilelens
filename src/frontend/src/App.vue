@@ -61,7 +61,7 @@ watch(
 
 .app-route-loading {
   display: grid;
-  min-height: 100vh;
+  min-height: var(--app-viewport-height);
   padding: 32px;
   box-sizing: border-box;
   place-items: center;

@@ -24,7 +24,7 @@ function updateTableMaxHeight() {
   const panel = panelRef.value
   const footer = panel?.querySelector<HTMLElement>('.hfl-list-footer')
   const footerHeight = footer?.offsetHeight ?? 0
-  const pageBottom = pageBody?.getBoundingClientRect().bottom ?? window.innerHeight
+  const pageBottom = pageBody?.getBoundingClientRect().bottom ?? window.visualViewport?.height ?? window.innerHeight
   const tableTop = tableViewport.getBoundingClientRect().top
   const scrollbarReserve = 12
   const next = Math.max(280, Math.floor(pageBottom - tableTop - footerHeight - scrollbarReserve - 8))

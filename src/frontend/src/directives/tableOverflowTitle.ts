@@ -172,8 +172,9 @@ function positionTooltip(cell: HTMLElement) {
   const left = Math.max(VIEWPORT_PADDING, Math.min(rect.left, maxLeft))
   const belowTop = rect.bottom + TOOLTIP_GAP
   const aboveTop = rect.top - tooltipRect.height - TOOLTIP_GAP
+  const visibleViewportBottom = (window.visualViewport?.offsetTop ?? 0) + (window.visualViewport?.height ?? window.innerHeight)
   const top =
-    belowTop + tooltipRect.height <= window.innerHeight - VIEWPORT_PADDING
+    belowTop + tooltipRect.height <= visibleViewportBottom - VIEWPORT_PADDING
       ? belowTop
       : Math.max(VIEWPORT_PADDING, aboveTop)
 

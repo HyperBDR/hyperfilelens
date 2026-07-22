@@ -2,12 +2,22 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 export type ResponsiveDrawerLevel = 1 | 2 | 3
 
-export function computeResponsiveDrawerWidth(level: ResponsiveDrawerLevel = 1) {
+function visibleViewportWidth() {
   if (typeof window === 'undefined') return 720
-  if (window.innerWidth <= 720) return Math.max(320, window.innerWidth - 16)
-  if (level === 2) return Math.round(Math.min(820, Math.max(680, window.innerWidth * 0.56)))
-  if (level === 3) return Math.round(Math.min(680, Math.max(560, window.innerWidth * 0.46)))
-  return Math.round(Math.min(1080, Math.max(860, window.innerWidth * 0.72)))
+  return window.visualViewport?.width || document.documentElement.clientWidth || window.innerWidth
+}
+
+export function computeResponsiveDrawerWidth(
+  level: ResponsiveDrawerLevel = 1,
+  viewportWidth = visibleViewportWidth(),
+) {
+  if (viewportWidth < 1024) {
+    const totalGutter = viewportWidth < 480 ? 16 : 32
+    return Math.max(0, Math.floor(viewportWidth - totalGutter))
+  }
+  if (level === 2) return Math.round(Math.min(820, Math.max(680, viewportWidth * 0.56)))
+  if (level === 3) return Math.round(Math.min(680, Math.max(560, viewportWidth * 0.46)))
+  return Math.round(Math.min(1080, Math.max(860, viewportWidth * 0.72)))
 }
 
 export function useResponsiveDrawerWidth(level: ResponsiveDrawerLevel = 1) {
@@ -22,12 +32,14 @@ export function useResponsiveDrawerWidth(level: ResponsiveDrawerLevel = 1) {
     updateDrawerWidth()
     if (resizeBound || typeof window === 'undefined') return
     window.addEventListener('resize', updateDrawerWidth)
+    window.visualViewport?.addEventListener('resize', updateDrawerWidth)
     resizeBound = true
   }
 
   function unbindDrawerResize() {
     if (!resizeBound || typeof window === 'undefined') return
     window.removeEventListener('resize', updateDrawerWidth)
+    window.visualViewport?.removeEventListener('resize', updateDrawerWidth)
     resizeBound = false
   }
 

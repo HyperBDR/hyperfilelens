@@ -142,6 +142,14 @@ html[data-theme='hybrid'] {
 
 /* Override Element Plus primary color to match brand */
 :root {
+  --app-viewport-height: 100vh;
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --app-safe-right: env(safe-area-inset-right, 0px);
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-left: env(safe-area-inset-left, 0px);
+  --app-header-content-height: 52px;
+  --app-header-height: calc(var(--app-header-content-height) + var(--app-safe-top));
+
   /* Keep dense Element Plus controls slightly tighter than cards. */
   --el-border-radius-base: 8px !important;
   --hfl-popper-radius: 10px;
@@ -202,6 +210,12 @@ html[data-theme='hybrid'] {
   --el-form-label-height: auto !important;
 }
 
+@supports (height: 100dvh) {
+  :root {
+    --app-viewport-height: 100dvh;
+  }
+}
+
 .el-input-number.is-controls-right .el-input-number__increase,
 .el-input-number.is-controls-right .el-input-number__decrease {
   --el-input-number-controls-height: 17px !important;
@@ -259,6 +273,103 @@ html[data-theme='hybrid'] {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
+}
+
+.el-dialog {
+  max-width: calc(100vw - var(--app-safe-left) - var(--app-safe-right) - 32px);
+  max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 32px);
+}
+
+.el-dialog__body {
+  min-height: 0;
+}
+
+@media (max-width: 1023.98px) {
+  .el-overlay-dialog {
+    display: flex;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden auto;
+    padding: calc(16px + var(--app-safe-top)) calc(16px + var(--app-safe-right)) calc(16px + var(--app-safe-bottom)) calc(16px + var(--app-safe-left));
+  }
+
+  .el-overlay-dialog > .el-dialog {
+    display: flex;
+    width: 100%;
+    max-width: min(var(--el-dialog-width, 640px), 100%);
+    max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 32px);
+    flex-direction: column;
+    margin: 0;
+  }
+
+  .el-overlay-dialog > .el-dialog > .el-dialog__header,
+  .el-overlay-dialog > .el-dialog > .el-dialog__footer {
+    flex: 0 0 auto;
+  }
+
+  .el-overlay-dialog > .el-dialog > .el-dialog__body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+
+  .el-drawer {
+    max-width: calc(100vw - var(--app-safe-left) - var(--app-safe-right));
+    max-height: var(--app-viewport-height);
+  }
+
+  .el-drawer__footer {
+    padding-bottom: calc(var(--el-drawer-padding-primary) + var(--app-safe-bottom)) !important;
+  }
+
+  .el-popper {
+    max-width: calc(100vw - var(--app-safe-left) - var(--app-safe-right) - 16px);
+  }
+}
+
+@media (max-width: 479.98px) {
+  .el-overlay-dialog {
+    align-items: stretch;
+    padding: calc(8px + var(--app-safe-top)) calc(8px + var(--app-safe-right)) calc(8px + var(--app-safe-bottom)) calc(8px + var(--app-safe-left));
+  }
+
+  .el-overlay-dialog > .el-dialog {
+    max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 16px);
+    align-self: center;
+    border-radius: 12px;
+  }
+
+  .el-dialog__header,
+  .el-dialog__body,
+  .el-dialog__footer {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .el-dialog .el-form-item {
+    display: block;
+  }
+
+  .el-dialog .el-form-item__label {
+    width: auto !important;
+    height: auto;
+    justify-content: flex-start;
+    padding: 0 0 6px;
+    line-height: 1.4;
+  }
+
+  .el-dialog .el-form-item__content {
+    margin-left: 0 !important;
+  }
+
+  .el-dialog__footer,
+  .dialog-footer-actions {
+    flex-wrap: wrap;
+  }
+
+  .el-popper {
+    min-width: 0 !important;
+  }
 }
 
 /* Shared inline header label with a tooltip/help icon. */
@@ -1167,15 +1278,17 @@ a:hover {
  */
 .module-page {
   display: flex;
-  min-height: calc(100vh - 52px);
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
   position: relative;
+  min-width: 0;
 }
 
 .main-content {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: calc(100vh - 52px);
+  min-width: 0;
+  min-height: calc(var(--app-viewport-height) - var(--app-header-height));
   padding: var(--page-gutter);
   overflow: hidden auto;
   transition: margin-left 200ms ease;
@@ -1223,7 +1336,7 @@ a:hover {
 /* Page Body (app-container) */
 .page-body {
   box-sizing: border-box;
-  height: calc(100vh - 52px - 24px - 16px - 12px - 32px);
+  height: calc(var(--app-viewport-height) - var(--app-header-height) - 24px - 16px - 12px - 32px);
   padding: var(--page-gutter);
   background: var(--page-bg, #1A1A22);
   border: 1px solid var(--page-border, #2A2B35);
@@ -1231,6 +1344,34 @@ a:hover {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+@media (max-width: 1023.98px) {
+  .main-content {
+    width: 100%;
+    padding: 12px;
+  }
+
+  .page-body {
+    height: auto;
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .page-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .main-content {
+    padding: 8px;
+  }
+
+  .page-body {
+    padding: 10px;
+    border-radius: 10px;
+  }
 }
 
 .page-body--fill {

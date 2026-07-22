@@ -39,7 +39,7 @@ onMounted(async () => {
 
 <style scoped>
 .oauth-callback {
-  min-height: 100vh;
+  min-height: var(--app-viewport-height);
   display: flex;
   align-items: center;
   justify-content: center;

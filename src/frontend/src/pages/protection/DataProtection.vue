@@ -919,7 +919,7 @@ function updateFlowTableMaxHeight() {
 
   const pageBody = zone.closest('.page-body') as HTMLElement | null
   const zoneTop = zone.getBoundingClientRect().top
-  const pageBottom = pageBody?.getBoundingClientRect().bottom ?? window.innerHeight
+  const pageBottom = pageBody?.getBoundingClientRect().bottom ?? window.visualViewport?.height ?? window.innerHeight
   const visibleFooter = zone
     ? Array.from(zone.querySelectorAll<HTMLElement>('.hfl-list-footer'))
       .find((footer) => footer.offsetParent !== null)
@@ -10407,7 +10407,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           v-table-overflow-title
               :data="recBackupSnapshotHostRows"
               :header-cell-style="TABLE_HEADER_STYLE"
-              max-height="calc(100vh - 390px)"
+              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               class="recovery-plan-preview-table recovery-manual-table"
               row-key="rowKey"
@@ -10512,7 +10512,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           v-table-overflow-title
               :data="recRecoveryDestSourceRows"
               row-key="hostId"
-              max-height="calc(100vh - 390px)"
+              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               :header-cell-style="TABLE_HEADER_STYLE"
               class="hfl-list-table recovery-manual-table"
@@ -10695,7 +10695,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               ref="recRecoveryDirSourceTableRef"
               :data="recRecoveryDirSourceRows"
               row-key="hostId"
-              max-height="calc(100vh - 390px)"
+              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               :expand-row-keys="recExpandedRecDirHostIds"
               :header-cell-style="TABLE_HEADER_STYLE"
@@ -11275,7 +11275,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               ref="recRecoveryConfirmTableRef"
               :data="recRecoveryConfirmSourceRows"
               row-key="hostId"
-              max-height="calc(100vh - 390px)"
+              max-height="calc(var(--app-viewport-height) - 390px)"
               stripe
               :expand-row-keys="recExpandedRecConfirmHostIds"
               :header-cell-style="TABLE_HEADER_STYLE"
@@ -11915,7 +11915,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
 }
 
 .setup-dr-opening-skeleton__page {
-  min-height: 100vh;
+  min-height: var(--app-viewport-height);
 }
 
 .setup-dr-opening-skeleton__header {
@@ -14867,7 +14867,7 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 
 .repository-add-dialog :deep(.el-dialog) {
   max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 48px);
+  max-height: calc(var(--app-viewport-height) - 48px);
   display: flex;
   flex-direction: column;
 }

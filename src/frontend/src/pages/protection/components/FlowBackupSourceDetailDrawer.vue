@@ -2760,7 +2760,7 @@ function onClosed() {
               :data="pagedSourceSnapshots"
               stripe
               row-key="id"
-              max-height="calc(100vh - 260px)"
+              max-height="calc(var(--app-viewport-height) - 260px)"
               :expand-row-keys="expandedSnapshotRowKeys"
               :header-cell-style="TABLE_HEADER_STYLE"
               class="hfl-list-table"
@@ -3189,7 +3189,7 @@ function onClosed() {
               :data="restoreRecords"
               :fit="false"
               row-key="id"
-              max-height="calc(100vh - 260px)"
+              max-height="calc(var(--app-viewport-height) - 260px)"
               :expand-row-keys="expandedRestoreRecordRowKeys"
               :header-cell-style="TABLE_HEADER_STYLE"
               stripe
