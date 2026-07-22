@@ -257,6 +257,13 @@ grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification
 grep -F 'apt source: official Ubuntu HTTPS' "${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
 grep -F 'using official Ubuntu HTTPS sources' \
 	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
+grep -F 'NAS_DOCKER_TIMEOUT=900' "${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
+for dependency_fetcher in \
+	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
+	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh"; do
+	grep -F 'Acquire::https::Verify-Peer=false' "${dependency_fetcher}" >/dev/null
+	grep -F 'Acquire::https::Verify-Host=false' "${dependency_fetcher}" >/dev/null
+done
 if rg -n 'apt_mirror_http|default Ubuntu HTTP sources' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
 	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null; then
