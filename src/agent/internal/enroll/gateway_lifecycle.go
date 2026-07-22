@@ -82,6 +82,7 @@ func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
 		args = append(args, "--purge-all")
 	}
 	cmd := exec.CommandContext(ctx, "/bin/bash", args...)
+	cmd.Env = append(os.Environ(), "HFL_SKIP_GATEWAY_SIDECAR_UNINSTALL=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

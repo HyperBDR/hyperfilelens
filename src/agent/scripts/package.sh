@@ -161,6 +161,7 @@ NAS_DEPS_BASE="${REPO_ROOT}/build/dependencies/agent"
 KOPIA_ROOT="${REPO_ROOT}/build/kopia"
 INSTALL_DIR="${AGENT_ROOT}/packaging/install"
 SYSTEMD_UNIT="${AGENT_ROOT}/packaging/systemd/hyperfilelens-agent.service"
+GATEWAY_LIFECYCLE_SCRIPT="${REPO_ROOT}/deploy/bootstrap/gateway-lifecycle.sh"
 
 case "${BUNDLE}" in
 all) DO_STANDARD=1; UBUNTU_RELEASES="20.04 24.04" ;;
@@ -218,7 +219,9 @@ package_archives() {
 		WORK_ROOT_VALUE="${WORK_ROOT}" PACKAGE_DIR_VALUE="${PACKAGE_DIR}" \
 		KOPIA_ROOT_VALUE="${KOPIA_ROOT}" \
 		NAS_BASE_VALUE="${NAS_DEPS_BASE}" INSTALL_DIR_VALUE="${INSTALL_DIR}" \
-		SYSTEMD_UNIT_VALUE="${SYSTEMD_UNIT}" DO_STANDARD_VALUE="${DO_STANDARD}" \
+		SYSTEMD_UNIT_VALUE="${SYSTEMD_UNIT}" \
+		GATEWAY_LIFECYCLE_SCRIPT_VALUE="${GATEWAY_LIFECYCLE_SCRIPT}" \
+		DO_STANDARD_VALUE="${DO_STANDARD}" \
 		UBUNTU_RELEASES_VALUE="${UBUNTU_RELEASES}" python3 - <<'PY'
 import hashlib
 import json
@@ -243,6 +246,7 @@ package_dir = Path(os.environ["PACKAGE_DIR_VALUE"])
 nas_base = Path(os.environ["NAS_BASE_VALUE"])
 install_dir = Path(os.environ["INSTALL_DIR_VALUE"])
 systemd_unit = Path(os.environ["SYSTEMD_UNIT_VALUE"])
+gateway_lifecycle_script = Path(os.environ["GATEWAY_LIFECYCLE_SCRIPT_VALUE"])
 do_standard = os.environ["DO_STANDARD_VALUE"] == "1"
 ubuntu_releases = os.environ["UBUNTU_RELEASES_VALUE"].split()
 
@@ -407,9 +411,17 @@ def assemble_standard(goos: str, goarch: str, kopia_info: dict) -> None:
             if goos == "linux":
                 if not systemd_unit.is_file():
                     raise PrerequisiteError(f"missing systemd unit: {systemd_unit}")
+                if not gateway_lifecycle_script.is_file():
+                    raise PrerequisiteError(
+                        f"missing Gateway lifecycle script: {gateway_lifecycle_script}"
+                    )
                 unit_destination = root / "systemd" / systemd_unit.name
                 unit_destination.parent.mkdir(parents=True)
                 shutil.copy2(systemd_unit, unit_destination)
+                lifecycle_destination = root / "libexec" / gateway_lifecycle_script.name
+                lifecycle_destination.parent.mkdir(parents=True)
+                shutil.copy2(gateway_lifecycle_script, lifecycle_destination)
+                executable(lifecycle_destination)
 
         manifest = {
             "schema": 1,

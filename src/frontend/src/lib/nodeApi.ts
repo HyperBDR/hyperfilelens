@@ -138,6 +138,15 @@ export async function updateNode(nodeId: number, body: UpdateNodeBody): Promise<
 }
 
 export const NODE_LIFECYCLE_MAX_CONCURRENT = 5
+export type NodeLifecycleScope = 'tenant' | 'platform'
+
+function nodeLifecyclePath(scope: NodeLifecycleScope, relative: string): string {
+  const clean = relative.replace(/^\/+|\/+$/g, '')
+  if (scope === 'platform') {
+    return `/api/v1/platform-ops/lens/gateways/${clean}`
+  }
+  return `/api/v1/node/nodes/${clean}/`
+}
 
 export class NodeLifecycleApiError extends Error {
   code: string
@@ -179,9 +188,9 @@ async function postLifecycle<T>(path: string, body: unknown): Promise<T> {
 export async function startNodeOperation(
   nodeId: number,
   kind: NodeLifecycleKind,
-  options?: { force?: boolean },
+  options?: { force?: boolean; scope?: NodeLifecycleScope },
 ): Promise<NodeOperationStartResult> {
-  return postLifecycle(`/api/v1/node/nodes/${nodeId}/operations/`, {
+  return postLifecycle(nodeLifecyclePath(options?.scope ?? 'tenant', `${nodeId}/operations`), {
     kind,
     force: Boolean(options?.force),
   })
@@ -191,8 +200,9 @@ export async function previewNodeOperationsBatch(params: {
   kind: NodeLifecycleKind
   nodeIds: number[]
   maxConcurrent?: number
+  scope?: NodeLifecycleScope
 }): Promise<NodeOperationBatchPreview> {
-  return postLifecycle('/api/v1/node/nodes/operations/preview/', {
+  return postLifecycle(nodeLifecyclePath(params.scope ?? 'tenant', 'operations/preview'), {
     kind: params.kind,
     node_ids: params.nodeIds,
     max_concurrent: params.maxConcurrent ?? NODE_LIFECYCLE_MAX_CONCURRENT,
@@ -204,8 +214,9 @@ export async function startNodeOperationsBatch(params: {
   nodeIds: number[]
   maxConcurrent?: number
   force?: boolean
+  scope?: NodeLifecycleScope
 }): Promise<NodeOperationBatchStartResult> {
-  return postLifecycle('/api/v1/node/nodes/operations/batch/', {
+  return postLifecycle(nodeLifecyclePath(params.scope ?? 'tenant', 'operations/batch'), {
     kind: params.kind,
     node_ids: params.nodeIds,
     max_concurrent: params.maxConcurrent ?? NODE_LIFECYCLE_MAX_CONCURRENT,
@@ -221,11 +232,14 @@ export type NodeLifecycleWatchEntry = Pick<
 }
 
 /** Poll lifecycle state for nodes in an active upgrade/remove batch (read-only). */
-export async function fetchLifecycleWatch(nodeIds: number[]): Promise<NodeLifecycleWatchEntry[]> {
+export async function fetchLifecycleWatch(
+  nodeIds: number[],
+  scope: NodeLifecycleScope = 'tenant',
+): Promise<NodeLifecycleWatchEntry[]> {
   const ids = [...new Set(nodeIds.filter((id) => Number.isFinite(id) && id > 0))]
   if (ids.length === 0) return []
   const raw = await postLifecycle<{ nodes: NodeLifecycleWatchEntry[] }>(
-    '/api/v1/node/nodes/lifecycle-watch/',
+    nodeLifecyclePath(scope, 'lifecycle-watch'),
     { node_ids: ids },
   )
   return Array.isArray(raw.nodes) ? raw.nodes : []

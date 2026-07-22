@@ -10,6 +10,7 @@ import {
   startNodeOperationsBatch,
   NodeLifecycleApiError,
 } from '../lib/nodeApi'
+import type { NodeLifecycleScope } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
 import { parseSemver, semverCompare } from '../lib/agentVersion'
 import { logger } from '../lib/logger'
@@ -28,6 +29,7 @@ type PersistedQueue = {
   batchId: string
   kind: NodeLifecycleKind
   role: NodeRole
+  scope?: NodeLifecycleScope
   maxConcurrent: number
   queued: LifecycleQueueItem[]
   running: LifecycleQueueItem[]
@@ -121,6 +123,7 @@ function queueItemMeta(
 
 export function useNodeLifecycleOps(options: {
   role: NodeRole | (() => NodeRole)
+  scope?: NodeLifecycleScope | (() => NodeLifecycleScope)
   t: Composer['t']
   onRefresh?: () => Promise<void> | void
   onLifecyclePatch?: (nodes: ApiNode[]) => void
@@ -128,6 +131,8 @@ export function useNodeLifecycleOps(options: {
   const { t } = options
   const resolveRole = (): NodeRole =>
     typeof options.role === 'function' ? options.role() : options.role
+  const resolveScope = (): NodeLifecycleScope =>
+    typeof options.scope === 'function' ? options.scope() : options.scope || 'tenant'
   const batchId = ref<string | null>(null)
   const activeKind = ref<NodeLifecycleKind | null>(null)
   const maxConcurrent = ref(NODE_LIFECYCLE_MAX_CONCURRENT)
@@ -238,6 +243,7 @@ export function useNodeLifecycleOps(options: {
       batchId: batchId.value,
       kind: activeKind.value,
       role: pollRole.value || resolveRole(),
+      scope: resolveScope(),
       maxConcurrent: maxConcurrent.value,
       running: running.value,
       queued: queued.value,
@@ -311,7 +317,7 @@ export function useNodeLifecycleOps(options: {
         return
       }
       const role = pollRole.value || resolveRole()
-      const watched = await fetchLifecycleWatch(nodeIds)
+      const watched = await fetchLifecycleWatch(nodeIds, resolveScope())
       const nodes: ApiNode[] = watched.map((row) => {
         const item = localLifecycleItem(running.value, queued.value, row.id)
         return {
@@ -356,7 +362,9 @@ export function useNodeLifecycleOps(options: {
         kind: item.kind,
         name: item.name,
       })
-      const result = await startNodeOperation(item.nodeId, item.kind)
+      const result = await startNodeOperation(item.nodeId, item.kind, {
+        scope: resolveScope(),
+      })
       item.state = result.state
       item.taskId = result.task_id
       if (result.target_version) {
@@ -470,6 +478,7 @@ export function useNodeLifecycleOps(options: {
         kind,
         nodeIds,
         maxConcurrent: maxConcurrent.value,
+        scope: resolveScope(),
       })
       if (preview.eligible.length === 0) {
         ElMessage.warning({ message: explainIneligiblePreview(preview), grouping: true })
@@ -514,6 +523,7 @@ export function useNodeLifecycleOps(options: {
         nodeIds: preview.eligible.map((x) => x.node_id),
         maxConcurrent: maxConcurrent.value,
         force: Boolean(runOptions?.force),
+        scope: resolveScope(),
       })
 
       for (const started of batchResult.started || []) {
@@ -608,6 +618,7 @@ export function useNodeLifecycleOps(options: {
     const saved = loadPersisted()
     if (!saved) return
     if (saved.role !== resolveRole()) return
+    if ((saved.scope || 'tenant') !== resolveScope()) return
     batchId.value = saved.batchId
     activeKind.value = saved.kind
     pollRole.value = saved.role
@@ -623,7 +634,7 @@ export function useNodeLifecycleOps(options: {
             ...queued.value.map((item) => item.nodeId),
           ]),
         ]
-        const watched = await fetchLifecycleWatch(nodeIds)
+        const watched = await fetchLifecycleWatch(nodeIds, resolveScope())
         const nodes: ApiNode[] = watched.map((row) => {
           const item = localLifecycleItem(running.value, queued.value, row.id)
           return {

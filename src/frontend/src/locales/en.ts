@@ -825,6 +825,10 @@ export const en = {
       defaultActive: 'Default',
       defaultSet: 'Set default',
       defaultSetSuccess: 'Platform default data gateway updated.',
+      deleteOfflineConfirm:
+        'Remove {n} data gateway(s)? {offline} gateway(s) are offline, so only their console records can be removed; Agent and LensNode files may remain on those hosts.',
+      deleteInstallerManagedConfirm:
+        'Remove {n} data gateway(s)? Installer-managed platform gateways are recreated by the next deployment while auto-deploy remains enabled. Offline hosts may retain Agent and LensNode files.',
       origin: {
         user: 'User',
         platform: 'Platform',

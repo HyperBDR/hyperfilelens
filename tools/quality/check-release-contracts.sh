@@ -275,6 +275,7 @@ grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null
 grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/null
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
