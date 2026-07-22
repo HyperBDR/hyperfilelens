@@ -62,6 +62,7 @@ docker run --rm \
 	-e SOURCELENS_USER="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_USERNAME admin)" \
 	-e SOURCELENS_PASSWORD="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_PASSWORD adminpassword)" \
 	-e SMOKE_REQUIRE_HMR="${SMOKE_REQUIRE_HMR:-1}" \
+	-e SMOKE_SKIP_SOURCELENS="${SMOKE_SKIP_SOURCELENS:-0}" \
 	"${image}" bash -euc '
 		cd /smoke
 		if [[ ! -f package.json ]]; then
