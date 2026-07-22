@@ -44,7 +44,7 @@ Fetch (passed to fetch-deps.sh):
   --kopia-mode MODE               build or download
   --kopia-git-url URL             Kopia source repository URL
   --kopia-ref REF                 Kopia release ref in vX.Y.Z form
-  --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
+  --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for NAS Ubuntu images (env: DOCKER_DOWNLOAD_MIRROR)
   --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)

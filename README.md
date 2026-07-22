@@ -204,6 +204,11 @@ options. For example:
 ```
 
 Third-party mirrors are examples only and are never enabled automatically.
+For GitHub HTTPS repositories such as the default Kopia source, the selected
+GitHub download mirror is also tried for Git clone and fetch before falling
+back to the canonical GitHub URL. The canonical URL remains in the Git remote
+and generated build metadata; `--kopia-git-url` is only needed for a different
+upstream or fork.
 The backend keeps `uv.lock` as the single dependency lock and uses the selected
 Python index only to download hash-verified packages exported from that lock.
 

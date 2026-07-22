@@ -218,7 +218,7 @@ Version:
   - Image-only runtime package: images, payload/media, compose, and deploy config
 
 Mirror options (Kopia fetch + Agent publishing + runtime image pull; env fallback):
-  --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
+  --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for ubuntu:24.04, postgres, redis (env: DOCKER_DOWNLOAD_MIRROR)
   --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)
