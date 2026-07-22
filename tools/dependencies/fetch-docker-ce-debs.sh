@@ -329,7 +329,11 @@ fi
 chmod a+r /etc/apt/keyrings/docker.gpg
 echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] ${docker_apt} ${UBUNTU_CODENAME} stable" \
   > /etc/apt/sources.list.d/docker.list
-"${apt_network[@]}" update -qq
+"${apt_network[@]}" \
+  -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/docker.list \
+  -o Dir::Etc::sourceparts=- \
+  -o APT::Get::List-Cleanup=0 \
+  update -qq
 
 rm -f /var/cache/apt/archives/*.deb
 download_ok=0

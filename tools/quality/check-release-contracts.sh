@@ -281,6 +281,8 @@ grep -F 'runner: macos-15' "${workflow}" >/dev/null
 grep -F 'runner: windows-2022' "${workflow}" >/dev/null
 grep -A2 '^  build-host-debs:' "${workflow}" | grep -F 'timeout-minutes: 60' >/dev/null
 grep -F 'bootstrap_tools_ok=0' "${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
+grep -F 'Dir::Etc::sourcelist=/etc/apt/sources.list.d/docker.list' \
+	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
 grep -F -- '--required-target linux:arm64' "${workflow}" >/dev/null
 grep -F -- '--required-target darwin:arm64' "${workflow}" >/dev/null
 grep -F -- '--required-target windows:amd64' "${workflow}" >/dev/null
