@@ -288,18 +288,14 @@ defineExpose({ reset })
 
 .turnstile-widget__loading {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 65px;
+  inset: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: left !important;
   gap: 15px;
   padding: 0 14px;
   box-sizing: border-box;
-  border: 1px solid #3A3B40;
-  border-radius: var(--radius-card);
   background: #313131;
   color: #D4D7DD;
   font-size: 13px;

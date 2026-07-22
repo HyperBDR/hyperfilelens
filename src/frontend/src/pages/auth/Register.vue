@@ -1163,7 +1163,7 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-@media (max-width: 1023.98px) {
+@media (max-width: 1279.98px) {
   .register-container {
     min-height: var(--app-viewport-height);
     height: auto;
