@@ -273,6 +273,13 @@ onUnmounted(() => {
   color: var(--nav-notification-hover-color, #fff);
 }
 
+@media (max-width: 1023.98px) {
+  .nav-notification-trigger {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .nav-notification-badge {
   position: absolute;
   top: -4px;

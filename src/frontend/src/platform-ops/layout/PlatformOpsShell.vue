@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { useRoute, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, Menu } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import AppLogoMark from '../../components/AppLogoMark.vue'
 import Sidebar from '../../components/Sidebar.vue'
@@ -10,6 +10,7 @@ import { useTheme } from '../../composables/useTheme'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { applyThemeVars } from '../composables/applyThemeVars'
 import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
+import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import '../styles/platform-ops-ui.css'
 import '../styles/monitoring.css'
 
@@ -21,6 +22,7 @@ const tenantUrl = ref('')
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
 const fallbackMenuItems = usePlatformOpsSideNav()
+const mobileNavigationOpen = ref(false)
 
 const routeSkeletonShowsCards = computed(
   () => route.path.startsWith('/platform-ops/monitoring') || route.path === '/platform-ops/overview',
@@ -62,6 +64,7 @@ watch(
   () => route.path,
   () => {
     fallbackSidebarCollapsed.value = localStorage.getItem('sidebar-collapsed') === 'true'
+    mobileNavigationOpen.value = false
   },
 )
 </script>
@@ -70,9 +73,18 @@ watch(
   <div
     class="platform-ops-shell"
     :data-theme-version="themeVersion"
-    :style="{ backgroundColor: 'var(--content-bg)', '--topnav-height': '52px' }"
+    :style="{ backgroundColor: 'var(--content-bg)', '--topnav-height': 'var(--app-header-height)' }"
   >
     <header class="platform-ops-header">
+      <button
+        type="button"
+        class="platform-ops-header__menu"
+        :aria-label="t('nav.openMenu')"
+        :aria-expanded="mobileNavigationOpen"
+        @click="mobileNavigationOpen = !mobileNavigationOpen"
+      >
+        <Menu :size="21" aria-hidden="true" />
+      </button>
       <div class="platform-ops-header__brand">
         <AppLogoMark :size="18" />
         <span>{{ t('platformOps.nav.title') }}</span>
@@ -91,6 +103,11 @@ watch(
         <NavUserMenu />
       </div>
     </header>
+    <MobileNavigationDrawer
+      v-model="mobileNavigationOpen"
+      :title="t('platformOps.nav.title')"
+      :module-items="fallbackMenuItems"
+    />
     <main class="platform-ops-main">
       <RouterView v-slot="{ Component, route }">
         <Suspense :key="route.path" timeout="0">
@@ -155,7 +172,7 @@ watch(
 
 <style scoped>
 .platform-ops-shell {
-  min-height: 100vh;
+  min-height: var(--app-viewport-height);
   color: var(--page-text, #1c1c26);
   font-family: var(--font-sans);
 }
@@ -165,7 +182,8 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 0 12px;
+  box-sizing: border-box;
+  padding: var(--app-safe-top) max(16px, var(--app-safe-right)) 0 max(12px, var(--app-safe-left));
   border-bottom: 1px solid var(--tnav-border, rgba(109, 94, 246, 0.24));
   background:
     var(--tnav-overlay, linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0))),
@@ -174,6 +192,28 @@ watch(
   position: sticky;
   top: 0;
   z-index: 40;
+}
+
+.platform-ops-header__menu {
+  display: none;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--icon-btn-color, #aeb2c5);
+  cursor: pointer;
+}
+
+.platform-ops-header__menu:hover,
+.platform-ops-header__menu:focus-visible {
+  background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
+  color: var(--icon-btn-hover-color, #fff);
 }
 
 .platform-ops-header__brand {
@@ -215,13 +255,13 @@ watch(
 
 .platform-ops-main {
   position: relative;
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
 }
 
 .platform-ops-main__route-fallback {
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   background: var(--content-bg, #f4f4f7);
 }
 
@@ -233,7 +273,7 @@ watch(
   position: sticky;
   top: var(--topnav-height, 52px);
   display: flex;
-  height: calc(100vh - var(--topnav-height, 52px));
+  height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   min-width: 0;
   flex-shrink: 0;
 }
@@ -241,7 +281,7 @@ watch(
 .platform-ops-main__route-fallback-content {
   display: block;
   min-width: 0;
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   padding: 20px 24px 28px;
   overflow: hidden;
 }
@@ -250,7 +290,7 @@ watch(
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-height: calc(100vh - var(--topnav-height, 52px) - 48px);
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)) - 48px);
   animation: platform-ops-route-skeleton-fade 180ms ease-out;
 }
 
@@ -419,6 +459,51 @@ watch(
   }
   to {
     opacity: 1;
+  }
+}
+
+@media (max-width: 1023.98px) {
+  .platform-ops-header {
+    justify-content: flex-start;
+    padding-right: max(8px, var(--app-safe-right));
+    padding-left: max(6px, var(--app-safe-left));
+  }
+
+  .platform-ops-header__menu {
+    display: inline-flex;
+  }
+
+  .platform-ops-header__brand {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .platform-ops-header__brand span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .platform-ops-header__actions {
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .platform-ops-return {
+    display: none;
+  }
+
+  .platform-ops-main__route-fallback,
+  .platform-ops-main__route-fallback--collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .platform-ops-main__route-fallback-side {
+    display: none;
+  }
+
+  .platform-ops-main__route-fallback-content {
+    padding: 12px;
   }
 }
 

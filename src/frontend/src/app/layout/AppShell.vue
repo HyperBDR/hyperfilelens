@@ -13,6 +13,8 @@ import { useNodeSideNav } from '../../composables/useNodeSideNav'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useAccountCenterMenus } from '../../composables/useAccountCenterMenus'
+import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
+import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
 
 const { locale, t } = useI18n()
 const route = useRoute()
@@ -26,6 +28,8 @@ const insightFallbackMenus = useInsightSideNav()
 const nodeFallbackMenus = useNodeSideNav()
 const opsFallbackMenus = useOpsMenus()
 const accountFallbackMenus = useAccountCenterMenus()
+const mobileNavigationOpen = ref(false)
+const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
 
 function pathMatchesPrefix(path: string, prefix: string) {
   return path === prefix || path.startsWith(`${prefix}/`)
@@ -87,6 +91,13 @@ watch(
     }
   },
   { flush: 'post', immediate: true },
+)
+
+watch(
+  () => route.fullPath,
+  () => {
+    mobileNavigationOpen.value = false
+  },
 )
 
 // Apply theme CSS variables to document root
@@ -433,9 +444,18 @@ function applyThemeVars(t: string) {
   <div
     class="min-h-screen"
     :data-theme-version="themeVersion"
-    :style="{ backgroundColor: 'var(--content-bg)', '--topnav-height': '52px' }"
+    :style="{ backgroundColor: 'var(--content-bg)', '--topnav-height': 'var(--app-header-height)' }"
   >
-    <TopNav />
+    <TopNav
+      :mobile-menu-open="mobileNavigationOpen"
+      @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
+    />
+    <MobileNavigationDrawer
+      v-model="mobileNavigationOpen"
+      :title="t('nav.navigation')"
+      :primary-items="primaryNavItems"
+      :module-items="fallbackMenuItems"
+    />
     <div v-if="supportOrgKey" class="support-banner">
       {{ t('common.supportModeBanner', { org: supportOrgKey }) }}
     </div>
@@ -753,13 +773,13 @@ function applyThemeVars(t: string) {
 .content-wrapper {
   position: relative;
   width: 100%;
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
 }
 
 .app-main-route-fallback {
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   background: var(--content-bg, #f4f4f7);
 }
 
@@ -779,7 +799,7 @@ function applyThemeVars(t: string) {
   position: sticky;
   top: var(--topnav-height, 52px);
   display: flex;
-  height: calc(100vh - var(--topnav-height, 52px));
+  height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   min-width: 0;
   flex-shrink: 0;
 }
@@ -790,7 +810,7 @@ function applyThemeVars(t: string) {
 
 .app-main-route-fallback__content {
   display: block;
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   padding: 20px 24px 28px;
   overflow: hidden;
 }
@@ -803,7 +823,7 @@ function applyThemeVars(t: string) {
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-height: calc(100vh - var(--topnav-height, 52px) - 48px);
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)) - 48px);
   animation: app-route-skeleton-fade 180ms ease-out;
 }
 
@@ -904,7 +924,7 @@ function applyThemeVars(t: string) {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(1180px, 100%);
-  height: calc(100vh - var(--topnav-height, 52px) - 56px);
+  height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)) - 56px);
   margin: 0 auto;
   gap: 18px;
 }
@@ -1379,7 +1399,7 @@ function applyThemeVars(t: string) {
 .app-route-copilot-skeleton {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-  min-height: calc(100vh - var(--topnav-height, 52px) - 48px);
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)) - 48px);
 }
 
 .app-route-copilot-skeleton__aside,
@@ -1805,7 +1825,7 @@ function applyThemeVars(t: string) {
   inset: 0;
   z-index: 5;
   display: grid;
-  min-height: calc(100vh - var(--topnav-height, 52px));
+  min-height: calc(var(--app-viewport-height) - var(--topnav-height, var(--app-header-height)));
   place-items: center;
   background: var(--content-bg, #f4f4f7);
 }
@@ -1822,6 +1842,21 @@ function applyThemeVars(t: string) {
 @keyframes app-main-route-loading-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1023.98px) {
+  .app-main-route-fallback,
+  .app-main-route-fallback--collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-main-route-fallback__side {
+    display: none;
+  }
+
+  .app-main-route-fallback__content {
+    padding: 12px;
   }
 }
 
