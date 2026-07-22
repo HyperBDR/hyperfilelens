@@ -101,3 +101,7 @@ class EmailLoginApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["code"], "0000")
+        self.assertTrue(response.data["data"]["user"]["is_staff"])
+        self.assertEqual(response.data["data"]["available_orgs"], [])
+        self.assertIn("access_token", response.cookies)
+        self.assertIn("refresh_token", response.cookies)

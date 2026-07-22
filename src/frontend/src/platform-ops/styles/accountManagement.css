@@ -1,0 +1,428 @@
+.platform-account-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.platform-account-page__lead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.platform-account-page__lead p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.platform-account-page .hfl-ops-stats-grid {
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+.platform-account-page .hfl-ops-stat-card {
+  min-height: 104px;
+  border-radius: 10px;
+}
+
+.platform-account-page .hfl-ops-stat-card__label,
+.platform-account-page .hfl-ops-stat-card__sub {
+  color: var(--page-text-secondary, #70707e);
+}
+
+.platform-account-page__filters {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-account-page__search {
+  width: min(320px, 100%);
+}
+
+.platform-account-page__filter {
+  width: 144px;
+}
+
+.platform-account-page__filter--wide {
+  width: 172px;
+}
+
+.platform-account-page .platform-account-page__cell-meta {
+  display: block;
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-account-detail .platform-ops-detail__sections > .hfl-detail-section {
+  flex: 0 0 auto;
+}
+
+.platform-account-page__cell-meta--mono {
+  font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
+}
+
+.platform-account-page__attention {
+  color: var(--el-color-danger);
+  font-weight: 650;
+}
+
+.platform-account-page__row-menu {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+:is(.platform-account-page, .platform-account-detail)
+  .el-tag.hfl-tag--boolean.el-tag--success:not(.el-tag--dark):not(.el-tag--plain) {
+  --el-tag-text-color: color-mix(
+    in srgb,
+    var(--color-success, #15a45b) 58%,
+    var(--color-text-title, #1c1c26) 42%
+  );
+  color: var(--el-tag-text-color);
+}
+
+.platform-account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.platform-account-form__section {
+  padding: 18px;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 10px;
+  background: var(--color-card-bg, #fff);
+}
+
+.platform-account-form__heading,
+.platform-account-detail__section-lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.platform-account-form__heading {
+  margin-bottom: 16px;
+}
+
+.platform-account-form__heading > svg,
+.platform-account-detail__section-lead > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--color-primary, #6d5ef6);
+}
+
+.platform-account-form__heading h3 {
+  margin: 0;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.platform-account-form__heading p,
+.platform-account-detail__section-lead p {
+  margin: 3px 0 0;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.platform-account-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
+.platform-account-form__hint {
+  margin: -8px 0 16px;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.platform-account-form__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.platform-account-detail__section-lead {
+  padding: 14px 16px 4px;
+}
+
+.platform-account-detail__section-lead p {
+  margin-top: 0;
+}
+
+.platform-account-detail__organization,
+.platform-account-detail__owner {
+  margin: 14px 16px 16px;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 10px;
+  background: var(--color-card-bg, #fff);
+}
+
+.platform-account-detail__organization-head,
+.platform-account-detail__owner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.platform-account-detail__organization-head {
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--color-border-light, #f2f2f6);
+}
+
+.platform-account-detail__owner {
+  padding: 15px 16px;
+}
+
+.platform-account-detail__entity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.platform-account-detail__entity > svg {
+  flex: 0 0 auto;
+  color: var(--color-primary, #6d5ef6);
+}
+
+.platform-account-detail__entity > div {
+  min-width: 0;
+}
+
+.platform-account-detail__entity strong,
+.platform-account-detail__entity a,
+.platform-account-detail__entity span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-account-detail__entity strong,
+.platform-account-detail__entity a {
+  color: var(--color-text-title, #1c1c26);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.platform-account-detail__entity span {
+  margin-top: 3px;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+}
+
+.platform-account-detail__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.platform-account-detail__metrics > a {
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid var(--color-border-light, #f2f2f6);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 180ms ease;
+}
+
+.platform-account-detail__metrics > a:last-child {
+  border-right: 0;
+}
+
+.platform-account-detail__metrics > a:hover,
+.platform-account-detail__metrics > a:focus-visible {
+  background: var(--color-grey-1, #fafafa);
+  outline: none;
+}
+
+.platform-account-detail__metrics > a:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-primary, #6d5ef6);
+}
+
+.platform-account-detail__metrics span,
+.platform-account-detail__metrics strong {
+  display: block;
+}
+
+.platform-account-detail__metrics span {
+  overflow: hidden;
+  color: var(--page-text-secondary, var(--color-text-secondary, #70707e));
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-account-detail__metrics strong {
+  margin-top: 5px;
+  color: var(--color-text-title, #1c1c26);
+  font-size: 20px;
+  font-weight: 680;
+}
+
+.platform-account-detail__metrics > a.is-attention strong {
+  color: var(--el-color-danger);
+}
+
+.platform-account-detail__metrics--large {
+  margin: 14px 16px 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-border, #e9e9ef);
+  border-radius: 10px;
+}
+
+.platform-account-detail__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 14px 16px 16px;
+}
+
+.platform-account-detail__links a {
+  color: var(--color-primary, #6d5ef6);
+  font-size: 13px;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.platform-account-detail__links a:hover,
+.platform-account-detail__links a:focus-visible {
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.platform-account-detail__quotas {
+  display: grid;
+  padding: 4px 16px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.platform-account-detail__quota {
+  padding: 12px;
+  border: 1px solid var(--color-border-light, #f2f2f6);
+  border-radius: 8px;
+  background: var(--color-grey-1, #fafafa);
+}
+
+.platform-account-detail__quota > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--color-text-primary, #3a3a48);
+  font-size: 11px;
+}
+
+.platform-account-detail__quota strong {
+  font-weight: 600;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 1100px) {
+  .platform-account-page .hfl-ops-stats-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .platform-account-page {
+    overflow-y: auto;
+  }
+
+  .platform-account-page__lead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .platform-account-page__lead .el-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .platform-account-page .hfl-ops-stats-grid--4,
+  .platform-account-form__grid,
+  .platform-account-detail__quotas {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-account-page__search,
+  .platform-account-page__filter,
+  .platform-account-page__filter--wide {
+    width: 100%;
+  }
+
+  .platform-account-detail__organization-head,
+  .platform-account-detail__owner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .platform-account-detail__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-account-detail__metrics > a {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border-light, #f2f2f6);
+  }
+
+  .platform-account-detail__metrics > a:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .platform-account-detail__metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-account-detail__metrics > a:nth-last-child(2) {
+    border-bottom: 1px solid var(--color-border-light, #f2f2f6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-account-detail__metrics > a {
+    transition: none;
+  }
+}

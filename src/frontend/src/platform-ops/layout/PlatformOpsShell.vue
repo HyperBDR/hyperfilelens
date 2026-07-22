@@ -13,6 +13,7 @@ import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
 import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import '../styles/platform-ops-ui.css'
 import '../styles/monitoring.css'
+import '../styles/accountManagement.css'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -25,7 +26,10 @@ const fallbackMenuItems = usePlatformOpsSideNav()
 const mobileNavigationOpen = ref(false)
 
 const routeSkeletonShowsCards = computed(
-  () => route.path.startsWith('/platform-ops/monitoring') || route.path === '/platform-ops/overview',
+  () => route.path.startsWith('/platform-ops/monitoring')
+    || route.path === '/platform-ops/overview'
+    || route.path === '/platform-ops/users'
+    || route.path === '/platform-ops/orgs',
 )
 
 onMounted(async () => {

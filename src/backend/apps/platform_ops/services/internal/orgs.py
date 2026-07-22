@@ -27,6 +27,10 @@ def create_platform_organization(
     owner = User.objects.filter(pk=owner_user_id).first()
     if owner is None:
         raise ValueError("Owner user not found")
+    if owner.is_staff:
+        raise ValueError("Platform administrators cannot own customer organizations")
+    if Membership.objects.filter(user=owner, is_active=True).exists():
+        raise ValueError("This user already belongs to an organization")
 
     org = Organization.objects.create(key=key, name=name.strip(), is_active=is_active)
     Membership.objects.create(

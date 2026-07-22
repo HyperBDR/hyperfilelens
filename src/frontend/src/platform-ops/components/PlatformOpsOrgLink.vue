@@ -20,7 +20,11 @@ defineProps<{
 
 <style scoped>
 .platform-org-link {
-  color: var(--color-primary);
+  color: color-mix(
+    in srgb,
+    var(--color-primary, #6d5ef6) 82%,
+    var(--color-text-title, #1c1c26) 18%
+  );
   text-decoration: none;
 }
 

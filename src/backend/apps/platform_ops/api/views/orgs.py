@@ -18,7 +18,11 @@ from apps.platform_ops.api.serializers.platform import (
 )
 from apps.platform_ops.api.views._utils import paginated, safe_int
 from apps.platform_ops.selectors.internal.org_summary import organization_resource_summary
-from apps.platform_ops.selectors.internal.orgs import get_organization_detail, list_organizations
+from apps.platform_ops.selectors.internal.orgs import (
+    get_organization_detail,
+    list_organizations,
+    organization_account_stats,
+)
 from apps.platform_ops.services.internal.orgs import (
     create_platform_organization,
     delete_platform_organization,
@@ -34,12 +38,24 @@ class PlatformOpsOrganizationListView(APIView):
         page_size = safe_int(request.query_params.get("page_size"), 20)
         search = request.query_params.get("search", "")
 
-        qs = list_organizations(search=search)
+        qs = list_organizations(
+            search=search,
+            status=request.query_params.get("status", ""),
+            health=request.query_params.get("health", ""),
+        )
         total = qs.count()
         offset = (page - 1) * page_size
         page_qs = qs[offset : offset + page_size]
         data = PlatformOpsOrganizationListSerializer(page_qs, many=True).data
-        return Response(paginated(data, total=total, page=page, page_size=page_size))
+        return Response(
+            paginated(
+                data,
+                total=total,
+                page=page,
+                page_size=page_size,
+                extra={"stats": organization_account_stats()},
+            )
+        )
 
     def post(self, request):
         serializer = PlatformOrgCreateSerializer(data=request.data)

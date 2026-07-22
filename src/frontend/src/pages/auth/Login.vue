@@ -304,7 +304,7 @@ async function handleSubmit() {
     const res = await api<{
       code: string
       data: {
-        user?: { id: number; email: string; username: string }
+        user?: { id: number; email: string; username: string; is_staff?: boolean }
         roles?: string[]
         available_orgs?: Array<{ org_key: string; org_name: string; role: string }>
         message?: string
@@ -380,7 +380,7 @@ async function completeLoginWithOrg(orgKey: string) {
       code: string
       status?: number
       data: {
-        user?: { id: number; email: string; username: string }
+        user?: { id: number; email: string; username: string; is_staff?: boolean }
         selected_org?: { org_key: string; org_name: string; role: string }
         message?: string
         code?: string

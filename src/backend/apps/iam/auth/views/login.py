@@ -119,6 +119,40 @@ def _set_token_cookies(response: Response, access_token: str, refresh_token: str
     return response
 
 
+def _complete_token_login(
+    *,
+    request,
+    user,
+    response: Response,
+    organization=None,
+) -> Response:
+    """Issue the cookie session shared by tenant and platform staff logins."""
+    from apps.iam.services.login_audit import record_user_login
+
+    record_user_login(user, request, organization=organization)
+
+    family_id = generate_token_family_id()
+    refresh = RefreshToken.for_user(user)
+    refresh["family_id"] = family_id
+
+    blacklist_all_user_tokens(user.id, "new_login")
+    token_version = store_refresh_token_family(
+        user.id,
+        family_id,
+        refresh.payload.get("jti"),
+    )
+    refresh["token_version"] = token_version
+
+    _set_token_cookies(
+        response,
+        str(refresh.access_token),
+        str(refresh),
+        family_id,
+    )
+    django_logout(request)
+    return response
+
+
 def _clear_token_cookies(response: Response) -> Response:
     """Clear all token cookies."""
     cookie_settings = _get_cookie_settings()
@@ -294,8 +328,7 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
         # Explicitly save session to ensure it's persisted before returning response
         request.session.save()
 
-        # Return available_orgs for org selection
-        return Response(
+        response = Response(
             {
                 "code": "0000",
                 "data": {
@@ -303,6 +336,7 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
                         "id": user_obj.id,
                         "email": user_obj.email,
                         "username": user_obj.username,
+                        "is_staff": user_obj.is_staff,
                     },
                     "roles": roles,
                     "available_orgs": available_orgs,
@@ -311,6 +345,16 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
             },
             status=status.HTTP_200_OK,
         )
+        if user_obj.is_staff and not available_orgs:
+            response.data["data"]["message"] = _("Login successful")
+            return _complete_token_login(
+                request=request,
+                user=user_obj,
+                response=response,
+            )
+
+        # Tenant accounts complete login after selecting their organization.
+        return response
 
 
 class OrgSelectView(AnonymousPublicViewMixin, APIView):
@@ -392,21 +436,6 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
         # Clear pending_user_id from session
         request.session.pop('pending_user_id', None)
 
-        from apps.iam.services.login_audit import record_user_login
-
-        record_user_login(user_obj, request, organization=membership.organization)
-
-        family_id = generate_token_family_id()
-        refresh = RefreshToken.for_user(user_obj)
-        refresh["family_id"] = family_id
-
-        # Blacklist all previous tokens to enforce single session
-        blacklist_all_user_tokens(user_obj.id, "new_login")
-
-        # Store refresh token family for rotation detection and get current version
-        token_version = store_refresh_token_family(user_obj.id, family_id, refresh.payload.get("jti"))
-        refresh["token_version"] = token_version
-
         # Build response with cookies
         response = Response(
             {
@@ -416,6 +445,7 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
                         "id": user_obj.id,
                         "email": user_obj.email,
                         "username": user_obj.username,
+                        "is_staff": user_obj.is_staff,
                     },
                     "selected_org": {
                         "org_key": org_key,
@@ -428,18 +458,12 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
             status=status.HTTP_200_OK,
         )
 
-        # Set HttpOnly cookies
-        _set_token_cookies(
-            response,
-            str(refresh.access_token),
-            str(refresh),
-            family_id,
+        return _complete_token_login(
+            request=request,
+            user=user_obj,
+            response=response,
+            organization=membership.organization,
         )
-
-        # API auth is JWT-only; clear login session state after issuing tokens.
-        django_logout(request)
-
-        return response
 
 
 class TokenRefreshView(APIView):

@@ -1,48 +1,55 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { Building2, CircleGauge, CreditCard, UserRound } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
 import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
+import { usePageRequestScope } from '../../../composables/usePageRequestScope'
+import { clearDeployProfileCache, fetchDeployProfile } from '../../../composables/useDeployProfile'
+import { apiErrorMessageI18n } from '../../../lib/api'
+import { formatLocalDateTime } from '../../../lib/dateTime'
+import { notifyError, notifySuccess } from '../../../lib/notify'
 import PlatformOpsActiveTag from '../../components/PlatformOpsActiveTag.vue'
 import PlatformOpsDetailSection from '../../components/PlatformOpsDetailSection.vue'
 import PlatformOpsDetailShell from '../../components/PlatformOpsDetailShell.vue'
-import PlatformOpsTimeCell from '../../components/PlatformOpsTimeCell.vue'
 import PlatformOpsUserLink from '../../components/PlatformOpsUserLink.vue'
-import HflPagination from '../../../components/HflPagination.vue'
-import { usePlatformOpsClientPagination } from '../../composables/usePlatformOpsClientPagination'
-import { usePageRequestScope } from '../../../composables/usePageRequestScope'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
-import { PLATFORM_OPS_TABLE_HEADER_STYLE } from '../../lib/tableUi'
 import {
   endSupportSession,
   fetchOrgSummary,
   startSupportSession,
   updatePlatformOrg,
 } from '../../lib/platformOpsApi'
-import { getPlatformOpsOrganization } from '../../lib/platformOpsUserApi'
-import { apiErrorMessageI18n } from '../../../lib/api'
-import { formatLocalDateTime } from '../../../lib/dateTime'
-import { notifyError, notifySuccess } from '../../../lib/notify'
-import { clearDeployProfileCache, fetchDeployProfile } from '../../../composables/useDeployProfile'
+import {
+  getPlatformOpsOrganization,
+  type PlatformOpsOrganization,
+} from '../../lib/platformOpsUserApi'
 
-interface OrgDetail {
-  id: number
+interface QuotaUsage {
   key: string
-  name: string
-  is_active: boolean
-  owner_email?: string | null
-  member_count?: number
-  created_at?: string | null
-  memberships?: Array<{
-    id: number
-    user_id: number
-    user_email: string
-    user_display_name: string
-    role: string
-    is_active: boolean
-    created_at?: string
-  }>
+  limit: number
+  used: number
+  unit?: string
+}
+
+interface OrganizationSummary {
+  counts?: {
+    nodes?: number
+    tasks_running?: number
+    tasks_failed?: number
+    alerts_firing?: number
+  }
+  quota_usage?: QuotaUsage[]
+  subscription?: {
+    plan_name?: string
+    status?: string
+    ends_at?: string | null
+  } | null
+  license?: {
+    status?: string
+    expires_at?: string | null
+  } | null
 }
 
 const { t } = useI18n()
@@ -52,76 +59,63 @@ const sideNav = usePlatformOpsSideNav()
 const pageRequests = usePageRequestScope()
 
 const orgId = computed(() => Number(route.params.id))
-const org = ref<OrgDetail | null>(null)
-const summary = ref<Record<string, unknown> | null>(null)
-const busy = ref(false)
+const org = ref<PlatformOpsOrganization | null>(null)
+const summary = ref<OrganizationSummary | null>(null)
+const loading = ref(false)
 const saving = ref(false)
+const summaryLoading = ref(false)
 const loadError = ref('')
 const summaryError = ref('')
-const summaryBusy = ref(false)
 const deactivateConfirmOpen = ref(false)
 const supportOrgKey = ref<string | null>(null)
+const supportAction = ref<'enter' | 'exit' | null>(null)
+const editForm = reactive({ name: '' })
 
-const memberships = computed(() => org.value?.memberships || [])
-const isCurrentSupportOrg = computed(() => Boolean(
-  org.value && supportOrgKey.value === org.value.key,
-))
+const counts = computed(() => summary.value?.counts || {})
+const quotaUsage = computed(() => summary.value?.quota_usage || [])
+const isCurrentSupportOrg = computed(() => Boolean(org.value && supportOrgKey.value === org.value.key))
 const hasOtherSupportOrg = computed(() => Boolean(
   org.value && supportOrgKey.value && supportOrgKey.value !== org.value.key,
 ))
-const {
-  currentPage: membersPage,
-  pageSize: membersPageSize,
-  totalCount: membersTotal,
-  pagedRows: pagedMembers,
-} = usePlatformOpsClientPagination(memberships)
-const supportAction = ref<'enter' | 'exit' | null>(null)
 
-const monitoringLinks = computed(() => {
+function monitoringLink(path: string) {
   const key = org.value?.key
-  if (!key) return []
-  const q = encodeURIComponent(key)
-  return [
-    { label: t('platformOps.orgs.linkTasks'), to: `/platform-ops/monitoring/tasks?org=${q}` },
-    { label: t('platformOps.orgs.linkNodes'), to: `/platform-ops/monitoring/nodes?org=${q}` },
-  ]
-})
+  return key ? `/platform-ops/monitoring/${path}?org=${encodeURIComponent(key)}` : '/platform-ops/overview'
+}
+
+function quotaPercent(row: QuotaUsage) {
+  if (!row.limit || row.limit < 0) return 0
+  return Math.min(100, Math.round((Number(row.used || 0) / Number(row.limit)) * 100))
+}
 
 async function loadSummary() {
   if (!org.value) return
   const targetOrgId = org.value.id
   const signal = pageRequests.nextSignal('platform-org-summary')
-  summaryBusy.value = true
+  summaryLoading.value = true
   summaryError.value = ''
   try {
     const result = await fetchOrgSummary(targetOrgId, { signal })
     if (!pageRequests.isCurrentSignal('platform-org-summary', signal)) return
-    summary.value = result
-  } catch (err) {
-    if (pageRequests.isAbortError(err)) return
-    summaryError.value = apiErrorMessageI18n(err, t, t('platformOps.orgs.summaryLoadFailed'))
-    notifyError({
-      message: summaryError.value,
-      error: err,
-      showDetails: true,
-      dedupeKey: `platform-org:${targetOrgId}:summary-load:error`,
-    })
+    summary.value = result as OrganizationSummary
+  } catch (error) {
+    if (pageRequests.isAbortError(error)) return
+    summaryError.value = apiErrorMessageI18n(error, t, t('platformOps.orgs.summaryLoadFailed'))
   } finally {
     pageRequests.releaseSignal('platform-org-summary', signal)
-    if (!signal.aborted) summaryBusy.value = false
+    if (!signal.aborted) summaryLoading.value = false
   }
 }
 
 async function load() {
   if (!orgId.value) {
-    router.replace('/platform-ops/orgs')
+    await router.replace('/platform-ops/orgs')
     return
   }
   const targetOrgId = orgId.value
   pageRequests.abortScope('platform-org-summary')
-  summaryBusy.value = false
   const signal = pageRequests.nextSignal('platform-org-detail')
-  busy.value = true
+  loading.value = true
   loadError.value = ''
   summaryError.value = ''
   org.value = null
@@ -132,27 +126,46 @@ async function load() {
       fetchDeployProfile(true),
     ])
     if (!pageRequests.isCurrentSignal('platform-org-detail', signal)) return
-    org.value = result as OrgDetail
+    org.value = result
+    editForm.name = result.name
     supportOrgKey.value = profile?.support_org_key ?? null
     await loadSummary()
-  } catch (err) {
-    if (pageRequests.isAbortError(err)) return
-    loadError.value = apiErrorMessageI18n(err, t, t('platformOps.orgs.loadFailed'))
+  } catch (error) {
+    if (pageRequests.isAbortError(error)) return
+    loadError.value = apiErrorMessageI18n(error, t, t('platformOps.orgs.loadFailed'))
     notifyError({
       message: loadError.value,
-      error: err,
+      error,
       showDetails: true,
       dedupeKey: `platform-org:${targetOrgId}:detail-load:error`,
     })
   } finally {
     pageRequests.releaseSignal('platform-org-detail', signal)
-    if (!signal.aborted) busy.value = false
+    if (!signal.aborted) loading.value = false
   }
 }
 
-watch(orgId, () => {
-  void load()
-}, { immediate: true })
+async function saveOrganization() {
+  if (!org.value || saving.value || !editForm.name.trim()) return
+  const target = org.value
+  saving.value = true
+  try {
+    org.value = await updatePlatformOrg(target.id, { name: editForm.name.trim() }) as PlatformOpsOrganization
+    notifySuccess({
+      message: t('platformOps.orgs.saveSuccess'),
+      dedupeKey: `platform-org:${target.id}:save`,
+    })
+  } catch (error) {
+    notifyError({
+      message: apiErrorMessageI18n(error, t, t('platformOps.orgs.saveFailed')),
+      error,
+      showDetails: true,
+      dedupeKey: `platform-org:${target.id}:save:error`,
+    })
+  } finally {
+    saving.value = false
+  }
+}
 
 function requestToggleActive() {
   if (!org.value || saving.value) return
@@ -165,22 +178,21 @@ function requestToggleActive() {
 
 async function updateActiveState() {
   if (!org.value || saving.value) return
-  const targetOrg = org.value
+  const target = org.value
   saving.value = true
   try {
-    org.value = await updatePlatformOrg(targetOrg.id, { is_active: !targetOrg.is_active }) as OrgDetail
+    org.value = await updatePlatformOrg(target.id, { is_active: !target.is_active }) as PlatformOpsOrganization
     deactivateConfirmOpen.value = false
     notifySuccess({
       message: t('platformOps.orgs.saveSuccess'),
-      dedupeKey: `platform-org:${targetOrg.id}:active:${String(org.value.is_active)}`,
+      dedupeKey: `platform-org:${target.id}:active:${String(org.value.is_active)}`,
     })
-  } catch (err) {
-    const message = apiErrorMessageI18n(err, t, t('platformOps.orgs.saveFailed'))
+  } catch (error) {
     notifyError({
-      message,
-      error: err,
+      message: apiErrorMessageI18n(error, t, t('platformOps.orgs.saveFailed')),
+      error,
       showDetails: true,
-      dedupeKey: `platform-org:${targetOrg.id}:active:error`,
+      dedupeKey: `platform-org:${target.id}:active:error`,
     })
   } finally {
     saving.value = false
@@ -189,26 +201,24 @@ async function updateActiveState() {
 
 async function enterSupport() {
   if (!org.value || supportAction.value) return
-  const targetOrg = org.value
+  const target = org.value
   supportAction.value = 'enter'
   try {
-    const session = await startSupportSession(targetOrg.id)
+    const session = await startSupportSession(target.id)
     supportOrgKey.value = session.org_key
     clearDeployProfileCache()
     const base = session.tenant_url?.replace(/\/$/, '') || ''
-    const url = `${base}/?org=${encodeURIComponent(session.org_key)}`
-    window.open(url, '_blank', 'noopener,noreferrer')
+    window.open(`${base}/?org=${encodeURIComponent(session.org_key)}`, '_blank', 'noopener,noreferrer')
     notifySuccess({
       message: t('platformOps.orgs.supportStarted', { name: session.org_name }),
-      dedupeKey: `platform-org:${targetOrg.id}:support:start:success`,
+      dedupeKey: `platform-org:${target.id}:support:start:success`,
     })
-  } catch (err) {
-    const message = apiErrorMessageI18n(err, t, t('platformOps.orgs.supportFailed'))
+  } catch (error) {
     notifyError({
-      message,
-      error: err,
+      message: apiErrorMessageI18n(error, t, t('platformOps.orgs.supportFailed')),
+      error,
       showDetails: true,
-      dedupeKey: `platform-org:${targetOrg.id}:support:start:error`,
+      dedupeKey: `platform-org:${target.id}:support:start:error`,
     })
   } finally {
     supportAction.value = null
@@ -217,60 +227,54 @@ async function enterSupport() {
 
 async function exitSupport() {
   if (!org.value || supportAction.value || !isCurrentSupportOrg.value) return
-  const targetOrg = org.value
+  const target = org.value
   supportAction.value = 'exit'
   try {
-    await endSupportSession(targetOrg.id)
+    await endSupportSession(target.id)
     supportOrgKey.value = null
     clearDeployProfileCache()
     notifySuccess({
       message: t('platformOps.orgs.supportEnded'),
-      dedupeKey: `platform-org:${targetOrg.id}:support:end:success`,
+      dedupeKey: `platform-org:${target.id}:support:end:success`,
     })
-  } catch (err) {
-    const message = apiErrorMessageI18n(err, t, t('platformOps.orgs.supportFailed'))
+  } catch (error) {
     notifyError({
-      message,
-      error: err,
+      message: apiErrorMessageI18n(error, t, t('platformOps.orgs.supportFailed')),
+      error,
       showDetails: true,
-      dedupeKey: `platform-org:${targetOrg.id}:support:end:error`,
+      dedupeKey: `platform-org:${target.id}:support:end:error`,
     })
   } finally {
     supportAction.value = null
   }
 }
+
+watch(orgId, () => { void load() }, { immediate: true })
 </script>
 
 <template>
   <ModulePage :menus="sideNav" body-fill>
     <PlatformOpsDetailShell
+      class="platform-account-detail"
       :title="org?.name || t('platformOps.orgs.detailTitle')"
-      :loading="busy"
+      :loading="loading"
       @back="router.push('/platform-ops/orgs')"
     >
-      <template #status>
-        <span
-          v-if="isCurrentSupportOrg"
-          class="platform-ops-detail__status platform-ops-detail__status--active"
-        >
-          <span
-            class="platform-ops-detail__status-dot"
-            aria-hidden="true"
-          />
+      <template v-if="org" #status>
+        <PlatformOpsActiveTag :active="org.is_active" />
+        <span v-if="isCurrentSupportOrg" class="platform-ops-detail__status platform-ops-detail__status--active">
+          <span class="platform-ops-detail__status-dot" aria-hidden="true" />
           {{ t('platformOps.orgs.supportActive') }}
         </span>
-        <span
-          v-else-if="hasOtherSupportOrg"
-          class="platform-ops-detail__status"
-        >
-          <span
-            class="platform-ops-detail__status-dot"
-            aria-hidden="true"
-          />
+        <span v-else-if="hasOtherSupportOrg" class="platform-ops-detail__status">
+          <span class="platform-ops-detail__status-dot" aria-hidden="true" />
           {{ t('platformOps.orgs.supportActiveFor', { org: supportOrgKey }) }}
         </span>
       </template>
       <template v-if="org" #actions>
+        <el-button :loading="saving" @click="requestToggleActive">
+          {{ org.is_active ? t('platformOps.orgs.deactivate') : t('platformOps.orgs.activate') }}
+        </el-button>
         <el-button
           :loading="supportAction === 'enter'"
           :disabled="Boolean(supportAction)"
@@ -292,132 +296,121 @@ async function exitSupport() {
         </el-button>
       </template>
 
-      <el-alert
-        v-if="loadError"
-        type="error"
-        show-icon
-        :closable="false"
-        :title="loadError"
-      >
-        <template #default>
-          <el-button size="small" @click="load">
-            {{ t('common.retry') }}
-          </el-button>
-        </template>
+      <el-alert v-if="loadError" type="error" show-icon :closable="false" :title="loadError">
+        <template #default><el-button size="small" @click="load">{{ t('common.retry') }}</el-button></template>
       </el-alert>
 
       <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.sectionBasic')">
+        <div class="platform-account-detail__section-lead">
+          <Building2 :size="17" aria-hidden="true" />
+          <p>{{ t('platformOps.orgs.informationHint') }}</p>
+        </div>
         <div class="hfl-detail-grid">
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.organizationId') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ org.id }}</span>
+          </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colKey') }}</span>
             <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ org.key }}</span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colName') }}</span>
-            <span class="hfl-detail-row__value">{{ org.name }}</span>
-          </div>
-          <div class="hfl-detail-row">
-            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colOwner') }}</span>
-            <span class="hfl-detail-row__value">{{ org.owner_email || '—' }}</span>
-          </div>
-          <div class="hfl-detail-row">
-            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colMembers') }}</span>
-            <span class="hfl-detail-row__value">{{ org.member_count ?? 0 }}</span>
-          </div>
-          <div class="hfl-detail-row">
-            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colActive') }}</span>
-            <span class="hfl-detail-row__value">
-              <PlatformOpsActiveTag :active="org.is_active" />
-              <el-button size="small" class="ml-2" :loading="saving" @click="requestToggleActive">
-                {{ org.is_active ? t('platformOps.orgs.deactivate') : t('platformOps.orgs.activate') }}
-              </el-button>
-            </span>
+            <span class="hfl-detail-row__value"><el-input v-model="editForm.name" /></span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colCreated') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatLocalDateTime(org.created_at, '—') }}</span>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.updatedAt') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatLocalDateTime(org.updated_at, '—') }}</span>
+          </div>
+        </div>
+        <div class="platform-ops-detail__footer">
+          <el-button type="primary" :loading="saving" @click="saveOrganization">{{ t('common.save') }}</el-button>
+        </div>
+      </PlatformOpsDetailSection>
+
+      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.ownerTitle')">
+        <div class="platform-account-detail__owner">
+          <div class="platform-account-detail__entity">
+            <UserRound :size="18" aria-hidden="true" />
+            <div>
+              <PlatformOpsUserLink
+                v-if="org.owner_user_id"
+                :user-id="org.owner_user_id"
+                :display-name="org.owner_display_name || org.owner_email || '—'"
+              />
+              <strong v-else>{{ org.owner_display_name || org.owner_email || '—' }}</strong>
+              <span>{{ org.owner_email || '—' }}</span>
+            </div>
+          </div>
+          <el-button v-if="org.owner_user_id" @click="router.push(`/platform-ops/users/${org.owner_user_id}`)">
+            {{ t('platformOps.orgs.viewUser') }}
+          </el-button>
+        </div>
+      </PlatformOpsDetailSection>
+
+      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.operationalHealth')">
+        <div class="platform-account-detail__section-lead">
+          <CircleGauge :size="17" aria-hidden="true" />
+          <p>{{ t('platformOps.orgs.operationalHealthHint') }}</p>
+        </div>
+        <el-alert v-if="summaryError" type="error" show-icon :closable="false" :title="summaryError">
+          <template #default><el-button size="small" :loading="summaryLoading" @click="loadSummary">{{ t('common.retry') }}</el-button></template>
+        </el-alert>
+        <div v-else v-loading="summaryLoading" class="platform-account-detail__metrics platform-account-detail__metrics--large">
+          <router-link :to="monitoringLink('nodes')">
+            <span>{{ t('platformOps.orgs.colNodes') }}</span><strong>{{ counts.nodes || 0 }}</strong>
+          </router-link>
+          <router-link :to="monitoringLink('tasks')">
+            <span>{{ t('platformOps.monitoring.runningTasks') }}</span><strong>{{ counts.tasks_running || 0 }}</strong>
+          </router-link>
+          <router-link :to="monitoringLink('tasks')" :class="{ 'is-attention': (counts.tasks_failed || 0) > 0 }">
+            <span>{{ t('platformOps.monitoring.failedTasks') }}</span><strong>{{ counts.tasks_failed || 0 }}</strong>
+          </router-link>
+          <router-link :to="monitoringLink('incidents')" :class="{ 'is-attention': (counts.alerts_firing || 0) > 0 }">
+            <span>{{ t('platformOps.overview.firingIncidents') }}</span><strong>{{ counts.alerts_firing || 0 }}</strong>
+          </router-link>
+        </div>
+        <div class="platform-account-detail__links">
+          <router-link :to="monitoringLink('incidents')">{{ t('platformOps.orgs.linkAlerts') }}</router-link>
+          <router-link :to="monitoringLink('tasks')">{{ t('platformOps.orgs.linkTasks') }}</router-link>
+          <router-link :to="monitoringLink('nodes')">{{ t('platformOps.orgs.linkNodes') }}</router-link>
+          <router-link :to="monitoringLink('notification-deliveries')">{{ t('platformOps.orgs.linkNotifications') }}</router-link>
+        </div>
+      </PlatformOpsDetailSection>
+
+      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.subscriptionUsage')">
+        <div class="platform-account-detail__section-lead">
+          <CreditCard :size="17" aria-hidden="true" />
+          <p>{{ t('platformOps.orgs.subscriptionUsageHint') }}</p>
+        </div>
+        <div v-loading="summaryLoading" class="hfl-detail-grid">
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.plan') }}</span>
+            <span class="hfl-detail-row__value">{{ summary?.subscription?.plan_name || '—' }}</span>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.subscriptionStatus') }}</span>
+            <span class="hfl-detail-row__value">{{ summary?.subscription?.status || '—' }}</span>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.licenseStatus') }}</span>
+            <span class="hfl-detail-row__value">{{ summary?.license?.status || '—' }}</span>
+          </div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.expiresAt') }}</span>
             <span class="hfl-detail-row__value hfl-detail-row__value--mono">
-              {{ formatLocalDateTime(org.created_at, '—') }}
+              {{ formatLocalDateTime(summary?.license?.expires_at || summary?.subscription?.ends_at, '—') }}
             </span>
           </div>
         </div>
-      </PlatformOpsDetailSection>
-
-      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.usageTitle')">
-        <el-alert
-          v-if="summaryError"
-          type="error"
-          show-icon
-          :closable="false"
-          :title="summaryError"
-        >
-          <template #default>
-            <el-button size="small" :loading="summaryBusy" @click="loadSummary">
-              {{ t('common.retry') }}
-            </el-button>
-          </template>
-        </el-alert>
-        <div v-else-if="summary?.counts" v-loading="summaryBusy" class="hfl-detail-grid">
-          <div class="hfl-detail-row">
-            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colMembers') }}</span>
-            <span class="hfl-detail-row__value">{{ (summary.counts as Record<string, number>).members ?? 0 }}</span>
-          </div>
-          <div class="hfl-detail-row">
-            <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colNodes') }}</span>
-            <span class="hfl-detail-row__value">{{ (summary.counts as Record<string, number>).nodes ?? 0 }}</span>
-          </div>
-        </div>
-        <div v-else v-loading="summaryBusy" class="platform-ops-detail__summary-state">
-          <span v-if="!summaryBusy">{{ t('common.empty') }}</span>
-        </div>
-        <div v-if="summary?.counts" class="platform-ops-detail__links">
-          <router-link
-            v-for="link in monitoringLinks"
-            :key="link.to"
-            :to="link.to"
-            class="platform-ops-detail__link"
-          >
-            {{ link.label }}
-          </router-link>
-        </div>
-      </PlatformOpsDetailSection>
-
-      <PlatformOpsDetailSection v-if="org" :title="t('platformOps.orgs.membersTitle')">
-        <div class="platform-ops-detail__table-wrap">
-          <el-table
-            v-if="memberships.length"
-            v-table-column-resize="'platformOps.orgs.members'"
-            v-table-overflow-title
-            :data="pagedMembers"
-            stripe
-            class="hfl-list-table"
-            :header-cell-style="PLATFORM_OPS_TABLE_HEADER_STYLE"
-          >
-            <el-table-column :label="t('platformOps.users.colName')" min-width="160">
-              <template #default="{ row }">
-                <PlatformOpsUserLink :user-id="row.user_id" :display-name="row.user_display_name" />
-              </template>
-            </el-table-column>
-            <el-table-column prop="user_email" :label="t('platformOps.users.colEmail')" min-width="200" />
-            <el-table-column prop="role" :label="t('platformOps.users.colOrgRole')" min-width="120" />
-            <el-table-column :label="t('platformOps.users.colActive')" min-width="110" align="center">
-              <template #default="{ row }">
-                <PlatformOpsActiveTag :active="row.is_active" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('platformOps.users.colJoined')" min-width="170">
-              <template #default="{ row }">
-                <PlatformOpsTimeCell :value="row.created_at" />
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-else :description="t('platformOps.orgs.membersEmpty')" :image-size="72" />
-          <div v-if="memberships.length" class="hfl-list-footer platform-ops-detail__table-footer">
-            <HflPagination
-              v-model:current-page="membersPage"
-              v-model:page-size="membersPageSize"
-              class="hfl-list-footer__pagination"
-              :total="membersTotal"
-            />
+        <div v-if="quotaUsage.length" class="platform-account-detail__quotas">
+          <div v-for="quota in quotaUsage" :key="`${quota.key}:${quota.unit || ''}`" class="platform-account-detail__quota">
+            <div><span>{{ quota.key }}</span><strong>{{ quota.used }} / {{ quota.limit }} {{ quota.unit || '' }}</strong></div>
+            <el-progress :percentage="quotaPercent(quota)" :stroke-width="7" :show-text="false" />
           </div>
         </div>
       </PlatformOpsDetailSection>

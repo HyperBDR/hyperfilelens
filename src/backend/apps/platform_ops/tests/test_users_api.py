@@ -36,6 +36,30 @@ class PlatformOpsUsersApiTest(TestCase):
         response = self.client.get("/api/v1/platform-ops/users")
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(response.data["count"], 2)
+        self.assertGreaterEqual(response.data["stats"]["active"], 2)
+        member_row = next(
+            row for row in response.data["results"] if row["id"] == self.member.pk
+        )
+        self.assertEqual(member_row["account_type"], "customer")
+        self.assertEqual(member_row["organization"]["key"], "acme")
+
+    def test_list_users_supports_account_filters_and_organization_search(self):
+        customer_response = self.client.get(
+            "/api/v1/platform-ops/users",
+            {"account_type": "customer", "search": "acme"},
+        )
+        self.assertEqual(customer_response.status_code, 200)
+        self.assertEqual(customer_response.data["count"], 1)
+        self.assertEqual(customer_response.data["results"][0]["id"], self.member.pk)
+
+        admin_response = self.client.get(
+            "/api/v1/platform-ops/users",
+            {"account_type": "administrator"},
+        )
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertTrue(
+            all(row["account_type"] == "administrator" for row in admin_response.data["results"])
+        )
 
     def test_create_and_reset_password(self):
         create_resp = self.client.post(
@@ -75,6 +99,24 @@ class PlatformOpsUsersApiTest(TestCase):
 
         target = User.objects.get(pk=user_id)
         self.assertTrue(target.check_password("Newpass1234"))
+
+    def test_create_accepts_customer_organization_name(self):
+        response = self.client.post(
+            "/api/v1/platform-ops/users",
+            {
+                "email": "named@test.com",
+                "password": "Pass1234",
+                "organization_name": "Named Customer",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["organization"]["name"], "Named Customer")
+        membership = Membership.objects.select_related("organization").get(
+            user_id=response.data["id"],
+        )
+        self.assertEqual(membership.organization.name, "Named Customer")
 
     def test_created_tenant_user_can_reach_org_selection(self):
         create_resp = self.client.post(
@@ -182,6 +224,42 @@ class PlatformOpsUsersApiTest(TestCase):
         user.refresh_from_db()
         self.assertFalse(user.is_staff)
         self.assertFalse(user.is_superuser)
+        self.assertTrue(
+            Membership.objects.filter(
+                user=user,
+                role=Membership.Role.OWNER,
+                is_active=True,
+            ).exists()
+        )
+
+    def test_customer_with_organization_cannot_be_promoted_to_platform_admin(self):
+        response = self.client.patch(
+            f"/api/v1/platform-ops/users/{self.member.pk}",
+            {"is_staff": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.member.refresh_from_db()
+        self.assertFalse(self.member.is_staff)
+
+    def test_staff_cannot_remove_own_console_access(self):
+        deactivate = self.client.patch(
+            f"/api/v1/platform-ops/users/{self.staff.pk}",
+            {"is_active": False},
+            format="json",
+        )
+        demote = self.client.patch(
+            f"/api/v1/platform-ops/users/{self.staff.pk}",
+            {"is_staff": False},
+            format="json",
+        )
+
+        self.assertEqual(deactivate.status_code, 400)
+        self.assertEqual(demote.status_code, 400)
+        self.staff.refresh_from_db()
+        self.assertTrue(self.staff.is_active)
+        self.assertTrue(self.staff.is_staff)
 
     def test_delete_user(self):
         user = User.objects.create_user(
