@@ -44,6 +44,12 @@ RUN npm run build
 # Stage 2: Serve the SPA and reverse proxy through the official stable Nginx Alpine image.
 FROM nginx:stable-alpine
 
+ARG IMAGE_VERSION=dev
+ARG IMAGE_REVISION=unknown
+
+LABEL org.opencontainers.image.version="${IMAGE_VERSION}" \
+    org.opencontainers.image.revision="${IMAGE_REVISION}"
+
 ENV TZ=UTC \
     LOGROTATE_INTERVAL_SECONDS=3600 \
     LOGROTATE_CONF=/etc/logrotate.d/hyperfilelens \

@@ -250,6 +250,7 @@ grep -F 'uv run --isolated --no-project --python 3.8 python tools/quality/check-
 	"${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-installer-image-refresh.sh' "${workflow}" >/dev/null
 grep -F "'.register-form-box, .login-form-box'" \
 	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
 grep -F "'.dashboard-page, .main-content, .platform-ops-main, .login-form-box, .register-form-box'" \
@@ -308,6 +309,7 @@ if grep -F 'celery -A common inspect ping' <<<"${worker_healthcheck}" >/dev/null
 fi
 
 backend_dockerfile="${ROOT}/deploy/docker/backend.Dockerfile"
+frontend_dockerfile="${ROOT}/deploy/docker/frontend.Dockerfile"
 grep -F 'ARG KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia' "${backend_dockerfile}" >/dev/null
 grep -F 'COPY --chmod=0755 ${KOPIA_BINARY} /usr/local/bin/kopia' "${backend_dockerfile}" >/dev/null
 grep -F '/etc/apt/sources.list.d/ubuntu.sources' "${backend_dockerfile}" >/dev/null
@@ -320,6 +322,18 @@ if grep -F 'UV_DEFAULT_INDEX' "${backend_dockerfile}" >/dev/null; then
 fi
 if grep -F 'PIP_NO_CACHE_DIR' "${backend_dockerfile}" >/dev/null; then
 	printf 'ERROR: backend build must not disable its BuildKit-managed pip cache\n' >&2
+	exit 1
+fi
+grep -F 'org.opencontainers.image.revision="${IMAGE_REVISION}"' "${backend_dockerfile}" >/dev/null
+grep -F 'org.opencontainers.image.revision="${IMAGE_REVISION}"' "${frontend_dockerfile}" >/dev/null
+grep -F 'IMAGE_REVISION=${{ needs.prepare.outputs.commit }}' "${workflow}" >/dev/null
+
+installer="${ROOT}/deploy/installer/install.sh"
+grep -F 'loading image {rel}' "${installer}" >/dev/null
+grep -F 'org.opencontainers.image.revision' "${installer}" >/dev/null
+grep -F 'does not match release' "${installer}" >/dev/null
+if grep -F 'image already loaded' "${installer}" >/dev/null; then
+	printf 'ERROR: installer must refresh verified release images even when tags already exist\n' >&2
 	exit 1
 fi
 

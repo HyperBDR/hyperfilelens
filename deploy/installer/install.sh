@@ -829,13 +829,23 @@ def sha256_file(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def image_present(ref: str) -> bool:
+def inspect_image(ref: str) -> dict:
     tag = ref.split("@", 1)[0]
-    return subprocess.run(
+    completed = subprocess.run(
         ["docker", "image", "inspect", tag],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return {}
+    try:
+        inspected = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(inspected, list) or len(inspected) != 1:
+        return {}
+    return inspected[0] if isinstance(inspected[0], dict) else {}
 
 for entry in manifest.get("images", []):
     if skip_sourcelens and str(entry.get("role", "")).startswith("sourcelens"):
@@ -850,11 +860,32 @@ for entry in manifest.get("images", []):
     if expected and sha256_file(path) != expected:
         print(f"[install.sh] ERROR: sha256 mismatch for {rel}", file=sys.stderr)
         sys.exit(1)
-    if refs and all(image_present(ref) for ref in refs):
-        print(f"[install.sh] skipping {rel} (image already loaded)")
-        continue
     print(f"[install.sh] loading image {rel} ...")
     subprocess.run(["docker", "load", "-i", str(path)], check=True)
+    missing = [ref for ref in refs if not inspect_image(ref)]
+    if missing:
+        print(
+            f"[install.sh] ERROR: archive {rel} did not load expected refs: "
+            + ", ".join(missing),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if entry.get("role") == "hyperfilelens":
+        expected_revision = str(manifest.get("git_commit", "")).strip()
+        if not expected_revision:
+            print("[install.sh] ERROR: release manifest has no git_commit", file=sys.stderr)
+            sys.exit(1)
+        for ref in refs:
+            config = inspect_image(ref).get("Config") or {}
+            labels = config.get("Labels") or {}
+            actual_revision = str(labels.get("org.opencontainers.image.revision", ""))
+            if actual_revision != expected_revision:
+                print(
+                    f"[install.sh] ERROR: image {ref} revision {actual_revision or '<missing>'} "
+                    f"does not match release {expected_revision}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 PY
 }
 
@@ -2496,4 +2527,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

@@ -142,6 +142,7 @@ jobs:
           ./tools/quality/test-gateway-bootstrap-health.sh
           ./tools/quality/test-platform-gateway-auto-deploy.sh
           ./tools/quality/test-agent-gateway-uninstall.sh
+          ./tools/quality/test-installer-image-refresh.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-payload-tree-hash.sh
@@ -224,6 +225,8 @@ jobs:
           tags: ${{ env.REGISTRY_PREFIX }}/${{ matrix.repository }}:${{ needs.prepare.outputs.version }}
           build-args: |
             KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia
+            IMAGE_VERSION=${{ needs.prepare.outputs.version }}
+            IMAGE_REVISION=${{ needs.prepare.outputs.commit }}
             PIP_TIMEOUT=600
             SENTRY_ENABLED=false
             SENTRY_ENVIRONMENT=production

@@ -607,6 +607,8 @@ build_control_plane_images() {
 		--build-arg "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST:-}" \
 		--build-arg "PIP_TIMEOUT=${PIP_TIMEOUT:-600}" \
 		--build-arg "KOPIA_BINARY=${KOPIA_BINARY:-build/kopia/dist/linux/amd64/kopia}" \
+		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
+		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
 		"${ROOT}"
 
 	log "Building hyperfilelens-frontend:${HFL_VERSION} (alias: latest)"
@@ -622,6 +624,8 @@ build_control_plane_images() {
 		--build-arg "SENTRY_TRACES_SAMPLE_RATE=${SENTRY_TRACES_SAMPLE_RATE:-0}" \
 		--build-arg "SENTRY_SEND_DEFAULT_PII=${SENTRY_SEND_DEFAULT_PII:-false}" \
 		--build-arg "VITE_SHOW_EULA=${VITE_SHOW_EULA:-false}" \
+		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
+		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
 		"${ROOT}"
 }
 

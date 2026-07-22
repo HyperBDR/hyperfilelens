@@ -88,6 +88,12 @@ ENTRYPOINT ["/entrypoint.sh"]
 # Production/release image: application source is immutable inside the image.
 FROM backend-dependencies AS backend-runtime
 
+ARG IMAGE_VERSION=dev
+ARG IMAGE_REVISION=unknown
+
+LABEL org.opencontainers.image.version="${IMAGE_VERSION}" \
+    org.opencontainers.image.revision="${IMAGE_REVISION}"
+
 RUN rm -f /tmp/dev-requirements.txt
 
 COPY src/backend /opt/backend
