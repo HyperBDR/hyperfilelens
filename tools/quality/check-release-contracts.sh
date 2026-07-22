@@ -252,6 +252,10 @@ grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
 grep -F "'.register-form-box, .login-form-box'" \
 	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
+grep -F "'.dashboard-page, .main-content, .platform-ops-main, .login-form-box, .register-form-box'" \
+	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
+grep -F 'verifyResponsivePlatformPrimaryAction' \
+	"${ROOT}/tools/dev/browser-smoke.mjs" >/dev/null
 grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${workflow}" >/dev/null
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
@@ -270,7 +274,7 @@ for dependency_fetcher in \
 	grep -F 'for attempt in 1 2 3' "${dependency_fetcher}" >/dev/null
 	grep -F 'if [[ -z "${apt_mirror_url}" ]]; then' "${dependency_fetcher}" >/dev/null
 done
-if rg -n 'apt_mirror_http|default Ubuntu HTTP sources' \
+if grep -E -n 'apt_mirror_http|default Ubuntu HTTP sources' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
 	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null; then
 	printf 'ERROR: offline dependency fetchers must not force apt mirrors to HTTP\n' >&2
@@ -488,6 +492,7 @@ done
 smoke_runner="${ROOT}/tools/dev/browser-smoke.sh"
 grep -F -- '--add-host host.docker.internal:host-gateway' "${smoke_runner}" >/dev/null
 grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
+grep -F 'HFL_LOGIN_PORT="${login_port}"' "${smoke_runner}" >/dev/null
 smoke_script="${ROOT}/tools/dev/browser-smoke.mjs"
 grep -F 'host.docker.internal' "${smoke_script}" >/dev/null
 grep -F "submit.waitFor({ state: 'visible'" "${smoke_script}" >/dev/null

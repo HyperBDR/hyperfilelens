@@ -9,6 +9,7 @@ const { chromium } = require('playwright')
 const smokeHost = process.env.SMOKE_HOST || 'host.docker.internal'
 const tenantPort = process.env.HFL_TENANT_PORT || '11443'
 const adminPort = process.env.HFL_ADMIN_PORT || '11444'
+const loginPort = process.env.HFL_LOGIN_PORT || tenantPort
 const sourceLensPort = process.env.SOURCELENS_CONSOLE_PORT || '11445'
 const hflEmail = process.env.SEED_ADMIN_EMAIL || 'admin@hyperfilelens.com'
 const hflPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin@123'
@@ -103,16 +104,49 @@ async function assertInsideViewport(page, locator, label) {
   }
 }
 
+async function assertHorizontallyInsideViewport(page, locator, label) {
+  await locator.waitFor({ state: 'visible', timeout: 30_000 })
+  const box = await locator.boundingBox()
+  const viewport = page.viewportSize()
+  if (!box || !viewport) fail(`${label} has no measurable viewport box`)
+  if (box.x < -1 || box.x + box.width > viewport.width + 1) {
+    fail(`${label} is outside the horizontal viewport: box=${JSON.stringify(box)} viewport=${JSON.stringify(viewport)}`)
+  }
+}
+
 async function waitForResponsiveRoute(page, url, label) {
-  await page.goto(url, { waitUntil: 'domcontentloaded' })
-  await page.waitForTimeout(350)
-  await page.locator('.main-content, .platform-ops-main, .login-form-box, .register-form-box').first()
-    .waitFor({ state: 'visible', timeout: 30_000 })
+  const pageErrors = []
+  const failedRequests = []
+  const onPageError = error => pageErrors.push(String(error?.stack || error))
+  const onRequestFailed = request => {
+    failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'unknown error'}`)
+  }
+  page.on('pageerror', onPageError)
+  page.on('requestfailed', onRequestFailed)
+  process.stdout.write(`[browser smoke] checking ${label}: ${url}\n`)
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(350)
+    await page.locator(
+      '.dashboard-page, .main-content, .platform-ops-main, .login-form-box, .register-form-box',
+    ).first()
+      .waitFor({ state: 'visible', timeout: 30_000 })
+  } catch (error) {
+    const body = (await page.locator('body').innerText().catch(() => '')).slice(0, 1_500)
+    fail(
+      `${label} did not become ready at ${page.url()}: ${error?.message || error}; `
+      + `pageErrors=${JSON.stringify(pageErrors.slice(-5))} `
+      + `failedRequests=${JSON.stringify(failedRequests.slice(-10))} body=${JSON.stringify(body)}`,
+    )
+  } finally {
+    page.off('pageerror', onPageError)
+    page.off('requestfailed', onRequestFailed)
+  }
   await assertNoDocumentOverflow(page, label)
 
   const table = page.locator('.el-table:visible').first()
   if (await table.count()) {
-    await assertInsideViewport(page, table, `${label} table`)
+    await assertHorizontallyInsideViewport(page, table, `${label} table`)
   }
 }
 
@@ -139,13 +173,16 @@ async function verifyMobilePlatformNavigation(page, baseUrl) {
   await drawer.waitFor({ state: 'hidden' })
 }
 
-async function verifyResponsiveDialogs(page, adminBaseUrl) {
+async function verifyResponsivePlatformPrimaryAction(page, adminBaseUrl) {
   await page.goto(`${adminBaseUrl}/platform-ops/orgs`, { waitUntil: 'domcontentloaded' })
-  await page.locator('.hfl-list-toolbar .el-button').first().click()
-  const dialog = page.locator('.el-dialog:visible').first()
-  await assertInsideViewport(page, dialog, 'Create Organization dialog')
-  await assertNoDocumentOverflow(page, 'Create Organization dialog')
-  await page.keyboard.press('Escape')
+  const createUser = page.locator('.platform-account-page__lead .el-button').first()
+  await createUser.waitFor({ state: 'visible', timeout: 30_000 })
+  await createUser.click()
+  await page.waitForURL(url => (
+    url.pathname === '/platform-ops/users' && url.searchParams.get('create') === '1'
+  ))
+  await page.locator('.platform-ops-main').waitFor({ state: 'visible', timeout: 30_000 })
+  await assertNoDocumentOverflow(page, 'Create User page')
 }
 
 async function verifyAuthenticationViewport(browser, baseUrl, viewport) {
@@ -217,7 +254,9 @@ async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, ad
         await verifyMobileTenantNavigation(page, tenantBaseUrl)
         await verifyMobilePlatformNavigation(page, adminBaseUrl)
       }
-      if (profile.name === 'mobile-375') await verifyResponsiveDialogs(page, adminBaseUrl)
+      if (profile.name === 'mobile-375') {
+        await verifyResponsivePlatformPrimaryAction(page, adminBaseUrl)
+      }
     } finally {
       await context.close()
     }
@@ -256,10 +295,11 @@ async function run() {
   try {
     const tenantBaseUrl = `https://${smokeHost}:${tenantPort}`
     const adminBaseUrl = `https://${smokeHost}:${adminPort}`
+    const loginBaseUrl = `https://${smokeHost}:${loginPort}`
     const hfl = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
     await waitForHflLogin(
       await hfl.newPage(),
-      tenantBaseUrl,
+      loginBaseUrl,
       '/',
     )
     await waitForPlatformOps(
