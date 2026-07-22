@@ -11,7 +11,7 @@ const deployProfile = {
   site_role: 'ops' as const,
   email_signup_enabled: false,
   platform_ops_enabled: true,
-  self_service_password_reset: true,
+  password_reset_available: true,
   tenant_public_url: 'https://example.test:11443',
   admin_console_url: 'https://example.test:11444',
   landing_path: '/platform-ops/overview',

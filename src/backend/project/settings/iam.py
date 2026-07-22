@@ -11,7 +11,7 @@ from .env import env_bool, env_int, env_str
 
 EMAIL_BACKEND = env_str(
     "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend",
+    "django.core.mail.backends.console.EmailBackend",
 )
 EMAIL_HOST = env_str("EMAIL_HOST")
 EMAIL_PORT = env_int("EMAIL_PORT", 587)

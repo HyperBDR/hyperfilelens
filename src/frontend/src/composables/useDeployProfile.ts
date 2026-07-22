@@ -2,7 +2,7 @@ export interface DeployProfile {
   site_role: 'tenant' | 'ops'
   email_signup_enabled: boolean
   platform_ops_enabled: boolean
-  self_service_password_reset: boolean
+  password_reset_available: boolean
   tenant_public_url: string
   admin_console_url: string
   landing_path: string

@@ -139,17 +139,17 @@ def system_health_payload() -> dict:
 
 def deploy_profile_staff_payload() -> dict:
     from apps.platform_ops.services.internal.runtime_settings import (
+        email_delivery_configured,
         email_signup_enabled,
         platform_ops_allowed_cidrs,
         platform_ops_enabled,
-        self_service_password_reset_enabled,
     )
     from common.deploy.site import tenant_public_url
 
     return {
         "platform_ops_enabled": platform_ops_enabled(),
         "email_signup_enabled": email_signup_enabled(),
-        "self_service_password_reset": self_service_password_reset_enabled(),
+        "password_reset_available": email_delivery_configured(),
         "tenant_public_url": tenant_public_url(),
         "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
         "app_version": os.getenv("APP_VERSION", "").strip() or None,

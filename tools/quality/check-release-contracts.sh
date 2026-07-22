@@ -166,6 +166,25 @@ if grep -F 'PROD_PUBLIC_HOST' "${workflow}" >/dev/null; then
 fi
 grep -F '"TURNSTILE_ENABLED=$TURNSTILE_ENABLED"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+for variable in \
+	SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_SECURITY EMAIL_FROM; do
+	grep -F "PROD_${variable}" "${workflow}" >/dev/null
+	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
+done
+grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+grep -F 'smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+grep -F '"HFL_EMAIL_SIGNUP_ENABLED=false"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F '"SMTP_PASSWORD=$SMTP_PASSWORD"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'umask 077 && cat > /var/tmp/hyperfilelens-runtime-' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+if git -C "${ROOT}" grep -n -E \
+	'HFL_SELF_SERVICE_PASSWORD_RESET|HFL_EMAIL_SETTINGS_MODE' -- . \
+	':!tools/quality/check-release-contracts.sh'; then
+	printf 'ERROR: obsolete email deployment feature flags remain\n' >&2
+	exit 1
+fi
 if git -C "${ROOT}" grep -n 'CAPTCHA_PROVIDER' -- . \
 	':!tools/config/sync_env.py' \
 	':!tools/quality/check-release-contracts.sh'; then

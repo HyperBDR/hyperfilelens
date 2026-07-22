@@ -42,12 +42,40 @@ on:
         required: false
         default: false
         type: boolean
+      smtp_host:
+        description: Optional SMTP server hostname; configure all SMTP inputs together
+        required: false
+        default: ''
+        type: string
+      smtp_port:
+        description: Optional SMTP server port
+        required: false
+        default: ''
+        type: string
+      smtp_username:
+        description: Optional SMTP account username
+        required: false
+        default: ''
+        type: string
+      smtp_security:
+        description: Optional SMTP transport security (ssl, starttls, or none)
+        required: false
+        default: ''
+        type: string
+      email_from:
+        description: Optional sender identity for outbound email
+        required: false
+        default: ''
+        type: string
     secrets:
       ssh_private_key:
         description: SSH private key for the deployment target
         required: true
       turnstile_secret_key:
         description: Private Cloudflare Turnstile verification key
+        required: false
+      smtp_password:
+        description: Optional SMTP account password
         required: false
 
 permissions:
@@ -69,6 +97,12 @@ jobs:
       - name: Validate deployment configuration
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
+          SMTP_HOST: ${{ inputs.smtp_host }}
+          SMTP_PORT: ${{ inputs.smtp_port }}
+          SMTP_USERNAME: ${{ inputs.smtp_username }}
+          SMTP_PASSWORD: ${{ secrets.smtp_password }}
+          SMTP_SECURITY: ${{ inputs.smtp_security }}
+          EMAIL_FROM: ${{ inputs.email_from }}
         shell: bash
         run: |
           set -euo pipefail
@@ -77,6 +111,25 @@ jobs:
           [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
           [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" ]]
           [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
+
+          smtp_values=(
+            "$SMTP_HOST" "$SMTP_PORT" "$SMTP_USERNAME"
+            "$SMTP_PASSWORD" "$SMTP_SECURITY" "$EMAIL_FROM"
+          )
+          smtp_configured=0
+          for value in "${smtp_values[@]}"; do
+            [[ -z "$value" ]] || smtp_configured=$((smtp_configured + 1))
+          done
+          if (( smtp_configured != 0 && smtp_configured != ${#smtp_values[@]} )); then
+            echo 'SMTP deployment configuration is partial; configure all SMTP variables and the password secret, or leave all of them empty' >&2
+            exit 1
+          fi
+          if (( smtp_configured > 0 )); then
+            [[ "$SMTP_HOST" != *[[:space:]]* ]]
+            [[ "$SMTP_PORT" =~ ^[0-9]+$ ]] && (( SMTP_PORT >= 1 && SMTP_PORT <= 65535 ))
+            [[ "$SMTP_SECURITY" =~ ^(ssl|starttls|none)$ ]]
+            [[ "$SMTP_PASSWORD" != *$'\n'* && "$SMTP_PASSWORD" != *$'\r'* ]]
+          fi
 
       - name: Install SSH credentials
         env:
@@ -95,6 +148,12 @@ jobs:
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
           TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
+          SMTP_HOST: ${{ inputs.smtp_host }}
+          SMTP_PORT: ${{ inputs.smtp_port }}
+          SMTP_USERNAME: ${{ inputs.smtp_username }}
+          SMTP_PASSWORD: ${{ secrets.smtp_password }}
+          SMTP_SECURITY: ${{ inputs.smtp_security }}
+          EMAIL_FROM: ${{ inputs.email_from }}
         shell: bash
         run: |
           set -euo pipefail
@@ -102,18 +161,26 @@ jobs:
           trap 'rm -f -- "$runtime_env"' EXIT
           umask 077
           printf '%s\n' \
+            "HFL_EMAIL_SIGNUP_ENABLED=false" \
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=$HFL_PLATFORM_GATEWAY_AUTO_DEPLOY" \
             "TURNSTILE_ENABLED=$TURNSTILE_ENABLED" \
             "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \
             "TURNSTILE_SECRET_KEY=$TURNSTILE_SECRET_KEY" \
+            "SMTP_HOST=$SMTP_HOST" \
+            "SMTP_PORT=$SMTP_PORT" \
+            "SMTP_USERNAME=$SMTP_USERNAME" \
+            "SMTP_PASSWORD=$SMTP_PASSWORD" \
+            "SMTP_SECURITY=$SMTP_SECURITY" \
+            "EMAIL_FROM=$EMAIL_FROM" \
             > "$runtime_env"
-          scp -i ~/.ssh/hyperfilelens_deploy \
+          ssh -i ~/.ssh/hyperfilelens_deploy \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=20 \
-            -P "$DEPLOY_SSH_PORT" \
-            "$runtime_env" \
-            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
+            < "$runtime_env"
 
       - name: Download and deploy the complete release package on the host
         shell: bash

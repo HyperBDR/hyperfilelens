@@ -20,7 +20,6 @@ const saving = ref(false)
 const meta = ref<PlatformIdentitySettings | null>(null)
 const form = reactive({
   email_signup_enabled: false,
-  self_service_password_reset: true,
   platform_ops_enabled: true,
   platform_ops_allowed_cidrs: '',
   registration_verification_code_minutes: 10,
@@ -35,7 +34,6 @@ async function load() {
     const data = await fetchPlatformIdentitySettings()
     meta.value = data
     form.email_signup_enabled = data.email_signup_enabled
-    form.self_service_password_reset = data.self_service_password_reset
     form.platform_ops_enabled = data.platform_ops_enabled
     form.platform_ops_allowed_cidrs = (data.platform_ops_allowed_cidrs || []).join(', ')
     form.registration_verification_code_minutes = data.iam.registration_verification_code_minutes
@@ -54,7 +52,6 @@ async function save() {
   try {
     const body: Record<string, unknown> = {
       email_signup_enabled: form.email_signup_enabled,
-      self_service_password_reset: form.self_service_password_reset,
       platform_ops_enabled: form.platform_ops_enabled,
       platform_ops_allowed_cidrs: form.platform_ops_allowed_cidrs,
       iam: {
@@ -82,9 +79,6 @@ onMounted(load)
       <el-form label-position="top" class="platform-settings__form">
         <el-form-item :label="t('platformOps.settings.identity.emailSignup')">
           <el-switch v-model="form.email_signup_enabled" />
-        </el-form-item>
-        <el-form-item :label="t('platformOps.settings.identity.passwordReset')">
-          <el-switch v-model="form.self_service_password_reset" />
         </el-form-item>
         <el-form-item :label="t('platformOps.settings.identity.platformOps')">
           <el-switch v-model="form.platform_ops_enabled" />

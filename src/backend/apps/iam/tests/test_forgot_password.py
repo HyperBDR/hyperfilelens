@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth.models import User
 from django.core import mail
 from django.test import override_settings
@@ -6,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.iam.profile_models import Profile
+from apps.iam.email_verification_models import EmailVerificationCode
 
 
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
@@ -34,7 +37,7 @@ class ForgotPasswordApiTests(APITestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("password reset", mail.outbox[0].subject.lower())
 
-    def test_pending_registration_user_receives_registration_email(self):
+    def test_pending_registration_user_does_not_resume_when_signup_is_disabled(self):
         email = "pending-reset@example.com"
         user = User.objects.create_user(
             username="pending-reset",
@@ -52,9 +55,81 @@ class ForgotPasswordApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["code"], "0000")
+        self.assertFalse(response.data["data"].get("pending_registration"))
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(HFL_EMAIL_SIGNUP_ENABLED=True)
+    @patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "true"})
+    def test_pending_registration_user_resumes_when_signup_is_enabled(self):
+        email = "pending-signup-enabled@example.com"
+        user = User.objects.create_user(
+            username="pending-signup-enabled",
+            email=email,
+            password="unused",
+            is_active=False,
+        )
+        Profile.objects.create(user=user, registration_completed=False)
+
+        response = self.client.post(
+            reverse("forgot_password"),
+            self._payload(email),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["data"]["pending_registration"])
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("verification code", mail.outbox[0].subject.lower())
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+    def test_console_backend_reports_email_service_unavailable(self):
+        email = "console-reset@example.com"
+        user = User.objects.create_user(
+            username="console-reset",
+            email=email,
+            password="Pass1234",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("forgot_password"),
+            self._payload(email),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "EMAIL_SERVICE_UNAVAILABLE",
+        )
+        self.assertFalse(EmailVerificationCode.objects.filter(user=user).exists())
+
+    @patch(
+        "apps.iam.services.registration_service._send_password_reset_email",
+        side_effect=RuntimeError("sensitive provider failure"),
+    )
+    def test_smtp_failure_deletes_code_and_returns_stable_error(self, _send_email):
+        email = "failed-reset@example.com"
+        user = User.objects.create_user(
+            username="failed-reset",
+            email=email,
+            password="Pass1234",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("forgot_password"),
+            self._payload(email),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "EMAIL_SERVICE_UNAVAILABLE",
+        )
+        self.assertNotIn("sensitive provider failure", str(response.data))
+        self.assertFalse(EmailVerificationCode.objects.filter(user=user).exists())
 
     def test_unknown_email_returns_not_registered_error(self):
         response = self.client.post(

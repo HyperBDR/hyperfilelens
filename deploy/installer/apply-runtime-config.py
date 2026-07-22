@@ -12,10 +12,17 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
 RUNTIME_KEYS = {
+    "HFL_EMAIL_SIGNUP_ENABLED",
     "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
     "TURNSTILE_ENABLED",
     "TURNSTILE_SITE_KEY",
     "TURNSTILE_SECRET_KEY",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD",
+    "SMTP_SECURITY",
+    "EMAIL_FROM",
 }
 KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -91,6 +98,69 @@ def read_runtime_values(path: Optional[pathlib.Path]) -> Dict[str, str]:
     return values
 
 
+def smtp_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
+    """Validate staged SMTP inputs and return Docker Compose environment updates."""
+    names = (
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USERNAME",
+        "SMTP_PASSWORD",
+        "SMTP_SECURITY",
+        "EMAIL_FROM",
+    )
+    present = [name for name in names if values.get(name, "") != ""]
+    if not present:
+        return {}
+    missing = [name for name in names if values.get(name, "") == ""]
+    if missing:
+        raise SystemExit(
+            "partial SMTP deployment configuration; missing: " + ", ".join(missing)
+        )
+
+    host = values["SMTP_HOST"].strip()
+    username = values["SMTP_USERNAME"].strip()
+    password = values["SMTP_PASSWORD"]
+    security = values["SMTP_SECURITY"].strip().lower()
+    from_email = values["EMAIL_FROM"].strip()
+    if not host or re.search(r"\s", host):
+        raise SystemExit("SMTP_HOST must be a non-empty hostname without whitespace")
+    if not username or re.search(r"[\r\n]", username):
+        raise SystemExit("SMTP_USERNAME must be non-empty and single-line")
+    if not password or re.search(r"[\x00\r\n]", password):
+        raise SystemExit("SMTP_PASSWORD must be non-empty and single-line")
+    if not from_email or re.search(r"[\r\n]", from_email):
+        raise SystemExit("EMAIL_FROM must be non-empty and single-line")
+    try:
+        port = int(values["SMTP_PORT"])
+    except ValueError as exc:
+        raise SystemExit("SMTP_PORT must be an integer between 1 and 65535") from exc
+    if port < 1 or port > 65535:
+        raise SystemExit("SMTP_PORT must be an integer between 1 and 65535")
+    if security not in {"ssl", "starttls", "none"}:
+        raise SystemExit("SMTP_SECURITY must be one of: ssl, starttls, none")
+
+    return {
+        "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "EMAIL_HOST": host,
+        "EMAIL_PORT": str(port),
+        "EMAIL_HOST_USER": username,
+        "EMAIL_HOST_PASSWORD": password,
+        "EMAIL_USE_TLS": "true" if security == "starttls" else "false",
+        "EMAIL_USE_SSL": "true" if security == "ssl" else "false",
+        "DEFAULT_FROM_EMAIL": from_email,
+    }
+
+
+def compose_env_value(value: str) -> str:
+    """Quote values that must remain literal through Docker Compose interpolation."""
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "$$")
+    )
+    return f'"{escaped}"'
+
+
 def atomic_write(path: pathlib.Path, lines: List[str]) -> None:
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f"{path.name}.", suffix=".tmp", dir=str(path.parent)
@@ -124,6 +194,14 @@ def apply_configuration(
     updates: Dict[str, str] = {}
     runtime_values = read_runtime_values(runtime_path)
     if runtime_path is not None:
+        signup_enabled = runtime_values.get("HFL_EMAIL_SIGNUP_ENABLED", "").lower()
+        if signup_enabled != "false":
+            raise SystemExit(
+                "SaaS deployment runtime configuration must disable email sign-up"
+            )
+        updates["HFL_EMAIL_SIGNUP_ENABLED"] = "false"
+        updates.update(smtp_runtime_updates(runtime_values))
+
         gateway_enabled = runtime_values.get(
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", ""
         ).lower()
@@ -206,12 +284,17 @@ def apply_configuration(
     for line in lines:
         key = line.split("=", 1)[0] if "=" in line else ""
         if key in updates:
-            updated.append(f"{key}={updates[key]}")
+            value = updates[key]
+            if key == "EMAIL_HOST_PASSWORD":
+                value = compose_env_value(value)
+            updated.append(f"{key}={value}")
             seen.add(key)
         else:
             updated.append(line)
     for key, value in updates.items():
         if key not in seen:
+            if key == "EMAIL_HOST_PASSWORD":
+                value = compose_env_value(value)
             updated.append(f"{key}={value}")
     atomic_write(env_path, updated)
     print("[runtime-config] Applied deployment configuration before service startup")

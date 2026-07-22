@@ -37,7 +37,10 @@ from apps.iam.services.registration_service import (
     validate_password_format,
 )
 from apps.iam.services.token_service import blacklist_all_user_tokens
-from apps.platform_ops.services.internal.runtime_settings import email_signup_enabled
+from apps.platform_ops.services.internal.runtime_settings import (
+    email_delivery_configured,
+    email_signup_enabled,
+)
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -73,6 +76,14 @@ def _email_signup_disabled_response() -> Response:
         "EMAIL_SIGNUP_DISABLED",
         _("Email sign-up is disabled"),
         http_status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _email_service_unavailable_response() -> Response:
+    return _build_error_response(
+        "EMAIL_SERVICE_UNAVAILABLE",
+        _("Email service is temporarily unavailable"),
+        http_status=status.HTTP_503_SERVICE_UNAVAILABLE,
     )
 
 
@@ -178,6 +189,8 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
     def post(self, request):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
+        if not email_delivery_configured():
+            return _email_service_unavailable_response()
 
         configuration_error = _turnstile_misconfigured_response(request)
         if configuration_error is not None:
@@ -239,13 +252,7 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
         if error:
             if created:
                 user.delete()
-            return Response(
-                {
-                    "code": "1001",
-                    "error": {"message": error},
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _email_service_unavailable_response()
 
         response_data = {
             "code": "0000",
@@ -295,6 +302,8 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
     def post(self, request):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
+        if not email_delivery_configured():
+            return _email_service_unavailable_response()
 
         configuration_error = _turnstile_misconfigured_response(request)
         if configuration_error is not None:
@@ -383,13 +392,7 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
 
         if error:
             user.delete()
-            return Response(
-                {
-                    "code": "1001",
-                    "error": {"message": error},
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _email_service_unavailable_response()
 
         response_data = {
             "code": "0000",
@@ -578,6 +581,9 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
         ):
             return _turnstile_invalid_response()
 
+        if not email_delivery_configured():
+            return _email_service_unavailable_response()
+
         user = User.objects.filter(email=email).first()
 
         if user is None:
@@ -595,16 +601,10 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
             )
 
         if not user.is_active:
-            if _pending_registration_user(user):
+            if email_signup_enabled() and _pending_registration_user(user):
                 code, error = generate_registration_verification_code(user)
                 if error:
-                    return Response(
-                        {
-                            "code": "1001",
-                            "error": {"message": error},
-                        },
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
+                    return _email_service_unavailable_response()
                 response_data = {
                     "code": "0000",
                     "data": {
@@ -625,13 +625,7 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
         code, error = generate_password_reset_code(user)
 
         if error:
-            return Response(
-                {
-                    "code": "1001",
-                    "error": {"message": error},
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _email_service_unavailable_response()
 
         response_data = {
             "code": "0000",
