@@ -256,14 +256,20 @@ done
 
 # Bootstrap the CA bundle through signed APT metadata, then immediately return
 # to strict TLS verification for every subsequent package and key download.
-bootstrap_apt=(
+apt_network=(
   apt-get
+  -o Acquire::Retries=5
+  -o Acquire::http::Timeout=30
+  -o Acquire::https::Timeout=30
+)
+bootstrap_apt=(
+  "${apt_network[@]}"
   -o Acquire::https::Verify-Peer=false
   -o Acquire::https::Verify-Host=false
 )
 "${bootstrap_apt[@]}" update -qq
 "${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates curl gnupg apt-utils
-apt-get update -qq
+"${apt_network[@]}" update -qq
 
 docker_apt="${DOCKER_APT_MIRROR:-https://download.docker.com/linux/ubuntu}"
 docker_apt="${docker_apt%/}"
@@ -305,15 +311,27 @@ fi
 chmod a+r /etc/apt/keyrings/docker.gpg
 echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] ${docker_apt} ${UBUNTU_CODENAME} stable" \
   > /etc/apt/sources.list.d/docker.list
-apt-get update -qq
+"${apt_network[@]}" update -qq
 
 rm -f /var/cache/apt/archives/*.deb
-apt-get install -y --download-only --no-install-recommends \
-  "containerd.io=${CONTAINERD_VERSION}" \
-  "docker-ce-cli=${CLI_VERSION}" \
-  "docker-ce=${ENGINE_VERSION}" \
-  "docker-compose-plugin=${COMPOSE_PLUGIN_VERSION}" \
-  "docker-buildx-plugin=${BUILDX_PLUGIN_VERSION}"
+download_ok=0
+for attempt in 1 2 3; do
+  if "${apt_network[@]}" install -y --download-only --no-install-recommends \
+    "containerd.io=${CONTAINERD_VERSION}" \
+    "docker-ce-cli=${CLI_VERSION}" \
+    "docker-ce=${ENGINE_VERSION}" \
+    "docker-compose-plugin=${COMPOSE_PLUGIN_VERSION}" \
+    "docker-buildx-plugin=${BUILDX_PLUGIN_VERSION}"; then
+    download_ok=1
+    break
+  fi
+  echo "WARN: Docker deb download attempt ${attempt}/3 failed; retrying cached remainder" >&2
+  sleep $((attempt * 5))
+done
+[[ "${download_ok}" -eq 1 ]] || {
+  echo "ERROR: Docker deb download failed after 3 attempts" >&2
+  exit 1
+}
 
 decode_apt_deb_name() {
   local encoded=$1 len i c h decoded=""

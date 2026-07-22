@@ -263,6 +263,8 @@ for dependency_fetcher in \
 	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh"; do
 	grep -F 'Acquire::https::Verify-Peer=false' "${dependency_fetcher}" >/dev/null
 	grep -F 'Acquire::https::Verify-Host=false' "${dependency_fetcher}" >/dev/null
+	grep -F 'Acquire::Retries=5' "${dependency_fetcher}" >/dev/null
+	grep -F 'for attempt in 1 2 3' "${dependency_fetcher}" >/dev/null
 done
 if rg -n 'apt_mirror_http|default Ubuntu HTTP sources' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
