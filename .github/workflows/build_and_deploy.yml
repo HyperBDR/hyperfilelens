@@ -325,6 +325,7 @@ jobs:
       - name: Build Agent asset
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          APT_MIRROR: ${{ vars.CI_UBUNTU_APT_MIRROR }}
         run: |
           ./release/ci/build-agent-asset.sh \
             "${{ matrix.target }}" \
@@ -468,6 +469,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build host dependency asset
+        env:
+          APT_MIRROR: ${{ vars.CI_UBUNTU_APT_MIRROR }}
         run: >-
           ./release/ci/build-host-debs-asset.sh
           "${{ matrix.ubuntu_release }}"

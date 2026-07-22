@@ -279,6 +279,7 @@ grep -F 'runner: ubuntu-24.04-arm' "${workflow}" >/dev/null
 grep -F 'runner: macos-15-intel' "${workflow}" >/dev/null
 grep -F 'runner: macos-15' "${workflow}" >/dev/null
 grep -F 'runner: windows-2022' "${workflow}" >/dev/null
+[[ "$(grep -c 'APT_MIRROR: \${{ vars.CI_UBUNTU_APT_MIRROR }}' "${workflow}")" -eq 2 ]]
 grep -A2 '^  build-host-debs:' "${workflow}" | grep -F 'timeout-minutes: 60' >/dev/null
 grep -F 'bootstrap_tools_ok=0' "${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
 grep -F 'Dir::Etc::sourcelist=/etc/apt/sources.list.d/docker.list' \
