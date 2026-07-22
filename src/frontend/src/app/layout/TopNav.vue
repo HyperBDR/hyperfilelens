@@ -8,7 +8,7 @@ import NavUserMenu from '../../components/NavUserMenu.vue'
 import OrgSwitcher from '../../components/OrgSwitcher.vue'
 import AppLogoMark from '../../components/AppLogoMark.vue'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
-import { fetchDeployProfile } from '../../composables/useDeployProfile'
+import { fetchDeployProfile, platformOpsEntryUrl } from '../../composables/useDeployProfile'
 import { currentUser } from '../../composables/useAuth'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
@@ -17,6 +17,7 @@ const { t } = useI18n()
 const { canSwitchLocale, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
 
 const adminConsoleUrl = ref('')
+const adminConsoleHref = computed(() => platformOpsEntryUrl(adminConsoleUrl.value))
 
 async function refreshAdminConsoleEntry() {
   const profile = await fetchDeployProfile(true)
@@ -145,9 +146,9 @@ function handleNavClick(event: MouseEvent, to: string) {
       <OrgSwitcher />
 
       <a
-        v-if="adminConsoleUrl"
+        v-if="adminConsoleHref"
         class="platform-ops-entry"
-        :href="`${adminConsoleUrl}/platform-ops/monitoring/host`"
+        :href="adminConsoleHref"
         target="_blank"
         rel="noopener noreferrer"
       >

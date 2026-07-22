@@ -12,6 +12,8 @@ export interface DeployProfile {
   support_org_key?: string | null
 }
 
+export const PLATFORM_OPS_LANDING_PATH = '/platform-ops/overview'
+
 let cachedProfile: DeployProfile | null = null
 let inflight: Promise<DeployProfile | null> | null = null
 
@@ -66,7 +68,12 @@ export function shouldForceDeployProfileRefresh(
   return targetsPlatformOps && !fromPath.startsWith('/platform-ops')
 }
 
-/** Post-login redirect: ops site staff → /platform-ops/users, else tenant home. */
+export function platformOpsEntryUrl(adminConsoleUrl: string): string {
+  const origin = adminConsoleUrl.trim().replace(/\/+$/, '')
+  return origin ? `${origin}${PLATFORM_OPS_LANDING_PATH}` : ''
+}
+
+/** Resolve the deployment-specific post-login landing page. */
 export async function resolvePostLoginPath(): Promise<string> {
   const profile = await fetchDeployProfile(true)
   const path = profile?.landing_path?.trim()

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clearDeployProfileCache,
   fetchDeployProfile,
+  platformOpsEntryUrl,
+  resolvePostLoginPath,
   shouldForceDeployProfileRefresh,
 } from './useDeployProfile'
 
@@ -12,7 +14,7 @@ const deployProfile = {
   self_service_password_reset: true,
   tenant_public_url: 'https://example.test:11443',
   admin_console_url: 'https://example.test:11444',
-  landing_path: '/platform-ops/monitoring/host',
+  landing_path: '/platform-ops/overview',
   admin_console_entry_visible: false,
   platform_ops_access_allowed: true,
 }
@@ -52,6 +54,21 @@ describe('deploy profile caching', () => {
     await fetchDeployProfile(false)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('lands operations staff on the Admin Overview after login', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(deployProfile), { status: 200 }),
+    ))
+
+    await expect(resolvePostLoginPath()).resolves.toBe('/platform-ops/overview')
+  })
+
+  it('builds the tenant-to-admin entry URL for the Admin Overview', () => {
+    expect(platformOpsEntryUrl('https://example.test:11444/')).toBe(
+      'https://example.test:11444/platform-ops/overview',
+    )
+    expect(platformOpsEntryUrl('')).toBe('')
   })
 })
 
