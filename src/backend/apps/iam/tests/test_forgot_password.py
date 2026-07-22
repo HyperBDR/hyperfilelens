@@ -68,3 +68,27 @@ class ForgotPasswordApiTests(APITestCase):
         self.assertEqual(response.data["error"]["error_code"], "EMAIL_NOT_REGISTERED")
         self.assertIn("email", response.data["error"]["fields"])
         self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="site-key",
+        TURNSTILE_SECRET_KEY="",
+    )
+    def test_ops_site_password_reset_bypasses_turnstile(self):
+        email = "ops-reset@example.com"
+        User.objects.create_user(
+            username=email,
+            email=email,
+            password="Pass1234",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("forgot_password"),
+            self._payload(email),
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["code"], "0000")

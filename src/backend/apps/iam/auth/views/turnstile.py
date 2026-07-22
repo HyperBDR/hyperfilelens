@@ -11,7 +11,7 @@ from common.i18n.client_lang import activate_request_language
 
 from apps.iam.services.turnstile_verification import (
     turnstile_configured,
-    turnstile_enabled,
+    turnstile_required,
 )
 from apps.platform_ops.services.internal.runtime_settings import turnstile_site_key
 
@@ -26,7 +26,7 @@ class TurnstileConfigView(AnonymousPublicViewMixin, APIView):
     )
     def get(self, request):
         activate_request_language(request)
-        enabled = turnstile_enabled()
+        enabled = turnstile_required(request)
         configured = turnstile_configured() if enabled else False
         data: dict[str, str | bool] = {
             "enabled": enabled,

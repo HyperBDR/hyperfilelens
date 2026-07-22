@@ -76,3 +76,28 @@ class EmailLoginApiTests(APITestCase):
             response.data["error"]["error_code"],
             "TURNSTILE_MISCONFIGURED",
         )
+
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="site-key",
+        TURNSTILE_SECRET_KEY="",
+    )
+    def test_ops_site_login_bypasses_turnstile(self):
+        email = "ops-login@example.com"
+        User.objects.create_user(
+            username=email,
+            email=email,
+            password="CorrectPass123",
+            is_active=True,
+            is_staff=True,
+        )
+
+        response = self.client.post(
+            reverse("email_login"),
+            self._payload(email, password="CorrectPass123"),
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["code"], "0000")

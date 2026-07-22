@@ -164,6 +164,22 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.data["error"]["error_code"], "VALIDATION_ERROR")
         self.assertIn("turnstile_token", response.data["error"]["fields"])
 
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="site-key",
+        TURNSTILE_SECRET_KEY="",
+    )
+    def test_ops_site_registration_bypasses_turnstile(self):
+        response = self.client.post(
+            reverse("email_register_send_code"),
+            {"email": "ops-register@example.com"},
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["code"], "0000")
+
 
 @override_settings(HFL_EMAIL_SIGNUP_ENABLED=False)
 @patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})

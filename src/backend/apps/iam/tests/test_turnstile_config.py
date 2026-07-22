@@ -43,6 +43,23 @@ class TurnstileConfigViewTests(TestCase):
         self.assertFalse(payload["data"]["configured"])
         self.assertNotIn("site_key", payload["data"])
 
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="test-site-key",
+        TURNSTILE_SECRET_KEY="test-secret-key",
+    )
+    def test_ops_site_reports_turnstile_disabled(self):
+        response = self.client.get(
+            "/api/v1/auth/turnstile/config",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["data"]["enabled"])
+        self.assertFalse(payload["data"]["configured"])
+        self.assertNotIn("site_key", payload["data"])
+
     def test_public_config_ignores_invalid_access_token_cookie(self):
         self.client.cookies["access_token"] = "not-a-valid-jwt"
         response = self.client.get("/api/v1/auth/turnstile/config")

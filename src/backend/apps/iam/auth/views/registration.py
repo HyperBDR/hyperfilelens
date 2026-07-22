@@ -14,6 +14,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,7 +25,7 @@ from apps.iam.services.turnstile_verification import (
     invalid_turnstile_fields,
     missing_turnstile_fields,
     turnstile_configured,
-    turnstile_enabled,
+    turnstile_required,
     verify_turnstile_for_action,
 )
 from apps.iam.services.verification_code_service import verify_email_verification_code
@@ -75,9 +76,9 @@ def _email_signup_disabled_response() -> Response:
     )
 
 
-def _turnstile_misconfigured_response() -> Response | None:
-    """Fail closed when Turnstile is enabled without a complete key pair."""
-    if not turnstile_enabled() or turnstile_configured():
+def _turnstile_misconfigured_response(request: Request) -> Response | None:
+    """Fail closed when this request requires Turnstile without complete keys."""
+    if not turnstile_required(request) or turnstile_configured():
         return None
     return _build_error_response(
         "TURNSTILE_MISCONFIGURED",
@@ -178,13 +179,13 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
 
-        configuration_error = _turnstile_misconfigured_response()
+        configuration_error = _turnstile_misconfigured_response(request)
         if configuration_error is not None:
             return configuration_error
 
         email = (request.data.get("email") or "").strip().lower()
 
-        if not email or missing_turnstile_fields(request.data):
+        if not email or missing_turnstile_fields(request.data, request):
             return Response(
                 {
                     "code": "1001",
@@ -192,7 +193,7 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_turnstile_fields(request.data),
+                            **missing_turnstile_fields(request.data, request),
                             "email": [_('Required')] if not email else [],
                         },
                     },
@@ -295,7 +296,7 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
         if not email_signup_enabled():
             return _email_signup_disabled_response()
 
-        configuration_error = _turnstile_misconfigured_response()
+        configuration_error = _turnstile_misconfigured_response(request)
         if configuration_error is not None:
             return configuration_error
 
@@ -303,7 +304,10 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
         last_name = request.data.get("last_name")
         email = request.data.get("email")
 
-        if not all([first_name, last_name, email]) or missing_turnstile_fields(request.data):
+        if not all([first_name, last_name, email]) or missing_turnstile_fields(
+            request.data,
+            request,
+        ):
             return Response(
                 {
                     "code": "1001",
@@ -311,7 +315,7 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_turnstile_fields(request.data),
+                            **missing_turnstile_fields(request.data, request),
                             "first_name": [_('Required')] if not first_name else [],
                             "last_name": [_('Required')] if not last_name else [],
                             "email": [_('Required')] if not email else [],
@@ -545,13 +549,13 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
-        configuration_error = _turnstile_misconfigured_response()
+        configuration_error = _turnstile_misconfigured_response(request)
         if configuration_error is not None:
             return configuration_error
 
         email = (request.data.get("email") or "").strip().lower()
 
-        if not email or missing_turnstile_fields(request.data):
+        if not email or missing_turnstile_fields(request.data, request):
             return Response(
                 {
                     "code": "1001",
@@ -559,7 +563,7 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_turnstile_fields(request.data),
+                            **missing_turnstile_fields(request.data, request),
                             "email": [_('Required')] if not email else [],
                         },
                     },

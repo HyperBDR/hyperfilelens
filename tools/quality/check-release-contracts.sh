@@ -402,6 +402,12 @@ if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 fi
 grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
+grep -F 'map $server_port $hfl_site {' \
+	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
+grep -E '^[[:space:]]*10444[[:space:]]+ops;' \
+	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
+grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
+	"${ROOT}/deploy/nginx/snippets/hfl-backend-proxy-headers.inc" >/dev/null
 grep -F 'mem_limit: 448m' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'name: hyperfilelens-sourcelens' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
