@@ -3,9 +3,11 @@
 .env.*
 data
 build/**
-!build/dependencies/
-!build/dependencies/kopia/
-!build/dependencies/kopia/*.deb
+!build/kopia/
+!build/kopia/dist/
+!build/kopia/dist/linux/
+!build/kopia/dist/linux/amd64/
+!build/kopia/dist/linux/amd64/kopia
 logs
 *.log
 node_modules
