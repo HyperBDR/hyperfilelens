@@ -15,8 +15,14 @@ defineEmits<{
   <div v-loading="loading" class="platform-ops-detail">
     <div class="platform-ops-detail__head">
       <PlatformOpsBackButton @click="$emit('back')" />
-      <h2>{{ title }}</h2>
-      <div v-if="$slots.actions" class="platform-ops-detail__actions">
+      <div class="platform-ops-detail__title-group">
+        <h2>{{ title }}</h2>
+        <slot name="status" />
+      </div>
+      <div
+        v-if="$slots.actions"
+        class="platform-ops-detail__actions"
+      >
         <slot name="actions" />
       </div>
     </div>

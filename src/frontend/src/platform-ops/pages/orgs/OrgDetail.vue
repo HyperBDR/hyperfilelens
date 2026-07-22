@@ -24,6 +24,7 @@ import { getPlatformOpsOrganization } from '../../lib/platformOpsUserApi'
 import { apiErrorMessageI18n } from '../../../lib/api'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { notifyError, notifySuccess } from '../../../lib/notify'
+import { clearDeployProfileCache, fetchDeployProfile } from '../../../composables/useDeployProfile'
 
 interface OrgDetail {
   id: number
@@ -59,15 +60,22 @@ const loadError = ref('')
 const summaryError = ref('')
 const summaryBusy = ref(false)
 const deactivateConfirmOpen = ref(false)
+const supportOrgKey = ref<string | null>(null)
 
 const memberships = computed(() => org.value?.memberships || [])
+const isCurrentSupportOrg = computed(() => Boolean(
+  org.value && supportOrgKey.value === org.value.key,
+))
+const hasOtherSupportOrg = computed(() => Boolean(
+  org.value && supportOrgKey.value && supportOrgKey.value !== org.value.key,
+))
 const {
   currentPage: membersPage,
   pageSize: membersPageSize,
   totalCount: membersTotal,
   pagedRows: pagedMembers,
 } = usePlatformOpsClientPagination(memberships)
-const supportBusy = ref(false)
+const supportAction = ref<'enter' | 'exit' | null>(null)
 
 const monitoringLinks = computed(() => {
   const key = org.value?.key
@@ -119,9 +127,13 @@ async function load() {
   org.value = null
   summary.value = null
   try {
-    const result = await getPlatformOpsOrganization(targetOrgId, { signal })
+    const [result, profile] = await Promise.all([
+      getPlatformOpsOrganization(targetOrgId, { signal }),
+      fetchDeployProfile(true),
+    ])
     if (!pageRequests.isCurrentSignal('platform-org-detail', signal)) return
     org.value = result as OrgDetail
+    supportOrgKey.value = profile?.support_org_key ?? null
     await loadSummary()
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
@@ -176,11 +188,13 @@ async function updateActiveState() {
 }
 
 async function enterSupport() {
-  if (!org.value || supportBusy.value) return
+  if (!org.value || supportAction.value) return
   const targetOrg = org.value
-  supportBusy.value = true
+  supportAction.value = 'enter'
   try {
     const session = await startSupportSession(targetOrg.id)
+    supportOrgKey.value = session.org_key
+    clearDeployProfileCache()
     const base = session.tenant_url?.replace(/\/$/, '') || ''
     const url = `${base}/?org=${encodeURIComponent(session.org_key)}`
     window.open(url, '_blank', 'noopener,noreferrer')
@@ -197,16 +211,18 @@ async function enterSupport() {
       dedupeKey: `platform-org:${targetOrg.id}:support:start:error`,
     })
   } finally {
-    supportBusy.value = false
+    supportAction.value = null
   }
 }
 
 async function exitSupport() {
-  if (!org.value || supportBusy.value) return
+  if (!org.value || supportAction.value || !isCurrentSupportOrg.value) return
   const targetOrg = org.value
-  supportBusy.value = true
+  supportAction.value = 'exit'
   try {
     await endSupportSession(targetOrg.id)
+    supportOrgKey.value = null
+    clearDeployProfileCache()
     notifySuccess({
       message: t('platformOps.orgs.supportEnded'),
       dedupeKey: `platform-org:${targetOrg.id}:support:end:success`,
@@ -220,7 +236,7 @@ async function exitSupport() {
       dedupeKey: `platform-org:${targetOrg.id}:support:end:error`,
     })
   } finally {
-    supportBusy.value = false
+    supportAction.value = null
   }
 }
 </script>
@@ -232,9 +248,48 @@ async function exitSupport() {
       :loading="busy"
       @back="router.push('/platform-ops/orgs')"
     >
+      <template #status>
+        <span
+          v-if="isCurrentSupportOrg"
+          class="platform-ops-detail__status platform-ops-detail__status--active"
+        >
+          <span
+            class="platform-ops-detail__status-dot"
+            aria-hidden="true"
+          />
+          {{ t('platformOps.orgs.supportActive') }}
+        </span>
+        <span
+          v-else-if="hasOtherSupportOrg"
+          class="platform-ops-detail__status"
+        >
+          <span
+            class="platform-ops-detail__status-dot"
+            aria-hidden="true"
+          />
+          {{ t('platformOps.orgs.supportActiveFor', { org: supportOrgKey }) }}
+        </span>
+      </template>
       <template v-if="org" #actions>
-        <el-button :loading="supportBusy" @click="enterSupport">{{ t('platformOps.orgs.enterSupport') }}</el-button>
-        <el-button :loading="supportBusy" @click="exitSupport">{{ t('platformOps.orgs.exitSupport') }}</el-button>
+        <el-button
+          :loading="supportAction === 'enter'"
+          :disabled="Boolean(supportAction)"
+          @click="enterSupport"
+        >
+          {{ isCurrentSupportOrg
+            ? t('platformOps.orgs.openSupport')
+            : hasOtherSupportOrg
+              ? t('platformOps.orgs.switchSupport')
+              : t('platformOps.orgs.enterSupport') }}
+        </el-button>
+        <el-button
+          v-if="isCurrentSupportOrg"
+          :loading="supportAction === 'exit'"
+          :disabled="Boolean(supportAction)"
+          @click="exitSupport"
+        >
+          {{ t('platformOps.orgs.exitSupport') }}
+        </el-button>
       </template>
 
       <el-alert

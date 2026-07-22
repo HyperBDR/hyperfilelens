@@ -90,13 +90,52 @@
   flex-shrink: 0;
 }
 
-.platform-ops-shell .platform-ops-detail__head h2 {
+.platform-ops-shell .platform-ops-detail__title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.platform-ops-shell .platform-ops-detail__title-group h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 650;
-  flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--page-text, var(--color-text-title));
+}
+
+.platform-ops-shell .platform-ops-detail__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--radius-full);
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1;
+}
+
+.platform-ops-shell .platform-ops-detail__status--active {
+  border-color: color-mix(in srgb, var(--el-color-warning) 24%, transparent);
+  background: color-mix(in srgb, var(--el-color-warning) 9%, var(--el-bg-color));
+  color: var(--el-color-warning-dark-2);
+}
+
+.platform-ops-shell .platform-ops-detail__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
 }
 
 .platform-ops-shell .platform-ops-detail__actions {
