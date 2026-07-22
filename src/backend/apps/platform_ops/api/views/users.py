@@ -17,7 +17,11 @@ from apps.platform_ops.api.serializers.users import (
     PlatformOpsUserUpdateSerializer,
 )
 from apps.platform_ops.api.views._utils import paginated, safe_int
-from apps.platform_ops.selectors.internal.users import get_user_detail, list_users
+from apps.platform_ops.selectors.internal.users import (
+    get_user_detail,
+    list_users,
+    user_account_stats,
+)
 from apps.platform_ops.services.internal.audit import write_platform_audit_log
 from apps.platform_ops.services.internal.users import (
     create_platform_user,
@@ -37,12 +41,24 @@ class PlatformOpsUserListCreateView(APIView):
         page_size = safe_int(request.query_params.get("page_size"), 20)
         search = request.query_params.get("search", "")
 
-        qs = list_users(search=search)
+        qs = list_users(
+            search=search,
+            status=request.query_params.get("status", ""),
+            account_type=request.query_params.get("account_type", ""),
+        )
         total = qs.count()
         offset = (page - 1) * page_size
         page_qs = qs[offset : offset + page_size]
         data = PlatformOpsUserListSerializer(page_qs, many=True).data
-        return Response(paginated(data, total=total, page=page, page_size=page_size))
+        return Response(
+            paginated(
+                data,
+                total=total,
+                page=page,
+                page_size=page_size,
+                extra={"stats": user_account_stats()},
+            )
+        )
 
     def post(self, request):
         serializer = PlatformOpsUserCreateSerializer(data=request.data)
@@ -56,6 +72,7 @@ class PlatformOpsUserListCreateView(APIView):
                 last_name=payload.get("last_name", ""),
                 is_active=payload.get("is_active", True),
                 is_staff=payload.get("is_staff", False),
+                organization_name=payload.get("organization_name", ""),
             )
         except ValueError as exc:
             return Response(
@@ -93,13 +110,24 @@ class PlatformOpsUserDetailView(APIView):
         user = self._get_user(user_id)
         serializer = PlatformOpsUserUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        updated = update_platform_user(user, **serializer.validated_data)
+        payload = serializer.validated_data
+        if user.pk == request.user.pk and (
+            payload.get("is_active") is False or payload.get("is_staff") is False
+        ):
+            return Response(
+                {"detail": "You cannot remove your own Admin Console access"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            updated = update_platform_user(user, **payload)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         write_platform_audit_log(
             request=request,
             action="user.update",
             target_type="user",
             target_id=str(updated.pk),
-            details=serializer.validated_data,
+            details=payload,
         )
         detail = get_user_detail(user_id=updated.pk)
         return Response(PlatformOpsUserDetailSerializer(detail).data)

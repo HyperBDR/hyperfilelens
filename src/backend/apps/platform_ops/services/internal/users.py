@@ -43,6 +43,7 @@ def create_platform_user(
     last_name: str = "",
     is_active: bool = True,
     is_staff: bool = False,
+    organization_name: str = "",
 ) -> User:
     email = email.strip().lower()
     is_valid, error_msg = validate_password_format(password)
@@ -70,7 +71,11 @@ def create_platform_user(
         },
     )
     if not user.is_staff:
-        provision_registered_user_tenant(user)
+        organization, _membership = provision_registered_user_tenant(user)
+        requested_name = organization_name.strip()
+        if requested_name and requested_name != organization.name:
+            organization.name = requested_name
+            organization.save(update_fields=["name", "updated_at"])
         _schedule_chat_user_provision(user)
     return user
 
@@ -78,6 +83,7 @@ def create_platform_user(
 @transaction.atomic
 def update_platform_user(user: User, **fields) -> User:
     update_fields: list[str] = []
+    provision_customer_tenant = False
 
     if "email" in fields and fields["email"] is not None:
         email = str(fields["email"]).strip().lower()
@@ -91,11 +97,24 @@ def update_platform_user(user: User, **fields) -> User:
             update_fields.append(attr)
 
     if "is_staff" in fields and fields["is_staff"] is not None:
-        apply_platform_staff(user, bool(fields["is_staff"]))
+        next_is_staff = bool(fields["is_staff"])
+        if next_is_staff and Membership.objects.filter(user=user, is_active=True).exists():
+            raise ValueError(
+                "Customer accounts with an organization cannot be converted to "
+                "platform administrators"
+            )
+        provision_customer_tenant = not next_is_staff and not Membership.objects.filter(
+            user=user,
+            is_active=True,
+        ).exists()
+        apply_platform_staff(user, next_is_staff)
         update_fields.extend(["is_staff", "is_superuser"])
 
     if update_fields:
         user.save(update_fields=update_fields)
+    if provision_customer_tenant:
+        provision_registered_user_tenant(user)
+        _schedule_chat_user_provision(user)
     return user
 
 

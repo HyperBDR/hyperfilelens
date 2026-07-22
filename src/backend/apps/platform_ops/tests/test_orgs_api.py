@@ -2,7 +2,11 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from apps.alert.constants import AlertSeverity, AlertStatus, AlertType
+from apps.alert.models import AlertRecord
 from apps.iam.models import Membership, Organization
+from apps.node.models import Node, NodeRole
+from apps.task.models import Task
 
 
 def _payload(response):
@@ -37,13 +41,58 @@ class PlatformOpsOrgsApiTest(TestCase):
         )
 
     def test_list_orgs(self):
+        Organization.objects.create(key="__platform_lens__", name="Platform Lens")
         response = self.client.get("/api/v1/platform-ops/orgs")
         self.assertEqual(response.status_code, 200)
         payload = _payload(response)
         self.assertGreaterEqual(payload["count"], 1)
         row = next(r for r in payload["results"] if r["key"] == "acme")
         self.assertEqual(row["owner_email"], "owner@test.com")
+        self.assertEqual(row["owner_user_id"], self.owner.pk)
         self.assertEqual(row["member_count"], 1)
+        self.assertEqual(row["node_count"], 0)
+        self.assertEqual(row["failed_task_count"], 0)
+        self.assertEqual(row["incident_count"], 0)
+        self.assertGreaterEqual(payload["stats"]["active"], 1)
+        self.assertFalse(
+            any(row["key"] == "__platform_lens__" for row in payload["results"])
+        )
+
+    def test_list_orgs_supports_health_status_and_owner_search(self):
+        Node.objects.create(
+            organization=self.org,
+            name="agent-1",
+            role=NodeRole.AGENT,
+            status=Node.Status.ONLINE,
+        )
+        Task.objects.create(
+            organization_id=self.org.pk,
+            task_type=Task.Type.BACKUP,
+            display_name="Failed backup",
+            status=Task.Status.FAILED,
+        )
+        AlertRecord.objects.create(
+            organization=self.org,
+            type=AlertType.SYSTEM,
+            severity=AlertSeverity.CRITICAL,
+            status=AlertStatus.FIRING,
+            title="Customer incident",
+            fingerprint="customer-incident",
+        )
+
+        response = self.client.get(
+            "/api/v1/platform-ops/orgs",
+            {"health": "attention", "status": "active", "search": "owner@test.com"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = _payload(response)
+        self.assertEqual(payload["count"], 1)
+        row = payload["results"][0]
+        self.assertEqual(row["node_count"], 1)
+        self.assertEqual(row["failed_task_count"], 1)
+        self.assertEqual(row["incident_count"], 1)
+        self.assertEqual(payload["stats"]["with_incidents"], 1)
 
     def test_org_detail_includes_memberships(self):
         response = self.client.get(f"/api/v1/platform-ops/orgs/{self.org.pk}")
@@ -59,3 +108,18 @@ class PlatformOpsOrgsApiTest(TestCase):
         response = self.client.delete(f"/api/v1/platform-ops/orgs/{org.pk}")
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Organization.objects.filter(pk=org.pk).exists())
+
+    def test_create_org_rejects_owner_with_existing_organization(self):
+        response = self.client.post(
+            "/api/v1/platform-ops/orgs",
+            {
+                "key": "second-org",
+                "name": "Second Organization",
+                "owner_user_id": self.owner.pk,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Organization.objects.filter(key="second-org").exists())

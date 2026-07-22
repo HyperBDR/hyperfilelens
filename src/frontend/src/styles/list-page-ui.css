@@ -226,7 +226,7 @@
   max-width: none;
 }
 
-.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell > span:not(.el-tag):not(.hfl-table-type-label):not(.repo-protocol-pill):not(.repo-s3-platform-pill):not(.hfl-ops-user-chip):not(.hfl-ops-result-chip):not(.hfl-ops-response-chip):not(.source-os-cell):not(.backup-source-cell):not(.dp-source-task-type-pill):not(.dp-source-task-trigger-pill):not(.flow-binding-empty):not(.recovery-confirm-policy-cell) {
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell > span:not(.el-tag):not(.hfl-table-type-label):not(.repo-protocol-pill):not(.repo-s3-platform-pill):not(.hfl-ops-user-chip):not(.hfl-ops-result-chip):not(.hfl-ops-response-chip):not(.source-os-cell):not(.backup-source-cell):not(.dp-source-task-type-pill):not(.dp-source-task-trigger-pill):not(.flow-binding-empty):not(.recovery-confirm-policy-cell):not(.platform-account-page__cell-meta) {
   display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;

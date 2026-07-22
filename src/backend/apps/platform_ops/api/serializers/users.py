@@ -31,6 +31,11 @@ class PlatformOpsMembershipSerializer(serializers.ModelSerializer):
 class PlatformOpsUserListSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     membership_count = serializers.IntegerField(read_only=True)
+    account_type = serializers.SerializerMethodField()
+    organization = serializers.SerializerMethodField()
+    registered_at = serializers.SerializerMethodField()
+    last_login_ip = serializers.SerializerMethodField()
+    has_usable_password = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -43,15 +48,59 @@ class PlatformOpsUserListSerializer(serializers.ModelSerializer):
             "display_name",
             "is_active",
             "is_staff",
+            "account_type",
             "date_joined",
             "last_login",
+            "registered_at",
+            "last_login_ip",
+            "has_usable_password",
             "membership_count",
+            "organization",
         ]
 
     @staticmethod
     def get_display_name(obj):
         name = f"{obj.first_name or ''} {obj.last_name or ''}".strip()
         return name or obj.email or obj.username or str(obj.pk)
+
+    @staticmethod
+    def get_account_type(obj):
+        return "administrator" if obj.is_staff else "customer"
+
+    @staticmethod
+    def get_organization(obj):
+        memberships = getattr(obj, "platform_memberships", [])
+        membership = next(
+            (
+                row
+                for row in memberships
+                if row.role == Membership.Role.OWNER
+            ),
+            memberships[0] if memberships else None,
+        )
+        if membership is None:
+            return None
+        org = membership.organization
+        return {
+            "id": org.id,
+            "key": org.key,
+            "name": org.name,
+            "is_active": org.is_active,
+        }
+
+    @staticmethod
+    def get_registered_at(obj):
+        profile = getattr(obj, "profile", None)
+        return getattr(profile, "registered_at", None)
+
+    @staticmethod
+    def get_last_login_ip(obj):
+        profile = getattr(obj, "profile", None)
+        return getattr(profile, "last_login_ip", "")
+
+    @staticmethod
+    def get_has_usable_password(obj):
+        return obj.has_usable_password()
 
 
 class PlatformOpsUserDetailSerializer(PlatformOpsUserListSerializer):
@@ -68,6 +117,11 @@ class PlatformOpsUserCreateSerializer(serializers.Serializer):
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
     is_active = serializers.BooleanField(default=True)
     is_staff = serializers.BooleanField(default=False)
+    organization_name = serializers.CharField(
+        max_length=200,
+        required=False,
+        allow_blank=True,
+    )
 
     @staticmethod
     def validate_email(value: str) -> str:

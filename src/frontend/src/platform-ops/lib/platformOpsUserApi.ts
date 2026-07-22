@@ -10,10 +10,29 @@ export interface PlatformOpsUser {
   display_name: string
   is_active: boolean
   is_staff: boolean
+  account_type: 'customer' | 'administrator'
   date_joined?: string | null
   last_login?: string | null
+  registered_at?: string | null
+  last_login_ip?: string
+  has_usable_password?: boolean
   membership_count?: number
+  organization?: PlatformOpsUserOrganization | null
   memberships?: PlatformOpsMembership[]
+}
+
+export interface PlatformOpsUserOrganization {
+  id: number
+  key: string
+  name: string
+  is_active: boolean
+}
+
+export interface PlatformOpsUserStats {
+  total: number
+  active: number
+  inactive: number
+  never_signed_in: number
 }
 
 export interface PlatformOpsMembership {
@@ -31,6 +50,7 @@ export interface PlatformOpsUserListResponse {
   page: number
   page_size: number
   results: PlatformOpsUser[]
+  stats: PlatformOpsUserStats
 }
 
 export interface PlatformOpsOrganization {
@@ -39,9 +59,21 @@ export interface PlatformOpsOrganization {
   name: string
   is_active: boolean
   owner_email?: string | null
+  owner_user_id?: number | null
+  owner_display_name?: string
   member_count?: number
+  node_count?: number
+  failed_task_count?: number
+  incident_count?: number
   created_at?: string | null
   updated_at?: string | null
+}
+
+export interface PlatformOpsOrganizationStats {
+  total: number
+  active: number
+  inactive: number
+  with_incidents: number
 }
 
 export interface PlatformOpsOrganizationListResponse {
@@ -49,17 +81,22 @@ export interface PlatformOpsOrganizationListResponse {
   page: number
   page_size: number
   results: PlatformOpsOrganization[]
+  stats: PlatformOpsOrganizationStats
 }
 
 export async function listPlatformOpsUsers(params: {
   page?: number
   page_size?: number
   search?: string
+  status?: string
+  account_type?: string
 }): Promise<PlatformOpsUserListResponse> {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
   if (params.search?.trim()) qs.set('search', params.search.trim())
+  if (params.status) qs.set('status', params.status)
+  if (params.account_type) qs.set('account_type', params.account_type)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const raw = await api<unknown>(`/api/v1/platform-ops/users${suffix}`)
   return unwrapApiPayload<PlatformOpsUserListResponse>(raw)
@@ -77,6 +114,7 @@ export async function createPlatformOpsUser(body: {
   last_name?: string
   is_active?: boolean
   is_staff?: boolean
+  organization_name?: string
 }): Promise<PlatformOpsUser> {
   const raw = await api<unknown>('/api/v1/platform-ops/users', {
     method: 'POST',
@@ -117,11 +155,15 @@ export async function listPlatformOpsOrganizations(params: {
   page?: number
   page_size?: number
   search?: string
+  status?: string
+  health?: string
 }): Promise<PlatformOpsOrganizationListResponse> {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
   if (params.search?.trim()) qs.set('search', params.search.trim())
+  if (params.status) qs.set('status', params.status)
+  if (params.health) qs.set('health', params.health)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const raw = await api<unknown>(`/api/v1/platform-ops/orgs${suffix}`)
   return unwrapApiPayload<PlatformOpsOrganizationListResponse>(raw)

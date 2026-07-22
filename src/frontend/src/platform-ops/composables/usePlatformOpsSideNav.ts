@@ -69,16 +69,16 @@ export function usePlatformOpsSideNav() {
       label: t('platformOps.nav.groupIdentityAccess'),
       children: [
         {
-          label: t('platformOps.nav.orgs'),
-          to: '/platform-ops/orgs',
-          icon: Building2,
-          pageTitle: t('platformOps.orgs.pageTitle'),
-        },
-        {
           label: t('platformOps.nav.users'),
           to: '/platform-ops/users',
           icon: Users,
           pageTitle: t('platformOps.users.pageTitle'),
+        },
+        {
+          label: t('platformOps.nav.orgs'),
+          to: '/platform-ops/orgs',
+          icon: Building2,
+          pageTitle: t('platformOps.orgs.pageTitle'),
         },
       ],
     },
