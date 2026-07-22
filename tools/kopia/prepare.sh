@@ -30,7 +30,7 @@ Usage: ./tools/kopia/prepare.sh [options]
   --matrix MATRIX               Space-separated os:arch entries
   --force                       Ignore a valid cached matrix
   --offline                     Use only the existing source/download caches
-  --github-download-mirror URL  Optional mirror used by download mode
+  --github-download-mirror URL  Optional mirror for GitHub Git and release downloads
   --github-token TOKEN          Optional GitHub token (environment recommended)
   --print-config                Print resolved non-secret inputs and exit
   -h, --help                    Show this help
@@ -71,7 +71,58 @@ git_with_auth() {
 	fi
 }
 
+github_git_mirror_url() {
+	local url=$1
+	[[ -n "${GITHUB_DOWNLOAD_MIRROR}" && "${url}" == https://github.com/* ]] || return 1
+	printf '%s/%s' "${GITHUB_DOWNLOAD_MIRROR%/}" "${url}"
+}
+
+git_source_candidates() {
+	local url=$1 mirrored
+	if mirrored="$(github_git_mirror_url "${url}")"; then
+		printf '%s\n' "${mirrored}"
+	fi
+	printf '%s\n' "${url}"
+}
+
+clone_source() {
+	local candidate mirrored=""
+	mirrored="$(github_git_mirror_url "${KOPIA_GIT_URL}" || true)"
+	while IFS= read -r candidate; do
+		if [[ -n "${mirrored}" && "${candidate}" == "${mirrored}" ]]; then
+			log "Cloning ${KOPIA_GIT_URL} through ${GITHUB_DOWNLOAD_MIRROR%/}"
+		else
+			[[ -z "${mirrored}" ]] || log "Git mirror unavailable; retrying ${KOPIA_GIT_URL} directly"
+			log "Cloning ${KOPIA_GIT_URL}"
+		fi
+		if git_with_auth clone --no-checkout "${candidate}" "${KOPIA_SOURCE_DIR}"; then
+			git -C "${KOPIA_SOURCE_DIR}" remote set-url origin "${KOPIA_GIT_URL}"
+			return 0
+		fi
+		rm -rf "${KOPIA_SOURCE_DIR}"
+	done < <(git_source_candidates "${KOPIA_GIT_URL}")
+	die "unable to clone Kopia source from the configured mirror or ${KOPIA_GIT_URL}"
+}
+
+fetch_source_ref() {
+	local candidate mirrored=""
+	mirrored="$(github_git_mirror_url "${KOPIA_GIT_URL}" || true)"
+	while IFS= read -r candidate; do
+		if [[ -n "${mirrored}" && "${candidate}" == "${mirrored}" ]]; then
+			log "Fetching ${KOPIA_GIT_REF} through ${GITHUB_DOWNLOAD_MIRROR%/}"
+		else
+			[[ -z "${mirrored}" ]] || log "Git mirror unavailable; retrying ${KOPIA_GIT_REF} directly"
+			log "Fetching ${KOPIA_GIT_REF}"
+		fi
+		if git_with_auth -C "${KOPIA_SOURCE_DIR}" fetch --force --tags "${candidate}" "${KOPIA_GIT_REF}"; then
+			return 0
+		fi
+	done < <(git_source_candidates "${KOPIA_GIT_URL}")
+	die "unable to fetch ${KOPIA_GIT_REF} from the configured mirror or ${KOPIA_GIT_URL}"
+}
+
 sync_source() {
+	local origin_url mirrored_url=""
 	command -v git >/dev/null 2>&1 || die "git is required to prepare Kopia"
 	mkdir -p "${KOPIA_BUILD_DIR}"
 	if [[ -e "${KOPIA_SOURCE_DIR}" && ! -d "${KOPIA_SOURCE_DIR}/.git" ]]; then
@@ -79,12 +130,18 @@ sync_source() {
 	fi
 	if [[ ! -d "${KOPIA_SOURCE_DIR}/.git" ]]; then
 		[[ "${OFFLINE}" -eq 0 ]] || die "Kopia source cache is missing and offline mode forbids cloning"
-		log "Cloning ${KOPIA_GIT_URL}"
-		git_with_auth clone --no-checkout "${KOPIA_GIT_URL}" "${KOPIA_SOURCE_DIR}"
-	elif [[ "$(git -C "${KOPIA_SOURCE_DIR}" remote get-url origin)" != "${KOPIA_GIT_URL}" ]]; then
-		[[ "${FORCE}" -eq 1 ]] || die "Kopia source cache origin differs from KOPIA_GIT_URL; rerun with --force"
-		[[ "${OFFLINE}" -eq 0 ]] || die "offline mode cannot replace the Kopia source cache origin"
-		git -C "${KOPIA_SOURCE_DIR}" remote set-url origin "${KOPIA_GIT_URL}"
+		clone_source
+	else
+		origin_url="$(git -C "${KOPIA_SOURCE_DIR}" config --get remote.origin.url || true)"
+		mirrored_url="$(github_git_mirror_url "${KOPIA_GIT_URL}" || true)"
+		if [[ -n "${mirrored_url}" && "${origin_url}" == "${mirrored_url}" ]]; then
+			log "Normalizing cached Kopia origin to ${KOPIA_GIT_URL}"
+			git -C "${KOPIA_SOURCE_DIR}" remote set-url origin "${KOPIA_GIT_URL}"
+		elif [[ "${origin_url}" != "${KOPIA_GIT_URL}" ]]; then
+			[[ "${FORCE}" -eq 1 ]] || die "Kopia source cache origin differs from KOPIA_GIT_URL; rerun with --force"
+			[[ "${OFFLINE}" -eq 0 ]] || die "offline mode cannot replace the Kopia source cache origin"
+			git -C "${KOPIA_SOURCE_DIR}" remote set-url origin "${KOPIA_GIT_URL}"
+		fi
 	fi
 	if [[ "${OFFLINE}" -eq 1 ]]; then
 		log "Offline mode: resolving ${KOPIA_GIT_REF} from the source cache"
@@ -92,8 +149,7 @@ sync_source() {
 			|| die "Kopia ref ${KOPIA_GIT_REF} is missing from the offline source cache"
 		git -C "${KOPIA_SOURCE_DIR}" reset --hard "${KOPIA_GIT_REF}^{commit}" >/dev/null
 	else
-		log "Fetching ${KOPIA_GIT_REF}"
-		git_with_auth -C "${KOPIA_SOURCE_DIR}" fetch --force --tags origin "${KOPIA_GIT_REF}"
+		fetch_source_ref
 		git -C "${KOPIA_SOURCE_DIR}" reset --hard FETCH_HEAD >/dev/null
 	fi
 	git -C "${KOPIA_SOURCE_DIR}" clean -fdx >/dev/null
@@ -372,4 +428,6 @@ EOF
 	log "Kopia matrix is ready under ${KOPIA_DIST_DIR}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

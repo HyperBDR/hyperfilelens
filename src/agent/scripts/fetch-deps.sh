@@ -99,7 +99,7 @@ Options:
   --kopia-mode MODE                build or download
   --kopia-git-url URL              Kopia source repository URL
   --kopia-ref REF                  Kopia release ref in vX.Y.Z form
-  --github-download-mirror URL     Explicit GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
+  --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub API token (env: GITHUB_TOKEN; environment recommended)
   --ubuntu2404-arch ARCH           amd64 | arm64 | all (env: AGENT_UBUNTU2404_ARCH)
   --docker-download-mirror URL     Docker Hub mirror (env: DOCKER_DOWNLOAD_MIRROR)

@@ -84,7 +84,7 @@ SourceLens options (default: enabled for up/restart):
   --sourcelens-git-url URL         Override SourceLens repository URL (env: SOURCELENS_GIT_URL)
 
 Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
-  --github-download-mirror URL     GitHub download mirror (env: GITHUB_DOWNLOAD_MIRROR)
+  --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for NAS ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
