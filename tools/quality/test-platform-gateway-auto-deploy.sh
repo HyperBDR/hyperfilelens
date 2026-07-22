@@ -24,17 +24,17 @@ printf '%s\n' \
 	'[[ "$HFL_NODE_ROLE" == "gateway" ]]' \
 	'[[ "$HFL_API_BASE" == "https://console.example:11443" ]]' \
 	'[[ "$HFL_WSS_URL" == "wss://console.example:11443/ws/node/agent/" ]]' \
-	'[[ "$HFL_INSECURE_TLS" == "1" ]]' \
 	'[[ "$1" == "gateway-install" && "$2" == "--yes" ]]' \
-	'printf ready >"$TEST_PLATFORM_GATEWAY_MARKER"' \
+	'printf "%s" "$HFL_INSECURE_TLS" >"$TEST_PLATFORM_GATEWAY_MARKER"' \
 	>"${helper}"
 chmod 755 "${helper}"
 
 AUTO_DEPLOY=false
+TLS_MODE=1
 read_env_value() {
 	case "$1" in
 	HFL_PLATFORM_GATEWAY_AUTO_DEPLOY) printf '%s' "${AUTO_DEPLOY}" ;;
-	HFL_INSECURE_TLS) printf '1' ;;
+	HFL_INSECURE_TLS) printf '%s' "${TLS_MODE}" ;;
 	esac
 }
 skip() { :; }
@@ -55,7 +55,12 @@ ensure_local_platform_gateway
 AUTO_DEPLOY=true
 export TEST_PLATFORM_GATEWAY_MARKER="${marker}"
 ensure_local_platform_gateway
-[[ "$(<"${marker}")" == "ready" ]]
+[[ "$(<"${marker}")" == "1" ]]
+
+TLS_MODE=0
+rm -f "${marker}"
+ensure_local_platform_gateway
+[[ "$(<"${marker}")" == "0" ]]
 
 read_agent_env_value() {
 	case "$1" in

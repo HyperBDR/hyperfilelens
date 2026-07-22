@@ -32,6 +32,7 @@ export type ApiNodeToken = {
   created_at?: string
   expires_at?: string | null
   used_at?: string | null
+  tls_verify: boolean
 }
 
 export type CreateNodeTokenBody = {

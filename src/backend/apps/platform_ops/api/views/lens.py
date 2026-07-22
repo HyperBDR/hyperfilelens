@@ -58,6 +58,7 @@ from apps.node.services.internal.node_lifecycle import (
 )
 from apps.node.services.internal.local_platform_gateway import platform_gateway_api_base
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
+from common.deploy.site import enrollment_tls_verify
 
 
 def _platform_org():
@@ -169,6 +170,7 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
                 "org_key": org.key,
                 "gateway_scope": LensGatewayLink.GatewayScope.PLATFORM,
                 "api_base": api_base,
+                "tls_verify": enrollment_tls_verify(),
             },
             status=status.HTTP_201_CREATED,
         )

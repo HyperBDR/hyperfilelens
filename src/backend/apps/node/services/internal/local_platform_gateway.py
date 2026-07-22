@@ -12,7 +12,7 @@ from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import platform_lens
 from apps.node.models import NodeToken
 from apps.node.models.base import NodeRole
-from common.deploy.site import tenant_public_url
+from common.deploy.site import enrollment_tls_verify, tenant_public_url
 
 LOCAL_PLATFORM_GATEWAY_TOKEN_NOTE = "deploy:local-platform-gateway"
 LOCAL_PLATFORM_GATEWAY_INSTALL_KEY = "local-platform-gateway"
@@ -46,10 +46,11 @@ def platform_gateway_api_base() -> str:
         or parsed.path not in {"", "/"}
         or parsed.query
         or parsed.fragment
+        or (enrollment_tls_verify() and parsed.scheme != "https")
     ):
         raise ValueError(
-            "FRONTEND_URL must be an absolute HTTP(S) origin "
-            "for Data Gateway enrollment."
+            "FRONTEND_URL must be an absolute HTTP(S) origin for Data Gateway "
+            "enrollment and must use HTTPS when TLS verification is enabled."
         )
     return api_base.rstrip("/")
 

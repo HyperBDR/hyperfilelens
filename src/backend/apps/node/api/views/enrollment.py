@@ -45,6 +45,7 @@ class EnrollmentTokenCreateView(APIView):
                 "role": data["role"],
                 "token": data["token"],
                 "created_at": data["created_at"],
+                "tls_verify": data["tls_verify"],
             },
             status=status.HTTP_201_CREATED,
         )

@@ -247,7 +247,7 @@ async function refreshUpgradeCommand(gen: number) {
   loading.value = true
   upgradeCommand.value = ''
   try {
-    const { token } = await issueEnrollmentInstall({
+    const { token, tlsVerify } = await issueEnrollmentInstall({
       role: props.role,
       os: props.os,
       note: `upgrade:${props.role}`,
@@ -262,6 +262,7 @@ async function refreshUpgradeCommand(gen: number) {
       true,
       release.download_url,
       props.role,
+      tlsVerify,
     )
   } catch {
     if (gen === generation) {

@@ -3,12 +3,12 @@
 from datetime import timedelta
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
 from apps.iam.models import Organization
-from apps.node.api.serializers import NodeTokenCreateSerializer
+from apps.node.api.serializers import NodeTokenCreateSerializer, NodeTokenSerializer
 from apps.node.api.views.node import NodeViewSet
 from apps.node.models import Node, NodeToken
 from apps.node.models.base import NodeRole
@@ -77,3 +77,9 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertTrue(ser.is_valid(), ser.errors)
         row = ser.save(organization=self.org)
         self.assertIsNone(row.expires_at)
+
+    @override_settings(HFL_INSECURE_TLS=False)
+    def test_token_response_exposes_strict_tls_policy(self):
+        data = NodeTokenSerializer(self.token_row).data
+
+        self.assertTrue(data["tls_verify"])

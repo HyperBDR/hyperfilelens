@@ -162,6 +162,7 @@ jobs:
           umask 077
           printf '%s\n' \
             "HFL_EMAIL_SIGNUP_ENABLED=false" \
+            "HFL_INSECURE_TLS=0" \
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=$HFL_PLATFORM_GATEWAY_AUTO_DEPLOY" \
             "TURNSTILE_ENABLED=$TURNSTILE_ENABLED" \
             "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \
