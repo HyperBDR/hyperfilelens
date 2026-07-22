@@ -254,8 +254,9 @@ grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
 grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification}" >/dev/null
-grep -F 'apt source: official Ubuntu HTTPS' "${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
-grep -F 'using official Ubuntu HTTPS sources' \
+grep -F 'apt source: official Ubuntu (HTTPS after CA bootstrap)' \
+	"${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
+grep -F 'using official Ubuntu sources (HTTPS after CA bootstrap)' \
 	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
 grep -F 'NAS_DOCKER_TIMEOUT=900' "${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
 for dependency_fetcher in \
@@ -265,6 +266,7 @@ for dependency_fetcher in \
 	grep -F 'Acquire::https::Verify-Host=false' "${dependency_fetcher}" >/dev/null
 	grep -F 'Acquire::Retries=5' "${dependency_fetcher}" >/dev/null
 	grep -F 'for attempt in 1 2 3' "${dependency_fetcher}" >/dev/null
+	grep -F 'if [[ -z "${apt_mirror_url}" ]]; then' "${dependency_fetcher}" >/dev/null
 done
 if rg -n 'apt_mirror_http|default Ubuntu HTTP sources' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
