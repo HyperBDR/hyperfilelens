@@ -38,7 +38,7 @@ run_gateway_sidecar_upgrade_if_needed() {
 
 const unixGatewaySidecarUninstallHook = `
 run_gateway_sidecar_uninstall_if_needed() {
-  local env_file="/var/lib/hyperfilelens-agent/agent.env"
+  local env_file="$DATA_DIR/agent.env"
   local api_base org token node_id insecure bootstrap script tmp curl_tls purge_args
   [[ -f "$env_file" ]] || return 0
   grep -q '^HFL_NODE_ROLE=gateway' "$env_file" || return 0
@@ -53,21 +53,25 @@ run_gateway_sidecar_uninstall_if_needed() {
   }
   curl_tls=()
   [[ "$insecure" != "0" ]] && curl_tls=(-k)
-  bootstrap="${api_base%/}/media/gateway-bootstrap"
-  tmp="$(mktemp -d)"
-  script="${tmp}/gateway-lifecycle.sh"
-  if ! curl "${curl_tls[@]}" -fsSL "${bootstrap}/gateway-lifecycle.sh" -o "$script"; then
-    log "WARN " "Failed to download gateway-lifecycle.sh; continuing agent uninstall."
-    rm -rf "$tmp"
-    return 0
+  script="$INSTALL_DIR/libexec/gateway-lifecycle.sh"
+  tmp=""
+  if [[ ! -x "$script" ]]; then
+    bootstrap="${api_base%/}/media/gateway-bootstrap"
+    tmp="$(mktemp -d)"
+    script="${tmp}/gateway-lifecycle.sh"
+    if ! curl "${curl_tls[@]}" -fsSL "${bootstrap}/gateway-lifecycle.sh" -o "$script"; then
+      log "FAIL " "Failed to obtain gateway-lifecycle.sh; keeping the Agent installed for retry."
+      rm -rf "$tmp"
+      return 1
+    fi
+    chmod +x "$script"
   fi
-  chmod +x "$script"
   purge_args=()
   [[ "$KEEP_DATA" == "0" ]] && purge_args=(--purge-all)
   log "INFO " "Running gateway sidecar uninstall."
   HFL_AGENT_ENV_FILE="$env_file" HFL_INSECURE_TLS="${insecure:-1}" bash "$script" uninstall-sidecar "${purge_args[@]}"
   local rc=$?
-  rm -rf "$tmp"
+  [[ -z "$tmp" ]] || rm -rf "$tmp"
   return $rc
 }
 `

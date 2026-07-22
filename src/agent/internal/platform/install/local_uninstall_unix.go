@@ -12,6 +12,7 @@ import (
 const (
 	unixServiceUnit      = "hyperfilelens-agent.service"
 	unixUnitPath         = "/etc/systemd/system/hyperfilelens-agent.service"
+	unixResourceDropIn   = "/etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf"
 	unixLaunchdPlist     = "/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
 	unixLaunchdLabel     = "com.hyperfilelens.agent"
 	unixDefaultDataRoot  = "/var/lib/hyperfilelens-agent"
@@ -80,6 +81,7 @@ DATA_DIR=%q
 LOG_FILE=%q
 KEEP_DATA=%s
 UNIT_FILE=%q
+RESOURCE_DROPIN=%q
 SERVICE_NAME=%q
 LAUNCHD_PLIST=%q
 LAUNCHD_LABEL=%q
@@ -97,7 +99,10 @@ log "detached uninstall script started install_dir=$INSTALL_DIR data_dir=$DATA_D
 sleep "$SLEEP_SECONDS"
 log "delay elapsed; running gateway sidecar uninstall when applicable"
 %s
-run_gateway_sidecar_uninstall_if_needed || log "gateway sidecar uninstall reported errors; continuing agent uninstall"
+if ! run_gateway_sidecar_uninstall_if_needed; then
+  log "gateway sidecar uninstall failed; keeping the Agent installed for retry"
+  exit 1
+fi
 log "delay elapsed; stopping service"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -132,6 +137,15 @@ elif command -v systemctl >/dev/null 2>&1; then
   fi
 else
   log "systemctl not found; skipped service stop/disable"
+fi
+
+if [[ "$(uname -s)" != "Darwin" && -f "$RESOURCE_DROPIN" ]]; then
+  if rm -f "$RESOURCE_DROPIN"; then
+    log "removed gateway resource policy $RESOURCE_DROPIN"
+    rmdir "$(dirname "$RESOURCE_DROPIN")" 2>/dev/null || true
+  else
+    log "failed to remove gateway resource policy $RESOURCE_DROPIN (exit=$?)"
+  fi
 fi
 
 if [[ "$(uname -s)" != "Darwin" && -f "$UNIT_FILE" ]]; then
@@ -224,6 +238,7 @@ log "detached uninstall script finished"
 		logFile,
 		keepFlag,
 		unixUnitPath,
+		unixResourceDropIn,
 		unixServiceUnit,
 		unixLaunchdPlist,
 		unixLaunchdLabel,

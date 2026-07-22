@@ -2,7 +2,13 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
-import { issuePlatformGatewayEnrollmentInstall } from './nodeApi'
+import {
+  fetchLifecycleWatch,
+  issuePlatformGatewayEnrollmentInstall,
+  previewNodeOperationsBatch,
+  startNodeOperation,
+  startNodeOperationsBatch,
+} from './nodeApi'
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>()
@@ -56,5 +62,31 @@ describe('platform Data Gateway enrollment', () => {
     await expect(issuePlatformGatewayEnrollmentInstall()).rejects.toThrow(
       'Platform gateway enrollment response is incomplete',
     )
+  })
+})
+
+describe('platform Data Gateway lifecycle', () => {
+  it('routes every lifecycle request through Platform Operations', async () => {
+    vi.mocked(api).mockResolvedValue({ nodes: [] })
+
+    await previewNodeOperationsBatch({
+      kind: 'remove',
+      nodeIds: [17],
+      scope: 'platform',
+    })
+    await startNodeOperationsBatch({
+      kind: 'remove',
+      nodeIds: [17],
+      scope: 'platform',
+    })
+    await startNodeOperation(17, 'remove', { scope: 'platform' })
+    await fetchLifecycleWatch([17], 'platform')
+
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      '/api/v1/platform-ops/lens/gateways/operations/preview',
+      '/api/v1/platform-ops/lens/gateways/operations/batch',
+      '/api/v1/platform-ops/lens/gateways/17/operations',
+      '/api/v1/platform-ops/lens/gateways/lifecycle-watch',
+    ])
   })
 })

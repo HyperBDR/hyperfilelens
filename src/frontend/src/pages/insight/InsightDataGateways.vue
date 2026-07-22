@@ -86,6 +86,28 @@ const detailNodeId = ref<number | null>(null)
 const renameDialogOpen = ref(false)
 const renameInput = ref('')
 const renameTarget = ref<InsightGatewayRow | null>(null)
+const offlinePendingDeleteCount = computed(
+  () => pendingDelete.value.filter((row) => row.routable === false || !row.hfl_agent_online).length,
+)
+const installerManagedPendingDelete = computed(() =>
+  pendingDelete.value.some((row) => {
+    const metadata = row.metadata as Record<string, unknown> | undefined
+    return metadata?.managed_by === 'hfl-installer'
+  }),
+)
+const deleteConfirmationMessage = computed(() => {
+  const values = {
+    n: pendingDelete.value.length,
+    offline: offlinePendingDeleteCount.value,
+  }
+  if (installerManagedPendingDelete.value) {
+    return t('insight.dataGateway.deleteInstallerManagedConfirm', values)
+  }
+  if (offlinePendingDeleteCount.value > 0) {
+    return t('insight.dataGateway.deleteOfflineConfirm', values)
+  }
+  return t('nodesPage.deleteSelectedConfirm', values)
+})
 
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
@@ -105,6 +127,7 @@ const osPlatformLabels = computed((): NodeOsPlatformLabels => ({
 
 const lifecycleOps = useNodeLifecycleOps({
   role: () => 'gateway',
+  scope: () => (isPlatformEngine.value ? 'platform' : 'tenant'),
   t,
   onRefresh: () => load(),
   onLifecyclePatch: (patched) => {
@@ -758,7 +781,7 @@ onUnmounted(() => {
     <DangerConfirmDialog
       v-model="deleteOpen"
       :title="t('nodesPage.deleteTitle')"
-      :message="t('nodesPage.deleteSelectedConfirm', { n: pendingDelete.length })"
+      :message="deleteConfirmationMessage"
       :items="pendingDelete.map((row) => ({ key: row.id, name: row.name }))"
       confirm-mode="keyword"
       :confirm-keyword="t('common.deleteKeyword')"

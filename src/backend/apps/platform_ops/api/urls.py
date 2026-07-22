@@ -27,6 +27,10 @@ from apps.platform_ops.api.views.lens import (
     PlatformOpsLensGatewayEnableAiView,
     PlatformOpsLensGatewayEnrollmentView,
     PlatformOpsLensGatewayListView,
+    PlatformOpsLensGatewayLifecycleWatchView,
+    PlatformOpsLensGatewayOperationBatchView,
+    PlatformOpsLensGatewayOperationPreviewView,
+    PlatformOpsLensGatewayOperationView,
     PlatformOpsLensGatewaySetDefaultView,
     PlatformOpsLensKnowledgeSourceSyncView,
     PlatformOpsLensKnowledgeSourceView,
@@ -183,6 +187,26 @@ urlpatterns = [
         "lens/gateways/<int:gateway_id>/set-default",
         PlatformOpsLensGatewaySetDefaultView.as_view(),
         name="platform-ops-lens-gateway-set-default",
+    ),
+    path(
+        "lens/gateways/<int:gateway_id>/operations",
+        PlatformOpsLensGatewayOperationView.as_view(),
+        name="platform-ops-lens-gateway-operation",
+    ),
+    path(
+        "lens/gateways/operations/preview",
+        PlatformOpsLensGatewayOperationPreviewView.as_view(),
+        name="platform-ops-lens-gateway-operation-preview",
+    ),
+    path(
+        "lens/gateways/operations/batch",
+        PlatformOpsLensGatewayOperationBatchView.as_view(),
+        name="platform-ops-lens-gateway-operation-batch",
+    ),
+    path(
+        "lens/gateways/lifecycle-watch",
+        PlatformOpsLensGatewayLifecycleWatchView.as_view(),
+        name="platform-ops-lens-gateway-lifecycle-watch",
     ),
     path(
         "lens/gateways/<int:gateway_id>/browse",

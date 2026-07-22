@@ -6,9 +6,11 @@ import uuid
 
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.audit.services.interface import write_audit_log
 from apps.lens_bridge.api.serializers import (
     LensGatewayEnableAiSerializer,
     LensKnowledgeSourceCreateSerializer,
@@ -36,14 +38,99 @@ from apps.lens_bridge.services.gateway_insights import list_admin_gateway_insigh
 from apps.lens_bridge.services import mcp_servers as mcp_servers_service
 from apps.lens_bridge.services import skills as skills_service
 from apps.lens_bridge.services.skills import beautify_skill
-from apps.node.models import NodeToken
+from apps.node.api.serializers.lifecycle_watch import (
+    NodeLifecycleWatchEntrySerializer,
+    NodeLifecycleWatchRequestSerializer,
+)
+from apps.node.api.serializers.node_operation import (
+    NodeOperationBatchPreviewSerializer,
+    NodeOperationBatchStartSerializer,
+    NodeOperationStartSerializer,
+)
+from apps.node.api.views.node_operation import _lifecycle_error_response
+from apps.node.models import Node, NodeToken
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.node_lifecycle import (
+    LIFECYCLE_KIND_UPGRADE,
+    preview_batch_operations,
+    start_node_remove,
+    start_node_upgrade,
+)
 from apps.node.services.internal.local_platform_gateway import platform_gateway_api_base
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
 
 
 def _platform_org():
     return platform_lens.get_or_create_platform_org()
+
+
+def _platform_gateway(gateway_id: int) -> Node | None:
+    """Return an active HFL Gateway owned by the hidden platform organization."""
+    return Node.objects.filter(
+        organization=_platform_org(),
+        role=NodeRole.GATEWAY,
+        pk=int(gateway_id),
+    ).first()
+
+
+def _preview_platform_gateway_operations(*, node_ids: list[int], kind: str) -> dict:
+    """Preview only Gateway nodes from the hidden platform organization."""
+    org = _platform_org()
+    gateway_ids = set(
+        Node.objects.filter(
+            organization=org,
+            role=NodeRole.GATEWAY,
+            pk__in=node_ids,
+        ).values_list("id", flat=True)
+    )
+    preview = preview_batch_operations(
+        org=org,
+        node_ids=[node_id for node_id in node_ids if node_id in gateway_ids],
+        kind=kind,
+    )
+    preview["requested"] = len(node_ids)
+    preview["missing_node_ids"] = [
+        node_id for node_id in node_ids if node_id not in gateway_ids
+    ]
+    return preview
+
+
+def _start_platform_gateway_operation(
+    *,
+    request: Request,
+    gateway: Node,
+    kind: str,
+    force: bool = False,
+) -> dict:
+    """Start one platform Gateway lifecycle operation through the shared service."""
+    org = _platform_org()
+    if kind == LIFECYCLE_KIND_UPGRADE:
+        result = start_node_upgrade(org=org, node=gateway, user=request.user)
+    else:
+        result = start_node_remove(
+            org=org,
+            node=gateway,
+            user=request.user,
+            force=force,
+        )
+    write_audit_log(
+        organization=org,
+        user=request.user,
+        action=f"node.lifecycle.{kind}",
+        target_type="node",
+        target_id=str(gateway.id),
+        ip_address=request.META.get("REMOTE_ADDR"),
+        user_agent=str(request.META.get("HTTP_USER_AGENT", "") or ""),
+        metadata={
+            "kind": kind,
+            "role": gateway.role,
+            "operation_id": result.get("operation_id"),
+            "task_id": result.get("task_id"),
+            "state": result.get("state"),
+            "scope": "platform",
+        },
+    )
+    return result
 
 
 class PlatformOpsLensGatewayListView(APIView):
@@ -133,6 +220,120 @@ class PlatformOpsLensGatewaySetDefaultView(APIView):
                 "is_platform_default": link.is_platform_default,
             }
         )
+
+
+class PlatformOpsLensGatewayOperationView(APIView):
+    """Start upgrade/remove for one hidden platform Data Gateway."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def post(self, request, gateway_id: int):
+        gateway = _platform_gateway(gateway_id)
+        if gateway is None:
+            return Response(
+                {"detail": "Platform Data Gateway not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        body = NodeOperationStartSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            result = _start_platform_gateway_operation(
+                request=request,
+                gateway=gateway,
+                kind=body.validated_data["kind"],
+                force=bool(body.validated_data.get("force")),
+            )
+        except Exception as exc:
+            return _lifecycle_error_response(exc)
+        return Response(result, status=status.HTTP_202_ACCEPTED)
+
+
+class PlatformOpsLensGatewayOperationPreviewView(APIView):
+    """Preview lifecycle eligibility for hidden platform Data Gateways."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def post(self, request):
+        body = NodeOperationBatchPreviewSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        return Response(
+            _preview_platform_gateway_operations(
+                node_ids=body.validated_data["node_ids"],
+                kind=body.validated_data["kind"],
+            )
+        )
+
+
+class PlatformOpsLensGatewayOperationBatchView(APIView):
+    """Start a bounded batch of hidden platform Gateway lifecycle operations."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def post(self, request):
+        body = NodeOperationBatchStartSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        values = body.validated_data
+        preview = _preview_platform_gateway_operations(
+            node_ids=values["node_ids"],
+            kind=values["kind"],
+        )
+        max_concurrent = int(
+            values.get("max_concurrent") or preview.get("max_concurrent") or 5
+        )
+        eligible = preview.get("eligible") or []
+        started: list[dict] = []
+        errors: list[dict] = []
+        for item in eligible[:max_concurrent]:
+            gateway = _platform_gateway(item["node_id"])
+            if gateway is None:
+                errors.append({"node_id": item["node_id"], "error": "not_found"})
+                continue
+            try:
+                started.append(
+                    _start_platform_gateway_operation(
+                        request=request,
+                        gateway=gateway,
+                        kind=values["kind"],
+                        force=bool(values.get("force")),
+                    )
+                )
+            except Exception as exc:
+                response = _lifecycle_error_response(exc)
+                errors.append({"node_id": gateway.id, **response.data})
+        return Response(
+            {
+                **preview,
+                "max_concurrent": max_concurrent,
+                "started": started,
+                "queued": eligible[max_concurrent:],
+                "errors": errors,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class PlatformOpsLensGatewayLifecycleWatchView(APIView):
+    """Poll lifecycle state for platform Gateway operations."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def post(self, request):
+        body = NodeLifecycleWatchRequestSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        org = _platform_org()
+        gateways = list(
+            Node.objects.filter(
+                organization=org,
+                role=NodeRole.GATEWAY,
+                pk__in=body.validated_data["node_ids"],
+            ).order_by("id")
+        )
+        payload = NodeLifecycleWatchEntrySerializer(
+            gateways,
+            many=True,
+            context={"org": org},
+        ).data
+        return Response({"nodes": payload})
 
 
 class PlatformOpsLensModelProxyView(APIView):

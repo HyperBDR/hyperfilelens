@@ -5,7 +5,7 @@ set -euo pipefail
 
 ENV_FILE="${HFL_AGENT_ENV_FILE:-/var/lib/hyperfilelens-agent/agent.env}"
 LENS_ENV_FILE="${HFL_LENS_ENV_FILE:-/etc/hyperfilelens/lensnode.env}"
-COMPOSE_DIR="/etc/hyperfilelens/lensnode"
+COMPOSE_DIR="${HFL_GATEWAY_COMPOSE_DIR:-/etc/hyperfilelens/lensnode}"
 GATEWAY_BOOTSTRAP_BASE=""
 HFL_API_BASE=""
 HFL_ORG_KEY=""
@@ -18,6 +18,7 @@ LENSNODE_IMAGE_ARCHIVE="lensnode-image-linux-amd64.tar.gz"
 SIDECAR_INSTALL_SCRIPT="gateway-install-lensnode-sidecar.sh"
 COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
+OWNED_LENSNODE_IMAGES=("${DEFAULT_LENSNODE_IMAGE}")
 
 hfl_now() {
 	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
@@ -56,14 +57,19 @@ read_env_value() {
 }
 
 load_agent_credentials() {
-	[[ -f "${ENV_FILE}" ]] || hfl_fail "missing ${ENV_FILE}" 2
+	load_agent_credentials_optional || hfl_fail "missing or incomplete ${ENV_FILE}" 2
+}
+
+load_agent_credentials_optional() {
+	[[ -f "${ENV_FILE}" ]] || return 1
 	HFL_API_BASE="$(read_env_value "${ENV_FILE}" HFL_API_BASE)"
 	HFL_ORG_KEY="$(read_env_value "${ENV_FILE}" HFL_ORG_KEY)"
 	HFL_NODE_TOKEN="$(read_env_value "${ENV_FILE}" HFL_NODE_TOKEN)"
 	HFL_NODE_ID="$(read_env_value "${ENV_FILE}" HFL_NODE_ID)"
 	[[ -n "${HFL_API_BASE}" && -n "${HFL_ORG_KEY}" && -n "${HFL_NODE_TOKEN}" && -n "${HFL_NODE_ID}" ]] \
-		|| hfl_fail "incomplete agent credentials in ${ENV_FILE}" 2
+		|| return 1
 	GATEWAY_BOOTSTRAP_BASE="${HFL_API_BASE%/}/media/gateway-bootstrap"
+	return 0
 }
 
 report_lifecycle_status() {
@@ -93,6 +99,12 @@ ensure_docker_ready() {
 	docker info >/dev/null 2>&1 || hfl_fail "docker daemon not reachable" 3
 }
 
+remember_owned_lensnode_image() {
+	local image=${1:-}
+	[[ -n "${image}" ]] || return 0
+	OWNED_LENSNODE_IMAGES+=("${image}")
+}
+
 remove_owned_legacy_gateway_containers() {
 	local id project service working_dir config_files
 	while IFS= read -r id; do
@@ -106,21 +118,44 @@ remove_owned_legacy_gateway_containers() {
 			&& ",${config_files}," != *",${COMPOSE_DIR}/docker-compose.yml,"* ]]; then
 			continue
 		fi
+		remember_owned_lensnode_image "$(docker inspect --format '{{.Config.Image}}' "${id}" 2>/dev/null || true)"
 		hfl_log "Removing owned legacy Gateway container ${id:0:12} from project sourcelens."
 		docker rm -f "${id}" >/dev/null
 	done < <(docker ps -aq --no-trunc)
 }
 
 compose_down_sidecar() {
+	local id
 	remove_owned_legacy_gateway_containers
-	if [[ ! -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
-		return 0
-	fi
-	if docker compose version >/dev/null 2>&1; then
+	if [[ -f "${COMPOSE_DIR}/docker-compose.yml" ]]; then
+		docker compose version >/dev/null 2>&1 \
+			|| hfl_fail "Docker Compose v2 is required to remove the LensNode sidecar" 3
+		while IFS= read -r image; do
+			remember_owned_lensnode_image "${image}"
+		done < <(
+			cd "${COMPOSE_DIR}"
+			docker compose -p "${COMPOSE_PROJECT}" config --images 2>/dev/null || true
+		)
 		(
 			cd "${COMPOSE_DIR}"
-			docker compose -p "${COMPOSE_PROJECT}" down || true
+			docker compose -p "${COMPOSE_PROJECT}" down --remove-orphans
 		)
+	fi
+	while IFS= read -r id; do
+		[[ -n "${id}" ]] || continue
+		remember_owned_lensnode_image "$(docker inspect --format '{{.Config.Image}}' "${id}" 2>/dev/null || true)"
+		hfl_log "Removing owned Gateway LensNode container ${id:0:12}."
+		docker rm -f "${id}" >/dev/null
+	done < <(
+		docker ps -aq \
+			--filter 'label=com.hyperfilelens.managed=true' \
+			--filter 'label=com.hyperfilelens.component=gateway-lensnode'
+	)
+	if docker ps -aq \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		| grep -q .; then
+		hfl_fail "Gateway LensNode containers remain after uninstall" 4
 	fi
 }
 
@@ -185,7 +220,18 @@ cmd_upgrade_sidecar() {
 }
 
 remove_lensnode_images() {
-	docker image rm -f "${DEFAULT_LENSNODE_IMAGE}" 2>/dev/null || true
+	local image
+	local -A seen=()
+	for image in "${OWNED_LENSNODE_IMAGES[@]}"; do
+		[[ -n "${image}" && -z "${seen[${image}]:-}" ]] || continue
+		seen["${image}"]=1
+		if docker ps -aq --filter "ancestor=${image}" | grep -q .; then
+			hfl_log "Keeping shared LensNode image ${image}; another container still references it."
+			continue
+		fi
+		docker image rm "${image}" >/dev/null 2>&1 \
+			|| hfl_log "LensNode image ${image} was absent or retained by Docker."
+	done
 }
 
 purge_sidecar_artifacts() {
@@ -208,7 +254,10 @@ purge_sidecar_artifacts() {
 }
 
 cmd_uninstall_sidecar() {
-	load_agent_credentials
+	if ! load_agent_credentials_optional; then
+		hfl_log "Agent credentials are unavailable; continuing local LensNode cleanup without status reporting."
+	fi
+	ensure_docker_ready
 	report_lifecycle_status "sidecar_uninstall" "running"
 	if [[ "${PURGE_ALL}" -eq 1 ]]; then
 		purge_sidecar_artifacts

@@ -11,11 +11,13 @@ BUNDLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Unix paths use product slug "hyperfilelens-agent" (see internal/platform/vfs/paths.go).
 INSTALL_DIR="/opt/hyperfilelens-agent"
 UNIT_DST="/etc/systemd/system/hyperfilelens-agent.service"
+GATEWAY_RESOURCE_DROPIN="/etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf"
 DEFAULT_DATA="/var/lib/hyperfilelens-agent"
 INSTALLED_VERSION_FILE="${INSTALL_DIR}/INSTALLED_VERSION"
 LAUNCHD_PLIST="/Library/LaunchDaemons/com.hyperfilelens.agent.plist"
 LAUNCHD_LABEL="com.hyperfilelens.agent"
 RUN_AGENT_SCRIPT="${INSTALL_DIR}/run-agent.sh"
+GATEWAY_LIFECYCLE_SCRIPT="${INSTALL_DIR}/libexec/gateway-lifecycle.sh"
 
 if [[ $# -eq 0 ]]; then
 	CMD="install"
@@ -81,10 +83,14 @@ Options:
 
 Install paths:
   /opt/hyperfilelens-agent                         Binaries and installer scripts
+  /opt/hyperfilelens-agent/libexec/gateway-lifecycle.sh
+                                                   Data Gateway LensNode lifecycle helper
   /var/lib/hyperfilelens-agent                     Runtime data, backup, and configuration
   /var/lib/hyperfilelens-agent/backup/state/       Pre-upgrade agent.env/agent.db snapshot (retained until uninstall --purge-all)
   /opt/hyperfilelens-agent/backup/                 Legacy upgrade archives (removed on uninstall)
   /etc/systemd/system/hyperfilelens-agent.service  systemd unit (Linux)
+  /etc/systemd/system/hyperfilelens-agent.service.d/20-gateway-resources.conf
+                                                   Soft resource policy for role=gateway
   /Library/LaunchDaemons/com.hyperfilelens.agent.plist  LaunchDaemon (macOS)
 
 Examples:
@@ -552,6 +558,7 @@ backup_upgrade_binaries() {
 	[[ -f "${INSTALL_DIR}/kopia" ]] && cp -a "${INSTALL_DIR}/kopia" "${UPGRADE_BIN_BACKUP}/"
 	[[ -f "${INSTALL_DIR}/MANIFEST.json" ]] && cp -a "${INSTALL_DIR}/MANIFEST.json" "${UPGRADE_BIN_BACKUP}/"
 	[[ -f "${INSTALLED_VERSION_FILE}" ]] && cp -a "${INSTALLED_VERSION_FILE}" "${UPGRADE_BIN_BACKUP}/"
+	[[ -d "${INSTALL_DIR}/libexec" ]] && cp -a "${INSTALL_DIR}/libexec" "${UPGRADE_BIN_BACKUP}/"
 	log_ok "backed up binaries -> ${UPGRADE_BIN_BACKUP}"
 }
 
@@ -561,6 +568,10 @@ restore_upgrade_binaries() {
 	[[ -f "${UPGRADE_BIN_BACKUP}/kopia" ]] && cp -a "${UPGRADE_BIN_BACKUP}/kopia" "${INSTALL_DIR}/"
 	[[ -f "${UPGRADE_BIN_BACKUP}/MANIFEST.json" ]] && cp -a "${UPGRADE_BIN_BACKUP}/MANIFEST.json" "${INSTALL_DIR}/"
 	[[ -f "${UPGRADE_BIN_BACKUP}/INSTALLED_VERSION" ]] && cp -a "${UPGRADE_BIN_BACKUP}/INSTALLED_VERSION" "${INSTALLED_VERSION_FILE}"
+	rm -rf "${INSTALL_DIR}/libexec"
+	if [[ -d "${UPGRADE_BIN_BACKUP}/libexec" ]]; then
+		cp -a "${UPGRADE_BIN_BACKUP}/libexec" "${INSTALL_DIR}/"
+	fi
 	log_warn "restored binaries from ${UPGRADE_BIN_BACKUP}"
 }
 
@@ -828,12 +839,18 @@ deploy_admin_scripts() {
 	local src_root="${1:-${BUNDLE_ROOT}}"
 	local src_script="${src_root}/install.sh"
 	local src_manifest="${src_root}/MANIFEST.json"
+	local src_gateway_lifecycle="${src_root}/libexec/gateway-lifecycle.sh"
 	[[ -f "$src_script" ]] || log_fail "Missing bundle installer: ${src_script}." 2
 	install -m 755 "$src_script" "${INSTALL_DIR}/install.sh"
 	log_ok "deployed ${INSTALL_DIR}/install.sh"
 	if [[ -f "$src_manifest" ]]; then
 		install -m 644 "$src_manifest" "${INSTALL_DIR}/MANIFEST.json"
 		log_ok "deployed ${INSTALL_DIR}/MANIFEST.json"
+	fi
+	if [[ "$(uname -s)" == "Linux" && -f "${src_gateway_lifecycle}" ]]; then
+		install -d -m 755 "${INSTALL_DIR}/libexec"
+		install -m 755 "${src_gateway_lifecycle}" "${GATEWAY_LIFECYCLE_SCRIPT}"
+		log_ok "deployed ${GATEWAY_LIFECYCLE_SCRIPT}"
 	fi
 }
 
@@ -920,6 +937,61 @@ EOF
 	fi
 }
 
+configure_gateway_resource_policy() {
+	local env_file="$1" role=""
+	[[ "$(uname -s)" == "Linux" ]] || return 0
+	role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
+	if [[ "${role}" != "gateway" ]]; then
+		rm -f "${GATEWAY_RESOURCE_DROPIN}"
+		return 0
+	fi
+	install -d -m 755 "$(dirname "${GATEWAY_RESOURCE_DROPIN}")"
+	cat >"${GATEWAY_RESOURCE_DROPIN}" <<'EOF'
+[Service]
+CPUAccounting=true
+CPUWeight=50
+IOAccounting=true
+IOWeight=50
+MemoryAccounting=true
+MemoryHigh=768M
+TasksMax=256
+EOF
+	chmod 644 "${GATEWAY_RESOURCE_DROPIN}"
+	log_ok "installed Data Gateway soft resource policy ${GATEWAY_RESOURCE_DROPIN}"
+}
+
+gateway_resource_preflight() {
+	local role="$1" data_dir="$2" available_kb=0 free_kb=0 check_path=""
+	[[ "${role}" == "gateway" && "$(uname -s)" == "Linux" ]] || return 0
+	available_kb="$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)"
+	if [[ "${available_kb}" =~ ^[0-9]+$ ]]; then
+		if [[ "${available_kb}" -lt 1048576 ]]; then
+			log_fail "Data Gateway installation needs at least 1GiB available memory; found $((available_kb / 1024))MiB." 2
+		elif [[ "${available_kb}" -lt 2097152 ]]; then
+			log_warn "Data Gateway has less than 2GiB available memory ($((available_kb / 1024))MiB)."
+		else
+			log_ok "Data Gateway memory preflight passed ($((available_kb / 1024))MiB available)"
+		fi
+	fi
+	check_path="${data_dir}"
+	while [[ ! -e "${check_path}" && "${check_path}" != "/" ]]; do
+		check_path="$(dirname "${check_path}")"
+	done
+	free_kb="$(df -Pk "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+	if [[ "${free_kb}" =~ ^[0-9]+$ ]]; then
+		if [[ "${free_kb}" -lt 10485760 ]]; then
+			log_fail "Data Gateway installation needs at least 10GiB free disk space; found $((free_kb / 1024))MiB." 2
+		elif [[ "${free_kb}" -lt 20971520 ]]; then
+			log_warn "Data Gateway has less than 20GiB free disk space ($((free_kb / 1024))MiB)."
+		else
+			log_ok "Data Gateway disk preflight passed ($((free_kb / 1024))MiB free)"
+		fi
+	fi
+	if [[ -r /proc/swaps ]] && [[ "$(wc -l </proc/swaps)" -le 1 ]]; then
+		log_warn "No swap is configured; monitor host memory pressure for this Data Gateway."
+	fi
+}
+
 stop_service() {
 	if agent_uses_launchd; then
 		stop_launchd_service
@@ -971,6 +1043,11 @@ disable_service() {
 }
 
 remove_systemd_unit() {
+	if [[ -f "${GATEWAY_RESOURCE_DROPIN}" ]]; then
+		rm -f "${GATEWAY_RESOURCE_DROPIN}"
+		rmdir "$(dirname "${GATEWAY_RESOURCE_DROPIN}")" 2>/dev/null || true
+		log_ok "removed Data Gateway resource policy ${GATEWAY_RESOURCE_DROPIN}"
+	fi
 	if [[ -f "$UNIT_DST" ]]; then
 		rm -f "$UNIT_DST"
 		log_ok "removed unit ${UNIT_DST}"
@@ -987,6 +1064,7 @@ install_systemd_unit_logged() {
 	local env_file="$1"
 	local src_root="${2:-${BUNDLE_ROOT}}"
 	install_systemd_unit "$env_file" "$src_root"
+	configure_gateway_resource_policy "$env_file"
 	log_ok "installed unit ${UNIT_DST}"
 }
 
@@ -1053,6 +1131,7 @@ cmd_install() {
 		log_info "Platform: $(uname -s | tr '[:upper:]' '[:lower:]')/$(bundle_arch) · Role: ${NODE_ROLE} · Install dir: ${INSTALL_DIR} · Data dir: ${DATA_DIR}."
 	fi
 
+	gateway_resource_preflight "${NODE_ROLE}" "${DATA_DIR}"
 	install_nas_deps "${NODE_ROLE}"
 	deploy_binaries
 	write_agent_env "${DATA_DIR}/agent.env"
@@ -1268,17 +1347,35 @@ remove_install_file() {
 	fi
 }
 
+uninstall_gateway_sidecar_if_needed() {
+	local env_file="$1" role="" purge_args=()
+	[[ "${HFL_SKIP_GATEWAY_SIDECAR_UNINSTALL:-0}" != "1" ]] || return 0
+	role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
+	[[ "${role}" == "gateway" ]] || return 0
+	[[ "$(uname -s)" == "Linux" ]] \
+		|| log_fail "Data Gateway LensNode uninstall is supported on Linux only." 2
+	[[ -x "${GATEWAY_LIFECYCLE_SCRIPT}" ]] \
+		|| log_fail "Missing ${GATEWAY_LIFECYCLE_SCRIPT}; upgrade the Agent before uninstalling this Data Gateway." 2
+	[[ "${PURGE_ALL}" -eq 0 ]] || purge_args+=(--purge-all)
+	log_step "Removing the Data Gateway LensNode sidecar before the Agent."
+	HFL_AGENT_ENV_FILE="${env_file}" \
+		bash "${GATEWAY_LIFECYCLE_SCRIPT}" uninstall-sidecar "${purge_args[@]}"
+	log_ok "Data Gateway LensNode sidecar removal completed."
+}
+
 cmd_uninstall() {
 	parse_uninstall_flags "$@"
 	require_root
 
-	local resolved_data env_file="${DEFAULT_DATA}/agent.env"
+	local resolved_data env_file
 	resolved_data="$(resolve_data_dir)"
+	env_file="${resolved_data}/agent.env"
 	begin_uninstall_log "${resolved_data}"
 	trap 'finish_uninstall_log $?' EXIT
 
 	log_info "Starting HyperFileLens agent uninstallation."
 	log_info "Install dir: ${INSTALL_DIR} · Data dir: ${resolved_data} · Purge data: $([[ $PURGE_ALL -eq 1 ]] && echo yes || echo no)."
+	uninstall_gateway_sidecar_if_needed "${env_file}"
 
 	stop_service
 	remove_service_unit
