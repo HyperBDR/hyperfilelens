@@ -410,6 +410,9 @@ grep -F 'sync_default_tls_bundle "${from_root}/deploy/nginx/certs"' "${installer
 grep -F 'Preserving existing TLS certificate directory' "${installer}" >/dev/null
 grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
 grep -F 'apply_runtime_configuration' "${installer}" >/dev/null
+backup_body="$(sed -n '/^backup_postgresql_dump()/,/^}/p' "${installer}")"
+grep -F 'COMPOSE=(docker compose)' <<<"${backup_body}" >/dev/null
+grep -F 'skipping logical database backup before file backup' <<<"${backup_body}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
@@ -425,6 +428,8 @@ grep -F 'smoke_host="${SMOKE_HOST:-host.docker.internal}"' "${release_verifier}"
 grep -F 'HFL_PUBLIC_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'export SMOKE_HOST="${smoke_host}"' "${release_verifier}" >/dev/null
 grep -F 'SEED_ADMIN_EMAIL="$(sudo sed' "${release_verifier}" >/dev/null
+grep -F 'upgrade --from "${pkg_root}" --yes' "${release_verifier}" >/dev/null
+grep -F 'Full release install, upgrade, and login verification passed' "${release_verifier}" >/dev/null
 grep -F 'sudo env \' "${release_verifier}" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
