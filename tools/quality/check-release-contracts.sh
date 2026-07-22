@@ -413,6 +413,11 @@ grep -F 'apply_runtime_configuration' "${installer}" >/dev/null
 backup_body="$(sed -n '/^backup_postgresql_dump()/,/^}/p' "${installer}")"
 grep -F 'COMPOSE=(docker compose)' <<<"${backup_body}" >/dev/null
 grep -F 'skipping logical database backup before file backup' <<<"${backup_body}" >/dev/null
+[[ "$(grep -Fc 'sourcelens_compose exec -T postgres' <<<"${backup_body}")" -eq 2 ]]
+if grep -E 'sourcelens_compose (ps -q|exec -T) postgresql' <<<"${backup_body}" >/dev/null; then
+	printf 'ERROR: bundled SourceLens PostgreSQL Compose service is named postgres\n' >&2
+	exit 1
+fi
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
