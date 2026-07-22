@@ -30,6 +30,8 @@ export type TargetRepositoryItem = {
   proxyNodeDir?: string | null
   usedBytes?: number
   capacityBytes?: number
+  disabled?: boolean
+  disabledReason?: string | null
 }
 
 const props = withDefaults(defineProps<{
@@ -308,6 +310,7 @@ function nasProtocolLabel(protocol?: string | null): string {
               :key="target.id"
               :label="target.name"
               :value="target.id"
+              :disabled="target.disabled"
             >
               <HflPopover
                 ref="optionPopoverRefs"
@@ -349,6 +352,9 @@ function nasProtocolLabel(protocol?: string | null): string {
                       </span>
                     </div>
                     <span class="target-repository-picker-option__location">{{ target.location }}</span>
+                    <span v-if="target.disabledReason" class="target-repository-picker-option__disabled-reason">
+                      {{ target.disabledReason }}
+                    </span>
                   </div>
                 </template>
                 <TargetRepositoryDetailCard :target="target" />
@@ -367,6 +373,15 @@ function nasProtocolLabel(protocol?: string | null): string {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.target-repository-picker-option__disabled-reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--el-color-danger, #dc2626);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: normal;
 }
 
 .target-repository-picker--compact {

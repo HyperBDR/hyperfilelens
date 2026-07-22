@@ -10,6 +10,8 @@ from apps.iam.models import Membership, Organization
 from apps.node.models import Node
 from apps.node.agent_paths import repository_mount_point
 from apps.protection.models import BackupConfig
+from apps.source.constants import ResourceType
+from apps.source.models import SourceResource
 from apps.storage.services.internal.repository_initializer import RepositoryInitializationError
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
@@ -253,10 +255,51 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(row["source_name"], "source-agent")
         self.assertEqual(row["source_kind"], "host")
         self.assertEqual(row["node_ip"], "10.0.8.10")
+        self.assertEqual(row["registered_at"], agent.created_at.isoformat())
         self.assertEqual(row["nas_location"], "nfs://192.168.8.82/nfsshare")
         self.assertEqual(row["repository_subdir"], f"hp-repos/agent-{agent.id}")
         self.assertEqual(row["repository_mount_point"], f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{agent.id}")
         self.assertEqual(row["health"], Repository.Health.ONLINE)
+
+    def test_associated_sources_exposes_nas_registration_and_missing_source_fallback(self):
+        repo = Repository.objects.create(
+            organization_id=self.org.id,
+            name="associated-source-metadata",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+        )
+        nas_source = SourceResource.objects.create(
+            organization=self.org,
+            name="registered-nas-source",
+            resource_type=ResourceType.NAS,
+        )
+        BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="missing agent backup",
+            source_type="agent",
+            source_ref_id=999999,
+            repository_id=repo.id,
+        )
+        BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="nas backup",
+            source_type="nas",
+            source_ref_id=nas_source.id,
+            repository_id=repo.id,
+        )
+
+        response = self.client.get(
+            f"/api/v1/storage/repositories/{repo.id}/associated-sources/",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        rows = {row["source_type"]: row for row in response.data["results"]}
+        self.assertEqual(rows["agent"]["source_ref_id"], 999999)
+        self.assertIsNone(rows["agent"]["registered_at"])
+        self.assertEqual(rows["nas"]["source_ref_id"], nas_source.id)
+        self.assertEqual(rows["nas"]["registered_at"], nas_source.created_at.isoformat())
 
     def test_associated_sources_is_paginated_and_supports_non_nas_repositories(self):
         agent_a = Node.objects.create(
@@ -383,6 +426,7 @@ class StorageRepositoryApiTests(TestCase):
                     "share_path": "backup",
                     "smb_username": "backup_user",
                     "smb_password": "secret-pass",
+                    "proxy_repository_server_host": "Repo-Proxy.Example.Internal.",
                 },
             },
             format="json",
@@ -391,6 +435,8 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
         self.assertEqual(response.data["status"], Repository.Status.CREATED)
         self.assertEqual(response.data["health"], Repository.Health.ONLINE)
+        self.assertEqual(response.data["cross_proxy_access"]["reason"], "ready")
+        self.assertEqual(response.data["cross_proxy_access"]["host"], "repo-proxy.example.internal")
         repo = Repository.objects.get(name="proxy-nas")
         self.assertEqual(repo.config["share_path"], "/backup")
         self.assertEqual(
@@ -399,6 +445,31 @@ class StorageRepositoryApiTests(TestCase):
         )
         initialize_nas.assert_called_once()
         enqueue_usage.assert_called_once()
+
+    def test_create_repository_rejects_repository_server_url(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="proxy-invalid-server-host",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+        )
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            {
+                "name": "invalid-server-host",
+                "repo_type": "proxy_fs",
+                "bind_node_type": "proxy",
+                "bind_node_id": proxy.id,
+                "config": {
+                    "proxy_node_dir": "/data/repository",
+                    "proxy_repository_server_host": "https://repo.example.test:51515",
+                },
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
     @mock.patch("apps.storage.services.interface.initialize_s3_repository")

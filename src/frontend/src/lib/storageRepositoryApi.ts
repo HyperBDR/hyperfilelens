@@ -17,6 +17,12 @@ export type StorageRepositoryHealth = 'online' | 'offline' | 'unverified'
 export type StorageRepositoryNasProtocol = 'smb' | 'nfs'
 export type StorageRepositoryBindNodeType = 'proxy'
 export type StorageRepositoryS3Platform = 'aws' | 'huawei' | 'aliyun' | 'custom'
+export type StorageRepositoryCrossProxyAccess = {
+  enabled: boolean
+  ready: boolean
+  host: string | null
+  reason: 'ready' | 'not_applicable' | 'feature_disabled' | 'proxy_missing' | 'proxy_offline' | 'host_missing' | string
+}
 
 export type StorageRepository = {
   id: number
@@ -43,6 +49,7 @@ export type StorageRepository = {
   bind_node_id?: number | string | null
   bind_node_display_name?: string | null
   bind_node_ip?: string | null
+  cross_proxy_access?: StorageRepositoryCrossProxyAccess
 }
 
 export type StorageRepositoryAssociatedSource = {
@@ -62,6 +69,7 @@ export type StorageRepositoryAssociatedSource = {
   bound_node_id?: number | null
   mount_status?: string | null
   mount_point?: string | null
+  registered_at: string | null
   nas_location?: string | null
   repository_subdir?: string | null
   repository_mount_point?: string | null
@@ -103,6 +111,7 @@ export type StorageRepositoryUpdatePayload = {
     quota_alert_threshold?: number
     access_key_id?: string
     secret_access_key?: string
+    proxy_repository_server_host?: string
     [key: string]: unknown
   }
 }
@@ -124,6 +133,7 @@ export type StorageRepositoryRepairConfig = {
   smb_username?: string
   smb_password?: string
   smb_domain?: string
+  proxy_repository_server_host?: string
   [key: string]: unknown
 }
 

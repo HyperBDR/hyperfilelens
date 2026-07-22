@@ -2719,8 +2719,16 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 class="hfl-list-table repo-associated-sources__table"
               >
                 <ElTableColumn
+                  :label="t('repositoriesPage.associatedSourceColId')"
+                  :width="isDirectNasAssociatedSources() ? 80 : 90"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-mono">{{ row.source_ref_id }}</span>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn
                   :label="t('repositoriesPage.associatedSourceColSource')"
-                  :min-width="isDirectNasAssociatedSources() ? 198 : 260"
+                  :min-width="isDirectNasAssociatedSources() ? 160 : 260"
                 >
                   <template #default="{ row }">
                     <div class="repo-associated-source-cell">
@@ -2808,7 +2816,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <ElTableColumn
                   v-if="isDirectNasAssociatedSources()"
                   :label="t('repositoriesPage.associatedSourceColNasConnectivity')"
-                  min-width="171"
+                  min-width="129"
                 >
                   <template #default="{ row }">
                     <div class="repo-associated-health-cell">
@@ -2835,6 +2843,15 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <ElTag size="small" v-bind="associatedSourceStatusTagAttrs(row.status)">
                       {{ associatedSourceStatusLabel(row.status) }}
                     </ElTag>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn
+                  v-if="!isDirectNasAssociatedSources()"
+                  :label="t('repositoriesPage.colRegistered')"
+                  min-width="170"
+                >
+                  <template #default="{ row }">
+                    <span class="hfl-table-cell-time">{{ formatLocalDateTime(row.registered_at) }}</span>
                   </template>
                 </ElTableColumn>
               </ElTable>
