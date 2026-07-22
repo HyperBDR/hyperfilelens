@@ -196,8 +196,12 @@ def _test_connection(config_uuid: uuid.UUID) -> bool:
     try:
         response = sl_client.request_json(
             "POST",
-            f"/api/v1/admin/llm-config/{config_uuid}/test-call/",
-            json_body={},
+            "/api/v1/admin/llm-config/test-call/",
+            json_body={
+                "config_uuid": str(config_uuid),
+                "prompt": "Respond with exactly OK and no explanation.",
+                "max_tokens": 512,
+            },
             timeout=90,
         )
     except sl_client.LensBridgeError:
