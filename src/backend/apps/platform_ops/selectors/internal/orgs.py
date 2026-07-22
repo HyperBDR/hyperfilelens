@@ -49,7 +49,11 @@ def _with_operational_counts(qs: QuerySet) -> QuerySet:
             filter=Q(memberships__is_active=True),
             distinct=True,
         ),
-        node_count=Count("nodes", distinct=True),
+        node_count=Count(
+            "nodes",
+            filter=Q(nodes__is_deleted=False),
+            distinct=True,
+        ),
         incident_count=Count(
             "alert_records",
             filter=Q(alert_records__status=AlertStatus.FIRING),

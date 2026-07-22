@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted, useSlots, type Component } from 'vue'
+import { ref, computed, useSlots, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 const slots = useSlots()
 import Sidebar from './Sidebar.vue'
@@ -47,27 +47,7 @@ const isAdminSettingsShell = computed(
 )
 
 const collapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
-const viewportCollapsed = ref(false)
-const responsiveCollapsedOverride = ref<boolean | null>(null)
-const effectiveCollapsed = computed(
-  () => responsiveCollapsedOverride.value ?? (collapsed.value || viewportCollapsed.value),
-)
-
-function updateResponsiveSidebar() {
-  const nextViewportCollapsed = route.path.startsWith('/platform-ops') && window.innerWidth <= 900
-  if (nextViewportCollapsed === viewportCollapsed.value) return
-  viewportCollapsed.value = nextViewportCollapsed
-  responsiveCollapsedOverride.value = null
-}
-
-onMounted(() => {
-  updateResponsiveSidebar()
-  window.addEventListener('resize', updateResponsiveSidebar)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateResponsiveSidebar)
-})
+const effectiveCollapsed = computed(() => collapsed.value)
 
 // Convert side items to menu format if side prop is provided
 const menuItems = computed<MenuItem[]>(() => {
@@ -128,10 +108,6 @@ const displayTitle = computed(() => {
 })
 
 function toggleSidebar() {
-  if (viewportCollapsed.value) {
-    responsiveCollapsedOverride.value = !effectiveCollapsed.value
-    return
-  }
   collapsed.value = !collapsed.value
   localStorage.setItem('sidebar-collapsed', String(collapsed.value))
 }
