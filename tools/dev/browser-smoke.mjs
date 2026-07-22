@@ -178,11 +178,20 @@ async function verifyResponsivePlatformPrimaryAction(page, adminBaseUrl) {
   const createUser = page.locator('.platform-account-page__lead .el-button').first()
   await createUser.waitFor({ state: 'visible', timeout: 30_000 })
   await createUser.click()
-  await page.waitForURL(url => (
-    url.pathname === '/platform-ops/users' && url.searchParams.get('create') === '1'
-  ))
-  await page.locator('.platform-ops-main').waitFor({ state: 'visible', timeout: 30_000 })
-  await assertNoDocumentOverflow(page, 'Create User page')
+  // UserList consumes ?create=1 immediately and replaces the URL after opening
+  // the drawer, so the stable UI state is the route plus the visible drawer.
+  await page.waitForURL(url => url.pathname === '/platform-ops/users')
+  const drawer = page.locator('.el-drawer:visible').first()
+  await drawer.waitFor({ state: 'visible', timeout: 30_000 })
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.el-drawer')
+    if (!element) return false
+    const box = element.getBoundingClientRect()
+    return box.left >= -1 && box.top >= -1
+      && box.right <= window.innerWidth + 1 && box.bottom <= window.innerHeight + 1
+  }, null, { timeout: 30_000 })
+  await assertInsideViewport(page, drawer, 'Create User drawer')
+  await assertNoDocumentOverflow(page, 'Create User drawer')
 }
 
 async function verifyAuthenticationViewport(browser, baseUrl, viewport) {
