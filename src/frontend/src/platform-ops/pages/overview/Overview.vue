@@ -83,7 +83,7 @@ const kpis = computed<KpiCard[]>(() => [
     }),
     tone: metricNumber('alerts_firing') > 0 ? 'danger' : 'neutral',
     icon: AlertTriangle,
-    to: { path: '/platform-ops/monitoring/incidents', query: { status: 'firing' } },
+    to: { path: '/platform-ops/alert-center/incidents', query: { status: 'firing' } },
   },
   {
     key: 'tasks',
@@ -200,7 +200,7 @@ const needsAttention = computed(() => [
     label: t('platformOps.overview.notificationFailures'),
     value: metricNumber('notifications_failed_in_range'),
     tone: 'danger',
-    to: '/platform-ops/monitoring/notification-deliveries?status=failed',
+    to: '/platform-ops/alert-center/notification-history?status=failed',
   },
   {
     key: 'subscriptions',
@@ -353,7 +353,7 @@ onMounted(load)
           </div>
           <RouterLink
             class="overview-text-link"
-            to="/platform-ops/monitoring/system-health"
+            to="/platform-ops/monitoring/monitor"
           >
             {{ t('platformOps.overview.viewMonitor') }}
             <ArrowRight
@@ -433,7 +433,7 @@ onMounted(load)
             </ul>
             <RouterLink
               class="overview-text-link overview-panel__footer-link"
-              to="/platform-ops/monitoring/system-health"
+              to="/platform-ops/monitoring/monitor"
             >
               {{ t('platformOps.overview.viewMonitor') }}
               <ArrowRight
@@ -450,7 +450,7 @@ onMounted(load)
               <h2>{{ t('platformOps.overview.recentIncidents') }}</h2>
               <RouterLink
                 class="overview-text-link"
-                to="/platform-ops/monitoring/incidents"
+                to="/platform-ops/alert-center/incidents"
               >
                 {{ t('platformOps.overview.viewAll') }}
                 <ArrowRight

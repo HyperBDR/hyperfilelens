@@ -158,7 +158,12 @@ async function promptResetPassword() {
 
 function monitoringLink(path: string) {
   const key = user.value?.organization?.key
-  return key ? `/platform-ops/monitoring/${path}?org=${encodeURIComponent(key)}` : '/platform-ops/overview'
+  if (!key) return '/platform-ops/overview'
+  const section = path === 'incidents' || path === 'notification-deliveries'
+    ? 'alert-center'
+    : 'monitoring'
+  const destination = path === 'notification-deliveries' ? 'notification-history' : path
+  return `/platform-ops/${section}/${destination}?org=${encodeURIComponent(key)}`
 }
 
 onMounted(load)

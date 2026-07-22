@@ -28,16 +28,12 @@ export const platformOpsRoutes = [
     component: lazyRoute(() => import('./pages/orgs/OrgDetail.vue')),
   },
   {
-    path: 'monitoring/incidents',
-    name: 'PlatformOpsMonitoringIncidents',
-    component: lazyRoute(() => import('./pages/monitoring/MonitoringIncidents.vue')),
-  },
-  {
-    path: 'monitoring/system-health',
-    name: 'PlatformOpsMonitoringSystemHealth',
+    path: 'monitoring/monitor',
+    name: 'PlatformOpsMonitoringMonitor',
     component: lazyRoute(() => import('./pages/monitoring/MonitoringHost.vue')),
   },
-  { path: 'monitoring/host', redirect: '/platform-ops/monitoring/system-health' },
+  { path: 'monitoring/system-health', redirect: '/platform-ops/monitoring/monitor' },
+  { path: 'monitoring/host', redirect: '/platform-ops/monitoring/monitor' },
   {
     path: 'monitoring/tasks',
     name: 'PlatformOpsMonitoringTasks',
@@ -49,36 +45,58 @@ export const platformOpsRoutes = [
     component: lazyRoute(() => import('./pages/monitoring/MonitoringNodes.vue')),
   },
   {
-    path: 'monitoring/notification-deliveries',
-    name: 'PlatformOpsMonitoringDeliveries',
+    path: 'monitoring/logs',
+    name: 'PlatformOpsMonitoringLogs',
+    component: lazyRoute(() => import('./pages/monitoring/MonitoringLogs.vue')),
+  },
+  {
+    path: 'alert-center/incidents',
+    name: 'PlatformOpsAlertCenterIncidents',
+    component: lazyRoute(() => import('./pages/monitoring/MonitoringIncidents.vue')),
+  },
+  {
+    path: 'alert-center/policies',
+    name: 'PlatformOpsAlertCenterPolicies',
+    component: lazyRoute(() => import('./pages/alert-center/AlertPolicies.vue')),
+  },
+  {
+    path: 'alert-center/notification-channels',
+    name: 'PlatformOpsAlertCenterNotificationChannels',
+    component: lazyRoute(() => import('./pages/alert-center/NotificationChannels.vue')),
+  },
+  {
+    path: 'alert-center/notification-history',
+    name: 'PlatformOpsAlertCenterNotificationHistory',
     component: lazyRoute(() => import('./pages/monitoring/MonitoringDeliveries.vue')),
   },
-  { path: 'monitoring/notifications', redirect: '/platform-ops/monitoring/notification-deliveries' },
+  { path: 'monitoring/incidents', redirect: '/platform-ops/alert-center/incidents' },
+  { path: 'monitoring/notification-deliveries', redirect: '/platform-ops/alert-center/notification-history' },
+  { path: 'monitoring/notifications', redirect: '/platform-ops/alert-center/notification-history' },
   {
-    path: 'platform/settings/email',
+    path: 'platform/email',
     name: 'PlatformOpsSettingsEmail',
     component: lazyRoute(() => import('./pages/platform/settings/EmailSettings.vue')),
   },
   {
-    path: 'platform/settings/turnstile',
-    name: 'PlatformOpsSettingsTurnstile',
-    component: lazyRoute(() => import('./pages/platform/settings/TurnstileSettings.vue')),
-  },
-  {
-    path: 'platform/settings/google-oauth',
-    name: 'PlatformOpsSettingsGoogleOAuth',
-    component: lazyRoute(() => import('./pages/platform/settings/GoogleOAuthSettings.vue')),
-  },
-  {
-    path: 'platform/settings/identity',
-    name: 'PlatformOpsSettingsIdentity',
+    path: 'platform/authentication',
+    name: 'PlatformOpsAuthentication',
     component: lazyRoute(() => import('./pages/platform/settings/IdentitySettings.vue')),
   },
   {
-    path: 'platform/settings/environment',
-    name: 'PlatformOpsSettingsEnvironment',
+    path: 'platform/runtime-environment',
+    name: 'PlatformOpsRuntimeEnvironment',
     component: lazyRoute(() => import('./pages/platform/settings/EnvironmentSettings.vue')),
   },
+  {
+    path: 'platform/integrations',
+    name: 'PlatformOpsIntegrations',
+    component: lazyRoute(() => import('./pages/platform/PlatformIntegrations.vue')),
+  },
+  { path: 'platform/settings/email', redirect: '/platform-ops/platform/email' },
+  { path: 'platform/settings/turnstile', redirect: '/platform-ops/platform/authentication' },
+  { path: 'platform/settings/google-oauth', redirect: '/platform-ops/platform/authentication' },
+  { path: 'platform/settings/identity', redirect: '/platform-ops/platform/authentication' },
+  { path: 'platform/settings/environment', redirect: '/platform-ops/platform/runtime-environment' },
   {
     path: 'platform/agent-releases',
     name: 'PlatformOpsAgentReleases',
@@ -106,8 +124,16 @@ export const platformOpsRoutes = [
         component: lazyRoute(() => import('../pages/insight/AiModelFormPage.vue')),
       },
       {
+        path: 'usage',
+        component: lazyRoute(() => import('../pages/insight/InsightUsage.vue')),
+      },
+      {
         path: 'gateways',
         component: lazyRoute(() => import('../pages/insight/InsightDataGateways.vue')),
+      },
+      {
+        path: 'data-connections',
+        component: lazyRoute(() => import('./pages/engine/DataConnections.vue')),
       },
       {
         path: 'knowledge-base',
@@ -158,5 +184,10 @@ export const platformOpsRoutes = [
         component: lazyRoute(() => import('../pages/insight/McpServerFormPage.vue')),
       },
     ],
+  },
+  {
+    path: 'audit-center/audit-logs',
+    name: 'PlatformOpsAuditLogs',
+    component: lazyRoute(() => import('./pages/audit/PlatformAuditLogs.vue')),
   },
 ]

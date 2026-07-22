@@ -44,6 +44,8 @@ from apps.platform_ops.api.views.lens import (
 from apps.platform_ops.api.views.overview import PlatformOpsOverviewView
 from apps.platform_ops.api.views.platform import (
     PlatformOpsPlatformAgentReleasesView,
+    PlatformOpsPlatformAlertPoliciesView,
+    PlatformOpsPlatformIntegrationsView,
     PlatformOpsPlatformNotificationChannelsView,
 )
 from apps.platform_ops.api.views.platform_settings import (
@@ -62,6 +64,7 @@ from apps.platform_ops.api.views.system import (
     PlatformOpsSystemAuditView,
     PlatformOpsSystemDatabaseView,
     PlatformOpsSystemHealthView,
+    PlatformOpsSystemLogsView,
 )
 from apps.platform_ops.api.views.users import (
     PlatformOpsUserDetailView,
@@ -157,6 +160,16 @@ urlpatterns = [
         name="platform-ops-platform-agent-releases",
     ),
     path(
+        "platform/integrations",
+        PlatformOpsPlatformIntegrationsView.as_view(),
+        name="platform-ops-platform-integrations",
+    ),
+    path(
+        "platform/alert-policies",
+        PlatformOpsPlatformAlertPoliciesView.as_view(),
+        name="platform-ops-platform-alert-policies",
+    ),
+    path(
         "platform/notification-channels",
         PlatformOpsPlatformNotificationChannelsView.as_view(),
         name="platform-ops-platform-notification-channels",
@@ -190,6 +203,7 @@ urlpatterns = [
         name="platform-ops-system-database",
     ),
     path("system/audit", PlatformOpsSystemAuditView.as_view(), name="platform-ops-system-audit"),
+    path("system/logs", PlatformOpsSystemLogsView.as_view(), name="platform-ops-system-logs"),
     path("lens/gateways", PlatformOpsLensGatewayListView.as_view(), name="platform-ops-lens-gateways"),
     path(
         "lens/gateways/enrollment",

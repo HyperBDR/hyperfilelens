@@ -7,11 +7,13 @@ describe('Admin Monitoring navigation', () => {
     const monitoringPaths = paths.filter((path) => path.startsWith('monitoring/'))
 
     expect(monitoringPaths).toEqual([
-      'monitoring/incidents',
+      'monitoring/monitor',
       'monitoring/system-health',
       'monitoring/host',
       'monitoring/tasks',
       'monitoring/nodes',
+      'monitoring/logs',
+      'monitoring/incidents',
       'monitoring/notification-deliveries',
       'monitoring/notifications',
     ])
@@ -23,9 +25,9 @@ describe('Admin Monitoring navigation', () => {
       (route) => route.path === 'monitoring/notifications',
     )
 
-    expect(legacyHost?.redirect).toBe('/platform-ops/monitoring/system-health')
+    expect(legacyHost?.redirect).toBe('/platform-ops/monitoring/monitor')
     expect(legacyNotifications?.redirect).toBe(
-      '/platform-ops/monitoring/notification-deliveries',
+      '/platform-ops/alert-center/notification-history',
     )
   })
 })

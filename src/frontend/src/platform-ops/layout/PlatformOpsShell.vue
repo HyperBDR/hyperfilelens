@@ -27,6 +27,9 @@ const mobileNavigationOpen = ref(false)
 
 const routeSkeletonShowsCards = computed(
   () => route.path.startsWith('/platform-ops/monitoring')
+    || route.path.startsWith('/platform-ops/alert-center')
+    || route.path.startsWith('/platform-ops/audit-center')
+    || route.path.startsWith('/platform-ops/platform/integrations')
     || route.path === '/platform-ops/overview'
     || route.path === '/platform-ops/users'
     || route.path === '/platform-ops/orgs',
@@ -91,7 +94,9 @@ watch(
       </button>
       <div class="platform-ops-header__brand">
         <AppLogoMark :size="18" />
-        <span>{{ t('platformOps.nav.title') }}</span>
+        <span class="platform-ops-header__brand-name"><span>Hyper</span><strong>FileLens</strong></span>
+        <i aria-hidden="true"></i>
+        <span class="platform-ops-header__product">{{ t('platformOps.nav.title') }}</span>
       </div>
       <div class="platform-ops-header__actions">
         <button
@@ -224,10 +229,39 @@ watch(
   display: flex;
   align-items: center;
   gap: 9px;
-  font-weight: 600;
-  font-size: 15px;
   color: var(--tnav-text, #f8fafc);
   white-space: nowrap;
+}
+
+.platform-ops-header__brand-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.platform-ops-header__brand-name > span {
+  color: var(--nav-active-accent, #f5a623);
+}
+
+.platform-ops-header__brand-name strong {
+  font-weight: 850;
+}
+
+.platform-ops-header__brand > i {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: rgba(248, 250, 252, 0.24);
+}
+
+.platform-ops-header__product {
+  color: var(--nav-item-color, #bec2d4);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .platform-ops-header__actions {
