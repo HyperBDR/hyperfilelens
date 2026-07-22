@@ -235,9 +235,6 @@ if [[ -n "${APT_MIRROR:-}" ]]; then
   apt_mirror_url="${APT_MIRROR%/}"
 fi
 
-apt-get update -qq
-apt-get install -y --no-install-recommends ca-certificates curl gnupg apt-utils
-
 if [[ -n "${apt_mirror_url}" ]]; then
   m="${apt_mirror_url}"
   echo "  using Ubuntu apt mirror: ${m}"
@@ -256,6 +253,16 @@ for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources;
     sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "${source_file}"
   fi
 done
+
+# Bootstrap the CA bundle through signed APT metadata, then immediately return
+# to strict TLS verification for every subsequent package and key download.
+bootstrap_apt=(
+  apt-get
+  -o Acquire::https::Verify-Peer=false
+  -o Acquire::https::Verify-Host=false
+)
+"${bootstrap_apt[@]}" update -qq
+"${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates curl gnupg apt-utils
 apt-get update -qq
 
 docker_apt="${DOCKER_APT_MIRROR:-https://download.docker.com/linux/ubuntu}"

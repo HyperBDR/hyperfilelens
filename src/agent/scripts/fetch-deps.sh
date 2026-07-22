@@ -428,7 +428,7 @@ docker_platform_for_arch() {
 	esac
 }
 
-NAS_DOCKER_TIMEOUT=300
+NAS_DOCKER_TIMEOUT=900
 NAS_DOCKER_TIMEOUT_ARM64=1800
 NAS_DEPS_MIN_DEBS=30
 NAS_IMAGE="ubuntu:24.04"
@@ -447,20 +447,10 @@ chmod 777 "${work}"
 cd "${work}"
 
 # Preserve an explicitly configured mirror and its scheme. Without one, use
-# Ubuntu's official HTTPS endpoints after bootstrapping ca-certificates.
+# Ubuntu's official HTTPS endpoints.
 apt_mirror_url=""
 if [[ -n "${apt_mirror}" ]]; then
   apt_mirror_url="${apt_mirror%/}"
-fi
-
-echo "  bootstrap: ca-certificates (base-image Ubuntu sources)"
-if ! apt-get update -qq; then
-  echo "ERROR: bootstrap apt-get update failed (${arch})" >&2
-  exit 1
-fi
-if ! apt-get install -y --no-install-recommends ca-certificates; then
-  echo "ERROR: bootstrap ca-certificates install failed (${arch})" >&2
-  exit 1
 fi
 
 if [[ -n "${apt_mirror_url}" ]]; then
@@ -481,6 +471,24 @@ for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources;
     sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "${source_file}"
   fi
 done
+
+# Minimal Ubuntu images do not ship ca-certificates. Disable TLS peer checks
+# only while installing that package; APT repository signatures remain
+# enforced. The next update runs with normal strict TLS verification.
+bootstrap_apt=(
+  apt-get
+  -o Acquire::https::Verify-Peer=false
+  -o Acquire::https::Verify-Host=false
+)
+echo "  bootstrap: ca-certificates (signed APT metadata; temporary TLS peer bypass)"
+if ! "${bootstrap_apt[@]}" update -qq; then
+  echo "ERROR: bootstrap apt-get update failed (${arch})" >&2
+  exit 1
+fi
+if ! "${bootstrap_apt[@]}" install -y --no-install-recommends ca-certificates; then
+  echo "ERROR: bootstrap ca-certificates install failed (${arch})" >&2
+  exit 1
+fi
 if ! apt-get update -qq; then
   echo "ERROR: apt-get update failed after secure source configuration (${arch})" >&2
   exit 1
