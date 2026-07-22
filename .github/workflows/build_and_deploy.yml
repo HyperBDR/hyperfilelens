@@ -135,6 +135,7 @@ jobs:
           set -euo pipefail
           python3 tools/quality/check-english-source.py
           python3 -m unittest tools/quality/test_check_english_source.py
+          python3 -m unittest tools/quality/test_agent_certification_gate.py
           uv run --isolated --no-project --python 3.8 python tools/quality/check-python38-runtime.py
           ./tools/quality/check-release-contracts.sh
           ./tools/quality/test-default-certificates.sh
@@ -174,7 +175,7 @@ jobs:
   build-hfl-images:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    needs: [prepare, quality]
+    needs: [prepare, agent-release-gate]
     permissions:
       contents: write
     strategy:
@@ -255,7 +256,7 @@ jobs:
   build-sourcelens-images:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    needs: [prepare, quality]
+    needs: [prepare, agent-release-gate]
     permissions:
       contents: write
     strategy:
@@ -337,10 +338,123 @@ jobs:
           gh release upload "${{ needs.prepare.outputs.tag }}" \
             "_internal-agent-${{ matrix.asset }}.tar.gz" --clobber
 
+  certify-source-host:
+    name: Certify Source Host (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    needs: [prepare, build-agent]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux:amd64
+            platform: linux
+            arch: amd64
+            asset: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux:arm64
+            platform: linux
+            arch: arm64
+            asset: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin:amd64
+            platform: darwin
+            arch: amd64
+            asset: darwin-amd64
+            runner: macos-15-intel
+          - target: darwin:arm64
+            platform: darwin
+            arch: arm64
+            asset: darwin-arm64
+            runner: macos-15
+          - target: windows:amd64
+            platform: windows
+            arch: amd64
+            asset: windows-amd64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download immutable Agent candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          gh release download "${{ needs.prepare.outputs.tag }}"
+          --pattern "_internal-agent-${{ matrix.asset }}.tar.gz"
+          --dir build/agent-candidate
+      - name: Run native Source Host certification
+        shell: bash
+        run: >-
+          python release/ci/certify-agent-candidate.py
+          --internal-bundle "build/agent-candidate/_internal-agent-${{ matrix.asset }}.tar.gz"
+          --version "${{ needs.prepare.outputs.version }}"
+          --commit "${{ needs.prepare.outputs.commit }}"
+          --expected-platform "${{ matrix.platform }}"
+          --expected-arch "${{ matrix.arch }}"
+          --report "build/certification/_internal-agent-cert-${{ matrix.asset }}.json"
+      - name: Upload certification evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          report="build/certification/_internal-agent-cert-${{ matrix.asset }}.json"
+          if [[ -s "$report" ]]; then
+            gh release upload "${{ needs.prepare.outputs.tag }}" "$report" --clobber
+          fi
+
+  agent-release-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [prepare, certify-source-host]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download Agent candidates and certification evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p build/agent-candidates build/certification
+          gh release download "${{ needs.prepare.outputs.tag }}" \
+            --pattern '_internal-agent-*.tar.gz' \
+            --dir build/agent-candidates
+          gh release download "${{ needs.prepare.outputs.tag }}" \
+            --pattern '_internal-agent-cert-*.json' \
+            --dir build/certification
+      - name: Enforce Source Host release gate
+        run: |
+          python3 release/ci/verify-agent-certifications.py \
+            --candidates-dir build/agent-candidates \
+            --reports-dir build/certification \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --commit "${{ needs.prepare.outputs.commit }}" \
+            --required-target linux:amd64 \
+            --required-target linux:arm64 \
+            --required-target darwin:amd64 \
+            --required-target darwin:arm64 \
+            --required-target windows:amd64 \
+            --output build/certification/_internal-agent-certification-summary.json
+      - name: Upload certification summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "${{ needs.prepare.outputs.tag }}"
+          build/certification/_internal-agent-certification-summary.json --clobber
+
   build-host-debs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: [prepare, quality]
+    needs: [prepare, agent-release-gate]
     permissions:
       contents: write
     strategy:
@@ -432,7 +546,7 @@ jobs:
   export-runtime-images:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: [prepare, quality]
+    needs: [prepare, agent-release-gate]
     permissions:
       contents: write
     steps:
@@ -454,6 +568,7 @@ jobs:
     needs:
       - prepare
       - build-agent
+      - agent-release-gate
       - build-host-debs
       - export-hfl-images
       - export-sourcelens-bundle

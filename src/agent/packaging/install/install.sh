@@ -202,6 +202,19 @@ agent_manages_service() {
 	agent_uses_systemd || agent_uses_launchd
 }
 
+require_service_manager() {
+	if is_darwin; then
+		command -v launchctl >/dev/null 2>&1 \
+			|| log_fail "launchd is required to install the agent service on macOS." 2
+		return 0
+	fi
+	if ! command -v systemctl >/dev/null 2>&1 \
+		|| [[ ! -d /run/systemd/system ]] \
+		|| ! hfl_systemctl show-environment >/dev/null 2>&1; then
+		log_fail "This release requires a systemd-based Linux distribution. OpenRC, non-systemd, and container deployments are not supported." 2
+	fi
+}
+
 service_display_name() {
 	if agent_uses_launchd; then
 		echo "${LAUNCHD_LABEL}"
@@ -1116,6 +1129,7 @@ start_service_only() {
 cmd_install() {
 	parse_install_flags "$@"
 	require_root
+	require_service_manager
 	verify_bundle
 
 	if is_installed; then
@@ -1183,6 +1197,7 @@ cmd_install() {
 cmd_upgrade() {
 	parse_upgrade_flags "$@"
 	require_root
+	require_service_manager
 
 	[[ -n "${UPGRADE_FROM}" ]] || log_fail "Upgrade requires --from <directory-or.tar.gz>." 2
 

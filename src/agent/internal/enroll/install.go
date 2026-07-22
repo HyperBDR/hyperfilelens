@@ -85,7 +85,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 				logFail("Failed to resolve the agent release: "+fetchErr.Error(), 3)
 			}
 		}
-		if err := upgradeAgentPackage(ctx, dl, releaseVer); err != nil {
+		if err := upgradeAgentPackage(ctx, cfg, dl, releaseVer); err != nil {
 			logFail(err.Error(), 3)
 		}
 		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
@@ -193,7 +193,9 @@ func installAgentPackage(ctx context.Context, cfg Config, agentVer *string) erro
 	if err != nil {
 		return err
 	}
-	_ = bundleRoot
+	if err := validateAgentPackage(bundleRoot, cfg.NodeRole, releaseVersion); err != nil {
+		return fmt.Errorf("Agent package validation failed: %w", err)
+	}
 
 	logStep("Installing agent binaries and service.")
 	if err := RunBundleInstall(ctx, bundleRoot, cfg); err != nil {
@@ -207,7 +209,7 @@ func installAgentPackage(ctx context.Context, cfg Config, agentVer *string) erro
 	return nil
 }
 
-func upgradeAgentPackage(ctx context.Context, downloadURL, releaseVersion string) error {
+func upgradeAgentPackage(ctx context.Context, cfg Config, downloadURL, releaseVersion string) error {
 	if releaseVersion != "" {
 		logStep(fmt.Sprintf("Downloading agent version %s.", releaseVersion))
 	} else {
@@ -219,6 +221,13 @@ func upgradeAgentPackage(ctx context.Context, downloadURL, releaseVersion string
 		return err
 	}
 	defer cleanup()
+	bundleRoot, err := extractReleaseBundle(ctx, archivePath)
+	if err != nil {
+		return err
+	}
+	if err := validateAgentPackage(bundleRoot, cfg.NodeRole, releaseVersion); err != nil {
+		return fmt.Errorf("Agent package validation failed: %w", err)
+	}
 
 	logStep("Upgrading agent binaries.")
 	if err := RunBundleUpgrade(ctx, archivePath); err != nil {

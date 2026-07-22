@@ -55,6 +55,12 @@ if [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required. Re-run with sudo." 1
 fi
 
+if ! command -v systemctl >/dev/null 2>&1 \
+	|| [[ ! -d /run/systemd/system ]] \
+	|| ! systemctl show-environment >/dev/null 2>&1; then
+	hfl_fail "This release requires a systemd-based Linux distribution. OpenRC, non-systemd, and container deployments are not supported." 2
+fi
+
 BIN="${TMPDIR:-/tmp}/hfl-enroll-$$"
 cleanup() { rm -f "${BIN}"; }
 trap cleanup EXIT

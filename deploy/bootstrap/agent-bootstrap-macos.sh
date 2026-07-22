@@ -27,6 +27,14 @@ if ! command -v curl >/dev/null 2>&1; then
 	hfl_fail "curl is required but not installed." 2
 fi
 
+if [[ "$(id -u)" -ne 0 ]]; then
+	hfl_fail "Administrator privileges are required. Re-run with sudo." 1
+fi
+
+if ! command -v launchctl >/dev/null 2>&1; then
+	hfl_fail "launchd is required to install the agent service on macOS." 2
+fi
+
 RAW_ARCH="$(uname -m)"
 case "${RAW_ARCH}" in
 x86_64 | amd64) HFL_ARCH=amd64 ;;

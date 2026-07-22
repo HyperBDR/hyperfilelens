@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/hostinfo"
 )
 
 // EnvironmentReport is the result of pre-install environment checks.
@@ -28,7 +29,7 @@ type EnvironmentReport struct {
 func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, error) {
 	report := &EnvironmentReport{
 		Platform: platformDescription(),
-		ArchOK:   runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64",
+		ArchOK:   supportedRuntimeArch(),
 		Existing: DetectInstallState(),
 	}
 
@@ -38,13 +39,16 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 		report.PrivilegesOK = true
 	}
 
-	report.ServiceMgr = detectServiceManager()
+	report.ServiceMgr = detectServiceManager(ctx)
 	consoleReach := checkConsoleReachable(ctx, cfg.APIBase)
 	wssReach := checkWSSReachable(ctx, resolveWSSURL(cfg))
 	hostname := checkHostname()
 	clock := checkClockSync(ctx, cfg.APIBase)
 
 	if err := roleConstraints(cfg.NodeRole); err != nil {
+		report.RoleOK = false
+		report.RoleError = err.Error()
+	} else if err := serviceManagerConstraint(report.ServiceMgr); err != nil {
 		report.RoleOK = false
 		report.RoleError = err.Error()
 	} else {
@@ -62,7 +66,7 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	if report.ArchOK {
 		logOKDetail("CPU architecture is supported", runtime.GOARCH)
 	} else {
-		logFailDetail("CPU architecture is not supported", runtime.GOARCH+" (only amd64/arm64)", 4)
+		logFailDetail("CPU architecture is not supported", runtime.GOARCH+" ("+supportedArchDescription()+")", 4)
 	}
 
 	if report.RoleOK {
@@ -147,12 +151,31 @@ func Preflight(role model.Role) error {
 	if err := requireAdmin(); err != nil {
 		return err
 	}
-	switch runtime.GOARCH {
-	case "amd64", "arm64":
-	default:
-		return fmt.Errorf("unsupported arch %s (only amd64/arm64)", runtime.GOARCH)
+	if !supportedRuntimeArch() {
+		return fmt.Errorf("unsupported arch %s (%s)", runtime.GOARCH, supportedArchDescription())
 	}
-	return roleConstraints(role)
+	if err := roleConstraints(role); err != nil {
+		return err
+	}
+	return serviceManagerConstraint(detectServiceManager(context.Background()))
+}
+
+func supportedRuntimeArch() bool {
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		return runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
+	case "windows":
+		return runtime.GOARCH == "amd64"
+	default:
+		return false
+	}
+}
+
+func supportedArchDescription() string {
+	if runtime.GOOS == "windows" {
+		return "only amd64"
+	}
+	return "only amd64/arm64"
 }
 
 func roleConstraints(role model.Role) error {
@@ -167,23 +190,28 @@ func roleConstraints(role model.Role) error {
 	return nil
 }
 
-func detectServiceManager() string {
+func detectServiceManager(ctx context.Context) string {
+	return hostinfo.DetectServiceManager(ctx)
+}
+
+func serviceManagerConstraint(manager string) error {
 	switch runtime.GOOS {
 	case "linux":
-		if _, err := exec.LookPath("systemctl"); err == nil {
-			return "systemd"
+		if manager != "systemd" {
+			return fmt.Errorf("this release requires a systemd-based Linux distribution; OpenRC, non-systemd, and container deployments are not supported")
 		}
-		return "none"
 	case "darwin":
-		if _, err := exec.LookPath("launchctl"); err == nil {
-			return "launchd"
+		if manager != "launchd" {
+			return fmt.Errorf("launchd is required to install the agent service on macOS")
 		}
-		return "none"
 	case "windows":
-		return "windows-service"
+		if manager != "windows-service" {
+			return fmt.Errorf("Windows Service Manager is required to install the agent service")
+		}
 	default:
-		return "unknown"
+		return fmt.Errorf("operating system %s is not supported", runtime.GOOS)
 	}
+	return nil
 }
 
 func requireAdmin() error {

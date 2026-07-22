@@ -13,6 +13,7 @@ import (
 
 	"hyperfilelens/agent/internal/infra/config"
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
+	"hyperfilelens/agent/internal/platform/hostinfo"
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/netmac"
@@ -27,11 +28,13 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 		return nil
 	}
 	cfg := provider.Current()
+	platform := hostinfo.Collect(ctx)
 	dataDir := cfg.DataDir
 	if dataDir == "" {
 		dataDir = vfs.DefaultAgentDataDir()
 	}
-	payload := map[string]any{
+	payload := platform.Inventory()
+	for key, value := range map[string]any{
 		"agent_version": selfupdate.Version,
 		"agent_commit":  selfupdate.Commit,
 		"role":          string(cfg.Role),
@@ -42,6 +45,8 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 		"root_path":     dataDir,
 		"install_path":  install.DefaultInstallDir(),
 		"capabilities":  []string{"repository_operation_v1", "repository_cleanup_v1"},
+	} {
+		payload[key] = value
 	}
 	if mac := netmac.PrimaryMAC(); mac != "" {
 		payload["mac_address"] = mac

@@ -301,6 +301,21 @@ function Get-HflServiceStatusLine {
   return "$($svc.Status.ToString().ToLower()) ($startType)"
 }
 
+function Get-HflSupportedArchitecture {
+  $nativeArch = if ($env:PROCESSOR_ARCHITEW6432) {
+    $env:PROCESSOR_ARCHITEW6432
+  }
+  else {
+    $env:PROCESSOR_ARCHITECTURE
+  }
+  switch ($nativeArch) {
+    "AMD64" { return "amd64" }
+    "ARM64" { throw "Windows ARM64 is not supported by this release." }
+    "x86" { throw "32-bit Windows is not supported by this release." }
+    default { throw "Unsupported Windows architecture: $nativeArch" }
+  }
+}
+
 function Read-HflEnvValue {
   param(
     [Parameter(Mandatory = $true)][string]$EnvFile,
@@ -953,11 +968,10 @@ function Invoke-Install {
   if (Test-Installed) {
     throw "Agent already installed. Use: install.cmd upgrade -From <package.zip>"
   }
+  $archRel = Get-HflSupportedArchitecture
   $dataRoot = if ($DataDir) { $DataDir } else { $DefaultDataRoot }
   Start-HflInstallLog -DataRoot $dataRoot
   try {
-    $archRel = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
-
     if (-not $QuietFooter) {
       Write-HflBanner "install v$(Get-BundleVersion)"
       Write-HflSection "Preflight"
@@ -1023,6 +1037,7 @@ function Invoke-Upgrade {
     throw "upgrade requires -From <directory-or.zip>"
   }
 
+  $null = Get-HflSupportedArchitecture
   $dataRoot = Get-ResolvedDataRoot -Override $DataDir
   $envFile = Join-Path $dataRoot "agent.env"
   $workspace = Get-UpgradeWorkspace -DataRoot $dataRoot

@@ -226,6 +226,7 @@ fi
 grep -F 'tags:' "${workflow}" >/dev/null
 for job in \
 	prepare quality build-hfl-images build-sourcelens-images build-agent \
+	certify-source-host agent-release-gate \
 	build-host-debs export-hfl-images export-sourcelens-bundle \
 	export-runtime-images assemble-release verify-release publish-release \
 	deploy-preprod deploy-prod; do
@@ -248,6 +249,16 @@ grep -F 'uv run --isolated --no-project --python 3.8 python tools/quality/check-
 	"${workflow}" >/dev/null
 grep -F 'npm run test:ci' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ci-release-assembly.sh' "${workflow}" >/dev/null
+grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${workflow}" >/dev/null
+grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
+grep -F 'release/ci/verify-agent-certifications.py' "${workflow}" >/dev/null
+grep -F 'runner: ubuntu-24.04-arm' "${workflow}" >/dev/null
+grep -F 'runner: macos-15-intel' "${workflow}" >/dev/null
+grep -F 'runner: macos-15' "${workflow}" >/dev/null
+grep -F 'runner: windows-2022' "${workflow}" >/dev/null
+grep -F -- '--required-target linux:arm64' "${workflow}" >/dev/null
+grep -F -- '--required-target darwin:arm64' "${workflow}" >/dev/null
+grep -F -- '--required-target windows:amd64' "${workflow}" >/dev/null
 if grep -F 'uv run pytest src/backend' "${workflow}" >/dev/null; then
 	printf 'ERROR: backend CI must initialize Django through manage.py\n' >&2
 	exit 1
@@ -288,6 +299,19 @@ agent_publisher="${ROOT}/tools/agent/publish.sh"
 grep -F 'all | standard | ubuntu2004 | ubuntu2404' "${agent_publisher}" >/dev/null
 grep -F 'for ubuntu_flavor in ubuntu2004 ubuntu2404' "${agent_publisher}" >/dev/null
 grep -F 'build/dependencies/docker/ubuntu-${ubuntu_release}/amd64' "${agent_publisher}" >/dev/null
+
+agent_bootstrap_linux="${ROOT}/deploy/bootstrap/agent-bootstrap-linux.sh"
+agent_bootstrap_macos="${ROOT}/deploy/bootstrap/agent-bootstrap-macos.sh"
+agent_bootstrap_windows="${ROOT}/deploy/bootstrap/agent-bootstrap-windows.ps1"
+grep -F 'requires a systemd-based Linux distribution' "${agent_bootstrap_linux}" >/dev/null
+grep -F 'systemctl show-environment' "${agent_bootstrap_linux}" >/dev/null
+grep -F 'launchd is required to install the agent service on macOS' "${agent_bootstrap_macos}" >/dev/null
+grep -F 'Windows ARM64 is not supported by this release' "${agent_bootstrap_windows}" >/dev/null
+if grep -F 'hfl-enroll-windows-$archRel.exe' "${agent_bootstrap_windows}" >/dev/null \
+	&& ! grep -F '"ARM64" {' "${agent_bootstrap_windows}" >/dev/null; then
+	printf 'ERROR: Windows bootstrap may request an unsupported ARM64 enrollment binary\n' >&2
+	exit 1
+fi
 
 remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 [[ -x "${remote_deploy}" ]] || {
