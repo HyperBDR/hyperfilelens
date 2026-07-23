@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, useSlots, type Component } from 'vue'
+import { ref, computed, onMounted, useSlots, watch, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 const slots = useSlots()
 import Sidebar from './Sidebar.vue'
@@ -41,6 +41,8 @@ const props = withDefaults(
 )
 
 const route = useRoute()
+const mainContentRef = ref<HTMLElement | null>(null)
+const pageBodyRef = ref<HTMLElement | null>(null)
 
 const isAdminSettingsShell = computed(
   () => props.adminHub || route.path.startsWith('/settings') || route.path.startsWith('/account'),
@@ -111,6 +113,20 @@ function toggleSidebar() {
   collapsed.value = !collapsed.value
   localStorage.setItem('sidebar-collapsed', String(collapsed.value))
 }
+
+function resetScrollPosition() {
+  if (mainContentRef.value) mainContentRef.value.scrollTop = 0
+  if (pageBodyRef.value) pageBodyRef.value.scrollTop = 0
+  if (document.scrollingElement) document.scrollingElement.scrollTop = 0
+}
+
+onMounted(resetScrollPosition)
+
+watch(
+  () => route.fullPath,
+  resetScrollPosition,
+  { flush: 'post' },
+)
 </script>
 
 <template>
@@ -122,14 +138,22 @@ function toggleSidebar() {
         </template>
       </Sidebar>
     </div>
-    <div :class="{ 'sidebar-collapsed': effectiveCollapsed || menuItems.length === 0 }" class="main-content">
+    <div
+      ref="mainContentRef"
+      :class="{ 'sidebar-collapsed': effectiveCollapsed || menuItems.length === 0 }"
+      class="main-content"
+    >
       <div class="main-content-route-surface">
         <div v-if="!hidePageTitle" class="page-header">
           <div class="page-title-row">
             <h1 class="page-title">{{ displayTitle }}</h1>
           </div>
         </div>
-        <div class="page-body" :class="{ 'page-body--fill': bodyFill }">
+        <div
+          ref="pageBodyRef"
+          class="page-body"
+          :class="{ 'page-body--fill': bodyFill }"
+        >
           <div v-if="slots.actions" class="page-actions">
             <slot name="actions" />
           </div>
