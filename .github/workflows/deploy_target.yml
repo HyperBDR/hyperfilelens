@@ -142,6 +142,7 @@ jobs:
           AI_MODEL_API_BASE: ${{ secrets.ai_model_api_base }}
           AI_MODEL_API_KEY: ${{ secrets.ai_model_api_key }}
           ARTIFACT_CHANNEL: ${{ inputs.channel }}
+          ARTIFACT_ID: ${{ inputs.tag }}
           DEPLOY_TARGET: ${{ inputs.target }}
         shell: bash
         run: |
@@ -153,6 +154,10 @@ jobs:
           [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
           [[ "$DEPLOY_TARGET" =~ ^(test|preprod|prod)$ ]]
           [[ "$ARTIFACT_CHANNEL" =~ ^(release|main)$ ]]
+          case "$ARTIFACT_CHANNEL" in
+            release) [[ "$ARTIFACT_ID" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
+            main) [[ "$ARTIFACT_ID" =~ ^main-[0-9a-f]{7}$ ]] ;;
+          esac
           case "$DEPLOY_TARGET:$ARTIFACT_CHANNEL" in
             test:main|preprod:release|prod:release) ;;
             *)
@@ -216,6 +221,56 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
 
+      - name: Download, verify, and stage the release package
+        id: release-package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_dir="$RUNNER_TEMP/hyperfilelens-release"
+          remote_dir="/var/tmp/hyperfilelens-assets-${GITHUB_RUN_ID}"
+          mkdir -p "$local_dir"
+          gh release download "$ARTIFACT_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS \
+            --pattern 'hyperfilelens-*.tar.gz*' \
+            --dir "$local_dir"
+          [[ -s "$local_dir/SHA256SUMS" ]]
+          mapfile -t package_assets < <(
+            find "$local_dir" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz*' -print | sort
+          )
+          ((${#package_assets[@]} > 0))
+          for asset in "${package_assets[@]}"; do
+            name="$(basename "$asset")"
+            expected="$(awk -v file="$name" '$2 == file || $2 == "*" file {print $1; exit}' \
+              "$local_dir/SHA256SUMS")"
+            [[ -n "$expected" ]]
+            printf '%s  %s\n' "$expected" "$asset" | sha256sum -c -
+          done
+          ssh -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            "rm -rf -- '$remote_dir' && install -d -m 0700 '$remote_dir'"
+          scp -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
+            -P "$DEPLOY_SSH_PORT" \
+            "$local_dir/SHA256SUMS" "${package_assets[@]}" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$remote_dir/"
+          echo "remote_dir=$remote_dir" >> "$GITHUB_OUTPUT"
+
       - name: Stage runtime configuration
         env:
           HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ inputs.platform_gateway_auto_deploy }}
@@ -260,7 +315,7 @@ jobs:
             "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < "$runtime_env"
 
-      - name: Download and deploy the complete release package on the host
+      - name: Deploy the runner-staged complete release package
         shell: bash
         run: |
           set -euo pipefail
@@ -279,6 +334,7 @@ jobs:
               --public-url "$APP_PUBLIC_URL" \
               --direct-host "$DEPLOY_SSH_HOST" \
               --install-dir /opt/hyperfilelens \
+              --staged-assets-dir "${{ steps.release-package.outputs.remote_dir }}" \
               --runtime-env-file "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < .github/scripts/remote-deploy.sh
 
@@ -296,7 +352,7 @@ jobs:
               -o TCPKeepAlive=yes \
               -p "$DEPLOY_SSH_PORT" \
               "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-              rm -f -- "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
+              "rm -f -- '/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env'; rm -rf -- '/var/tmp/hyperfilelens-assets-${GITHUB_RUN_ID}'"
           fi
 
       - name: Post-deploy internal health checks

@@ -275,11 +275,11 @@ grep -F "vars.TEST_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
 grep -F "vars.PREPROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
 grep -F 'PROD_DEPLOY_ENABLED' "${production_workflow}" >/dev/null
 deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
-[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 5 ]] || {
+[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 7 ]] || {
 	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
 	exit 1
 }
-[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 5 ]] || {
+[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 7 ]] || {
 	printf 'ERROR: every deployment SSH call must set ServerAliveCountMax\n' >&2
 	exit 1
 }
@@ -422,6 +422,13 @@ fi
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
 grep -F -- '--runtime-env-file "${RUNTIME_ENV_FILE}"' "${remote_deploy}" >/dev/null
+grep -F 'Download, verify, and stage the release package' "${deploy_workflow}" >/dev/null
+grep -F 'gh release download "$ARTIFACT_ID"' "${deploy_workflow}" >/dev/null
+grep -F '"${package_assets[@]}"' "${deploy_workflow}" >/dev/null
+grep -F -- '--staged-assets-dir "${{ steps.release-package.outputs.remote_dir }}"' \
+	"${deploy_workflow}" >/dev/null
+grep -F -- '--staged-assets-dir) STAGED_ASSETS_DIR=' "${remote_deploy}" >/dev/null
+grep -F 'Using runner-staged release assets' "${remote_deploy}" >/dev/null
 if grep -F -- '--force-recreate' "${remote_deploy}" >/dev/null; then
 	printf 'ERROR: production deployment must apply runtime configuration before startup\n' >&2
 	exit 1
