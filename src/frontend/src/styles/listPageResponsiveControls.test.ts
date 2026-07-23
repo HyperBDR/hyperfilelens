@@ -3,6 +3,9 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles/list-page-ui.css'), 'utf8')
+const tableStyles = readFileSync(resolve(process.cwd(), 'src/styles/element-plus-table.css'), 'utf8')
+const tablePanel = readFileSync(resolve(process.cwd(), 'src/components/HflTablePanel.vue'), 'utf8')
+const nodesPage = readFileSync(resolve(process.cwd(), 'src/pages/node/Nodes.vue'), 'utf8')
 
 describe('responsive list toolbar controls', () => {
   it('keeps nested search field selects at their configured width', () => {
@@ -10,5 +13,43 @@ describe('responsive list toolbar controls', () => {
     expect(styles).not.toMatch(/\.hfl-list-toolbar \.el-select\s*,/)
     expect(styles).toContain('.hfl-list-toolbar > .el-select,')
     expect(styles).toContain('.hfl-list-toolbar__right > .el-select,')
+  })
+
+  it('keeps mobile search controls beside their utility actions', () => {
+    expect(styles).toContain('.hfl-list-toolbar__right--mobile-split')
+    expect(styles).toContain('grid-template-columns: minmax(0, 1fr) auto')
+    expect(styles).toContain('.hfl-list-toolbar__right--mobile-split > .hfl-list-search')
+    expect(styles).toContain('.hfl-list-toolbar__right--mobile-split > .hfl-list-toolbar__utility')
+    expect(nodesPage).toContain('hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split')
+    expect(nodesPage).toContain('class="hfl-list-toolbar__utility"')
+  })
+
+  it('supports separate filters and utility actions in shared table panels', () => {
+    expect(tablePanel).toContain("$slots['toolbar-utility']")
+    expect(tablePanel).toContain("<slot name=\"toolbar-utility\" />")
+    expect(tablePanel).toContain("'hfl-list-toolbar__right--mobile-split': $slots['toolbar-actions'] && $slots['toolbar-utility']")
+    expect(tablePanel).toContain("'hfl-list-toolbar--mobile-primary-utility': $slots.toolbar && $slots['toolbar-actions'] && $slots['toolbar-utility']")
+    expect(styles).toContain('.hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary')
+    expect(styles).toContain('grid-template-columns: minmax(0, 1fr) auto')
+    expect(styles).toContain('justify-self: end')
+    expect(styles).toContain('.hfl-list-toolbar__primary > .el-dropdown .el-button')
+    expect(styles).toContain('.hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary > .el-dropdown')
+    expect(styles).toContain('vertical-align: top')
+    expect(styles).toContain('grid-row: 2')
+  })
+
+  it('releases wide fixed data columns on phones', () => {
+    expect(tableStyles).toContain('@media (max-width: 767.98px)')
+    expect(tableStyles).toContain('.el-table-fixed-column--left:not(.el-table-column--selection):not(.el-table__expand-column)')
+    expect(tableStyles).toContain('position: relative !important')
+    expect(tableStyles).toContain('left: auto !important')
+    expect(tableStyles).toContain('display: none !important')
+  })
+
+  it('uses compact table empty states on phones', () => {
+    expect(tableStyles).toContain('--hfl-table-empty-min-height: 180px')
+    expect(tableStyles).toContain('--hfl-table-empty-min-height: 200px')
+    expect(tableStyles).toContain('--hfl-table-empty-image-size: 64px')
+    expect(tableStyles).toContain('--el-empty-padding: 24px 0')
   })
 })

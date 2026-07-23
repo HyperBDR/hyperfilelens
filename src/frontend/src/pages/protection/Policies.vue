@@ -1073,7 +1073,7 @@ function onMoreDisable() {
             </template>
           </ElDropdown>
 
-          <div class="hfl-list-toolbar__right">
+          <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
             <ElInput
               v-model="searchQuery"
               clearable
@@ -1092,15 +1092,17 @@ function onMoreDisable() {
                 <Search :size="16" class="hfl-list-search__icon" />
               </template>
             </ElInput>
-            <ElButton
-              class="hfl-refresh-button"
-              :title="t('protection.policiesPage.btnRefresh')"
-              :aria-label="t('protection.policiesPage.btnRefresh')"
-              :disabled="listLoading"
-              @click="refreshPoliciesList"
-            >
-              <RefreshCw :size="16" :class="{ 'is-spinning': listLoading }" />
-            </ElButton>
+            <div class="hfl-list-toolbar__utility">
+              <ElButton
+                class="hfl-refresh-button"
+                :title="t('protection.policiesPage.btnRefresh')"
+                :aria-label="t('protection.policiesPage.btnRefresh')"
+                :disabled="listLoading"
+                @click="refreshPoliciesList"
+              >
+                <RefreshCw :size="16" :class="{ 'is-spinning': listLoading }" />
+              </ElButton>
+            </div>
           </div>
         </template>
 

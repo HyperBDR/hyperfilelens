@@ -8844,7 +8844,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               </template>
             </ElDropdown>
           </template>
-        <div class="hfl-list-toolbar__right">
+        <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElInput
             v-model="taskSearchQuery"
             clearable
@@ -8889,27 +8889,29 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               :value="item.value"
             />
           </ElSelect>
-          <ElButton
-            :title="t('protection.backupsPage.flowFilterAdvanced')"
-            class="hfl-filter-button"
-            :class="{ 'hfl-filter-button--active': flowActiveFilterCount > 0 }"
-            :aria-label="t('protection.backupsPage.flowFilterAdvanced')"
-            @click="flowAdvancedFilterOpen = true"
-          >
-            <ElBadge v-if="flowActiveFilterCount > 0" :value="flowActiveFilterCount" :max="9" class="hfl-filter-badge">
-              <Filter :size="16" />
-            </ElBadge>
-            <Filter v-else :size="16" />
-          </ElButton>
-          <ElButton
-            class="hfl-refresh-button"
-            :title="t('protection.backupsPage.flowActionRefreshList')"
-            :aria-label="t('protection.backupsPage.flowActionRefreshList')"
-            :disabled="flowRefreshing"
-            @click="refreshTaskLists"
-          >
-            <RefreshCw :size="16" :class="{ 'is-spinning': flowRefreshing }" />
-          </ElButton>
+          <div class="hfl-list-toolbar__utility">
+            <ElButton
+              :title="t('protection.backupsPage.flowFilterAdvanced')"
+              class="hfl-filter-button"
+              :class="{ 'hfl-filter-button--active': flowActiveFilterCount > 0 }"
+              :aria-label="t('protection.backupsPage.flowFilterAdvanced')"
+              @click="flowAdvancedFilterOpen = true"
+            >
+              <ElBadge v-if="flowActiveFilterCount > 0" :value="flowActiveFilterCount" :max="9" class="hfl-filter-badge">
+                <Filter :size="16" />
+              </ElBadge>
+              <Filter v-else :size="16" />
+            </ElButton>
+            <ElButton
+              class="hfl-refresh-button"
+              :title="t('protection.backupsPage.flowActionRefreshList')"
+              :aria-label="t('protection.backupsPage.flowActionRefreshList')"
+              :disabled="flowRefreshing"
+              @click="refreshTaskLists"
+            >
+              <RefreshCw :size="16" :class="{ 'is-spinning': flowRefreshing }" />
+            </ElButton>
+          </div>
         </div>
     </div>
 

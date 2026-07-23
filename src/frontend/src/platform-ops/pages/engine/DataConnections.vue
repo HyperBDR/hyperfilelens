@@ -33,7 +33,7 @@ onMounted(load)
     <div class="platform-monitoring-page__lead"><p class="platform-monitoring-page__subtitle">Manage external source platforms used by SourceLens ingestion and knowledge workflows.</p><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></div>
     <HflTablePanel fill>
       <template #toolbar><div class="platform-data-connections__summary"><div class="platform-data-connections__icon"><GitBranch :size="18" /></div><div><strong>Source platform connections</strong><span>GitHub, GitLab, Feishu, and other supported providers</span></div></div></template>
-      <template #toolbar-actions><PlatformOpsStatusPill :status="status" /></template>
+      <template #toolbar-utility><PlatformOpsStatusPill :status="status" /></template>
       <template #table>
         <div v-loading="loading" class="platform-data-connections__body">
           <div class="platform-data-connections__service"><div><Link2 :size="18" /><span><strong>SourceLens Connection Manager</strong><small>{{ connectionManagerUrl || 'SourceLens is not configured' }}</small></span></div><a v-if="connectionManagerUrl && sourceLens?.authenticated" :href="connectionManagerUrl" target="_blank" rel="noopener noreferrer">Open Connection Manager <ExternalLink :size="14" /></a></div>

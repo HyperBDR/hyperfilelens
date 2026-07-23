@@ -54,14 +54,14 @@ watch(() => [pagination.page, pagination.pageSize], load)
         <OpsStatCard label="Channel Types" :value="stats.types" accent="blue" accent-side="left"><template #icon><Send :size="16" /></template></OpsStatCard>
       </div>
       <HflTablePanel fill>
-        <template #toolbar><div class="platform-monitoring-page__filters">
+      <template #toolbar><div class="platform-monitoring-page__filters">
           <el-input v-model="filters.search" clearable class="platform-monitoring-page__search" placeholder="Search channels or accounts"><template #prefix><Search :size="15" /></template></el-input>
           <el-select v-model="filters.type" clearable class="platform-monitoring-page__filter" placeholder="Channel type"><el-option value="email" label="Email" /><el-option value="webhook" label="Webhook" /><el-option value="dingtalk" label="DingTalk" /><el-option value="wecom" label="WeCom" /><el-option value="feishu" label="Feishu" /></el-select>
           <el-select v-model="filters.active" clearable class="platform-monitoring-page__filter" placeholder="Status"><el-option value="true" label="Active" /><el-option value="false" label="Inactive" /></el-select>
           <el-input v-model="filters.org" clearable class="platform-monitoring-page__filter" placeholder="Account key" />
           <el-button v-if="Object.values(filters).some(Boolean)" text @click="resetFilters">Reset</el-button>
         </div></template>
-        <template #toolbar-actions><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
+      <template #toolbar-utility><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
         <template #table="{ tableMaxHeight }"><el-table v-loading="loading" :data="rows" stripe flexible row-key="id" class="hfl-list-table" :max-height="tableMaxHeight">
           <el-table-column prop="name" label="Channel" min-width="230" />
           <el-table-column label="Status" width="110"><template #default="{ row }"><PlatformOpsStatusPill :status="row.is_active ? 'Active' : 'Inactive'" /></template></el-table-column>

@@ -311,7 +311,7 @@ watch(hasSyncingRows, (syncing) => {
             </template>
         </ElDropdown>
 
-        <div class="hfl-list-toolbar__right">
+        <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElSelect
             v-model="statusFilter"
             clearable
@@ -337,14 +337,16 @@ watch(hasSyncingRows, (syncing) => {
               <Search :size="14" />
             </template>
           </ElInput>
-          <ElButton
-            class="hfl-refresh-button"
-            :title="t('common.refresh')"
-            :loading="loading"
-            @click="load"
-          >
-            <RefreshCw :size="16" />
-          </ElButton>
+          <div class="hfl-list-toolbar__utility">
+            <ElButton
+              class="hfl-refresh-button"
+              :title="t('common.refresh')"
+              :loading="loading"
+              @click="load"
+            >
+              <RefreshCw :size="16" />
+            </ElButton>
+          </div>
         </div>
       </div>
 

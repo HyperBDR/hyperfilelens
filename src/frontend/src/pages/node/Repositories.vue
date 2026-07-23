@@ -1927,7 +1927,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </template>
           </ElDropdown>
 
-          <div class="hfl-list-toolbar__right">
+          <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
             <ElInput
               v-model="searchQuery"
               clearable
@@ -1952,15 +1952,17 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               </template>
             </ElInput>
             
-            <ElButton
-              class="hfl-refresh-button"
-              :title="t('repositoriesPage.refresh')"
-              :aria-label="t('repositoriesPage.refresh')"
-              :disabled="busy"
-              @click="refreshRepositories()"
-            >
-              <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
-            </ElButton>
+            <div class="hfl-list-toolbar__utility">
+              <ElButton
+                class="hfl-refresh-button"
+                :title="t('repositoriesPage.refresh')"
+                :aria-label="t('repositoriesPage.refresh')"
+                :disabled="busy"
+                @click="refreshRepositories()"
+              >
+                <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+              </ElButton>
+            </div>
           </div>
         </div>
 

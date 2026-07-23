@@ -416,6 +416,8 @@ watch(
             <el-option value="warning" :label="t('ops.alertsCenter.common.warning')" />
             <el-option value="info" :label="t('ops.alertsCenter.common.info')" />
           </el-select>
+        </template>
+        <template #toolbar-utility>
           <el-button class="hfl-refresh-button" :title="t('ops.task.btnRefresh')" :aria-label="t('ops.task.btnRefresh')" :disabled="loading" @click="fetchAlerts">
             <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
           </el-button>

@@ -1774,7 +1774,7 @@ onUnmounted(() => {
               </template>
           </ElDropdown>
 
-          <div class="hfl-list-toolbar__right">
+          <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
             <ElInput
               v-model="filters.search"
               :placeholder="listSearchPlaceholder"
@@ -1798,15 +1798,17 @@ onUnmounted(() => {
                 <Search :size="16" class="hfl-list-search__icon" />
               </template>
             </ElInput>
-            <ElButton
-              class="hfl-refresh-button"
-              :title="t('protection.sourceResources.refresh')"
-              :aria-label="t('protection.sourceResources.refresh')"
-              :disabled="busy"
-              @click="load"
-            >
-              <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
-            </ElButton>
+            <div class="hfl-list-toolbar__utility">
+              <ElButton
+                class="hfl-refresh-button"
+                :title="t('protection.sourceResources.refresh')"
+                :aria-label="t('protection.sourceResources.refresh')"
+                :disabled="busy"
+                @click="load"
+              >
+                <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+              </ElButton>
+            </div>
           </div>
         </div>
 

@@ -243,7 +243,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
             </el-button>
           </div>
         </template>
-        <template #toolbar-actions>
+        <template #toolbar-utility>
           <el-button
             class="hfl-refresh-button"
             :title="t('common.refresh')"

@@ -63,7 +63,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           <el-input v-model="filters.org" clearable class="platform-monitoring-page__filter" placeholder="Account key" />
           <el-button v-if="Object.values(filters).some(Boolean)" text @click="resetFilters">Reset</el-button>
         </div></template>
-        <template #toolbar-actions><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
+        <template #toolbar-utility><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
         <template #table="{ tableMaxHeight }"><el-table v-loading="loading" :data="rows" stripe flexible row-key="id" class="hfl-list-table" :max-height="tableMaxHeight">
           <el-table-column label="Time" width="175"><template #default="{ row }">{{ formatLocalDateTime(row.created_at, '—') }}</template></el-table-column>
           <el-table-column label="Actor" min-width="190"><template #default="{ row }">{{ row.actor_email || 'System' }}<span class="platform-monitoring-page__cell-meta">{{ row.ip_address || 'No IP recorded' }}</span></template></el-table-column>

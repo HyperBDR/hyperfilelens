@@ -679,6 +679,8 @@ watch(
             <el-option value="true" :label="t('ops.alertsCenter.common.enabled')" />
             <el-option value="false" :label="t('ops.alertsCenter.common.disabled')" />
           </el-select>
+        </template>
+        <template #toolbar-utility>
           <el-button class="hfl-refresh-button" :title="t('ops.task.btnRefresh')" :aria-label="t('ops.task.btnRefresh')" :disabled="loading" @click="loadPolicies">
             <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
           </el-button>

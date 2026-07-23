@@ -460,6 +460,8 @@ watch(
           <el-select v-model="filters.time_range" clearable style="width: 130px" @change="onAuditTimeRangeChange">
             <el-option v-for="p in datePresets" :key="p.value" :value="p.value" :label="p.label" />
           </el-select>
+        </template>
+        <template #toolbar-utility>
           <el-button
             class="hfl-filter-button"
             :class="{ 'hfl-filter-button--active': advancedFilterCount > 0 }"

@@ -588,7 +588,7 @@ async function submitRename() {
                 </template>
           </ElDropdown>
 
-          <div class="hfl-list-toolbar__right">
+          <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
             <ElInput
               v-model="search"
               clearable
@@ -608,15 +608,17 @@ async function submitRename() {
                 <Search :size="16" class="hfl-list-search__icon" />
               </template>
             </ElInput>
-            <ElButton
-              class="hfl-refresh-button"
-              :title="isProxyNodesPage ? t('protection.sourceResources.refresh') : t('nodesPage.refreshStatus')"
-              :aria-label="isProxyNodesPage ? t('protection.sourceResources.refresh') : t('nodesPage.refreshStatus')"
-              :disabled="busy"
-              @click="load()"
-            >
-              <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
-            </ElButton>
+            <div class="hfl-list-toolbar__utility">
+              <ElButton
+                class="hfl-refresh-button"
+                :title="isProxyNodesPage ? t('protection.sourceResources.refresh') : t('nodesPage.refreshStatus')"
+                :aria-label="isProxyNodesPage ? t('protection.sourceResources.refresh') : t('nodesPage.refreshStatus')"
+                :disabled="busy"
+                @click="load()"
+              >
+                <RefreshCw :size="16" :class="{ 'is-spinning': busy }" />
+              </ElButton>
+            </div>
           </div>
         </div>
 
