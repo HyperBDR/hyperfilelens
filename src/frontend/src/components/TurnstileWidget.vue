@@ -297,6 +297,8 @@ defineExpose({ reset })
   padding: 0 14px;
   box-sizing: border-box;
   background: #313131;
+  border: 1px solid #3A3B40;
+  border-radius: var(--radius-card);
   color: #D4D7DD;
   font-size: 13px;
   line-height: 1.35;
