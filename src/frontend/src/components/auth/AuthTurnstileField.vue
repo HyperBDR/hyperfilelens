@@ -76,7 +76,7 @@ defineExpose({ reset })
       </button>
     </div>
 
-    <p v-if="errorMessage" class="auth-turnstile-field__error" role="alert">
+    <p v-if="errorMessage && !blocked" class="auth-turnstile-field__error" role="alert">
       {{ errorMessage }}
     </p>
   </div>
@@ -90,20 +90,21 @@ defineExpose({ reset })
 }
 
 .auth-turnstile-field__control {
+  box-sizing: border-box;
   width: 100%;
   min-height: 64px;
   display: flex;
   align-items: center;
-  background: #313131;
-  border: 1px solid #3a3b40;
-  border-radius: var(--radius-card);
-  overflow: hidden;
 }
 
 .auth-turnstile-field__loading,
 .auth-turnstile-field__blocked {
   gap: 10px;
   padding: 12px 16px;
+  background: #313131;
+  border: 1px solid #3a3b40;
+  border-radius: var(--radius-card);
+  overflow: hidden;
   color: #b6b7bb;
   font-size: 14px;
 }
@@ -111,6 +112,10 @@ defineExpose({ reset })
 .auth-turnstile-field__widget {
   justify-content: center;
   padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .auth-turnstile-field__spinner {
