@@ -84,6 +84,7 @@ grep -F 'channel: main' "${main_workflow}" >/dev/null
 grep -F 'refs/heads/main' "${main_workflow}" >/dev/null
 grep -F 'vars.TEST_DEPLOY_ENABLED' "${main_workflow}" >/dev/null
 grep -F 'target: test' "${workflow}" >/dev/null
+grep -F "needs.prepare.outputs.build_required == 'false'" "${workflow}" >/dev/null
 grep -F 'test:main|preprod:release|prod:release' "${deploy_workflow}" >/dev/null
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${production_workflow}" >/dev/null
