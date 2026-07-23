@@ -445,6 +445,8 @@ work="/tmp/hfl-nas-deps"
 mkdir -p "${work}" "${dest}"
 chmod 777 "${work}"
 cd "${work}"
+baseline_status="${work}/dpkg-status.before-bootstrap"
+cp /var/lib/dpkg/status "${baseline_status}"
 
 # Preserve an explicitly configured mirror and its scheme. Without one, use
 # Ubuntu's official HTTPS endpoints.
@@ -508,7 +510,9 @@ echo "  download: nfs-common cifs-utils (+dependencies)"
 rm -f /var/cache/apt/archives/*.deb 2>/dev/null || true
 download_ok=0
 for attempt in 1 2 3; do
-  if "${apt_network[@]}" install -y --download-only --no-install-recommends nfs-common cifs-utils; then
+  if "${apt_network[@]}" \
+    -o Dir::State::status="${baseline_status}" \
+    install -y --download-only --no-install-recommends nfs-common cifs-utils; then
     download_ok=1
     break
   fi

@@ -319,6 +319,7 @@ for dependency_fetcher in \
 	grep -F 'Acquire::Retries=5' "${dependency_fetcher}" >/dev/null
 	grep -F 'for attempt in 1 2 3' "${dependency_fetcher}" >/dev/null
 	grep -F 'if [[ -z "${apt_mirror_url}" ]]; then' "${dependency_fetcher}" >/dev/null
+	grep -F 'Dir::State::status="${baseline_status}"' "${dependency_fetcher}" >/dev/null
 done
 if grep -E -n 'apt_mirror_http|default Ubuntu HTTP sources' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" \
@@ -502,6 +503,10 @@ grep -F 'verify-host-debs-asset.sh' \
 	"${workflow}" >/dev/null
 grep -F 'verify-ubuntu-agent-bundle.sh' \
 	"${workflow}" >/dev/null
+grep -F 'Offline NAS dependency install pass ${attempt}/3' \
+	"${ROOT}/release/ci/verify-ubuntu-agent-bundle.sh" >/dev/null
+grep -F 'Offline NAS dependency install pass ${attempt}/3' \
+	"${ROOT}/src/agent/packaging/install/install.sh" >/dev/null
 for verification_script in \
 	"${ROOT}/release/ci/verify-host-debs-asset.sh" \
 	"${ROOT}/release/ci/verify-ubuntu-agent-bundle.sh"; do

@@ -42,8 +42,16 @@ docker run --rm --pull=never --network none \
 printf "#!/bin/sh\nexit 101\n" >/usr/sbin/policy-rc.d
 chmod 0755 /usr/sbin/policy-rc.d
 export DEBIAN_FRONTEND=noninteractive
-dpkg -i /agent/deps/'"${flavor}"'/amd64/*.deb
-[[ -z "$(dpkg --audit)" ]]
+install_ok=0
+for attempt in 1 2 3; do
+  if dpkg -i /agent/deps/'"${flavor}"'/amd64/*.deb; then
+    install_ok=1
+    break
+  fi
+  echo "Offline NAS dependency install pass ${attempt}/3 requires another ordering pass"
+done
+[[ "${install_ok}" -eq 1 ]]
+[[ -z "$(dpkg --audit 2>&1)" ]]
 bash -n /agent/install.sh
 /agent/bin/hfl-agent -version
 /agent/bin/kopia --version

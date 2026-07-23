@@ -810,7 +810,13 @@ jobs:
         needs.prepare.outputs.channel == 'main' &&
         vars.TEST_DEPLOY_ENABLED == 'true' &&
         needs.prepare.result == 'success' &&
-        (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
+        (
+          needs.publish-release.result == 'success' ||
+          (
+            needs.prepare.outputs.build_required == 'false' &&
+            needs.publish-release.result == 'skipped'
+          )
+        )
       }}
     uses: ./.github/workflows/deploy_target.yml
     with:

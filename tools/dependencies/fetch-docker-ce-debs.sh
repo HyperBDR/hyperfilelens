@@ -229,6 +229,8 @@ cat > "${script_file}" <<'INNER'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p /out
+baseline_status="/tmp/hfl-dpkg-status.before-bootstrap"
+cp /var/lib/dpkg/status "${baseline_status}"
 
 apt_mirror_url=""
 if [[ -n "${APT_MIRROR:-}" ]]; then
@@ -338,7 +340,9 @@ echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] ${docker_apt} ${UB
 rm -f /var/cache/apt/archives/*.deb
 download_ok=0
 for attempt in 1 2 3; do
-  if "${apt_network[@]}" install -y --download-only --no-install-recommends \
+  if "${apt_network[@]}" \
+    -o Dir::State::status="${baseline_status}" \
+    install -y --download-only --no-install-recommends \
     "containerd.io=${CONTAINERD_VERSION}" \
     "docker-ce-cli=${CLI_VERSION}" \
     "docker-ce=${ENGINE_VERSION}" \

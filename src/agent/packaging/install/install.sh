@@ -840,10 +840,20 @@ install_nas_deps() {
 	fi
 
 	log_ok "install NAS packages for role=${role} (offline ${ubuntu_flavor}/${arch})"
-	# Offline on standard 24.04 Server: most library debs are already satisfied; dpkg may warn on
-	# duplicates but should still install mount.nfs / mount.cifs helpers.
-	if ! dpkg -i "${deps_dir}"/*.deb; then
-		log_warn "dpkg reported errors (often already-installed libraries on standard Server); rechecking mount helpers..."
+	local -a deb_files=()
+	mapfile -t deb_files < <(find "${deps_dir}" -maxdepth 1 -type f -name '*.deb' -print | sort)
+	local install_ok=0 attempt audit
+	for attempt in 1 2 3; do
+		if DEBIAN_FRONTEND=noninteractive dpkg -i "${deb_files[@]}"; then
+			install_ok=1
+			break
+		fi
+		log_warn "Offline NAS dependency install pass ${attempt}/3 reported unresolved package ordering; retrying..."
+	done
+	audit="$(dpkg --audit 2>&1 || true)"
+	if [[ "${install_ok}" -ne 1 || -n "${audit}" ]]; then
+		[[ -z "${audit}" ]] || printf '%s\n' "${audit}" >&2
+		log_fail "Unable to install the complete Ubuntu ${ubuntu_release} NAS dependency closure offline (${arch})." 2
 	fi
 	if ! nas_mount_helpers_ready; then
 		log_fail "NAS mount helpers are still missing after installing the Ubuntu ${ubuntu_release} bundled packages (${arch})." 2
