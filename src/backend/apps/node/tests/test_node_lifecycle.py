@@ -14,6 +14,7 @@ from apps.node.exceptions import NodeLifecycleError
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_lifecycle import (
+    _version_matches_target,
     advance_node_lifecycle,
     compute_node_lifecycle,
     preview_batch_operations,
@@ -149,6 +150,22 @@ class NodeLifecycleTests(TestCase):
         )
         lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
         self.assertIsNone(lifecycle)
+
+    def test_main_build_version_matches_exact_commit(self):
+        self.node.version = "main-123abcd"
+        self.assertTrue(
+            _version_matches_target(node=self.node, target_version="main-123abcd")
+        )
+
+    def test_main_build_version_rejects_different_commit(self):
+        self.node.version = "main-7654321"
+        self.assertFalse(
+            _version_matches_target(node=self.node, target_version="main-123abcd")
+        )
+
+    def test_release_version_match_preserves_ordered_semver_behavior(self):
+        self.node.version = "1.2.1"
+        self.assertTrue(_version_matches_target(node=self.node, target_version="1.2.0"))
 
     @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=False)
     def test_same_version_running_task_not_finalized_on_enrich(self, _session):

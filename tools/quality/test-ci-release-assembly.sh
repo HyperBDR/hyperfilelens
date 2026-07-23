@@ -4,6 +4,8 @@ set -euo pipefail
 umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+version="${HFL_TEST_VERSION:-1.2.3}"
+commit="0123456789abcdef0123456789abcdef01234567"
 tmp="$(mktemp -d "${ROOT}/build/ci-assembly-test.XXXXXX")"
 trap 'rm -rf "${tmp}"' EXIT
 input="${tmp}/input"
@@ -26,8 +28,8 @@ make_metadata() {
 
 hfl="${fixtures}/hfl"
 make_gzip "${hfl}/images/00-hyperfilelens.tar.gz" hfl-images
-make_metadata "${hfl}/metadata/hfl-backend.json" hfl-backend example/hfl-backend:1.2.3 1
-make_metadata "${hfl}/metadata/hfl-frontend.json" hfl-frontend example/hfl-frontend:1.2.3 2
+make_metadata "${hfl}/metadata/hfl-backend.json" hfl-backend "example/hfl-backend:${version}" 1
+make_metadata "${hfl}/metadata/hfl-frontend.json" hfl-frontend "example/hfl-frontend:${version}" 2
 tar -C "${hfl}" -czf "${input}/_internal-hfl-images.tar.gz" images metadata
 
 runtime="${fixtures}/runtime"
@@ -51,7 +53,7 @@ printf 'DJANGO_DEBUG=true\n' >"${sl}/sourcelens/.env.example"
 printf 'fixture\n' >"${sl}/sourcelens/deploy/postgresql/initdb.d/fixture.sh"
 cp "${sl}/images/11-sourcelens-lensnode.tar.gz" \
 	"${sl}/payload/media/gateway-bootstrap/lensnode-image-linux-amd64.tar.gz"
-cat >"${sl}/sourcelens/BUILD_INFO.json" <<'JSON'
+cat >"${sl}/sourcelens/BUILD_INFO.json" <<JSON
 {
   "enabled": true,
   "git_url": "https://github.com/HyperBDR/sourcelens.git",
@@ -64,9 +66,9 @@ cat >"${sl}/sourcelens/BUILD_INFO.json" <<'JSON'
   "install_dir": "/opt/hyperfilelens/sourcelens",
   "lensnode_image": "hyperfilelens-sourcelens-lensnode:latest",
   "images": {
-    "backend": {"ref": "hyperfilelens-sourcelens-backend:1.2.3-sl0.4.0", "upstream_ref": "example/backend:v0.4.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
-    "frontend": {"ref": "hyperfilelens-sourcelens-frontend:1.2.3-sl0.4.0", "upstream_ref": "example/frontend:v0.4.0", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
-    "lensnode": {"ref": "hyperfilelens-sourcelens-lensnode:1.2.3-sl0.4.0", "upstream_ref": "example/lensnode:v0.4.0", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+    "backend": {"ref": "hyperfilelens-sourcelens-backend:${version}-sl0.4.0", "upstream_ref": "example/backend:v0.4.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+    "frontend": {"ref": "hyperfilelens-sourcelens-frontend:${version}-sl0.4.0", "upstream_ref": "example/frontend:v0.4.0", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+    "lensnode": {"ref": "hyperfilelens-sourcelens-lensnode:${version}-sl0.4.0", "upstream_ref": "example/lensnode:v0.4.0", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
     "nginx": {"ref": "hyperfilelens-sourcelens-nginx:stable-alpine", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"}
   }
 }
@@ -84,14 +86,14 @@ done
 
 for asset in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
 	agent="${fixtures}/agent-${asset}"
-	mkdir -p "${agent}/payload/media/agent-releases/1.2.3" \
+	mkdir -p "${agent}/payload/media/agent-releases/${version}" \
 		"${agent}/payload/media/enroll-bootstrap"
-	printf '%s\n' "${asset}" >"${agent}/payload/media/agent-releases/1.2.3/${asset}.fixture"
+	printf '%s\n' "${asset}" >"${agent}/payload/media/agent-releases/${version}/${asset}.fixture"
 	if [[ "${asset}" == "linux-amd64" ]]; then
 		printf 'ubuntu 20.04 fixture\n' \
-			>"${agent}/payload/media/agent-releases/1.2.3/hfl-agent-1.2.3-linux-amd64-ubuntu2004.tar.gz"
+			>"${agent}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz"
 		printf 'ubuntu 24.04 fixture\n' \
-			>"${agent}/payload/media/agent-releases/1.2.3/hfl-agent-1.2.3-linux-amd64-ubuntu2404.tar.gz"
+			>"${agent}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-ubuntu2404.tar.gz"
 	fi
 	printf '%s\n' "${asset}" >"${agent}/payload/media/enroll-bootstrap/${asset}.fixture"
 	tar -C "${agent}" -czf "${input}/_internal-agent-${asset}.tar.gz" payload
@@ -102,8 +104,8 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	HFL_RELEASE_PART_BYTES=4096 \
 	"${ROOT}/release/ci/assemble-release.sh" \
 		--input-dir "${input}" \
-		--version 1.2.3 \
-		--commit 0123456789abcdef0123456789abcdef01234567
+		--version "${version}" \
+		--commit "${commit}"
 
 (
 	cd "${output}/dist"
@@ -117,6 +119,15 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length) == 7' \
 		SBOM.spdx.json >/dev/null
 	jq -e '(.files | length) == 3' SBOM.spdx.json >/dev/null
+	if [[ "${version}" == main-* ]]; then
+		jq -e --arg id "${version}" \
+			'.channel == "main" and .artifact_id == $id and (has("version") | not)' \
+			MANIFEST.json >/dev/null
+	else
+		jq -e --arg version "${version}" \
+			'.channel == "release" and .artifact_id == ("v" + $version) and .version == $version' \
+			MANIFEST.json >/dev/null
+	fi
 	sha256sum -c SHA256SUMS
 	[[ -s hyperfilelens-root-ca.crt ]]
 	first="$(find . -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz.part-000' -print -quit)"
@@ -130,9 +141,9 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/root-ca\.crt$' >/dev/null
 	key_mode="$(tar -tvzf "${archive}" | awk '$NF ~ /\/deploy\/nginx\/certs\/tls\.key$/ {mode=$1} END {print mode}')"
 	[[ "${key_mode}" == "-rw-------" ]]
-	tar -tzf "${archive}" | grep -E '/hfl-agent-1\.2\.3-linux-amd64-ubuntu2004\.tar\.gz$' >/dev/null
-	tar -tzf "${archive}" | grep -E '/hfl-agent-1\.2\.3-linux-amd64-ubuntu2404\.tar\.gz$' >/dev/null
+	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz" >/dev/null
+	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2404.tar.gz" >/dev/null
 	"${ROOT}/release/ci/verify-release.sh" --archive "$(realpath "${archive}")"
 )
 
-printf 'Synthetic CI release assembly passed.\n'
+printf 'Synthetic CI release assembly passed for %s.\n' "${version}"

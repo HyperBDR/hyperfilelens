@@ -14,7 +14,7 @@ from apps.alert.models import AlertRecord
 from apps.alert.services.internal.lifecycle import resolve_alert
 from apps.notification.models import NotificationDelivery
 from apps.notification.services.interface import attempt_delivery
-from apps.node.services.internal.agent_release import semver_compare
+from apps.node.services.internal.agent_release import agent_version_compare
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
 from apps.platform_ops.api.serializers.platform import (
     PlatformAlertRowSerializer,
@@ -218,7 +218,7 @@ class PlatformOpsMonitoringNodesView(_PagedMonitoringView):
                         node.version
                         and latest_version
                         and latest_version != "0.0.0"
-                        and semver_compare(node.version, latest_version) < 0
+                        and agent_version_compare(node.version, latest_version) < 0
                     ),
                     "os_name": node.os_name or "",
                     "ip_address": str(node.ip_address or ""),

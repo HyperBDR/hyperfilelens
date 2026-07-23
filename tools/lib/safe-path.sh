@@ -24,7 +24,7 @@ safe_assert_absolute() {
 
 safe_assert_package_basename() {
 	local name=$1
-	[[ "${name}" =~ ^hyperfilelens-[0-9][0-9A-Za-z._-]*-[0-9a-fA-F]{7}\.tar\.gz$ ]] \
+	[[ "${name}" =~ ^hyperfilelens-([0-9][0-9A-Za-z._-]*-[0-9a-fA-F]{7}|main-[0-9a-f]{7})\.tar\.gz$ ]] \
 		|| safe_path_die "invalid release package basename: ${name}"
 	[[ "${name}" != */* ]] || safe_path_die "package basename must not contain slashes: ${name}"
 }
@@ -39,7 +39,7 @@ safe_assert_staging_pkg_root() {
 	[[ "${pkg_root}" != "${staging_base}" ]] \
 		|| safe_path_die "refusing to delete staging base directory"
 	local rel="${pkg_root#"${staging_base}/"}"
-	[[ "${rel}" =~ ^hyperfilelens-[0-9][0-9A-Za-z._-]*$ ]] \
+	[[ "${rel}" =~ ^hyperfilelens-([0-9][0-9A-Za-z._-]*|main-[0-9a-f]{7})$ ]] \
 		|| safe_path_die "unexpected staging directory name: ${rel}"
 }
 

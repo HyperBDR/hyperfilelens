@@ -11,7 +11,7 @@ from apps.alert.constants import AlertStatus
 from apps.alert.models import AlertRecord
 from apps.notification.constants import NotificationLogStatus
 from apps.notification.models import NotificationDelivery, NotificationLog
-from apps.node.services.internal.agent_release import latest_published_agent_version, semver_compare
+from apps.node.services.internal.agent_release import agent_version_compare, latest_published_agent_version
 from apps.platform_ops.selectors.internal.org_lookup import (
     organization_ids_for_key,
     organization_ids_matching,
@@ -143,7 +143,7 @@ def platform_node_stats() -> dict[str, int | str]:
     latest = latest_published_agent_version()
     versions = Node.objects.exclude(version="").values_list("version", flat=True)
     outdated = 0 if latest == "0.0.0" else sum(
-        1 for version in versions if semver_compare(str(version), latest) < 0
+        1 for version in versions if agent_version_compare(str(version), latest) < 0
     )
     return {
         "total": Node.objects.count(),

@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=../../tools/sourcelens/common.sh
 source "${ROOT}/tools/sourcelens/common.sh"
+# shellcheck source=../../tools/lib/version.sh
+source "${ROOT}/tools/lib/version.sh"
 
 usage() {
 	printf 'Usage: %s COMPONENT REGISTRY_HOST/NAMESPACE HFL_VERSION OUTPUT_JSON\n' "$0" >&2
@@ -38,10 +40,7 @@ registry_namespace=${registry_prefix#*/}
 	printf 'ERROR: registry namespace is invalid: %s\n' "${registry_namespace}" >&2
 	exit 2
 }
-[[ "${hfl_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-	printf 'ERROR: invalid HFL version: %s\n' "${hfl_version}" >&2
-	exit 2
-}
+hfl_version="$(normalize_artifact_id "${hfl_version}")"
 
 sourcelens_load_config
 sourcelens_resolve_version

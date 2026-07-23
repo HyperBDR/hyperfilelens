@@ -68,6 +68,18 @@ PY
 openssl verify -CAfile "${pkg_root}/deploy/nginx/certs/root-ca.crt" \
 	"${pkg_root}/deploy/nginx/certs/tls.crt" >/dev/null
 
+artifact_channel="$(python3 - "${pkg_root}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(manifest.get("channel") or "release"))
+PY
+)"
+[[ "${artifact_channel}" == "release" || "${artifact_channel}" == "main" ]] \
+	|| { printf 'ERROR: unsupported artifact channel\n' >&2; exit 1; }
+
 while IFS= read -r image_archive; do
 	gzip -t "${image_archive}"
 done < <(find "${pkg_root}/images" -maxdepth 1 -type f -name '*.tar.gz' | sort)
@@ -100,13 +112,17 @@ wait_for_release_services() {
 	return 1
 }
 
+install_args=(install)
+[[ "${artifact_channel}" == "main" ]] && install_args+=(--allow-main-build)
 sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
-	bash "${pkg_root}/install.sh" install
+	bash "${pkg_root}/install.sh" "${install_args[@]}"
 wait_for_release_services
 
 printf 'Running same-version in-place upgrade verification\n'
+upgrade_args=(upgrade --from "${pkg_root}" --yes)
+[[ "${artifact_channel}" == "main" ]] && upgrade_args+=(--allow-main-build)
 sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
-	bash "${pkg_root}/install.sh" upgrade --from "${pkg_root}" --yes
+	bash "${pkg_root}/install.sh" "${upgrade_args[@]}"
 wait_for_release_services
 
 export HFL_TENANT_PORT=11443

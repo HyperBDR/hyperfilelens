@@ -12,6 +12,11 @@ actual="$(release_package_basename_for_version v0.1.0 69F809F)"
 	printf 'ERROR: unexpected release package basename: %s\n' "${actual}" >&2
 	exit 1
 }
+main_actual="$(release_package_basename_for_version main-69f809f 69F809F)"
+[[ "${main_actual}" == "hyperfilelens-main-69f809f.tar.gz" ]] || {
+	printf 'ERROR: unexpected Main package basename: %s\n' "${main_actual}" >&2
+	exit 1
+}
 
 # shellcheck source=../sourcelens/common.sh
 source "${ROOT}/tools/sourcelens/common.sh"
@@ -144,12 +149,21 @@ grep -F 'APT_MIRROR_URL: ${DEBIAN_APT_MIRROR_URL:-https://deb.debian.org/debian}
 [[ "$(grep -Fc 'UV_VERSION: ${UV_VERSION:-0.10.2}' \
 	"${tmp}/source-patch/docker-compose.yml")" -eq 2 ]]
 
-workflow="${ROOT}/.github/workflows/build_and_deploy.yml"
+workflow="${ROOT}/.github/workflows/artifact_pipeline.yml"
+release_workflow="${ROOT}/.github/workflows/release.yml"
+test_workflow="${ROOT}/.github/workflows/test.yml"
+production_workflow="${ROOT}/.github/workflows/production_deploy.yml"
 agent_certification="${ROOT}/release/ci/certify-agent-candidate.py"
 [[ -f "${workflow}" ]] || {
-	printf 'ERROR: tag release workflow is missing\n' >&2
+	printf 'ERROR: reusable artifact workflow is missing\n' >&2
 	exit 1
 }
+for entrypoint in "${release_workflow}" "${test_workflow}" "${production_workflow}"; do
+	[[ -f "${entrypoint}" ]] || {
+		printf 'ERROR: deployment entrypoint is missing: %s\n' "${entrypoint}" >&2
+		exit 1
+	}
+done
 [[ "$(awk '/^  assemble-release:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "90" ]] || {
 	printf 'ERROR: release assembly timeout must cover large GitHub asset uploads\n' >&2
 	exit 1
@@ -159,9 +173,18 @@ agent_certification="${ROOT}/release/ci/certify-agent-candidate.py"
 	exit 1
 }
 grep -F 'timeout-minutes: 120' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${workflow}" >/dev/null
-grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${workflow}" >/dev/null
-if grep -F 'PROD_PUBLIC_HOST' "${workflow}" >/dev/null; then
+grep -F 'docker_preexisting=0' "${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'Existing Docker not found; the verified offline release bundle will install Docker CE' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'existing Docker daemon is not reachable' \
+	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
+grep -F 'turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED' "${workflow}" >/dev/null
+grep -F 'public_url: ${{ vars.PREPROD_PUBLIC_URL }}' "${workflow}" >/dev/null
+grep -F 'turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED' "${workflow}" >/dev/null
+grep -F 'public_url: ${{ vars.TEST_PUBLIC_URL }}' "${workflow}" >/dev/null
+grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${production_workflow}" >/dev/null
+grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${production_workflow}" >/dev/null
+if grep -F 'PROD_PUBLIC_HOST' "${workflow}" "${production_workflow}" >/dev/null; then
 	printf 'ERROR: release workflow still uses the ambiguous PROD_PUBLIC_HOST variable\n' >&2
 	exit 1
 fi
@@ -169,27 +192,22 @@ grep -F '"TURNSTILE_ENABLED=$TURNSTILE_ENABLED"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 for variable in \
 	SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_SECURITY EMAIL_FROM; do
-	grep -F "PROD_${variable}" "${workflow}" >/dev/null
+	grep -F "TEST_${variable}" "${workflow}" >/dev/null
 	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
+	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
 done
-grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+grep -F 'smtp_password: ${{ secrets.TEST_SMTP_PASSWORD }}' "${workflow}" >/dev/null
 grep -F 'smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}' "${workflow}" >/dev/null
+grep -F 'smtp_password: ${{ secrets.PROD_SMTP_PASSWORD }}' "${production_workflow}" >/dev/null
 for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
-	grep -F "PROD_${variable}" "${workflow}" >/dev/null
+	grep -F "TEST_${variable}" "${workflow}" >/dev/null
 	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
+	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
 done
 for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
-	grep -F "secrets.PROD_${secret}" "${workflow}" >/dev/null
+	grep -F "secrets.TEST_${secret}" "${workflow}" >/dev/null
 	grep -F "secrets.PREPROD_${secret}" "${workflow}" >/dev/null
-done
-manual_deploy_workflow="${ROOT}/.github/workflows/deploy_release.yml"
-for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
-	grep -F "PROD_${variable}" "${manual_deploy_workflow}" >/dev/null
-	grep -F "PREPROD_${variable}" "${manual_deploy_workflow}" >/dev/null
-done
-for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
-	grep -F "secrets.PROD_${secret}" "${manual_deploy_workflow}" >/dev/null
-	grep -F "secrets.PREPROD_${secret}" "${manual_deploy_workflow}" >/dev/null
+	grep -F "secrets.PROD_${secret}" "${production_workflow}" >/dev/null
 done
 grep -F 'python manage.py ensure_platform_ai_model' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -222,24 +240,40 @@ if git -C "${ROOT}" grep -n 'CAPTCHA_PROVIDER' -- . \
 fi
 grep -F 'Capture failed install diagnostics' "${workflow}" >/dev/null
 grep -F 'logs --no-color --tail 200' "${workflow}" >/dev/null
-if grep -F 'workflow_dispatch:' "${workflow}" >/dev/null; then
-	printf 'ERROR: release workflow must not allow manual dispatch\n' >&2
+if grep -E '^  (workflow_dispatch|push|schedule):' "${workflow}" >/dev/null; then
+	printf 'ERROR: reusable artifact workflow must not expose a direct trigger\n' >&2
 	exit 1
 fi
-grep -F 'tags:' "${workflow}" >/dev/null
+grep -F 'workflow_call:' "${workflow}" >/dev/null
+grep -F 'tags:' "${release_workflow}" >/dev/null
+grep -F 'channel: release' "${release_workflow}" >/dev/null
+grep -F 'workflow_dispatch:' "${test_workflow}" >/dev/null
+grep -F 'schedule:' "${test_workflow}" >/dev/null
+grep -F 'channel: main' "${test_workflow}" >/dev/null
+grep -F 'workflow_dispatch:' "${production_workflow}" >/dev/null
+grep -F 'Production deployment must be dispatched from refs/heads/main' \
+	"${production_workflow}" >/dev/null
+grep -F 'Production requires a published, non-prerelease GitHub Release' \
+	"${production_workflow}" >/dev/null
 for job in \
 	prepare quality build-hfl-images build-sourcelens-images build-agent \
 	certify-source-host agent-release-gate \
 	build-host-debs export-hfl-images export-sourcelens-bundle \
 	export-runtime-images assemble-release verify-release publish-release \
-	deploy-preprod deploy-prod; do
+	deploy-test deploy-preprod; do
 	grep -F "  ${job}:" "${workflow}" >/dev/null || {
-		printf 'ERROR: release workflow job is missing: %s\n' "${job}" >&2
+		printf 'ERROR: artifact workflow job is missing: %s\n' "${job}" >&2
 		exit 1
 	}
 done
-grep -F "if: \${{ vars.PREPROD_DEPLOY_ENABLED == 'true' }}" "${workflow}" >/dev/null
-grep -F "vars.PROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
+if grep -F 'deploy-prod:' "${workflow}" >/dev/null \
+	|| grep -E '(^|[^A-Z])PROD_' "${workflow}" >/dev/null; then
+	printf 'ERROR: automatic artifact workflow must not contain production deployment configuration\n' >&2
+	exit 1
+fi
+grep -F "vars.TEST_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
+grep -F "vars.PREPROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
+grep -F 'PROD_DEPLOY_ENABLED' "${production_workflow}" >/dev/null
 deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
 [[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 5 ]] || {
 	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
@@ -298,7 +332,7 @@ grep -F 'runner: macos-15-intel' "${workflow}" >/dev/null
 grep -F 'runner: macos-15' "${workflow}" >/dev/null
 grep -F 'runner: windows-2022' "${workflow}" >/dev/null
 [[ "$(grep -c 'APT_MIRROR: \${{ vars.CI_UBUNTU_APT_MIRROR }}' "${workflow}")" -eq 2 ]]
-grep -A2 '^  build-host-debs:' "${workflow}" | grep -F 'timeout-minutes: 60' >/dev/null
+[[ "$(awk '/^  build-host-debs:/{job=1} job && /timeout-minutes:/{print $2; exit}' "${workflow}")" == "60" ]]
 grep -F 'bootstrap_tools_ok=0' "${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
 grep -F 'Dir::Etc::sourcelist=/etc/apt/sources.list.d/docker.list' \
 	"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" >/dev/null
@@ -465,9 +499,9 @@ if grep -E 'tomllib|extractall\([^)]*filter=' "${installer}" >/dev/null; then
 fi
 
 grep -F 'verify-host-debs-asset.sh' \
-	"${ROOT}/.github/workflows/build_and_deploy.yml" >/dev/null
+	"${workflow}" >/dev/null
 grep -F 'verify-ubuntu-agent-bundle.sh' \
-	"${ROOT}/.github/workflows/build_and_deploy.yml" >/dev/null
+	"${workflow}" >/dev/null
 for verification_script in \
 	"${ROOT}/release/ci/verify-host-debs-asset.sh" \
 	"${ROOT}/release/ci/verify-ubuntu-agent-bundle.sh"; do
@@ -509,6 +543,7 @@ fi
 for executable in \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
+	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}"/release/ci/*.sh \
@@ -585,9 +620,9 @@ grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
 grep -F 'mem_limit: 448m' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'name: hyperfilelens-sourcelens' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
-[[ -f "${ROOT}/.github/workflows/deploy_release.yml" ]] || {
-	printf 'ERROR: manual published-release deployment workflow is missing\n' >&2
-	exit 1
-}
+grep -F 'target: prod' "${production_workflow}" >/dev/null
+grep -F 'channel: release' "${production_workflow}" >/dev/null
+grep -F 'Production deployment requires a manual workflow_dispatch event' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 
 printf 'Release contract checks passed.\n'

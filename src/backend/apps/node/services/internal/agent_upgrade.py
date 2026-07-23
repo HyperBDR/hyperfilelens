@@ -6,9 +6,10 @@ from apps.node.exceptions import AgentUpgradeError
 from apps.node.models import Node
 from apps.node.services.internal.agent_release import (
     UPGRADEABLE_AGENT_ROLES,
+    agent_version_compare,
+    is_agent_artifact_id,
     parse_semver,
     resolve_agent_version,
-    semver_compare,
 )
 
 
@@ -68,7 +69,7 @@ def validate_agent_upgrade(*, node: Node) -> str:
         )
 
     target = resolve_agent_version(platform, arch, node.role, node_os_version(node))
-    if not parse_semver(target):
+    if not is_agent_artifact_id(target):
         raise AgentUpgradeError(
             "no published agent release available",
             code="release_unavailable",
@@ -79,8 +80,8 @@ def validate_agent_upgrade(*, node: Node) -> str:
         inv = _merged_inventory(node)
         current = str(inv.get("agent_version") or "").strip()
 
-    if current and parse_semver(current):
-        if semver_compare(current, target) > 0:
+    if current and parse_semver(current) and parse_semver(target):
+        if agent_version_compare(current, target) > 0:
             raise AgentUpgradeError(
                 f"downgrade not supported ({current} > {target})",
                 code="downgrade_not_supported",

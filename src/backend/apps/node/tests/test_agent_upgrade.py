@@ -64,6 +64,22 @@ def test_validate_agent_upgrade_accepts_lower_current(releases_root):
     assert validate_agent_upgrade(node=node) == "1.0.1"
 
 
+def test_validate_agent_upgrade_accepts_main_build(releases_root, monkeypatch):
+    version = "main-123abcd"
+    version_dir = releases_root / version
+    version_dir.mkdir()
+    (version_dir / f"hfl-agent-{version}-linux-amd64.tar.gz").write_bytes(b"x")
+    monkeypatch.setenv("AGENT_VERSION", version)
+    node = Node(
+        role=Node.Role.AGENT,
+        status=Node.Status.ONLINE,
+        version="main-7654321",
+        metadata={"inventory": {"os": "linux", "arch": "amd64"}},
+    )
+
+    assert validate_agent_upgrade(node=node) == version
+
+
 def test_node_platform_arch_treats_darwin_as_macos_not_windows():
     node = Node(
         role=Node.Role.AGENT,

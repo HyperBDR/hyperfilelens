@@ -26,6 +26,10 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
+def artifact_id(version: str) -> str:
+    return version if version.startswith("main-") else f"v{version}"
+
+
 def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -483,7 +487,7 @@ def main() -> int:
     finally:
         report = {
             "schema": 1,
-            "tag": f"v{args.version}",
+            "tag": artifact_id(args.version),
             "version": args.version,
             "commit": args.commit,
             "artifact": {"name": candidate_name, "sha256": candidate_hash},

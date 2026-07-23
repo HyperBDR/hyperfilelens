@@ -15,9 +15,9 @@ from apps.node.api.views.bootstrap_templates import (
     bootstrap_dir,
 )
 from apps.node.services.internal.agent_release import (
+    agent_release_sort_key,
     agent_releases_root,
     latest_published_agent_version,
-    semver_sort_key,
 )
 from django.db.models import Count, Q
 
@@ -53,9 +53,17 @@ def _artifact_kind(name: str) -> str:
 
 
 def _artifact_sort_key(row: dict) -> tuple:
-    version = semver_sort_key(str(row.get("version") or ""))
+    version = agent_release_sort_key(str(row.get("version") or ""))
     kind = _KIND_ORDER.get(str(row.get("kind") or ""), 9)
-    return (-version[0], -version[1], -version[2], kind, str(row.get("name") or ""))
+    return (
+        -version[0],
+        -version[1],
+        -version[2],
+        -version[3],
+        version[4],
+        kind,
+        str(row.get("name") or ""),
+    )
 
 
 def _list_agent_release_artifacts(root: Path) -> list[dict]:

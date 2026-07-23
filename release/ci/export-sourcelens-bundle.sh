@@ -13,6 +13,10 @@ metadata_dir=$1
 hfl_version=${2#v}
 output=$3
 
+# shellcheck source=../../tools/lib/version.sh
+source "${ROOT}/tools/lib/version.sh"
+hfl_version="$(normalize_artifact_id "${hfl_version}")"
+
 # shellcheck source=../../tools/sourcelens/common.sh
 source "${ROOT}/tools/sourcelens/common.sh"
 export SOURCELENS_HFL_VERSION="${hfl_version}"
