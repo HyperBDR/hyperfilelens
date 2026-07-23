@@ -667,6 +667,23 @@
   font-weight: 600;
 }
 
+@media (max-width: 767.98px) {
+  .el-table {
+    --hfl-table-empty-min-height: 180px;
+    --hfl-table-empty-image-size: 64px;
+  }
+
+  .hfl-list-panel--fill .hfl-list-table,
+  .hfl-list-table-block .hfl-list-table,
+  .protection-flow-table-block .hfl-list-table {
+    --hfl-table-empty-min-height: 200px;
+  }
+
+  .el-table .el-empty {
+    --el-empty-padding: 24px 0;
+  }
+}
+
 /* ----------------------------------------
    Filter dropdown
    ---------------------------------------- */
@@ -909,6 +926,23 @@
 .create-source-config-cell__type {
   font-size: 11px;
   color: var(--el-text-color-secondary, #909399);
+}
+
+/* On phones, wide pinned data columns consume most of the horizontal viewport.
+   Keep compact selection/expand affordances pinned, but let data columns scroll. */
+@media (max-width: 767.98px) {
+  .el-table :is(.el-table__header-wrapper, .el-table__body-wrapper, .el-table__footer-wrapper)
+    tr > .el-table-fixed-column--left:not(.el-table-column--selection):not(.el-table__expand-column) {
+    position: relative !important;
+    left: auto !important;
+    z-index: var(--el-table-index) !important;
+  }
+
+  .el-table :is(.el-table__header-wrapper, .el-table__body-wrapper, .el-table__footer-wrapper)
+    tr > .el-table-fixed-column--left:not(.el-table-column--selection):not(.el-table__expand-column)::before {
+    display: none !important;
+    box-shadow: none !important;
+  }
 }
 
 /* ----------------------------------------

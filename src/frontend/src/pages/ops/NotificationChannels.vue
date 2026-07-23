@@ -1198,6 +1198,8 @@ watch(
               :label="t('ops.notification.typeWecom')"
             />
           </el-select>
+        </template>
+        <template #toolbar-utility>
           <el-button
             class="hfl-refresh-button"
             :title="t('ops.task.btnRefresh')"

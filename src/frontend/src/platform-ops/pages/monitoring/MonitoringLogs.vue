@@ -58,13 +58,13 @@ watch(() => [pagination.page, pagination.pageSize], load)
         <OpsStatCard label="Services" :value="stats.services" accent="blue" accent-side="left"><template #icon><Layers3 :size="16" /></template></OpsStatCard>
       </div>
       <HflTablePanel fill>
-        <template #toolbar><div class="platform-monitoring-page__filters">
+      <template #toolbar><div class="platform-monitoring-page__filters">
           <el-input v-model="filters.search" clearable class="platform-monitoring-page__search" placeholder="Search messages or services"><template #prefix><Search :size="15" /></template></el-input>
           <el-select v-model="filters.level" clearable class="platform-monitoring-page__filter" placeholder="Level"><el-option value="DEBUG" label="Debug" /><el-option value="INFO" label="Info" /><el-option value="WARNING" label="Warning" /><el-option value="ERROR" label="Error" /><el-option value="CRITICAL" label="Critical" /></el-select>
           <el-select v-model="filters.service" clearable filterable class="platform-monitoring-page__filter" placeholder="Service"><el-option v-for="service in serviceOptions" :key="service" :value="service" :label="service" /></el-select>
           <el-button v-if="Object.values(filters).some(Boolean)" text @click="resetFilters">Reset</el-button>
         </div></template>
-        <template #toolbar-actions><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
+      <template #toolbar-utility><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
         <template #table="{ tableMaxHeight }"><el-table v-loading="loading" :data="rows" stripe flexible row-key="id" class="hfl-list-table platform-log-table" :max-height="tableMaxHeight">
           <el-table-column label="Time" width="185"><template #default="{ row }">{{ row.timestamp ? formatLocalDateTime(row.timestamp, row.timestamp) : '—' }}</template></el-table-column>
           <el-table-column label="Level" width="115"><template #default="{ row }"><PlatformOpsStatusPill :status="row.level" /></template></el-table-column>

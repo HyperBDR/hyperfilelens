@@ -60,10 +60,29 @@ onUnmounted(() => {
     :class="{ 'hfl-list-panel--fill': fill }"
     :style="minHeight && !fill ? { minHeight } : undefined"
   >
-    <div v-if="$slots.toolbar || $slots['toolbar-actions']" class="hfl-list-toolbar">
-      <slot name="toolbar" />
-      <div v-if="$slots['toolbar-actions']" class="hfl-list-toolbar__right">
+    <div
+      v-if="$slots.toolbar || $slots['toolbar-actions'] || $slots['toolbar-utility']"
+      class="hfl-list-toolbar"
+      :class="{
+        'hfl-list-toolbar--mobile-primary-utility': $slots.toolbar && $slots['toolbar-actions'] && $slots['toolbar-utility'],
+      }"
+    >
+      <div v-if="$slots.toolbar" class="hfl-list-toolbar__primary">
+        <slot name="toolbar" />
+      </div>
+      <div
+        v-if="$slots['toolbar-actions'] || $slots['toolbar-utility']"
+        class="hfl-list-toolbar__right"
+        :class="{
+          'hfl-list-toolbar__right--mobile-split': $slots['toolbar-actions'] && $slots['toolbar-utility'],
+          'hfl-list-toolbar__right--utility-only': !$slots['toolbar-actions'] && $slots['toolbar-utility'],
+          'hfl-list-toolbar__right--full': !$slots.toolbar && $slots['toolbar-actions'],
+        }"
+      >
         <slot name="toolbar-actions" />
+        <div v-if="$slots['toolbar-utility']" class="hfl-list-toolbar__utility">
+          <slot name="toolbar-utility" />
+        </div>
       </div>
     </div>
     <slot />

@@ -218,7 +218,7 @@ onMounted(() => {
         </ElButton>
       </template>
 
-      <template #toolbar-actions>
+      <template #toolbar-utility>
         <ElButton
           class="hfl-refresh-button"
           :title="t('protection.retentionPage.btnRefresh')"

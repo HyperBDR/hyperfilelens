@@ -297,7 +297,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
             </el-button>
           </div>
         </template>
-        <template #toolbar-actions>
+        <template #toolbar-utility>
           <el-button
             :disabled="!canAcknowledge || actionLoading"
             @click="performAction('acknowledge', selectedRows)"

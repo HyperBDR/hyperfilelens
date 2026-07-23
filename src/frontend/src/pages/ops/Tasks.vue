@@ -921,7 +921,7 @@ watch(
       </div>
 
       <HflTablePanel fill>
-        <template #toolbar>
+        <template #toolbar-actions>
           <ElInput
             v-model="filters.search"
             class="hfl-list-search hfl-list-search-group"
@@ -948,7 +948,7 @@ watch(
             <ElOption v-for="item in timeModeOptions" :key="item.value" :label="item.label" :value="item.value" />
           </ElSelect>
         </template>
-        <template #toolbar-actions>
+        <template #toolbar-utility>
           <ElButton
             class="hfl-filter-button"
             :class="{ 'hfl-filter-button--active': advancedFilterCount > 0 }"

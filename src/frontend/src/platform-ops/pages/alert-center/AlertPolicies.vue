@@ -89,7 +89,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
             <el-button v-if="Object.values(filters).some(Boolean)" text @click="resetFilters">Reset</el-button>
           </div>
         </template>
-        <template #toolbar-actions>
+        <template #toolbar-utility>
           <el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button>
         </template>
         <template #table="{ tableMaxHeight }">

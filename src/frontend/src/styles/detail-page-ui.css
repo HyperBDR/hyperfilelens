@@ -824,6 +824,11 @@
     grid-template-columns: 1fr;
   }
 
+  .hfl-detail-row--full,
+  .detail-page-row--full {
+    grid-template-columns: minmax(112px, 34%) minmax(0, 1fr);
+  }
+
   .hfl-detail-row:nth-last-child(2):nth-child(odd),
   .detail-page-row:nth-last-child(2):nth-child(odd),
   .repo-detail-row:nth-last-child(2):nth-child(odd) {
