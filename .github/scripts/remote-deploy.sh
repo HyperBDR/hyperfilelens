@@ -9,6 +9,7 @@ INSTALL_DIR="/opt/hyperfilelens"
 PUBLIC_URL=""
 DIRECT_HOST=""
 RUNTIME_ENV_FILE=""
+STAGED_ASSETS_DIR=""
 
 usage() {
 	cat <<'USAGE'
@@ -20,6 +21,7 @@ Usage: remote-deploy.sh --tag vX.Y.Z|main-SHA7 --channel release|main --direct-h
   --direct-host HOST       SSH-reachable host used for direct listener URLs
   --public-url URL         Optional canonical browser URL; external checks are non-blocking
   --runtime-env-file PATH  Root-only staged runtime configuration under /var/tmp
+  --staged-assets-dir DIR  Runner-uploaded release assets under /var/tmp
 USAGE
 }
 
@@ -32,6 +34,7 @@ while [[ $# -gt 0 ]]; do
 	--repository) REPOSITORY=${2:-}; shift 2 ;;
 	--install-dir) INSTALL_DIR=${2:-}; shift 2 ;;
 	--runtime-env-file) RUNTIME_ENV_FILE=${2:-}; shift 2 ;;
+	--staged-assets-dir) STAGED_ASSETS_DIR=${2:-}; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) printf 'ERROR: unknown argument: %s\n' "$1" >&2; exit 2 ;;
 	esac
@@ -61,6 +64,17 @@ if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		exit 2
 	}
 	chmod 0600 "${RUNTIME_ENV_FILE}"
+fi
+if [[ -n "${STAGED_ASSETS_DIR}" ]]; then
+	[[ "${STAGED_ASSETS_DIR}" =~ ^/var/tmp/hyperfilelens-assets-[0-9]+$ ]] || {
+		printf 'ERROR: invalid --staged-assets-dir path\n' >&2
+		exit 2
+	}
+	[[ -d "${STAGED_ASSETS_DIR}" && ! -L "${STAGED_ASSETS_DIR}" ]] || {
+		printf 'ERROR: staged release assets are missing or unsafe\n' >&2
+		exit 2
+	}
+	chmod 0700 "${STAGED_ASSETS_DIR}"
 fi
 command -v curl >/dev/null || { printf 'ERROR: curl is required\n' >&2; exit 1; }
 command -v python3 >/dev/null || { printf 'ERROR: python3 is required\n' >&2; exit 1; }
@@ -251,16 +265,53 @@ cleanup() {
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		rm -f -- "${RUNTIME_ENV_FILE}"
 	fi
+	if [[ -n "${STAGED_ASSETS_DIR}" ]]; then
+		rm -rf -- "${STAGED_ASSETS_DIR}"
+	fi
 	exit "${status}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-api="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
-printf '[deploy] Resolving published release %s\n' "${TAG}"
-curl -fsSL --retry 5 --connect-timeout 20 "${api}" -o "${work}/release.json"
+check_disk_capacity() {
+	local total_bytes=$1 available_bytes required_bytes
+	available_bytes="$(df -PB1 /opt | awk 'NR == 2 {print $4}')"
+	required_bytes=$((total_bytes * 4 + 4 * 1024 * 1024 * 1024))
+	if ((available_bytes < required_bytes)); then
+		printf 'ERROR: insufficient disk: available=%s required=%s\n' "${available_bytes}" "${required_bytes}" >&2
+		exit 1
+	fi
+}
 
-python3 - "${work}/release.json" "${work}/assets.tsv" "${TAG}" <<'PY'
+if [[ -n "${STAGED_ASSETS_DIR}" ]]; then
+	printf '[deploy] Using runner-staged release assets for %s\n' "${TAG}"
+	[[ -f "${STAGED_ASSETS_DIR}/SHA256SUMS" && ! -L "${STAGED_ASSETS_DIR}/SHA256SUMS" ]] || {
+		printf 'ERROR: staged release has no safe SHA256SUMS\n' >&2
+		exit 1
+	}
+	mapfile -t staged_packages < <(
+		find "${STAGED_ASSETS_DIR}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz*' -print | sort
+	)
+	((${#staged_packages[@]} > 0)) || {
+		printf 'ERROR: staged release package assets are missing\n' >&2
+		exit 1
+	}
+	total_bytes="$(du -cb "${STAGED_ASSETS_DIR}/SHA256SUMS" "${staged_packages[@]}" | awk 'END {print $1}')"
+	check_disk_capacity "${total_bytes}"
+	install -m 0600 "${STAGED_ASSETS_DIR}/SHA256SUMS" "${work}/SHA256SUMS"
+	for asset in "${staged_packages[@]}"; do
+		name="$(basename "${asset}")"
+		[[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || { printf 'ERROR: unsafe staged asset name\n' >&2; exit 1; }
+		install -m 0600 "${asset}" "${work}/${name}"
+	done
+	rm -rf -- "${STAGED_ASSETS_DIR}"
+	STAGED_ASSETS_DIR=""
+else
+	api="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
+	printf '[deploy] Resolving published release %s\n' "${TAG}"
+	curl -fsSL --retry 5 --connect-timeout 20 "${api}" -o "${work}/release.json"
+
+	python3 - "${work}/release.json" "${work}/assets.tsv" "${TAG}" <<'PY'
 import json
 import pathlib
 import re
@@ -301,25 +352,21 @@ pathlib.Path(sys.argv[2]).write_text(
 )
 PY
 
-total_bytes="$(python3 - "${work}/release.json" "${work}/assets.tsv" <<'PY'
+	total_bytes="$(python3 - "${work}/release.json" "${work}/assets.tsv" <<'PY'
 import json, pathlib, sys
 release = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 selected = {line.split("\t", 1)[0] for line in pathlib.Path(sys.argv[2]).read_text().splitlines()}
 print(sum(int(asset.get("size", 0)) for asset in release.get("assets", []) if asset.get("name") in selected))
 PY
 )"
-available_bytes="$(df -PB1 /opt | awk 'NR == 2 {print $4}')"
-required_bytes=$((total_bytes * 4 + 4 * 1024 * 1024 * 1024))
-if ((available_bytes < required_bytes)); then
-	printf 'ERROR: insufficient disk: available=%s required=%s\n' "${available_bytes}" "${required_bytes}" >&2
-	exit 1
-fi
+	check_disk_capacity "${total_bytes}"
 
-while IFS=$'\t' read -r name url; do
-	[[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || { printf 'ERROR: unsafe asset name\n' >&2; exit 1; }
-	printf '[deploy] Downloading %s\n' "${name}"
-	curl -fL --retry 5 --connect-timeout 20 "${url}" -o "${work}/${name}"
-done <"${work}/assets.tsv"
+	while IFS=$'\t' read -r name url; do
+		[[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || { printf 'ERROR: unsafe asset name\n' >&2; exit 1; }
+		printf '[deploy] Downloading %s\n' "${name}"
+		curl -fL --retry 5 --connect-timeout 20 "${url}" -o "${work}/${name}"
+	done <"${work}/assets.tsv"
+fi
 
 package="$(find "${work}" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -print -quit)"
 if [[ -z "${package}" ]]; then
