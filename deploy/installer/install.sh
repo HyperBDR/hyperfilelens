@@ -203,7 +203,7 @@ safe_assert_env_file() {
 
 safe_assert_package_basename() {
 	local name=$1
-	[[ "${name}" =~ ^hyperfilelens-[0-9][0-9A-Za-z._-]*-[0-9a-fA-F]{7}\.tar\.gz$ ]] \
+	[[ "${name}" =~ ^hyperfilelens-([0-9][0-9A-Za-z._-]*-[0-9a-fA-F]{7}|main-[0-9a-f]{7})\.tar\.gz$ ]] \
 		|| die "invalid release package basename: ${name}"
 	[[ "${name}" != */* ]] || die "package basename must not contain slashes: ${name}"
 }
@@ -500,10 +500,65 @@ read_version_from_dir() {
 	if [[ -f "${dir}/VERSION" ]]; then
 		tr -d ' \t\r\n' < "${dir}/VERSION"
 	elif [[ -f "${dir}/MANIFEST.json" ]]; then
-		python3 -c "import json; print(json.load(open('${dir}/MANIFEST.json'))['version'])"
+		python3 -c "import json; m=json.load(open('${dir}/MANIFEST.json')); print(m.get('artifact_id') if m.get('channel') == 'main' else m['version'])"
 	else
 		die "cannot read version from ${dir} (missing VERSION and MANIFEST.json)"
 	fi
+}
+
+read_channel_from_dir() {
+	local dir=$1
+	if [[ ! -f "${dir}/MANIFEST.json" ]]; then
+		printf 'release'
+		return
+	fi
+	python3 - "${dir}/MANIFEST.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(manifest.get("channel") or "release").strip())
+PY
+}
+
+validate_package_identity() {
+	local dir=$1
+	python3 - "${dir}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "MANIFEST.json").read_text(encoding="utf-8"))
+channel = str(manifest.get("channel") or "release").strip()
+commit = str(manifest.get("git_commit") or "").strip().lower()
+artifact_id = str(manifest.get("artifact_id") or "").strip().lower()
+version_file = (root / "VERSION").read_text(encoding="utf-8").strip()
+
+if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    raise SystemExit("release manifest has an invalid git_commit")
+if channel == "main":
+    if not re.fullmatch(r"main-[0-9a-f]{7}", artifact_id):
+        raise SystemExit("main package has an invalid artifact_id")
+    if artifact_id != f"main-{commit[:7]}":
+        raise SystemExit("main package artifact_id does not match git_commit")
+    if "version" in manifest:
+        raise SystemExit("main package must not declare a release version")
+    expected = artifact_id
+elif channel == "release":
+    version = str(manifest.get("version") or "").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise SystemExit("release package has an invalid version")
+    if artifact_id and artifact_id != f"v{version}":
+        raise SystemExit("release package artifact_id does not match version")
+    expected = version
+else:
+    raise SystemExit(f"unsupported release channel: {channel}")
+if version_file != expected:
+    raise SystemExit("VERSION does not match the release manifest identity")
+PY
 }
 
 read_version() {
@@ -651,8 +706,9 @@ ensure_env_file() {
 		return 0
 	fi
 
-	local version secret db_pass host
+	local version channel secret db_pass host
 	version="$(read_version)"
+	channel="$(read_channel_from_dir "${ROOT}")"
 	secret="$(random_hex)"
 	db_pass="$(random_hex | cut -c1-32)"
 	host="${PUBLIC_HOST}"
@@ -664,13 +720,13 @@ ensure_env_file() {
 	step "Creating .env from .env.example ..."
 	cp "${example}" "${env_file}"
 	chmod 600 "${env_file}"
-	python3 - "${env_file}" "${version}" "${secret}" "${db_pass}" "${host}" <<'PY'
+	python3 - "${env_file}" "${version}" "${channel}" "${secret}" "${db_pass}" "${host}" <<'PY'
 import pathlib
 import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-version, secret, db_pass, host = sys.argv[2:6]
+version, channel, secret, db_pass, host = sys.argv[2:7]
 text = path.read_text(encoding="utf-8")
 
 def sub_key(name, value):
@@ -683,6 +739,7 @@ def sub_key(name, value):
 
 sub_key("AGENT_VERSION", version)
 sub_key("APP_VERSION", version)
+sub_key("HFL_RELEASE_CHANNEL", channel)
 sub_key("SECRET_KEY", secret)
 sub_key("POSTGRES_PASSWORD", db_pass)
 sub_key("DJANGO_DEBUG", "false")
@@ -728,6 +785,7 @@ preflight_package_layout() {
 	[[ -f "${ROOT}/images/00-hyperfilelens.tar.gz" ]] || die "missing HFL image archive"
 	[[ -f "${ROOT}/images/01-postgres-17.tar.gz" ]] || die "missing PostgreSQL image archive"
 	[[ -f "${ROOT}/images/02-redis-alpine.tar.gz" ]] || die "missing Redis image archive"
+	validate_package_identity "${ROOT}"
 	log "Release package check passed"
 }
 
@@ -903,10 +961,12 @@ sync_env_from_example() {
 
 update_env_versions() {
 	local version=$1
-	python3 - "${ROOT}" "${version}" <<'PY'
+	local channel=$2
+	python3 - "${ROOT}" "${version}" "${channel}" <<'PY'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
+channel = sys.argv[3]
 env = root / ".env"
 if not env.exists():
     raise SystemExit(0)
@@ -917,6 +977,11 @@ for key in ("AGENT_VERSION", "APP_VERSION"):
         text = re.sub(pattern, lambda m, v=version: f"{m.group(1)}{v}", text, count=1, flags=re.M)
     else:
         text = text.rstrip() + f"\n{key}={version}\n"
+pattern = r"^(HFL_RELEASE_CHANNEL=).*$"
+if re.search(pattern, text, flags=re.M):
+    text = re.sub(pattern, rf"\g<1>{channel}", text, count=1, flags=re.M)
+else:
+    text = text.rstrip() + f"\nHFL_RELEASE_CHANNEL={channel}\n"
 env.write_text(text, encoding="utf-8")
 PY
 }
@@ -1737,7 +1802,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 # --- Commands ---
 
 cmd_install() {
-	local sourcelens_mode=-1
+	local sourcelens_mode=-1 allow_main_build=0
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--with-sourcelens) sourcelens_mode=1 ;;
@@ -1745,6 +1810,7 @@ cmd_install() {
 		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
 		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
 		--runtime-env-file) [[ $# -ge 2 && -n "${2:-}" ]] || die "--runtime-env-file requires a path" 2; RUNTIME_ENV_FILE="$2"; shift ;;
+		--allow-main-build) allow_main_build=1 ;;
 		*) die "unknown install option: $1" 2 ;;
 		esac
 		shift
@@ -1753,6 +1819,9 @@ cmd_install() {
 	init_install_root
 	local version
 	version="$(read_version)"
+	if [[ "$(read_channel_from_dir "${ROOT}")" == "main" && "${allow_main_build}" -ne 1 ]]; then
+		die "main channel packages require --allow-main-build"
+	fi
 	log "======== HyperFileLens install ${version} ========"
 	log "Install dir: ${ROOT}"
 
@@ -1924,7 +1993,10 @@ if version_path.is_file():
     print(version_path.read_text(encoding="utf-8").strip())
 elif manifest_path.is_file():
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    print(str(manifest["version"]).strip())
+    if manifest.get("channel") == "main":
+        print(str(manifest["artifact_id"]).strip())
+    else:
+        print(str(manifest["version"]).strip())
 elif pyproject_path.is_file():
     text = pyproject_path.read_text(encoding="utf-8")
     project_match = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", text)
@@ -2396,9 +2468,9 @@ cmd_uninstall() {
 }
 
 cmd_upgrade() {
-	local from=""
+	local from="" allow_main_build=0
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
-	local src_root new_version cur_version upgrade_sourcelens=0 backup_stamp
+	local src_root new_version cur_version new_channel cur_channel upgrade_sourcelens=0 backup_stamp
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--from)
@@ -2414,6 +2486,7 @@ cmd_upgrade() {
 		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
 		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
 		--runtime-env-file) [[ $# -ge 2 && -n "${2:-}" ]] || die "--runtime-env-file requires a path" 2; RUNTIME_ENV_FILE="$2"; shift ;;
+		--allow-main-build) allow_main_build=1 ;;
 		*) die "unknown upgrade option: $1" 2 ;;
 		esac
 		shift
@@ -2427,11 +2500,18 @@ cmd_upgrade() {
 
 	trap cleanup_upgrade_and_finish EXIT
 	src_root="$(prepare_upgrade_source "${from}")"
+	validate_package_identity "${src_root}"
 	new_version="$(read_version_from_dir "${src_root}")"
+	cur_channel="$(read_channel_from_dir "${ROOT}")"
+	new_channel="$(read_channel_from_dir "${src_root}")"
+	if [[ "${new_channel}" == "main" && "${allow_main_build}" -ne 1 ]]; then
+		die "main channel packages require --allow-main-build"
+	fi
 
 	if [[ "${new_version}" == "${cur_version}" ]]; then
 		confirm_same_version_upgrade "${cur_version}"
-	elif version_lt "${new_version}" "${cur_version}"; then
+	elif [[ "${new_channel}" == "release" && "${cur_channel}" == "release" ]] \
+		&& version_lt "${new_version}" "${cur_version}"; then
 		die "downgrade not supported (${new_version} < ${cur_version})"
 	fi
 
@@ -2486,7 +2566,7 @@ cmd_upgrade() {
 	step "[5/7] Merging .env and overwriting app files ..."
 	sync_env_from_example "${src_root}/.env.example"
 	apply_upgrade_files "${src_root}" "${remove_sourcelens}"
-	update_env_versions "${new_version}"
+	update_env_versions "${new_version}" "${new_channel}"
 	apply_runtime_configuration
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 

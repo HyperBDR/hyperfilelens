@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPOSITORY="HyperBDR/hyperfilelens"
 TAG=""
+CHANNEL="release"
 INSTALL_DIR="/opt/hyperfilelens"
 PUBLIC_URL=""
 DIRECT_HOST=""
@@ -11,9 +12,10 @@ RUNTIME_ENV_FILE=""
 
 usage() {
 	cat <<'USAGE'
-Usage: remote-deploy.sh --tag vX.Y.Z --direct-host HOST [options]
+Usage: remote-deploy.sh --tag vX.Y.Z|main-SHA7 --channel release|main --direct-host HOST [options]
 
   --repository OWNER/REPO  Public GitHub repository (default: HyperBDR/hyperfilelens)
+	--channel CHANNEL       Artifact channel: release or main (default: release)
   --install-dir DIR        HFL install directory (default: /opt/hyperfilelens)
   --direct-host HOST       SSH-reachable host used for direct listener URLs
   --public-url URL         Optional canonical browser URL; external checks are non-blocking
@@ -24,6 +26,7 @@ USAGE
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--tag) TAG=${2:-}; shift 2 ;;
+	--channel) CHANNEL=${2:-}; shift 2 ;;
 	--public-url) PUBLIC_URL=${2:-}; shift 2 ;;
 	--direct-host) DIRECT_HOST=${2:-}; shift 2 ;;
 	--repository) REPOSITORY=${2:-}; shift 2 ;;
@@ -34,7 +37,11 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-[[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'ERROR: invalid release tag\n' >&2; exit 2; }
+case "${CHANNEL}" in
+release) [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'ERROR: invalid release tag\n' >&2; exit 2; } ;;
+main) [[ "${TAG}" =~ ^main-[0-9a-f]{7}$ ]] || { printf 'ERROR: invalid main build identifier\n' >&2; exit 2; } ;;
+*) printf 'ERROR: invalid artifact channel\n' >&2; exit 2 ;;
+esac
 [[ "${REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { printf 'ERROR: invalid repository\n' >&2; exit 2; }
 [[ "${INSTALL_DIR}" == /opt/hyperfilelens ]] || {
 	printf 'ERROR: current HFL installer supports /opt/hyperfilelens only\n' >&2
@@ -58,9 +65,14 @@ fi
 command -v curl >/dev/null || { printf 'ERROR: curl is required\n' >&2; exit 1; }
 command -v python3 >/dev/null || { printf 'ERROR: python3 is required\n' >&2; exit 1; }
 command -v flock >/dev/null || { printf 'ERROR: flock is required\n' >&2; exit 1; }
-command -v docker >/dev/null || { printf 'ERROR: automated shared-host deployment requires existing Docker\n' >&2; exit 1; }
-docker info >/dev/null 2>&1 || { printf 'ERROR: existing Docker daemon is not reachable\n' >&2; exit 1; }
-docker compose version >/dev/null 2>&1 || { printf 'ERROR: Docker Compose v2 is required\n' >&2; exit 1; }
+docker_preexisting=0
+if command -v docker >/dev/null 2>&1; then
+	docker info >/dev/null 2>&1 || { printf 'ERROR: existing Docker daemon is not reachable\n' >&2; exit 1; }
+	docker compose version >/dev/null 2>&1 || { printf 'ERROR: Docker Compose v2 is required\n' >&2; exit 1; }
+	docker_preexisting=1
+else
+	printf '[deploy] Existing Docker not found; the verified offline release bundle will install Docker CE\n'
+fi
 
 # shellcheck disable=SC1091
 . /etc/os-release
@@ -221,12 +233,16 @@ verify_unrelated_state() {
 	printf '[deploy] Verified that unrelated Docker containers, networks, and volumes are unchanged\n'
 }
 
-capture_unrelated_state "${work}/unrelated-before.json"
 shared_host_guard_verified=0
+if [[ "${docker_preexisting}" == "1" ]]; then
+	capture_unrelated_state "${work}/unrelated-before.json"
+else
+	shared_host_guard_verified=1
+fi
 cleanup() {
 	local status=$?
 	trap - EXIT INT TERM
-	if [[ "${shared_host_guard_verified}" != "1" ]]; then
+	if [[ "${docker_preexisting}" == "1" && "${shared_host_guard_verified}" != "1" ]]; then
 		if ! verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
 			status=90
 		fi
@@ -261,15 +277,19 @@ selected = {}
 if "SHA256SUMS" not in assets:
     raise SystemExit("release has no SHA256SUMS")
 selected["SHA256SUMS"] = assets["SHA256SUMS"]
-prefix = re.escape(f"hyperfilelens-{tag[1:] if tag.startswith('v') else tag}-")
-full = sorted(name for name in assets if re.fullmatch(prefix + r"[0-9a-f]{7}\.tar\.gz", name))
+if tag.startswith("main-"):
+    package_pattern = re.escape(f"hyperfilelens-{tag}.tar.gz")
+else:
+    prefix = re.escape(f"hyperfilelens-{tag[1:]}-")
+    package_pattern = prefix + r"[0-9a-f]{7}\.tar\.gz"
+full = sorted(name for name in assets if re.fullmatch(package_pattern, name))
 if len(full) == 1:
     selected[full[0]] = assets[full[0]]
 else:
     parts = sorted(
         name
         for name in assets
-        if re.fullmatch(prefix + r"[0-9a-f]{7}\.tar\.gz\.part-[0-9]{3}", name)
+        if re.fullmatch(package_pattern + r"\.part-[0-9]{3}", name)
     )
     if not parts:
         raise SystemExit("release has neither one full package nor package parts")
@@ -329,6 +349,23 @@ package_root="$(find "${work}/extract" -mindepth 1 -maxdepth 1 -type d -name 'hy
 	printf 'ERROR: invalid HFL package layout\n' >&2
 	exit 1
 }
+python3 - "${package_root}/MANIFEST.json" "${CHANNEL}" "${TAG}" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected_channel = sys.argv[2]
+expected_id = sys.argv[3]
+channel = str(manifest.get("channel") or "release")
+if channel != expected_channel:
+    raise SystemExit(f"package channel mismatch: {channel} != {expected_channel}")
+artifact_id = str(manifest.get("artifact_id") or "")
+if expected_channel == "release" and not artifact_id:
+    artifact_id = "v" + str(manifest.get("version") or "")
+if artifact_id != expected_id:
+    raise SystemExit(f"package identity mismatch: {artifact_id} != {expected_id}")
+PY
 
 if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
 	printf '[deploy] Upgrading installed HFL to %s\n' "${TAG}"
@@ -339,6 +376,7 @@ if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
 		--direct-host "${DIRECT_HOST}"
 		--public-url "${PUBLIC_URL}"
 	)
+	[[ "${CHANNEL}" == "main" ]] && install_args+=(--allow-main-build)
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		install_args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
 	fi
@@ -351,6 +389,7 @@ else
 		--direct-host "${DIRECT_HOST}"
 		--public-url "${PUBLIC_URL}"
 	)
+	[[ "${CHANNEL}" == "main" ]] && install_args+=(--allow-main-build)
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		install_args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
 	fi
@@ -362,16 +401,18 @@ if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 	RUNTIME_ENV_FILE=""
 fi
 
-if verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
-	shared_host_guard_verified=1
-else
-	shared_host_guard_verified=1
-	exit 90
+if [[ "${docker_preexisting}" == "1" ]]; then
+	if verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
+		shared_host_guard_verified=1
+	else
+		shared_host_guard_verified=1
+		exit 90
+	fi
 fi
 
 mkdir -p "${INSTALL_DIR}/packages"
 install -m 0644 "${package}" "${INSTALL_DIR}/packages/${package_name}"
-mapfile -t old_packages < <(find "${INSTALL_DIR}/packages" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -printf '%T@ %p\n' | sort -nr | tail -n +3 | cut -d' ' -f2-)
+mapfile -t old_packages < <(find "${INSTALL_DIR}/packages" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2-)
 if ((${#old_packages[@]})); then
 	rm -f -- "${old_packages[@]}"
 fi

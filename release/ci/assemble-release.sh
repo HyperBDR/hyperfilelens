@@ -16,7 +16,7 @@ fi
 
 usage() {
 	cat <<'USAGE'
-Usage: assemble-release.sh --input-dir DIR --version X.Y.Z --commit SHA
+Usage: assemble-release.sh --input-dir DIR --version X.Y.Z|main-SHA7 --commit SHA
 USAGE
 }
 
@@ -34,8 +34,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -d "${input_dir}" ]] || { printf 'ERROR: input directory is missing\n' >&2; exit 2; }
-[[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'ERROR: invalid version\n' >&2; exit 2; }
+version="$(normalize_artifact_id "${version}")"
 [[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || { printf 'ERROR: invalid commit\n' >&2; exit 2; }
+if [[ "${version}" == main-* && "${version#main-}" != "${commit:0:7}" ]]; then
+	printf 'ERROR: main build identifier does not match commit\n' >&2
+	exit 2
+fi
 
 hfl_logging_configure ci-assemble
 hfl_logging_start

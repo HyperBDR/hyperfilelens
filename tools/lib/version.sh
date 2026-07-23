@@ -19,6 +19,32 @@ normalize_release_version() {
 	printf '%s' "${version}"
 }
 
+normalize_main_artifact_id() {
+	local artifact_id="${1,,}"
+	[[ "${artifact_id}" =~ ^main-[0-9a-f]{7}$ ]] \
+		|| version_die "invalid main build identifier: ${1} (expected main-<7 lowercase hex>)" 2
+	printf '%s' "${artifact_id}"
+}
+
+normalize_artifact_id() {
+	local value="${1:-}"
+	if [[ "${value,,}" == main-* ]]; then
+		normalize_main_artifact_id "${value}"
+		return
+	fi
+	normalize_release_version "${value}"
+}
+
+artifact_channel() {
+	local artifact_id
+	artifact_id="$(normalize_artifact_id "$1")" || return $?
+	if [[ "${artifact_id}" == main-* ]]; then
+		printf 'main'
+	else
+		printf 'release'
+	fi
+}
+
 resolve_release_version() {
 	local requested="${RELEASE_VERSION:-}" tag_version="" version=""
 	if command -v git >/dev/null 2>&1 \
@@ -63,9 +89,15 @@ resolve_commit7() {
 
 release_package_basename_for_version() {
 	local version commit7
-	version="$(normalize_release_version "$1")" || return $?
+	version="$(normalize_artifact_id "$1")" || return $?
 	commit7="${2,,}"
 	[[ "${commit7}" =~ ^[0-9a-f]{7}$ ]] \
 		|| version_die "invalid short git commit: ${2} (expected 7 hexadecimal characters)" 2
+	if [[ "${version}" == main-* ]]; then
+		[[ "${version#main-}" == "${commit7}" ]] \
+			|| version_die "main build identifier ${version} does not match commit ${commit7}" 2
+		printf 'hyperfilelens-%s.tar.gz' "${version}"
+		return
+	fi
 	printf 'hyperfilelens-%s-%s.tar.gz' "${version}" "${commit7}"
 }

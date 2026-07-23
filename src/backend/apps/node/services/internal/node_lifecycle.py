@@ -15,7 +15,7 @@ from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.selectors.interface import get_node_task_runtime_info
 from apps.node.selectors.internal.node_task_query import node_tasks_queryset
-from apps.node.services.internal.agent_release import parse_semver
+from apps.node.services.internal.agent_release import agent_version_compare, is_agent_artifact_id
 from apps.node.services.internal.agent_task import run_agent_task_async
 from apps.node.services.internal.agent_uninstall import (
     _purge_agent_server_records,
@@ -109,11 +109,10 @@ def _node_installed_version(node: Node) -> str:
 
 
 def _version_matches_target(*, node: Node, target_version: str) -> bool:
-    target = parse_semver(target_version)
-    current = parse_semver(_node_installed_version(node))
-    if target is None or current is None:
+    current = _node_installed_version(node)
+    if not is_agent_artifact_id(target_version) or not is_agent_artifact_id(current):
         return False
-    return current >= target
+    return agent_version_compare(current, target_version) >= 0
 
 
 def _is_detached_lifecycle_task(task: NodeTask) -> bool:

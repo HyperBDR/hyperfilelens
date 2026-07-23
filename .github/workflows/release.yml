@@ -1,0 +1,18 @@
+name: HFL - Release Pipeline
+run-name: Release ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build-publish-and-deploy-preprod:
+    uses: ./.github/workflows/artifact_pipeline.yml
+    with:
+      channel: release
+      force_rebuild: false
+    secrets: inherit

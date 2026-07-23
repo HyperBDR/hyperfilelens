@@ -3,8 +3,17 @@ name: HFL - Target Deployment (Reusable)
 on:
   workflow_call:
     inputs:
+      target:
+        description: Deployment target identity (test, preprod, or prod)
+        required: true
+        type: string
+      channel:
+        description: Artifact channel (release or main)
+        required: false
+        default: release
+        type: string
       tag:
-        description: Published HFL release tag to deploy
+        description: Published HFL artifact identifier to deploy
         required: true
         type: string
       public_url:
@@ -106,6 +115,9 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    concurrency:
+      group: hyperfilelens-deploy-${{ inputs.target }}
+      cancel-in-progress: false
     env:
       APP_PUBLIC_URL: ${{ inputs.public_url }}
       DEPLOY_SSH_HOST: ${{ inputs.ssh_host }}
@@ -129,6 +141,8 @@ jobs:
           AI_MODEL_DISPLAY_NAME: ${{ inputs.ai_model_display_name }}
           AI_MODEL_API_BASE: ${{ secrets.ai_model_api_base }}
           AI_MODEL_API_KEY: ${{ secrets.ai_model_api_key }}
+          ARTIFACT_CHANNEL: ${{ inputs.channel }}
+          DEPLOY_TARGET: ${{ inputs.target }}
         shell: bash
         run: |
           set -euo pipefail
@@ -137,6 +151,19 @@ jobs:
           [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
           [[ -n "$DEPLOY_SSH_KNOWN_HOSTS" ]]
           [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
+          [[ "$DEPLOY_TARGET" =~ ^(test|preprod|prod)$ ]]
+          [[ "$ARTIFACT_CHANNEL" =~ ^(release|main)$ ]]
+          case "$DEPLOY_TARGET:$ARTIFACT_CHANNEL" in
+            test:main|preprod:release|prod:release) ;;
+            *)
+              echo "Deployment target $DEPLOY_TARGET refuses channel $ARTIFACT_CHANNEL" >&2
+              exit 1
+              ;;
+          esac
+          if [[ "$DEPLOY_TARGET" == "prod" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo 'Production deployment requires a manual workflow_dispatch event' >&2
+            exit 1
+          fi
 
           smtp_values=(
             "$SMTP_HOST" "$SMTP_PORT" "$SMTP_USERNAME"
@@ -248,6 +275,7 @@ jobs:
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             bash -s -- \
               --tag "${{ inputs.tag }}" \
+              --channel "${{ inputs.channel }}" \
               --public-url "$APP_PUBLIC_URL" \
               --direct-host "$DEPLOY_SSH_HOST" \
               --install-dir /opt/hyperfilelens \
@@ -353,7 +381,7 @@ jobs:
           set +e
           if [[ -z "$APP_PUBLIC_URL" ]]; then
             echo '::warning::Public URL is not configured; skipping external availability check'
-            printf '### Public endpoint check\n\nSkipped: `PROD_PUBLIC_URL`/`PREPROD_PUBLIC_URL` is empty. Core deployment is healthy.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '### Public endpoint check\n\nSkipped: the target public URL is empty. Core deployment is healthy.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           endpoint="${APP_PUBLIC_URL%/}/health/ready"

@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    version = str(manifest["version"])
+    version = str(manifest.get("artifact_id") or manifest["version"])
     commit = str(manifest["git_commit"])
     namespace_seed = hashlib.sha256(
         f"hyperfilelens:{version}:{commit}".encode()

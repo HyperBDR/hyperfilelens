@@ -206,10 +206,12 @@ usage() {
 	cat <<'USAGE'
 Usage: release/build.sh [options]
 
-Build hyperfilelens-<version>-<commit7>.tar.gz into build/release/dist/
+Build one package into build/release/dist/:
+  release channel: hyperfilelens-<version>-<commit7>.tar.gz
+  main channel:    hyperfilelens-main-<commit7>.tar.gz
 
 Version:
-  --version VERSION                  Local untagged build version (default: 0.1.0)
+  --version VERSION                  X.Y.Z or main-<commit7> (default: 0.1.0)
                                      A matching exact Git tag is authoritative when present.
 
   - Full agent bundle (all platforms)
@@ -260,7 +262,7 @@ USAGE
 
 print_config() {
 	local resolved_version sourcelens_version
-	resolved_version="$(resolve_release_version)" || return $?
+	resolved_version="$(read_version)" || return $?
 	[[ "${SOURCELENS_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
 		|| die "invalid SourceLens release ref: ${SOURCELENS_GIT_REF} (expected vX.Y.Z)" 2
 	sourcelens_version="${BASH_REMATCH[1]}"
@@ -555,6 +557,10 @@ build_sourcelens_bundle() {
 }
 
 read_version() {
+	if [[ -n "${OPT_VERSION:-}" ]]; then
+		normalize_artifact_id "${OPT_VERSION}"
+		return
+	fi
 	resolve_release_version
 }
 
@@ -942,8 +948,10 @@ for role, relative in (
     }
 
 manifest = {
+    "schema_version": 2,
     "product": "hyperfilelens",
-    "version": version,
+    "channel": "main" if version.startswith("main-") else "release",
+    "artifact_id": version if version.startswith("main-") else f"v{version}",
     "built_at": built_at,
     "git_commit": commit,
     "host_runtime": {
@@ -966,6 +974,8 @@ manifest = {
         "default_tls": tls_artifacts,
     },
 }
+if manifest["channel"] == "release":
+    manifest["version"] = version
 pathlib.Path(out_path).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY
 }

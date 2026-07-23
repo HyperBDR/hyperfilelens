@@ -6,6 +6,8 @@ from __future__ import annotations
 import pytest
 
 from apps.node.services.internal.agent_release import (
+    agent_version_compare,
+    is_main_build,
     latest_published_agent_version,
     resolve_agent_version,
     semver_compare,
@@ -39,6 +41,16 @@ def test_latest_published_agent_version_honors_agent_version_env(releases_root, 
     assert latest_published_agent_version() == "1.0.0"
 
 
+def test_latest_published_agent_version_honors_main_build_env(releases_root, monkeypatch):
+    version = "main-123abcd"
+    version_dir = releases_root / version
+    version_dir.mkdir()
+    (version_dir / f"hfl-agent-{version}-linux-amd64.tar.gz").write_bytes(b"x")
+    monkeypatch.setenv("AGENT_VERSION", version)
+
+    assert latest_published_agent_version() == version
+
+
 @pytest.mark.parametrize(
     ("os_version", "suffix"),
     [("20.04", "ubuntu2004"), ("24.04", "ubuntu2404")],
@@ -58,3 +70,11 @@ def test_semver_compare_orders_versions():
     assert semver_compare("1.0.0", "1.0.1") < 0
     assert semver_compare("1.0.1", "1.0.0") > 0
     assert semver_compare("1.0.0", "1.0.0") == 0
+
+
+def test_main_build_identity_comparison_uses_exact_commit():
+    assert is_main_build("main-123abcd")
+    assert not is_main_build("main-latest")
+    assert agent_version_compare("main-123abcd", "main-123abcd") == 0
+    assert agent_version_compare("main-7654321", "main-123abcd") < 0
+    assert agent_version_compare("1.0.0", "main-123abcd") < 0

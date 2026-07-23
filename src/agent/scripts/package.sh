@@ -151,7 +151,7 @@ esac
 case "${VERBOSE}" in true | yes) VERBOSE=1 ;; false | no) VERBOSE=0 ;; esac
 
 [[ -n "${OPT_BUNDLE}" ]] && BUNDLE="${OPT_BUNDLE}"
-AGENT_VERSION="$(normalize_release_version "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
+AGENT_VERSION="$(normalize_artifact_id "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
 MATRIX="${OPT_MATRIX:-${AGENT_MATRIX:-${DEFAULT_MATRIX}}}"
 COMMIT="${OPT_COMMIT:-${AGENT_COMMIT:-$(resolve_commit_full "${REPO_ROOT}")}}"
 UBUNTU2404_ARCH="${OPT_UBUNTU2404_ARCH:-${AGENT_UBUNTU2404_ARCH:-}}"

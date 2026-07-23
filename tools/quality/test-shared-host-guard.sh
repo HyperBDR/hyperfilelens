@@ -48,7 +48,7 @@ cat >"${tmp}/state/volumes.json" <<'JSON'
 JSON
 
 # Load only the two guard functions; the production script itself must remain standalone.
-source <(sed -n '/^capture_unrelated_state()/,/^capture_unrelated_state "${work}/p' \
+source <(sed -n '/^capture_unrelated_state()/,/^shared_host_guard_verified=0/p' \
 	"${ROOT}/.github/scripts/remote-deploy.sh" | sed '$d')
 PATH="${tmp}/bin:${PATH}"
 export PATH HFL_TEST_STATE_DIR="${tmp}/state"

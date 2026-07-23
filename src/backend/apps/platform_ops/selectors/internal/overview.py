@@ -15,7 +15,7 @@ from apps.monitor.selectors.internal.platform_summary import platform_monitor_pa
 from apps.node.models import Node
 from apps.node.services.internal.agent_release import (
     latest_published_agent_version,
-    semver_compare,
+    agent_version_compare,
 )
 from apps.notification.constants import NotificationLogStatus
 from apps.notification.models import NotificationLog
@@ -111,7 +111,7 @@ def _outdated_agent_count() -> tuple[int, str]:
     count = sum(
         1
         for version in Node.objects.exclude(version="").values_list("version", flat=True)
-        if semver_compare(str(version), latest) < 0
+        if agent_version_compare(str(version), latest) < 0
     )
     return count, latest
 

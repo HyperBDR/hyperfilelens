@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate a tagged release on native Source Host certification reports."""
+"""Gate an immutable artifact on native Source Host certification reports."""
 
 from __future__ import annotations
 
@@ -27,6 +27,10 @@ def fail(message: str) -> None:
     raise SystemExit(f"ERROR: {message}")
 
 
+def artifact_id(version: str) -> str:
+    return version if version.startswith("main-") else f"v{version}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--reports-dir", required=True, type=pathlib.Path)
@@ -36,6 +40,7 @@ def main() -> int:
     parser.add_argument("--required-target", action="append", default=[])
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args()
+    expected_artifact_id = artifact_id(args.version)
 
     candidate_hashes: dict[str, str] = {}
     for bundle in sorted(args.candidates_dir.glob("_internal-agent-*.tar.gz")):
@@ -66,7 +71,10 @@ def main() -> int:
             fail(f"duplicate certification report for {target}")
         if value.get("schema") != 1:
             fail(f"unsupported report schema in {path.name}")
-        if value.get("version") != args.version or value.get("tag") != f"v{args.version}":
+        if (
+            value.get("version") != args.version
+            or value.get("tag") != expected_artifact_id
+        ):
             fail(f"version mismatch in {path.name}")
         if value.get("commit") != args.commit:
             fail(f"commit mismatch in {path.name}")
@@ -92,7 +100,7 @@ def main() -> int:
 
     summary = {
         "schema": 1,
-        "tag": f"v{args.version}",
+        "tag": expected_artifact_id,
         "version": args.version,
         "commit": args.commit,
         "required_targets": sorted(required),

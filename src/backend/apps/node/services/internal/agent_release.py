@@ -22,6 +22,7 @@ UPGRADEABLE_AGENT_ROLES = frozenset(
 )
 
 _SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+_MAIN_BUILD_RE = re.compile(r"^main-[0-9a-f]{7}$")
 
 
 def agent_releases_root() -> Path:
@@ -57,6 +58,36 @@ def semver_compare(left: str, right: str) -> int:
     if left_parsed > right_parsed:
         return 1
     return 0
+
+
+def is_main_build(value: str) -> bool:
+    return bool(_MAIN_BUILD_RE.fullmatch(str(value or "").strip().lower()))
+
+
+def is_agent_artifact_id(value: str) -> bool:
+    return parse_semver(value) is not None or is_main_build(value)
+
+
+def agent_release_sort_key(name: str) -> tuple[int, int, int, int, str]:
+    """Sort Main artifacts before SemVer fallbacks; pinned versions still win."""
+    value = str(name or "").strip().lower()
+    if is_main_build(value):
+        return (2, 0, 0, 0, value)
+    parsed = parse_semver(value)
+    if parsed is None:
+        return (0, 0, 0, 0, value)
+    return (1, *parsed, value)
+
+
+def agent_version_compare(current: str, target: str) -> int:
+    """Compare an installed Agent identity with the deployment-pinned target."""
+    current = str(current or "").strip().lower()
+    target = str(target or "").strip().lower()
+    if is_main_build(target):
+        return 0 if current == target else -1
+    if is_main_build(current) and parse_semver(target) is not None:
+        return -1
+    return semver_compare(current, target)
 
 
 def normalize_ubuntu_bundle_release(os_version: str | None) -> str | None:
@@ -136,7 +167,7 @@ def list_published_agent_versions() -> list[str]:
         and not path.name.startswith(".")
         and _dir_has_any_agent_archive(path)
     ]
-    versions.sort(key=semver_sort_key, reverse=True)
+    versions.sort(key=agent_release_sort_key, reverse=True)
     return versions
 
 
@@ -189,5 +220,5 @@ def resolve_agent_version(
         return preferred or latest_published_agent_version()
     if preferred and preferred in candidates:
         return preferred
-    candidates.sort(key=semver_sort_key, reverse=True)
+    candidates.sort(key=agent_release_sort_key, reverse=True)
     return candidates[0]

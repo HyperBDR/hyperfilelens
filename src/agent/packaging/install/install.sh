@@ -445,6 +445,10 @@ version_lt() {
 	[[ "$(printf '%s\n' "$a" "$b" | sort -V | head -n1)" == "$a" && "$a" != "$b" ]]
 }
 
+is_main_build() {
+	[[ "${1:-}" =~ ^main-[0-9a-f]{7}$ ]]
+}
+
 confirm_same_version_upgrade() {
 	local version=$1
 	if [[ "${UPGRADE_YES}" -eq 1 ]]; then
@@ -1218,7 +1222,10 @@ cmd_upgrade() {
 
 	if [[ "${new_ver}" == "${prev_ver}" ]]; then
 		confirm_same_version_upgrade "${prev_ver}"
-	elif [[ "${prev_ver}" != "unknown" && "${new_ver}" != "unknown" ]] && version_lt "${new_ver}" "${prev_ver}"; then
+	elif [[ "${prev_ver}" != "unknown" && "${new_ver}" != "unknown" ]] \
+		&& ! is_main_build "${new_ver}" \
+		&& ! is_main_build "${prev_ver}" \
+		&& version_lt "${new_ver}" "${prev_ver}"; then
 		log_fail "Downgrade is not supported (${new_ver} < ${prev_ver})." 2
 	fi
 

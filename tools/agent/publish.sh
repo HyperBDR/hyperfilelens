@@ -227,7 +227,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-VERSION="$(normalize_release_version "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
+VERSION="$(normalize_artifact_id "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
 COMMIT="${OPT_COMMIT:-${AGENT_COMMIT:-$(resolve_commit_full "${ROOT}")}}"
 RELEASES_DIR="${OPT_RELEASES_DIR:-${AGENT_RELEASES_DIR:-${DEFAULT_RELEASES_DIR}}}"
 GO_PROXY="${OPT_GO_PROXY:-${GOPROXY:-}}"

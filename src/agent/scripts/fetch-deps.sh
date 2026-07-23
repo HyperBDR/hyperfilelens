@@ -277,7 +277,7 @@ case "${AGENT_FORCE_PULL:-0}" in
 *) printf 'ERROR: AGENT_FORCE_PULL must be 0 or 1\n' >&2; exit 2 ;;
 esac
 
-AGENT_VERSION="$(normalize_release_version "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
+AGENT_VERSION="$(normalize_artifact_id "${OPT_VERSION:-$(resolve_release_version)}")" || exit $?
 case "${KOPIA_ARTIFACT_MODE}" in build | download) ;; *) printf 'ERROR: invalid Kopia mode: %s\n' "${KOPIA_ARTIFACT_MODE}" >&2; exit 2 ;; esac
 [[ "${KOPIA_GIT_REF}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
 	|| { printf 'ERROR: invalid Kopia ref: %s\n' "${KOPIA_GIT_REF}" >&2; exit 2; }
