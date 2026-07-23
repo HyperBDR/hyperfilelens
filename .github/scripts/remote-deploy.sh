@@ -362,8 +362,6 @@ if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 	RUNTIME_ENV_FILE=""
 fi
 
-bash "${INSTALL_DIR}/install.sh" platform-gateway ensure
-
 if verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
 	shared_host_guard_verified=1
 else

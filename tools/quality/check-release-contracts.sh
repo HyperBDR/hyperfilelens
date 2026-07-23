@@ -195,6 +195,8 @@ grep -F 'python manage.py ensure_platform_ai_model' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'exit "$command_status"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
 	printf 'ERROR: AI model API key must not be persisted in the runtime .env\n' >&2
@@ -378,6 +380,10 @@ remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 grep -F 'browser_download_url' "${remote_deploy}" >/dev/null
 grep -F 'bash "${package_root}/install.sh" "${install_args[@]}"' \
 	"${remote_deploy}" >/dev/null
+if grep -F 'install.sh" platform-gateway ensure' "${remote_deploy}" >/dev/null; then
+	printf 'ERROR: remote deployment must not repeat installer-owned Gateway ensure\n' >&2
+	exit 1
+fi
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
 grep -F -- '--runtime-env-file "${RUNTIME_ENV_FILE}"' "${remote_deploy}" >/dev/null
@@ -441,6 +447,13 @@ if grep -E 'sourcelens_compose (ps -q|exec -T) postgresql' <<<"${backup_body}" >
 	printf 'ERROR: bundled SourceLens PostgreSQL Compose service is named postgres\n' >&2
 	exit 1
 fi
+file_backup_body="$(sed -n '/^backup_env_and_data()/,/^}/p' "${installer}")"
+grep -F -- "--exclude='data/postgresql'" <<<"${file_backup_body}" >/dev/null
+grep -F -- "--exclude='data/sourcelens/postgresql'" <<<"${file_backup_body}" >/dev/null
+grep -F 'prune_upgrade_backups' "${installer}" >/dev/null
+grep -F 'HFL_BACKUP_RETENTION_COUNT' "${installer}" >/dev/null
+grep -F 'HFL_BACKUP_RETENTION_DAYS' "${installer}" >/dev/null
+grep -F 'HFL_BACKUP_RETENTION_BYTES' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
@@ -448,6 +461,26 @@ grep -F 'docker-debs-ubuntu2004-amd64.tar.gz' "${installer}" >/dev/null
 grep -F 'docker-debs-ubuntu2404-amd64.tar.gz' "${installer}" >/dev/null
 if grep -E 'tomllib|extractall\([^)]*filter=' "${installer}" >/dev/null; then
 	printf 'ERROR: installer contains Python APIs unavailable on Ubuntu 20.04\n' >&2
+	exit 1
+fi
+
+grep -F 'verify-host-debs-asset.sh' \
+	"${ROOT}/.github/workflows/build_and_deploy.yml" >/dev/null
+grep -F 'verify-ubuntu-agent-bundle.sh' \
+	"${ROOT}/.github/workflows/build_and_deploy.yml" >/dev/null
+for verification_script in \
+	"${ROOT}/release/ci/verify-host-debs-asset.sh" \
+	"${ROOT}/release/ci/verify-ubuntu-agent-bundle.sh"; do
+	[[ -x "${verification_script}" ]] || {
+		printf 'ERROR: Ubuntu verification script is not executable: %s\n' "${verification_script}" >&2
+		exit 1
+	}
+done
+
+if grep -ER 'uses:[[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@' \
+	"${ROOT}/.github/workflows" \
+	| grep -Ev '@[0-9a-f]{40}([[:space:]]|$)' >/dev/null; then
+	printf 'ERROR: external GitHub Actions must be pinned to full commit SHAs\n' >&2
 	exit 1
 fi
 
@@ -476,6 +509,7 @@ fi
 for executable in \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
+	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}"/release/ci/*.sh \
 	"${ROOT}/release/ci/write-sbom.py"; do

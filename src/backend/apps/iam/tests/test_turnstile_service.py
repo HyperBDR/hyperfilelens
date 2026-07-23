@@ -2,13 +2,21 @@
 
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 
 from apps.iam.services.turnstile_service import validate_turnstile
 
 
-@override_settings(TURNSTILE_SECRET_KEY="secret-key")
 class TurnstileServiceTests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        secret_patcher = patch(
+            "apps.platform_ops.services.internal.runtime_settings.turnstile_secret_key",
+            return_value="secret-key",
+        )
+        secret_patcher.start()
+        self.addCleanup(secret_patcher.stop)
+
     def _response(self, *, action: str = "login", hostname: str = "app.example.com"):
         response = MagicMock()
         response.json.return_value = {

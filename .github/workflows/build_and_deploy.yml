@@ -29,7 +29,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       commit: ${{ steps.version.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
@@ -111,20 +111,20 @@ jobs:
       SECRET_KEY: ci-only-secret-key-with-at-least-32-bytes
       DJANGO_DEBUG: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: src/agent/go.mod
           cache-dependency-path: src/agent/go.sum
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.2"
           enable-cache: true
@@ -143,6 +143,7 @@ jobs:
           ./tools/quality/test-platform-gateway-auto-deploy.sh
           ./tools/quality/test-agent-gateway-uninstall.sh
           ./tools/quality/test-installer-image-refresh.sh
+          ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-payload-tree-hash.sh
@@ -196,14 +197,14 @@ jobs:
             cache_scope: hfl-frontend
             needs_kopia: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         if: matrix.needs_kopia
         with:
           go-version: stable
           cache: false
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -215,7 +216,7 @@ jobs:
 
       - name: Build and push image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -267,9 +268,9 @@ jobs:
       matrix:
         component: [backend, frontend, lensnode]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -320,8 +321,8 @@ jobs:
           - target: windows:amd64
             asset: windows-amd64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: src/agent/go.mod
           cache-dependency-path: src/agent/go.sum
@@ -379,8 +380,8 @@ jobs:
             asset: windows-amd64
             runner: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Download immutable Agent candidate
@@ -401,6 +402,17 @@ jobs:
           --expected-platform "${{ matrix.platform }}"
           --expected-arch "${{ matrix.arch }}"
           --report "build/certification/_internal-agent-cert-${{ matrix.asset }}.json"
+      - name: Verify Ubuntu Agent bundles offline
+        if: ${{ matrix.target == 'linux:amd64' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ubuntu_release in 20.04 24.04; do
+            ./release/ci/verify-ubuntu-agent-bundle.sh \
+              "build/agent-candidate/_internal-agent-${{ matrix.asset }}.tar.gz" \
+              "${{ needs.prepare.outputs.version }}" \
+              "$ubuntu_release"
+          done
       - name: Upload certification evidence
         if: always()
         env:
@@ -419,8 +431,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Download Agent candidates and certification evidence
@@ -470,12 +482,17 @@ jobs:
           - ubuntu_release: "24.04"
             asset: ubuntu2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Build host dependency asset
         env:
           APT_MIRROR: ${{ vars.CI_UBUNTU_APT_MIRROR }}
         run: >-
           ./release/ci/build-host-debs-asset.sh
+          "${{ matrix.ubuntu_release }}"
+          "_internal-host-debs-${{ matrix.asset }}.tar.gz"
+      - name: Verify host dependencies install offline
+        run: >-
+          ./release/ci/verify-host-debs-asset.sh
           "${{ matrix.ubuntu_release }}"
           "_internal-host-debs-${{ matrix.asset }}.tar.gz"
       - name: Upload host dependency asset
@@ -492,8 +509,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -523,8 +540,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -556,8 +573,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -582,7 +599,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Download matrix bundles
         env:
           GH_TOKEN: ${{ github.token }}
@@ -621,7 +638,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Reclaim unused runner toolchains
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
