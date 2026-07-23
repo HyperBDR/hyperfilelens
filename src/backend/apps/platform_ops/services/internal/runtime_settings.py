@@ -54,8 +54,6 @@ SECRET_KEY_GEMINI = "ai.gemini_api_key"
 SECRET_KEY_LANGFUSE_PUBLIC = "ai.langfuse_public_key"
 SECRET_KEY_LANGFUSE_SECRET = "ai.langfuse_secret_key"
 
-_CACHE: dict[str, PlatformRuntimeSetting] | None = None
-
 SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 DUMMY_EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
@@ -78,19 +76,17 @@ EMAIL_RUNTIME_KEYS = (
 
 
 def invalidate_runtime_settings_cache() -> None:
-    global _CACHE
-    _CACHE = None
+    """Retained compatibility hook for callers that update runtime settings.
 
-
-def _rows_by_key() -> dict[str, PlatformRuntimeSetting]:
-    global _CACHE
-    if _CACHE is None:
-        _CACHE = {row.key: row for row in PlatformRuntimeSetting.objects.all()}
-    return _CACHE
+    Runtime settings are intentionally read from PostgreSQL on every access.
+    Process-local caching made security and AI settings remain stale in Celery,
+    Daphne, additional Gunicorn workers, and horizontally scaled API replicas.
+    """
 
 
 def _row(key: str) -> PlatformRuntimeSetting | None:
-    return _rows_by_key().get(key)
+    """Read one current setting without process-local caching."""
+    return PlatformRuntimeSetting.objects.filter(key=key).first()
 
 
 def _env_str(name: str, default: str = "") -> str:
@@ -118,10 +114,9 @@ def _runtime_raw(key: str) -> tuple[str, bool]:
 
 
 def get_source(key: str) -> str:
-    if _row(key) is not None:
-        row = _row(key)
-        if row and (row.secret_ciphertext or (row.value_text or "").strip()):
-            return "runtime"
+    row = _row(key)
+    if row and (row.secret_ciphertext or (row.value_text or "").strip()):
+        return "runtime"
     return "env"
 
 
@@ -452,7 +447,7 @@ def email_settings_managed_by_deployment() -> bool:
 
 
 def _runtime_email_configured() -> bool:
-    return any(_row(key) is not None for key in EMAIL_RUNTIME_KEYS)
+    return PlatformRuntimeSetting.objects.filter(key__in=EMAIL_RUNTIME_KEYS).exists()
 
 
 def email_connection_kwargs() -> dict[str, Any]:

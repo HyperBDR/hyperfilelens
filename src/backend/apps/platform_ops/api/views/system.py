@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections import Counter, deque
@@ -88,22 +89,54 @@ _LOG_LINE = re.compile(
     r"(?P<message>.*)$"
 )
 _LOG_LEVEL = re.compile(r"\b(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\b", re.I)
-_SENSITIVE_VALUE = re.compile(
-    r"(?i)(password|secret|token|api[_-]?key)"
-    r"(\s*[:=]\s*)([^\s,;]+)"
-)
+_SENSITIVE_KEY = re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key)")
+_SENSITIVE_HEADER_KEY = frozenset({"authorization", "cookie", "set-cookie"})
 _SENSITIVE_HEADER = re.compile(
-    r"(?i)(authorization|cookie)(\s*[:=]\s*)(.+)$"
+    r"(?i)([\"']?(?:authorization|cookie|set-cookie)[\"']?\s*[:=]\s*)"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\r\n]+)"
 )
+_SENSITIVE_VALUE = re.compile(
+    r"(?i)([\"']?[A-Za-z0-9_-]*"
+    r"(?:password|passwd|secret|token|api[_-]?key)"
+    r"[A-Za-z0-9_-]*[\"']?\s*[:=]\s*)"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
+
+
+def _sensitive_log_key(value: object) -> bool:
+    normalized = str(value).strip().lower()
+    return normalized in _SENSITIVE_HEADER_KEY or bool(_SENSITIVE_KEY.search(normalized))
+
+
+def _redact_structured_log(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if _sensitive_log_key(key) else _redact_structured_log(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_structured_log(item) for item in value]
+    return value
 
 
 def _redact_log_message(value: str) -> str:
+    try:
+        structured = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        structured = None
+    if isinstance(structured, (dict, list)):
+        return json.dumps(
+            _redact_structured_log(structured),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
     redacted = _SENSITIVE_HEADER.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+        lambda match: f"{match.group(1)}[REDACTED]",
         value,
     )
     return _SENSITIVE_VALUE.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+        lambda match: f"{match.group(1)}[REDACTED]",
         redacted,
     )
 

@@ -113,7 +113,7 @@ jobs:
       DEPLOY_SSH_USER: ${{ inputs.ssh_user }}
       DEPLOY_SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Validate deployment configuration
         env:
@@ -337,15 +337,15 @@ jobs:
           set -e
           printf '%s\n' "$output"
           if (( command_status != 0 )); then
-            echo '::warning title=AI model deployment::Unable to apply the deployment-managed model; core deployment remains healthy.'
-            printf '### AI model deployment\n\nWarning: model configuration could not be applied. Core deployment remains healthy.\n' >> "$GITHUB_STEP_SUMMARY"
+            echo '::error title=AI model deployment::Unable to apply the configured deployment-managed model.'
+            printf '### AI model deployment\n\nFailed: configured model could not be created or updated.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit "$command_status"
           elif grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' <<<"$output" >/dev/null; then
             echo '::warning title=AI model connectivity::The model was saved, but its connectivity test failed.'
             printf '### AI model deployment\n\nWarning: model configuration was applied, but the connectivity test failed.\n' >> "$GITHUB_STEP_SUMMARY"
           else
             printf '### AI model deployment\n\nPassed: deployment-managed model was applied and tested successfully.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
-          exit 0
 
       - name: Optional public endpoint check
         shell: bash

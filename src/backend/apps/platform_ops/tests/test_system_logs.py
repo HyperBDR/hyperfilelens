@@ -24,6 +24,31 @@ class PlatformSystemLogTests(SimpleTestCase):
         self.assertNotIn("provider-key", redacted)
         self.assertIn("authorization: [REDACTED]", redacted)
 
+    def test_nested_json_secrets_are_redacted(self):
+        message = (
+            '{"request":{"api_key":"provider-key","safe":"visible"},'
+            '"Authorization":"Bearer live-token","items":[{"password":"secret"}]}'
+        )
+
+        redacted = _redact_log_message(message)
+
+        self.assertNotIn("provider-key", redacted)
+        self.assertNotIn("live-token", redacted)
+        self.assertNotIn("secret", redacted)
+        self.assertIn('"safe":"visible"', redacted)
+        self.assertEqual(redacted.count("[REDACTED]"), 3)
+
+    def test_embedded_json_style_secret_is_redacted(self):
+        redacted = _redact_log_message(
+            'request payload={"turnstile_secret_key":"provider-key",'
+            '"accessToken":"live-token"} status=failed'
+        )
+
+        self.assertNotIn("provider-key", redacted)
+        self.assertNotIn("live-token", redacted)
+        self.assertIn('"turnstile_secret_key":[REDACTED]', redacted)
+        self.assertIn('"accessToken":[REDACTED]', redacted)
+
     def test_reads_and_orders_recent_log_rows(self):
         with TemporaryDirectory() as root:
             log_path = Path(root) / "api.log"

@@ -922,11 +922,10 @@ PY
 }
 
 backup_env_and_data() {
-	local stamp archive rc
-	stamp="$(date +%Y%m%d-%H%M%S)"
+	local stamp=$1 archive rc
 	mkdir -p "${ROOT}/backup"
 	archive="${ROOT}/backup/hyperfilelens-backup-${stamp}.tar.gz"
-	step "Backing up .env, TLS certificates, and data/ -> ${archive} ..."
+	step "Backing up config and non-database data -> ${archive} ..."
 	local -a items=()
 	[[ -f "${ROOT}/.env" ]] && items+=(".env")
 	[[ -d "${ROOT}/deploy/nginx/certs" ]] && items+=("deploy/nginx/certs")
@@ -936,7 +935,14 @@ backup_env_and_data() {
 		return 0
 	fi
 	set +e
-	tar -czf "${archive}" -C "${ROOT}" "${items[@]}"
+	tar -czf "${archive}" \
+		--exclude='data/postgresql' \
+		--exclude='data/sourcelens/postgresql' \
+		--exclude='data/redis' \
+		--exclude='data/sourcelens/redis' \
+		--exclude='data/logs' \
+		--exclude='data/sourcelens/logs' \
+		-C "${ROOT}" "${items[@]}"
 	rc=$?
 	set -e
 	if [[ "${rc}" -gt 1 ]]; then
@@ -949,6 +955,7 @@ backup_env_and_data() {
 }
 
 backup_postgresql_dump() {
+	local stamp=$1
 	[[ -f "${ROOT}/.env" ]] || return 0
 	if ! command -v docker >/dev/null 2>&1 \
 		|| ! docker info >/dev/null 2>&1 \
@@ -963,8 +970,7 @@ backup_postgresql_dump() {
 		return 0
 	fi
 	[[ -n "${cid}" ]] || { warn "PostgreSQL is not running; skipping logical database dump"; return 0; }
-	local stamp dump globals
-	stamp="$(date +%Y%m%d-%H%M%S)"
+	local dump globals
 	mkdir -p "${ROOT}/backup"
 	dump="${ROOT}/backup/hyperfilelens-postgresql-${stamp}.dump"
 	globals="${ROOT}/backup/hyperfilelens-postgresql-globals-${stamp}.sql"
@@ -1002,6 +1008,70 @@ backup_postgresql_dump() {
 			ok "Bundled SourceLens PostgreSQL logical backup created"
 		fi
 	fi
+}
+
+prune_upgrade_backups() {
+	local retention_count retention_days retention_bytes
+	retention_count="${HFL_BACKUP_RETENTION_COUNT:-$(read_env_value HFL_BACKUP_RETENTION_COUNT)}"
+	retention_days="${HFL_BACKUP_RETENTION_DAYS:-$(read_env_value HFL_BACKUP_RETENTION_DAYS)}"
+	retention_bytes="${HFL_BACKUP_RETENTION_BYTES:-$(read_env_value HFL_BACKUP_RETENTION_BYTES)}"
+	retention_count="${retention_count:-3}"
+	retention_days="${retention_days:-30}"
+	retention_bytes="${retention_bytes:-10737418240}"
+	[[ "${retention_count}" =~ ^[1-9][0-9]*$ ]] \
+		|| die "HFL_BACKUP_RETENTION_COUNT must be a positive integer"
+	[[ "${retention_days}" =~ ^[1-9][0-9]*$ ]] \
+		|| die "HFL_BACKUP_RETENTION_DAYS must be a positive integer"
+	[[ "${retention_bytes}" =~ ^[1-9][0-9]*$ ]] \
+		|| die "HFL_BACKUP_RETENTION_BYTES must be a positive integer"
+
+	python3 - "${ROOT}/backup" "${retention_count}" "${retention_days}" "${retention_bytes}" <<'PY'
+import datetime as dt
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+retention_count = int(sys.argv[2])
+retention_days = int(sys.argv[3])
+retention_bytes = int(sys.argv[4])
+pattern = re.compile(
+    r"^(?:hyperfilelens-backup|hyperfilelens-postgresql(?:-globals)?|"
+    r"sourcelens-postgresql(?:-globals)?)-"
+    r"(?P<stamp>\d{8}-\d{6})\.(?:tar\.gz|dump|sql)(?:\.part)?$"
+)
+groups = {}
+paths = root.iterdir() if root.is_dir() else ()
+for path in paths:
+    match = pattern.fullmatch(path.name)
+    if match and path.is_file():
+        groups.setdefault(match.group("stamp"), []).append(path)
+
+if not groups:
+    raise SystemExit(0)
+
+ordered = sorted(groups, reverse=True)
+newest = ordered[0]
+cutoff = dt.datetime.now() - dt.timedelta(days=retention_days)
+keep = set(ordered[:retention_count])
+for stamp in ordered:
+    created = dt.datetime.strptime(stamp, "%Y%m%d-%H%M%S")
+    if created < cutoff and stamp != newest:
+        keep.discard(stamp)
+
+def group_size(stamp):
+    return sum(path.stat().st_size for path in groups[stamp] if path.exists())
+
+while sum(group_size(stamp) for stamp in keep) > retention_bytes and len(keep) > 1:
+    keep.remove(min(keep))
+
+for stamp in ordered:
+    if stamp in keep:
+        continue
+    for path in groups[stamp]:
+        print(f"[install.sh] pruning expired upgrade backup {path.name}")
+        path.unlink(missing_ok=True)
+PY
 }
 
 apply_upgrade_files() {
@@ -2328,7 +2398,7 @@ cmd_uninstall() {
 cmd_upgrade() {
 	local from=""
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
-	local src_root new_version cur_version upgrade_sourcelens=0
+	local src_root new_version cur_version upgrade_sourcelens=0 backup_stamp
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--from)
@@ -2368,8 +2438,10 @@ cmd_upgrade() {
 	log "Upgrading: ${cur_version} -> ${new_version}"
 
 	step "[1/7] Backing up current config and data ..."
-	backup_postgresql_dump
-	backup_env_and_data
+	backup_stamp="$(date +%Y%m%d-%H%M%S)"
+	backup_postgresql_dump "${backup_stamp}"
+	backup_env_and_data "${backup_stamp}"
+	prune_upgrade_backups
 
 	step "[2/7] Validating upgrade package ..."
 	validate_publish_artifacts "${src_root}"

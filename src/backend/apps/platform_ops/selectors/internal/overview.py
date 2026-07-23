@@ -255,6 +255,18 @@ def _activity_series(*, since: datetime, until: datetime, hours: int) -> list[di
     ]
 
 
+def _failed_task_count(*, since: datetime, until: datetime) -> int:
+    """Count failed and timed-out tasks whose terminal update is in range."""
+    return (
+        Task.objects.filter(
+            status__in=[Task.Status.FAILED, Task.Status.TIMEOUT],
+        )
+        .annotate(activity_at=Coalesce("finished_at", "updated_at"))
+        .filter(activity_at__gte=since, activity_at__lte=until)
+        .count()
+    )
+
+
 def platform_overview_payload(*, hours: int) -> dict[str, Any]:
     """Build the complete read-only Admin Console overview response."""
 
@@ -277,7 +289,7 @@ def platform_overview_payload(*, hours: int) -> dict[str, Any]:
         "alerts_firing": summary["alerts_firing"],
         "alerts_acknowledged": summary["alerts_acknowledged"],
         "tasks_running": summary["tasks_running"],
-        "tasks_failed_in_range": summary["tasks_failed_24h"],
+        "tasks_failed_in_range": _failed_task_count(since=since, until=now),
         "tasks_failed_24h": summary["tasks_failed_24h"],
         "tasks_failed_total": summary["tasks_failed_total"],
         "notifications_failed_in_range": notification_failures,
