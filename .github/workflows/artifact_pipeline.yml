@@ -209,6 +209,7 @@ jobs:
           ./tools/quality/test-agent-gateway-uninstall.sh
           ./tools/quality/test-installer-image-refresh.sh
           ./tools/quality/test-docker-image-digest-alias.sh
+          ./tools/quality/test-offline-docker-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-main-channel-contracts.sh
           ./tools/quality/test-shared-host-guard.sh

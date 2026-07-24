@@ -7,6 +7,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 grep -F './tools/quality/test-docker-image-digest-alias.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-offline-docker-package-plan.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
