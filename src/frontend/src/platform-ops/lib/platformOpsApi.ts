@@ -261,6 +261,78 @@ export interface PlatformIntegration {
   managed_by: string
 }
 
+export interface PlatformAiUsageSummary {
+  estimated_cost: number
+  cost_currency: string
+  total_tokens: number
+  prompt_tokens: number
+  completion_tokens: number
+  cached_tokens: number
+  reasoning_tokens: number
+  model_calls: number
+  requests: number
+  successful_runs: number
+  failed_runs: number
+  success_rate: number
+  organizations: number
+  users: number
+}
+
+export interface PlatformAiUsageTrend {
+  bucket: string
+  requests: number
+  successful_runs: number
+  failed_runs: number
+  model_calls: number
+  total_tokens: number
+  estimated_cost: number
+}
+
+export interface PlatformAiOrganizationUsage {
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  users: number
+  requests: number
+  model_calls: number
+  total_tokens: number
+  estimated_cost: number
+  failed_runs: number
+  success_rate: number
+}
+
+export interface PlatformAiUsageRun {
+  run_uuid: string
+  time: string
+  organization_id: number
+  organization_key: string
+  organization_name: string
+  user_id: number | null
+  user_email: string
+  question: string
+  chat_title: string
+  backup_source_name: string
+  status: string
+  model_calls: number
+  total_tokens: number
+  estimated_cost: number | null
+  cost_currency: string
+  error: string
+}
+
+export interface PlatformAiUsagePayload {
+  period: { start_date: string; end_date: string }
+  summary: PlatformAiUsageSummary
+  trend: PlatformAiUsageTrend[]
+  by_organization: PlatformAiOrganizationUsage[]
+  organization_options: Array<{ key: string; name: string }>
+  status_options: string[]
+  count: number
+  page: number
+  page_size: number
+  results: PlatformAiUsageRun[]
+}
+
 export async function fetchMonitoringIncidents(params: Record<string, string | number | undefined>) {
   return get<Paginated<MonitoringIncident, IncidentStats>>(
     `/api/v1/platform-ops/monitoring/alerts${qs(params)}`,
@@ -336,6 +408,10 @@ export async function fetchPlatformAuditLogs(params: Record<string, string | num
 
 export async function fetchPlatformIntegrations() {
   return get<{ integrations: PlatformIntegration[] }>('/api/v1/platform-ops/platform/integrations')
+}
+
+export async function fetchPlatformAiUsage(params: Record<string, string | number | undefined>) {
+  return get<PlatformAiUsagePayload>(`/api/v1/platform-ops/lens/usage${qs(params)}`)
 }
 
 export type DeploymentHostItem = {

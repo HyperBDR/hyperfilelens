@@ -125,7 +125,7 @@ export const platformOpsRoutes = [
       },
       {
         path: 'usage',
-        component: lazyRoute(() => import('../pages/insight/InsightUsage.vue')),
+        component: lazyRoute(() => import('./pages/engine/PlatformUsage.vue')),
       },
       {
         path: 'gateways',
