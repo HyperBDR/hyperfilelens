@@ -6,13 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 [[ $# -eq 2 ]] || {
-	printf 'Usage: %s UBUNTU_RELEASE OUTPUT_TAR_GZ\n' "$0" >&2
+	printf 'Usage: %s UBUNTU_RELEASE OUTPUT_TAR\n' "$0" >&2
 	exit 2
 }
 ubuntu_release=$1
 output=$2
 case "${ubuntu_release}" in
 20.04) release_id=2004 ;;
+22.04) release_id=2204 ;;
 24.04) release_id=2404 ;;
 *) printf 'ERROR: unsupported Ubuntu release: %s\n' "${ubuntu_release}" >&2; exit 2 ;;
 esac
@@ -27,4 +28,4 @@ mkdir -p "${gateway_dir}"
 tar -C "${source_dir}" -czf \
 	"${gateway_dir}/docker-debs-ubuntu${release_id}-amd64.tar.gz" .
 mkdir -p "$(dirname "${output}")"
-tar -C "${tmp}" -czf "${output}" payload
+tar -C "${tmp}" -cf "${output}" payload

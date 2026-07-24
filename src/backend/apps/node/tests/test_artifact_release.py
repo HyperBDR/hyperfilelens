@@ -40,7 +40,7 @@ def test_ubuntu_bundle_release_uses_reported_host_version():
     assert release._ubuntu_bundle_release("gateway", "linux", "24.04.2") == "24.04"
     assert release._ubuntu_bundle_release("agent", "linux", "20.04") is None
     assert release._ubuntu_bundle_release("proxy", "darwin", "24.04") is None
-    assert release._ubuntu_bundle_release("gateway", "linux", "22.04") is None
+    assert release._ubuntu_bundle_release("gateway", "linux", "22.04") == "22.04"
 
 
 def test_ubuntu_bundle_release_preserves_legacy_2404_default():
@@ -49,13 +49,18 @@ def test_ubuntu_bundle_release_preserves_legacy_2404_default():
 
 @pytest.mark.parametrize(
     ("os_version", "suffix"),
-    [("20.04", "ubuntu2004"), ("24.04", "ubuntu2404")],
+    [
+        ("20.04", "ubuntu2004"),
+        ("22.04", "ubuntu2204"),
+        ("24.04", "ubuntu2404"),
+    ],
 )
 def test_get_agent_artifact_proxy_linux(tmp_path, monkeypatch, os_version, suffix):
     root = tmp_path / "agent-releases"
     version_dir = root / "1.0.0"
     version_dir.mkdir(parents=True)
     (version_dir / "hfl-agent-1.0.0-linux-amd64-ubuntu2404.tar.gz").write_bytes(b"x")
+    (version_dir / "hfl-agent-1.0.0-linux-amd64-ubuntu2204.tar.gz").write_bytes(b"w")
     (version_dir / "hfl-agent-1.0.0-linux-amd64-ubuntu2004.tar.gz").write_bytes(b"z")
     (version_dir / "hfl-agent-1.0.0-linux-amd64.tar.gz").write_bytes(b"y")
 

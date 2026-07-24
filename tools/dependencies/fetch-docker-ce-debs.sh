@@ -38,10 +38,10 @@ usage() {
 	cat <<'USAGE'
 Usage: ./tools/dependencies/fetch-docker-ce-debs.sh [options]
 
-Download pinned Docker CE packages for Ubuntu 20.04 or 24.04 amd64.
+Download pinned Docker CE packages for Ubuntu 20.04, 22.04, or 24.04 amd64.
 
 Options:
-  --ubuntu-release VERSION  20.04 | 24.04 (default: 24.04)
+  --ubuntu-release VERSION  20.04 | 22.04 | 24.04 (default: 24.04)
   --apt-mirror URL           Ubuntu apt mirror (env: APT_MIRROR / BUILD_APT_MIRROR)
   --docker-apt-mirror URL    Docker CE apt base URL (env: DOCKER_APT_MIRROR / BUILD_DOCKER_APT_MIRROR)
   --docker-download-mirror URL  Docker Hub mirror for ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
@@ -114,8 +114,12 @@ case "${UBUNTU_RELEASE}" in
 	UBUNTU_CODENAME="focal"
 	VERSION_FILE="${ROOT}/tools/dependencies/versions/docker-ce-ubuntu2004.env"
 	;;
+22.04)
+	UBUNTU_CODENAME="jammy"
+	VERSION_FILE="${ROOT}/tools/dependencies/versions/docker-ce-ubuntu2204.env"
+	;;
 24.04) UBUNTU_CODENAME="noble" ;;
-*) die "unsupported Ubuntu release ${UBUNTU_RELEASE} (use 20.04 or 24.04)" 2 ;;
+*) die "unsupported Ubuntu release ${UBUNTU_RELEASE} (use 20.04, 22.04, or 24.04)" 2 ;;
 esac
 OUT_DIR="${ROOT}/build/dependencies/docker/ubuntu-${UBUNTU_RELEASE}/amd64"
 DOCKER_IMAGE="ubuntu:${UBUNTU_RELEASE}"
@@ -138,13 +142,11 @@ ENGINE_VERSION="$(pin_for_release "${ENGINE_VERSION}")"
 CLI_VERSION="$(pin_for_release "${CLI_VERSION}")"
 CONTAINERD_VERSION="$(pin_for_release "${CONTAINERD_VERSION}")"
 COMPOSE_PLUGIN_VERSION="$(pin_for_release "${COMPOSE_PLUGIN_VERSION}")"
-BUILDX_PLUGIN_VERSION="$(pin_for_release "${BUILDX_PLUGIN_VERSION}")"
 
 : "${ENGINE_VERSION:?ENGINE_VERSION missing in ${VERSION_FILE}}"
 : "${CLI_VERSION:?CLI_VERSION missing in ${VERSION_FILE}}"
 : "${CONTAINERD_VERSION:?CONTAINERD_VERSION missing in ${VERSION_FILE}}"
 : "${COMPOSE_PLUGIN_VERSION:?COMPOSE_PLUGIN_VERSION missing in ${VERSION_FILE}}"
-: "${BUILDX_PLUGIN_VERSION:?BUILDX_PLUGIN_VERSION missing in ${VERSION_FILE}}"
 : "${MIN_ENGINE_VERSION:=24.0.0}"
 
 cache_complete() {
@@ -170,7 +172,6 @@ engine_version=${ENGINE_VERSION}
 cli_version=${CLI_VERSION}
 containerd_version=${CONTAINERD_VERSION}
 compose_plugin_version=${COMPOSE_PLUGIN_VERSION}
-buildx_plugin_version=${BUILDX_PLUGIN_VERSION}
 docker_download_mirror=${DOCKER_DOWNLOAD_MIRROR:-<official>}
 docker_apt_mirror=${DOCKER_APT_MIRROR}
 apt_mirror=${APT_MIRROR:-<official>}
@@ -346,8 +347,7 @@ for attempt in 1 2 3; do
     "containerd.io=${CONTAINERD_VERSION}" \
     "docker-ce-cli=${CLI_VERSION}" \
     "docker-ce=${ENGINE_VERSION}" \
-    "docker-compose-plugin=${COMPOSE_PLUGIN_VERSION}" \
-    "docker-buildx-plugin=${BUILDX_PLUGIN_VERSION}"; then
+    "docker-compose-plugin=${COMPOSE_PLUGIN_VERSION}"; then
     download_ok=1
     break
   fi
@@ -432,7 +432,6 @@ if ! docker run -d --init --name "${container_name}" --platform linux/amd64 \
 	-e CLI_VERSION="${CLI_VERSION}" \
 	-e CONTAINERD_VERSION="${CONTAINERD_VERSION}" \
 	-e COMPOSE_PLUGIN_VERSION="${COMPOSE_PLUGIN_VERSION}" \
-	-e BUILDX_PLUGIN_VERSION="${BUILDX_PLUGIN_VERSION}" \
 	"${DOCKER_IMAGE}" \
 	sleep infinity; then
 	die "failed to start host Docker CE deb fetch container"
@@ -462,9 +461,16 @@ if ! cache_complete "${staging_dir}"; then
 	die "host Docker CE deb fetch finished but the staged cache is incomplete"
 fi
 
-python3 - "${staging_dir}" "${VERSION_FILE}" "${UBUNTU_RELEASE}" <<'PY'
+ENGINE_VERSION_VALUE="${ENGINE_VERSION}" \
+	CLI_VERSION_VALUE="${CLI_VERSION}" \
+	CONTAINERD_VERSION_VALUE="${CONTAINERD_VERSION}" \
+	COMPOSE_PLUGIN_VERSION_VALUE="${COMPOSE_PLUGIN_VERSION}" \
+	MIN_ENGINE_VERSION_VALUE="${MIN_ENGINE_VERSION}" \
+	MIN_COMPOSE_VERSION_VALUE="${MIN_COMPOSE_VERSION}" \
+	python3 - "${staging_dir}" "${VERSION_FILE}" "${UBUNTU_RELEASE}" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import sys
 
@@ -488,6 +494,14 @@ for path in sorted(root.glob("*.deb")):
 payload = {
     "platform": f"ubuntu-{ubuntu_release}-amd64",
     "version_file": pins.name,
+    "versions": {
+        "engine": os.environ["ENGINE_VERSION_VALUE"],
+        "cli": os.environ["CLI_VERSION_VALUE"],
+        "containerd": os.environ["CONTAINERD_VERSION_VALUE"],
+        "compose": os.environ["COMPOSE_PLUGIN_VERSION_VALUE"],
+        "min_engine": os.environ["MIN_ENGINE_VERSION_VALUE"],
+        "min_compose": os.environ["MIN_COMPOSE_VERSION_VALUE"],
+    },
     "packages": packages,
 }
 (root / "MANIFEST.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

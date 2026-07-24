@@ -49,13 +49,46 @@ hfl_logging_start
 trap 'hfl_logging_finish "$?"' EXIT
 
 sourcelens_sync_source
-SOURCELENS_BUILD_SERVICES="${service}" sourcelens_build_app_images 1 0
-
-local_ref="$(sourcelens_upstream_image_ref "${component}")"
 target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"
-docker image inspect "${local_ref}" >/dev/null
-docker tag "${local_ref}" "${target_ref}"
-docker push "${target_ref}"
+source_commit="$(git -C "${SOURCELENS_SOURCE_CACHE}" rev-parse HEAD)"
+fingerprint="$({
+	printf '%s\n' \
+		"component=${component}" \
+		"platform=${SOURCELENS_DOCKER_PLATFORM}" \
+		"source_commit=${source_commit}" \
+		"apt_mirror=${SOURCELENS_APT_MIRROR}" \
+		"pip_index=${SOURCELENS_PIP_INDEX_URL}" \
+		"pip_trusted_host=${SOURCELENS_PIP_TRUSTED_HOST}" \
+		"npm_registry=${SOURCELENS_NPM_REGISTRY}" \
+		"uv_version=${SOURCELENS_UV_VERSION}"
+	find \
+		"${ROOT}/tools/sourcelens" \
+		"${ROOT}/deploy/installer/sourcelens" \
+		"${ROOT}/release/build-sourcelens.sh" \
+		"${ROOT}/release/ci/build-sourcelens-image.sh" \
+		-type f -print0 \
+		| sort -z \
+		| xargs -0 sha256sum
+} | sha256sum | cut -c1-24)"
+cache_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:slcache-${fingerprint}"
+cache_hit=false
+cache_manifest_json="$(docker buildx imagetools inspect "${cache_ref}" \
+	--format '{{json .Manifest}}' 2>/dev/null || true)"
+cache_digest="$(jq -r '.digest // empty' <<<"${cache_manifest_json:-{}}" 2>/dev/null || true)"
+
+if [[ "${cache_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+	cache_hit=true
+	printf 'Reusing immutable SourceLens component %s from %s\n' "${component}" "${cache_ref}"
+	docker buildx imagetools create --tag "${target_ref}" "${cache_ref}"
+else
+	SOURCELENS_BUILD_SERVICES="${service}" sourcelens_build_app_images 1 0
+	local_ref="$(sourcelens_upstream_image_ref "${component}")"
+	docker image inspect "${local_ref}" >/dev/null
+	docker tag "${local_ref}" "${target_ref}"
+	docker tag "${local_ref}" "${cache_ref}"
+	docker push "${target_ref}"
+	docker push "${cache_ref}"
+fi
 
 manifest_json="$(docker buildx imagetools inspect "${target_ref}" --format '{{json .Manifest}}')"
 digest="$(jq -r '.digest // empty' <<<"${manifest_json}")"
@@ -72,11 +105,19 @@ jq -n \
 	--arg platform linux/amd64 \
 	--arg sourcelens_version "${SOURCELENS_VERSION}" \
 	--arg sourcelens_git_ref "${SOURCELENS_GIT_REF}" \
+	--arg sourcelens_git_commit "${source_commit}" \
+	--arg build_fingerprint "${fingerprint}" \
+	--arg cache_ref "${cache_ref}" \
+	--argjson cache_hit "${cache_hit}" \
 	'{
 	  component: $component,
 	  ref: $ref,
 	  digest: $digest,
 	  platform: $platform,
 	  sourcelens_version: $sourcelens_version,
-	  sourcelens_git_ref: $sourcelens_git_ref
+	  sourcelens_git_ref: $sourcelens_git_ref,
+	  sourcelens_git_commit: $sourcelens_git_commit,
+	  build_fingerprint: $build_fingerprint,
+	  cache_ref: $cache_ref,
+	  cache_hit: $cache_hit
 	}' >"${output}"

@@ -88,8 +88,8 @@ Inputs:
 Outputs:
   build/kopia/dist/<os>/<arch>/kopia[.exe]
   build/kopia/KOPIA_INFO.json
-  build/dependencies/agent/ubuntu-24.04/<arch>/*.deb
-  build/dependencies/agent/ubuntu-24.04/<arch>/MANIFEST.json
+  build/dependencies/agent/ubuntu-{20.04,22.04,24.04}/<arch>/*.deb
+  build/dependencies/agent/ubuntu-{20.04,22.04,24.04}/<arch>/MANIFEST.json
 
 Options:
   --version VERSION                Release version (env: RELEASE_VERSION)
@@ -341,7 +341,7 @@ force=${FORCE}
 force_pull=${FORCE_PULL}
 docker_pull_timeout_seconds=${DOCKER_PULL_TIMEOUT_SECONDS}
 kopia_output=${KOPIA_BUILD_DIR}
-nas_output=${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}
+nas_output=${NAS_DEPS_BASE}/ubuntu-{20.04,22.04,24.04}
 CONFIG
 }
 
@@ -895,7 +895,7 @@ if [[ "${DO_KOPIA}" -eq 1 ]]; then
 	fetch_kopia
 fi
 if [[ "${DO_NAS}" -eq 1 ]]; then
-	for ubuntu_release in 20.04 24.04; do
+	for ubuntu_release in 20.04 22.04 24.04; do
 		fetch_nas_deps "${ubuntu_release}"
 	done
 fi

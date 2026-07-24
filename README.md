@@ -46,14 +46,14 @@ asynchronous work. SourceLens runs as a separate image-only stack on the shared
 
 ### Local development
 
-- Linux host or Linux development environment
+- Linux amd64, macOS Intel, or macOS Apple Silicon development host
 - Git
 - Bash
 - Python 3
 - Go 1.25 with the Go 1.25.10 toolchain
 - OpenSSL, curl, rsync, and SHA-256 utilities
 - Docker Engine 24.0 or later
-- Docker Compose v2
+- Docker Compose v2.20 or later
 - An amd64 host, or an environment capable of running linux/amd64 containers
 - Internet access for the initial dependency, Agent, and SourceLens build
 
@@ -61,11 +61,29 @@ Backend and frontend application dependencies, Kopia, PostgreSQL, and Redis are
 managed by the development workflow. Python and Go are used by repository
 quality, dependency, and Agent build scripts on the host.
 
+On macOS, HFL development containers run as `linux/amd64` through Docker
+Desktop or Colima. This is a development-only configuration: macOS is not a
+supported Release installation or Data Gateway host. Prepare the host tools
+once with:
+
+```bash
+./dev/bootstrap-macos.sh
+./dev/stack.sh doctor
+```
+
+Docker is deliberately not installed or upgraded by the bootstrap. On Apple
+Silicon, Docker Desktop must have amd64 emulation enabled; Colima must be
+started with an amd64-capable VM configuration.
+
 ### Release installation
 
-The offline installer targets **Ubuntu 20.04/24.04 amd64**. The target should
-have at least 4 CPU cores, 8 GB of memory, and adequate storage for application
-state, logs, metadata, and published artifacts.
+The offline installer targets **Ubuntu 20.04/22.04/24.04 amd64**. The minimum
+host size is 2 CPU cores and 4 GB of memory; 4 CPU cores and 8 GB are
+recommended. Data Gateways use the same Ubuntu/amd64 support matrix. Existing
+Docker Engine 24+ and Compose v2.20+ installations are used without being
+upgraded or repaired; Docker is installed from the offline bundle only when it
+is completely absent. Docker Buildx is used by Release CI but is not required
+on installation or Data Gateway hosts.
 
 ## Quick Start
 
@@ -365,7 +383,7 @@ The generated archive is written to `build/release/dist/` and contains:
 - PostgreSQL and Redis runtime images
 - Optional bundled SourceLens images
 - Agent installers and enrollment bootstrap files
-- Ubuntu 20.04/24.04 amd64 Docker CE packages
+- Ubuntu 20.04/22.04/24.04 amd64 Docker CE packages
 - Repository-pinned default TLS certificates and root CA
 - Runtime Compose, Nginx, installer, and license files
 

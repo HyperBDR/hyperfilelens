@@ -11,6 +11,7 @@ fixture="${tmp}/payload"
 mkdir -p "${fixture}/media/agent-releases/0.1.4"
 printf 'standard\n' >"${fixture}/media/agent-releases/0.1.4/hfl-agent-0.1.4-linux-amd64.tar.gz"
 printf 'ubuntu-2004\n' >"${fixture}/media/agent-releases/0.1.4/hfl-agent-0.1.4-linux-amd64-ubuntu2004.tar.gz"
+printf 'ubuntu-2204\n' >"${fixture}/media/agent-releases/0.1.4/hfl-agent-0.1.4-linux-amd64-ubuntu2204.tar.gz"
 printf 'ubuntu-2404\n' >"${fixture}/media/agent-releases/0.1.4/hfl-agent-0.1.4-linux-amd64-ubuntu2404.tar.gz"
 
 reference="$({

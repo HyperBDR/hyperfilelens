@@ -4,9 +4,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../tools/dependencies/versions/runtime-images.env
+source "${ROOT}/tools/dependencies/versions/runtime-images.env"
+export SOURCELENS_NGINX_SOURCE_IMAGE="${NGINX_IMAGE}"
 
 [[ $# -eq 3 ]] || {
-	printf 'Usage: %s METADATA_DIR HFL_VERSION OUTPUT_TAR_GZ\n' "$0" >&2
+	printf 'Usage: %s METADATA_DIR HFL_VERSION OUTPUT_TAR\n' "$0" >&2
 	exit 2
 }
 metadata_dir=$1
@@ -58,4 +61,4 @@ jq \
 mv "${tmp_info}" "${build_info}"
 
 mkdir -p "$(dirname "${output}")"
-tar -C "${pkg_root}" -czf "${output}" images sourcelens payload
+tar -C "${pkg_root}" -cf "${output}" images sourcelens payload

@@ -10,6 +10,7 @@ ubuntu_release=$1
 asset=$2
 case "${ubuntu_release}" in
 20.04) release_id=2004 ;;
+22.04) release_id=2204 ;;
 24.04) release_id=2404 ;;
 *) printf 'ERROR: unsupported Ubuntu release: %s\n' "${ubuntu_release}" >&2; exit 2 ;;
 esac
@@ -18,7 +19,7 @@ command -v docker >/dev/null 2>&1 || { printf 'ERROR: docker is required\n' >&2;
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-tar -xzf "${asset}" -C "${tmp}"
+tar -xf "${asset}" -C "${tmp}"
 archive="${tmp}/payload/media/gateway-bootstrap/docker-debs-ubuntu${release_id}-amd64.tar.gz"
 [[ -s "${archive}" ]] || { printf 'ERROR: nested Docker deb archive is missing\n' >&2; exit 1; }
 mkdir -p "${tmp}/debs"
@@ -40,6 +41,5 @@ docker --version
 dockerd --version
 containerd --version
 docker compose version
-docker buildx version
 '
 printf 'Offline Docker dependency verification passed for Ubuntu %s\n' "${ubuntu_release}"

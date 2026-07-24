@@ -46,7 +46,7 @@ def safe_target(root: pathlib.Path, name: str) -> pathlib.Path:
 
 
 def extract_tar(path: pathlib.Path, destination: pathlib.Path) -> None:
-    with tarfile.open(path, "r:gz") as archive:
+    with tarfile.open(path, "r:*") as archive:
         for member in archive.getmembers():
             safe_target(destination, member.name)
             if member.issym() or member.islnk():

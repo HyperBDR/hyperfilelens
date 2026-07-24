@@ -56,30 +56,31 @@ safe_rm_dir "${pkg_root}"
 mkdir -p "${pkg_root}" "${images_dir}" "${pkg_root}/payload/media" "${pkg_root}/metadata"
 
 required_bundles=(
-	_internal-hfl-images.tar.gz
-	_internal-runtime-images.tar.gz
-	_internal-sourcelens-bundle.tar.gz
-	_internal-host-debs-ubuntu2004.tar.gz
-	_internal-host-debs-ubuntu2404.tar.gz
+	_internal-hfl-images.tar
+	_internal-runtime-images.tar
+	_internal-sourcelens-bundle.tar
+	_internal-host-debs-ubuntu2004.tar
+	_internal-host-debs-ubuntu2204.tar
+	_internal-host-debs-ubuntu2404.tar
 )
 for bundle in "${required_bundles[@]}"; do
 	[[ -s "${input_dir}/${bundle}" ]] || die "missing CI bundle: ${bundle}"
 	log "Extracting ${bundle}"
-	tar -xzf "${input_dir}/${bundle}" -C "${pkg_root}"
+	tar -xf "${input_dir}/${bundle}" -C "${pkg_root}"
 done
 
 required_agent_bundles=(
-	_internal-agent-linux-amd64.tar.gz
-	_internal-agent-linux-arm64.tar.gz
-	_internal-agent-darwin-amd64.tar.gz
-	_internal-agent-darwin-arm64.tar.gz
-	_internal-agent-windows-amd64.tar.gz
+	_internal-agent-linux-amd64.tar
+	_internal-agent-linux-arm64.tar
+	_internal-agent-darwin-amd64.tar
+	_internal-agent-darwin-arm64.tar
+	_internal-agent-windows-amd64.tar
 )
 for bundle_name in "${required_agent_bundles[@]}"; do
 	bundle="${input_dir}/${bundle_name}"
 	[[ -s "${bundle}" ]] || die "missing Agent matrix bundle: ${bundle_name}"
 	log "Merging $(basename "${bundle}")"
-	tar -xzf "${bundle}" -C "${pkg_root}"
+	tar -xf "${bundle}" -C "${pkg_root}"
 done
 
 for required in \
@@ -181,13 +182,19 @@ python3 "${SCRIPT_DIR}/write-sbom.py" \
 	--manifest "${pkg_root}/MANIFEST.json" \
 	--output "${DIST_DIR}/SBOM.spdx.json"
 
+target_single_bytes="${HFL_RELEASE_TARGET_BYTES:-1600000000}"
 warn_single_bytes="${HFL_RELEASE_WARN_SINGLE_BYTES:-1750000000}"
 max_single_bytes="${HFL_RELEASE_MAX_SINGLE_BYTES:-1900000000}"
 part_bytes="${HFL_RELEASE_PART_BYTES:-$((1024 * 1024 * 1024))}"
 [[ "${max_single_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_MAX_SINGLE_BYTES"
+[[ "${target_single_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_TARGET_BYTES"
 [[ "${warn_single_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_WARN_SINGLE_BYTES"
 [[ "${part_bytes}" =~ ^[1-9][0-9]*$ ]] || die "invalid HFL_RELEASE_PART_BYTES"
 tar_bytes="$(stat -c '%s' "${tar_path}")"
+python3 "${SCRIPT_DIR}/report-release-size.py" "${pkg_root}" "${tar_path}"
+if ((tar_bytes > target_single_bytes)); then
+	hfl_log_warn "Release package size ${tar_bytes} bytes exceeds the 1.60 GB optimization target"
+fi
 if ((tar_bytes >= warn_single_bytes)); then
 	hfl_log_warn "Release package size ${tar_bytes} bytes exceeds the 1.75 GB warning budget"
 	find "${pkg_root}" -type f -printf '%s %P\n' | sort -nr | sed -n '1,20p' >&2

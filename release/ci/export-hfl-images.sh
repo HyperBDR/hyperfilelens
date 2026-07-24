@@ -2,8 +2,13 @@
 # Export registry-built HFL backend/frontend images into the offline release archive.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../tools/lib/archive.sh
+source "${ROOT}/tools/lib/archive.sh"
+
 [[ $# -eq 3 ]] || {
-	printf 'Usage: %s METADATA_DIR VERSION OUTPUT_TAR_GZ\n' "$0" >&2
+	printf 'Usage: %s METADATA_DIR VERSION OUTPUT_TAR\n' "$0" >&2
 	exit 2
 }
 
@@ -34,12 +39,10 @@ pull_and_tag() {
 
 pull_and_tag "${backend_meta}" hyperfilelens-backend
 pull_and_tag "${frontend_meta}" hyperfilelens-frontend
-docker save \
+hfl_docker_save_gz "${tmp}/images/00-hyperfilelens.tar.gz" \
 	"hyperfilelens-backend:${version}" hyperfilelens-backend:latest \
-	"hyperfilelens-frontend:${version}" hyperfilelens-frontend:latest \
-	| gzip -c >"${tmp}/images/00-hyperfilelens.tar.gz"
-gzip -t "${tmp}/images/00-hyperfilelens.tar.gz"
+	"hyperfilelens-frontend:${version}" hyperfilelens-frontend:latest
 cp "${backend_meta}" "${tmp}/metadata/hfl-backend.json"
 cp "${frontend_meta}" "${tmp}/metadata/hfl-frontend.json"
 mkdir -p "$(dirname "${output}")"
-tar -C "${tmp}" -czf "${output}" images metadata
+tar -C "${tmp}" -cf "${output}" images metadata

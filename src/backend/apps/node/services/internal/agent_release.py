@@ -12,7 +12,7 @@ from apps.node.models.base import NodeRole
 
 AGENT_RELEASES_URL_PREFIX = "/media/agent-releases"
 UBUNTU_BUNDLED_LINUX_ROLES = frozenset({"proxy", "gateway"})
-SUPPORTED_UBUNTU_BUNDLE_RELEASES = frozenset({"20.04", "24.04"})
+SUPPORTED_UBUNTU_BUNDLE_RELEASES = frozenset({"20.04", "22.04", "24.04"})
 UPGRADEABLE_AGENT_ROLES = frozenset(
     {
         NodeRole.AGENT,

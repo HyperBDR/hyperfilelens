@@ -89,7 +89,7 @@ class AgentCertificationGateTests(unittest.TestCase):
         package_name = f"hfl-agent-{version}-linux-amd64.tar.gz"
         package_data = b"immutable-agent-package"
         package_hash = hashlib.sha256(package_data).hexdigest()
-        bundle = destination / "_internal-agent-linux-amd64.tar.gz"
+        bundle = destination / "_internal-agent-linux-amd64.tar"
         with tempfile.TemporaryDirectory() as staging_value:
             staging = pathlib.Path(staging_value)
             package = (
@@ -102,7 +102,7 @@ class AgentCertificationGateTests(unittest.TestCase):
             )
             package.parent.mkdir(parents=True)
             package.write_bytes(package_data)
-            with tarfile.open(bundle, "w:gz") as archive:
+            with tarfile.open(bundle, "w") as archive:
                 archive.add(staging / "payload", arcname="payload")
         return package_name, package_hash
 

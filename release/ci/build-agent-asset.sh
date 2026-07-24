@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 [[ $# -eq 4 ]] || {
-	printf 'Usage: %s GOOS:GOARCH VERSION COMMIT OUTPUT_TAR_GZ\n' "$0" >&2
+	printf 'Usage: %s GOOS:GOARCH VERSION COMMIT OUTPUT_TAR\n' "$0" >&2
 	exit 2
 }
 matrix=$1
@@ -36,4 +36,4 @@ fi
 "${ROOT}/tools/agent/publish.sh" "${args[@]}"
 
 mkdir -p "$(dirname "${output}")"
-tar -C "${tmp}" -czf "${output}" payload
+tar -C "${tmp}" -cf "${output}" payload

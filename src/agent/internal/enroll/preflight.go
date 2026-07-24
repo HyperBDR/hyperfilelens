@@ -183,8 +183,11 @@ func roleConstraints(role model.Role) error {
 		if runtime.GOOS != "linux" {
 			return fmt.Errorf("role %s is Linux-only", role)
 		}
+		if runtime.GOARCH != "amd64" {
+			return fmt.Errorf("role %s requires linux/amd64", role)
+		}
 		if !isSupportedGatewayUbuntu() {
-			return fmt.Errorf("role %s requires Ubuntu 20.04 LTS or 24.04 LTS", role)
+			return fmt.Errorf("role %s requires Ubuntu 20.04, 22.04, or 24.04 LTS", role)
 		}
 	}
 	return nil
@@ -208,7 +211,7 @@ func isSupportedGatewayUbuntu() bool {
 			versionID = strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), `"`)
 		}
 	}
-	return id == "ubuntu" && (versionID == "20.04" || versionID == "24.04")
+	return id == "ubuntu" && (versionID == "20.04" || versionID == "22.04" || versionID == "24.04")
 }
 
 func detectServiceManager(ctx context.Context) string {

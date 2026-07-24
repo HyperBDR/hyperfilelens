@@ -249,6 +249,9 @@ if grep -E '^  (workflow_dispatch|push|schedule):' "${workflow}" >/dev/null; the
 fi
 grep -F 'workflow_call:' "${workflow}" >/dev/null
 grep -F 'tags:' "${release_workflow}" >/dev/null
+grep -F 'workflow_dispatch:' "${release_workflow}" >/dev/null
+grep -F 'Validate manual pre-production redeployment' "${release_workflow}" >/dev/null
+grep -F 'uses: ./.github/workflows/deploy_target.yml' "${release_workflow}" >/dev/null
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${test_workflow}" >/dev/null
 grep -F 'schedule:' "${test_workflow}" >/dev/null
@@ -277,6 +280,51 @@ fi
 grep -F "vars.TEST_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
 grep -F "vars.PREPROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
 grep -F 'PROD_DEPLOY_ENABLED' "${production_workflow}" >/dev/null
+
+for job in build-hfl-images build-sourcelens-images build-host-debs export-runtime-images; do
+	body="$(sed -n "/^  ${job}:/,/^  [a-zA-Z0-9_-]*:/p" "${workflow}")"
+	grep -F 'needs: [prepare, quality]' <<<"${body}" >/dev/null || {
+		printf 'ERROR: %s must start after quality without waiting for Agent certification\n' "${job}" >&2
+		exit 1
+	}
+done
+grep -F 'cancel-in-progress: ${{ inputs.channel == '\''main'\'' }}' "${workflow}" >/dev/null
+grep -F 'Retain only the current successful Main build' "${workflow}" >/dev/null
+grep -F 'needs: [prepare, publish-release]' "${workflow}" >/dev/null
+grep -F 'BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}' "${workflow}" >/dev/null
+grep -F '[[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]' "${workflow}" >/dev/null
+grep -F 'ubuntu_release: "22.04"' "${workflow}" >/dev/null
+grep -F 'asset: ubuntu2204' "${workflow}" >/dev/null
+
+grep -F 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6' "${workflow}" >/dev/null
+grep -F 'actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6' "${workflow}" >/dev/null
+grep -F 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6' "${workflow}" >/dev/null
+
+grep -F '_internal-hfl-images.tar' "${workflow}" >/dev/null
+if grep -E '_internal-[^[:space:]"'\'']*\.tar\.gz' "${workflow}" >/dev/null; then
+	printf 'ERROR: CI-only envelopes must not recompress already-compressed payloads\n' >&2
+	exit 1
+fi
+
+runtime_pins="${ROOT}/tools/dependencies/versions/runtime-images.env"
+for image in POSTGRES_IMAGE REDIS_IMAGE NGINX_IMAGE; do
+	grep -E "^${image}=[^[:space:]]+@sha256:[0-9a-f]{64}$" "${runtime_pins}" >/dev/null
+done
+grep -F 'slcache-${fingerprint}' "${ROOT}/release/ci/build-sourcelens-image.sh" >/dev/null
+grep -F 'docker buildx imagetools create --tag "${target_ref}" "${cache_ref}"' \
+	"${ROOT}/release/ci/build-sourcelens-image.sh" >/dev/null
+
+if grep -R -n 'docker-buildx-plugin\|BUILDX_PLUGIN_VERSION' \
+	"${ROOT}/tools/dependencies" "${ROOT}/deploy/bootstrap" "${ROOT}/release/ci" >/dev/null; then
+	printf 'ERROR: runtime Docker bundles must not include the Buildx plugin\n' >&2
+	exit 1
+fi
+
+grep -F 'configure_macos_dev_shell' "${ROOT}/dev/stack.sh" >/dev/null
+grep -F 'verify_amd64_runtime' "${ROOT}/dev/stack.sh" >/dev/null
+grep -F 'DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"' \
+	"${ROOT}/dev/stack.sh" >/dev/null
+[[ -x "${ROOT}/dev/bootstrap-macos.sh" && -f "${ROOT}/dev/Brewfile" ]]
 deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
 [[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 5 ]] || {
 	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
@@ -393,8 +441,8 @@ grep -F 'registry prefix must include host and namespace' \
 	"${sourcelens_image_builder}" >/dev/null
 
 agent_publisher="${ROOT}/tools/agent/publish.sh"
-grep -F 'all | standard | ubuntu2004 | ubuntu2404' "${agent_publisher}" >/dev/null
-grep -F 'for ubuntu_flavor in ubuntu2004 ubuntu2404' "${agent_publisher}" >/dev/null
+grep -F 'all | standard | ubuntu2004 | ubuntu2204 | ubuntu2404' "${agent_publisher}" >/dev/null
+grep -F 'for ubuntu_flavor in ubuntu2004 ubuntu2204 ubuntu2404' "${agent_publisher}" >/dev/null
 grep -F 'build/dependencies/docker/ubuntu-${ubuntu_release}/amd64' "${agent_publisher}" >/dev/null
 
 agent_bootstrap_linux="${ROOT}/deploy/bootstrap/agent-bootstrap-linux.sh"
@@ -512,9 +560,10 @@ grep -F 'HFL_BACKUP_RETENTION_COUNT' "${installer}" >/dev/null
 grep -F 'HFL_BACKUP_RETENTION_DAYS' "${installer}" >/dev/null
 grep -F 'HFL_BACKUP_RETENTION_BYTES' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
-grep -F 'host must be Ubuntu 20.04 or 24.04' "${installer}" >/dev/null
+grep -F 'host must be Ubuntu 20.04, 22.04, or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
 grep -F 'docker-debs-ubuntu2004-amd64.tar.gz' "${installer}" >/dev/null
+grep -F 'docker-debs-ubuntu2204-amd64.tar.gz' "${installer}" >/dev/null
 grep -F 'docker-debs-ubuntu2404-amd64.tar.gz' "${installer}" >/dev/null
 if grep -E 'tomllib|extractall\([^)]*filter=' "${installer}" >/dev/null; then
 	printf 'ERROR: installer contains Python APIs unavailable on Ubuntu 20.04\n' >&2

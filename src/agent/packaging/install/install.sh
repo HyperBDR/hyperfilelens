@@ -822,9 +822,10 @@ install_nas_deps() {
 	ubuntu_release="${VERSION_ID:-}"
 	case "${ubuntu_release}" in
 	20.04) ubuntu_flavor=ubuntu2004 ;;
+	22.04) ubuntu_flavor=ubuntu2204 ;;
 	24.04) ubuntu_flavor=ubuntu2404 ;;
 	*)
-		echo "ERROR: offline NAS dependencies support Ubuntu 20.04 or 24.04 (current: ${ubuntu_release:-unknown})" >&2
+		echo "ERROR: offline NAS dependencies support Ubuntu 20.04, 22.04, or 24.04 (current: ${ubuntu_release:-unknown})" >&2
 		exit 2
 		;;
 	esac

@@ -19,6 +19,7 @@ def releases_root(tmp_path, monkeypatch):
     version_dir.mkdir()
     (version_dir / "hfl-agent-1.0.1-linux-amd64.tar.gz").write_bytes(b"x")
     (version_dir / "hfl-agent-1.0.1-linux-amd64-ubuntu2404.tar.gz").write_bytes(b"x")
+    (version_dir / "hfl-agent-1.0.1-linux-amd64-ubuntu2204.tar.gz").write_bytes(b"x")
     (version_dir / "hfl-agent-1.0.1-linux-amd64-ubuntu2004.tar.gz").write_bytes(b"x")
     monkeypatch.setattr(release_service, "agent_releases_root", lambda: media)
     monkeypatch.delenv("AGENT_VERSION", raising=False)

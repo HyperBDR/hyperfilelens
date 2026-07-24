@@ -51,6 +51,7 @@ sourcelens_load_config() {
 	SOURCELENS_INSTALL_DIR="${SOURCELENS_INSTALL_DIR:-/opt/hyperfilelens/sourcelens}"
 	SOURCELENS_EMBED_LENSNODE="${SOURCELENS_EMBED_LENSNODE:-0}"
 	SOURCELENS_DOCKER_PLATFORM="${SOURCELENS_DOCKER_PLATFORM:-${DOCKER_DEFAULT_PLATFORM:-linux/amd64}}"
+	SOURCELENS_NGINX_SOURCE_IMAGE="${SOURCELENS_NGINX_SOURCE_IMAGE:-nginx:stable-alpine}"
 	SOURCELENS_APT_MIRROR="${SOURCELENS_APT_MIRROR:-${APT_MIRROR:-${BUILD_APT_MIRROR:-}}}"
 	SOURCELENS_PIP_INDEX_URL="${SOURCELENS_PIP_INDEX_URL:-${PIP_INDEX_URL:-${BUILD_PIP_INDEX_URL:-}}}"
 	SOURCELENS_PIP_TRUSTED_HOST="${SOURCELENS_PIP_TRUSTED_HOST:-${PIP_TRUSTED_HOST:-${BUILD_PIP_TRUSTED_HOST:-}}}"
@@ -1089,7 +1090,11 @@ sourcelens_build_app_images() {
 
 sourcelens_ensure_nginx_image() {
 	local force_pull=${1:-0}
-	sourcelens_ensure_runtime_image "nginx:stable-alpine" "${force_pull}"
+	sourcelens_ensure_runtime_image "${SOURCELENS_NGINX_SOURCE_IMAGE}" "${force_pull}"
+	if [[ "${SOURCELENS_NGINX_SOURCE_IMAGE}" != "nginx:stable-alpine" ]]; then
+		docker tag "${SOURCELENS_NGINX_SOURCE_IMAGE%@*}" nginx:stable-alpine \
+			|| sourcelens_die "unable to tag pinned nginx runtime image"
+	fi
 }
 
 sourcelens_ensure_runtime_image() {
