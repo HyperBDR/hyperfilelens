@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { ElDatePicker } from 'element-plus'
 
 export type HflDateTimeRangePreset = {
@@ -44,6 +44,15 @@ const emit = defineEmits<{
 const pickerValue = ref<RangeValue>('')
 const suppressNextChange = ref(false)
 const suppressNextClearChange = ref(false)
+const rangeInputId = useId()
+const rangeInputIds: [string, string] = [
+  `${rangeInputId}-start`,
+  `${rangeInputId}-end`,
+]
+const rangeInputNames: [string, string] = [
+  `${rangeInputId}-start`,
+  `${rangeInputId}-end`,
+]
 
 const displayPlaceholder = computed(() => props.label || '')
 const popperClass = computed(() => [
@@ -151,11 +160,14 @@ watch(
   >
     <ElDatePicker
       :model-value="pickerValue"
+      :id="rangeInputIds"
       class="hfl-date-time-range-picker__trigger"
       type="datetimerange"
       unlink-panels
       format="YYYY-MM-DD HH:mm"
       value-format="YYYY-MM-DDTHH:mm"
+      :name="rangeInputNames"
+      :aria-label="label"
       :shortcuts="shortcuts"
       :start-placeholder="displayPlaceholder"
       :end-placeholder="displayPlaceholder"

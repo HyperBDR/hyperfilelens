@@ -809,17 +809,30 @@ onMounted(refresh)
               </div>
               <div class="capacity-planner__form">
                 <div class="capacity-planner__field">
-                  <label class="capacity-planner__label">{{ t('dashboard.capacityPlanner.plannedAdd') }}</label>
+                  <label
+                    class="capacity-planner__label"
+                    for="dashboard-capacity-plan-amount"
+                  >
+                    {{ t('dashboard.capacityPlanner.plannedAdd') }}
+                  </label>
                   <div class="capacity-planner__controls">
                     <ElInputNumber
+                      id="dashboard-capacity-plan-amount"
                       v-model="capacityPlanAmount"
                       class="capacity-planner__amount"
+                      name="dashboard_capacity_plan_amount"
+                      :aria-label="t('dashboard.capacityPlanner.plannedAdd')"
                       :min="0"
                       :step="0.1"
                       :precision="1"
                       controls-position="right"
                     />
-                    <ElSelect v-model="capacityPlanUnit" class="capacity-planner__unit" :teleported="false">
+                    <ElSelect
+                      v-model="capacityPlanUnit"
+                      class="capacity-planner__unit"
+                      :aria-label="t('dashboard.capacityPlanner.unit')"
+                      :teleported="false"
+                    >
                       <ElOption label="GB" value="GB" />
                       <ElOption label="TB" value="TB" />
                     </ElSelect>
@@ -827,10 +840,18 @@ onMounted(refresh)
                 </div>
 
                 <div class="capacity-planner__field">
-                  <label class="capacity-planner__label">{{ t('dashboard.capacityPlanner.factor') }}</label>
+                  <label
+                    class="capacity-planner__label"
+                    for="dashboard-capacity-plan-factor"
+                  >
+                    {{ t('dashboard.capacityPlanner.factor') }}
+                  </label>
                   <ElInputNumber
+                    id="dashboard-capacity-plan-factor"
                     v-model="capacityPlanFactor"
                     class="capacity-planner__factor"
+                    name="dashboard_capacity_plan_factor"
+                    :aria-label="t('dashboard.capacityPlanner.factor')"
                     :min="0"
                     :step="0.1"
                     :precision="1"
