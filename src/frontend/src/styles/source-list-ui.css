@@ -139,6 +139,70 @@
   overflow: hidden;
 }
 
+@media (min-width: 768px) and (max-width: 1279.98px) {
+  .protection-flow-workspace {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .protection-flow-workspace {
+    gap: 12px;
+  }
+
+  .protection-flow-toolbar {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__primary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(44px, auto));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__primary > :first-child {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__primary > :nth-child(2):not(:last-child) {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: start;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__primary > :last-child {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__primary > .dp-flow-step3-action-tooltip .el-button {
+    min-height: 44px;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__right--mobile-split {
+    display: contents;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__right--mobile-split > .hfl-list-toolbar__utility {
+    position: absolute;
+    top: 52px;
+    right: 0;
+  }
+
+  .protection-flow-toolbar > .hfl-list-toolbar__right--mobile-split > :not(.hfl-list-toolbar__utility) {
+    width: 100% !important;
+    max-width: 100%;
+  }
+}
+
 .protection-flow-table-zone {
   flex: 1;
   min-height: 0;

@@ -417,6 +417,10 @@
     grid-row: 1;
   }
 
+  .hfl-list-toolbar__right--mobile-split > .hfl-list-search ~ :not(.hfl-list-toolbar__utility) {
+    grid-column: 1 / -1;
+  }
+
   .hfl-list-toolbar__right--mobile-split > .hfl-list-toolbar__utility {
     grid-column: 2;
     grid-row: 1;

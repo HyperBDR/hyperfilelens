@@ -8610,7 +8610,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
 
     <div class="hfl-list-shell protection-flow-list-shell">
       <div class="hfl-list-panel protection-flow-list-panel">
-    <div ref="flowToolbarRef" class="hfl-list-toolbar">
+    <div
+      ref="flowToolbarRef"
+      class="hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility protection-flow-toolbar"
+    >
+      <div class="hfl-list-toolbar__primary">
           <template v-if="flowMainStep === 0">
             <ElButton
               type="primary"
@@ -8844,6 +8848,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               </template>
             </ElDropdown>
           </template>
+      </div>
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElInput
             v-model="taskSearchQuery"
@@ -16557,6 +16562,11 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
     0 10px 22px color-mix(in srgb, var(--dp-hbr-primary) 13%, transparent);
 }
 
+.dp-flow-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--dp-hbr-primary) 28%, transparent);
+  outline-offset: 2px;
+}
+
 .dp-flow-steps-connector {
   position: relative;
   display: flex;
@@ -16610,16 +16620,114 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   }
 }
 
-@media (max-width: 1279.98px) {
+@media (min-width: 768px) and (max-width: 1279.98px) {
+  .dp-flow-steps-row {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .dp-flow-card {
+    min-width: 0;
+    min-height: 104px;
+    gap: 9px;
+    padding: 12px 11px 11px;
+  }
+
+  .dp-flow-card__mark {
+    flex-basis: 44px;
+    gap: 6px;
+    padding-right: 8px;
+  }
+
+  .dp-flow-card__icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .dp-flow-card__header {
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .dp-flow-card__desc {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .dp-flow-steps-connector {
+    width: 24px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .dp-flow-steps-row {
+    gap: 0;
+  }
+
+  .dp-flow-card {
+    min-height: 76px;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 10px;
+  }
+
+  .dp-flow-card__mark {
+    flex-basis: 44px;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 9px 0 0;
+  }
+
+  .dp-flow-card__icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .dp-flow-card__body {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .dp-flow-card__header {
+    gap: 6px;
+    margin-bottom: 5px;
+  }
+
+  .dp-flow-card__title {
+    font-size: 0.875rem;
+  }
+
+  .dp-flow-card__desc {
+    display: none;
+  }
+
+  .dp-flow-card__pill {
+    min-height: 20px;
+    padding: 2px 6px;
+  }
+
+  .dp-flow-card__meta {
+    min-height: 20px;
+    padding: 2px 7px 2px 6px;
+    font-size: 11.5px;
+  }
+
+  .dp-flow-card__meta-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .dp-flow-steps-connector {
     width: 100%;
-    height: 24px;
+    height: 20px;
   }
 
   .dp-flow-steps-connector::before,
   .dp-flow-steps-connector::after {
     width: 2px;
-    height: 8px;
+    height: 4px;
   }
 
   .dp-flow-steps-connector::before {
@@ -16631,6 +16739,8 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   }
 
   .dp-flow-steps-connector__icon {
+    width: 14px;
+    height: 14px;
     animation-name: dp-chev-shift-v;
   }
 
@@ -16645,18 +16755,8 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 }
 
 @media (max-width: 639.98px) {
-  .dp-flow-card {
-    min-height: 104px;
-    align-items: flex-start;
-  }
-
-  .dp-flow-card__mark {
-    flex-basis: 48px;
-    padding-right: 8px;
-  }
-
   .dp-flow-card__pill {
-    padding: 3px 6px;
+    font-size: 10px;
   }
 }
 

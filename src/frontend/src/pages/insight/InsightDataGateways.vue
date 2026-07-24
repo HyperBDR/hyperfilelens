@@ -510,54 +510,56 @@ onUnmounted(() => {
 <template>
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
-      <div class="hfl-list-toolbar">
-        <RouterLink
-          :to="isPlatformEngine ? '/node/nodes/deploy?role=gateway&gatewayScope=platform&returnTo=/platform-ops/engine/gateways' : '/node/nodes/deploy?role=gateway'"
-          class="inline-flex"
-        >
-          <ElButton type="primary">
-            <Plus :size="16" />
-            {{ t('insight.dataGateway.btnAdd') }}
-          </ElButton>
-        </RouterLink>
+      <div class="hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility">
+        <div class="hfl-list-toolbar__primary">
+          <RouterLink
+            :to="isPlatformEngine ? '/node/nodes/deploy?role=gateway&gatewayScope=platform&returnTo=/platform-ops/engine/gateways' : '/node/nodes/deploy?role=gateway'"
+            class="inline-flex"
+          >
+            <ElButton type="primary">
+              <Plus :size="16" />
+              {{ t('insight.dataGateway.btnAdd') }}
+            </ElButton>
+          </RouterLink>
 
-        <ElDropdown
-          trigger="click"
-          popper-class="hfl-actions-dropdown"
-          @visible-change="moreActionsOpen = $event"
-          @command="handleMoreAction"
-        >
-          <ElButton>
-            {{ t('insight.dataGateway.btnMoreActions') }}
-            <ChevronDown
-              :size="16"
-              class="hfl-list-more__chev"
-              :class="{ 'hfl-list-more__chev--open': moreActionsOpen }"
-            />
-          </ElButton>
-          <template #dropdown>
-            <ElDropdownMenu>
-              <ElDropdownItem command="rename" :disabled="batchRenameDisabled">
-                <span class="el-dropdown-menu__item-content">
-                  <Pencil :size="14" class="shrink-0" />
-                  <span>{{ t('nodesPage.btnBatchRename') }}</span>
-                </span>
-              </ElDropdownItem>
-              <ElDropdownItem command="upgrade" :disabled="batchUpgradeDisabled">
-                <span class="el-dropdown-menu__item-content">
-                  <ArrowUpCircle :size="14" class="shrink-0" />
-                  <span>{{ t('nodesPage.actionUpgrade') }}</span>
-                </span>
-              </ElDropdownItem>
-              <ElDropdownItem command="remove" divided class="el-dropdown-menu__item--danger" :disabled="batchDisabled">
-                <span class="el-dropdown-menu__item-content">
-                  <Trash2 :size="14" class="shrink-0" />
-                  <span>{{ t('nodesPage.actionDelete') }}</span>
-                </span>
-              </ElDropdownItem>
-            </ElDropdownMenu>
-          </template>
-        </ElDropdown>
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+            @command="handleMoreAction"
+          >
+            <ElButton>
+              {{ t('insight.dataGateway.btnMoreActions') }}
+              <ChevronDown
+                :size="16"
+                class="hfl-list-more__chev"
+                :class="{ 'hfl-list-more__chev--open': moreActionsOpen }"
+              />
+            </ElButton>
+            <template #dropdown>
+              <ElDropdownMenu>
+                <ElDropdownItem command="rename" :disabled="batchRenameDisabled">
+                  <span class="el-dropdown-menu__item-content">
+                    <Pencil :size="14" class="shrink-0" />
+                    <span>{{ t('nodesPage.btnBatchRename') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem command="upgrade" :disabled="batchUpgradeDisabled">
+                  <span class="el-dropdown-menu__item-content">
+                    <ArrowUpCircle :size="14" class="shrink-0" />
+                    <span>{{ t('nodesPage.actionUpgrade') }}</span>
+                  </span>
+                </ElDropdownItem>
+                <ElDropdownItem command="remove" divided class="el-dropdown-menu__item--danger" :disabled="batchDisabled">
+                  <span class="el-dropdown-menu__item-content">
+                    <Trash2 :size="14" class="shrink-0" />
+                    <span>{{ t('nodesPage.actionDelete') }}</span>
+                  </span>
+                </ElDropdownItem>
+              </ElDropdownMenu>
+            </template>
+          </ElDropdown>
+        </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElInput

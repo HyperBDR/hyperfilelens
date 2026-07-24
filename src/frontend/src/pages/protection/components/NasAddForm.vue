@@ -676,4 +676,34 @@ defineExpose({
     margin-bottom: 0;
   }
 }
+
+@media (max-width: 767.98px) {
+  .add-nas-protocol-grid {
+    gap: 8px;
+  }
+
+  .add-nas-protocol-grid :deep(.add-nas-protocol-card) {
+    min-height: 52px;
+    padding: 8px 12px !important;
+  }
+
+  .add-nas-protocol-grid :deep(.add-nas-protocol-card .el-radio__label) {
+    min-width: 0;
+    padding-left: 8px;
+  }
+
+  .add-nas-protocol-card__inner {
+    min-width: 0;
+    gap: 0;
+  }
+
+  .add-nas-protocol-card__icon {
+    display: none;
+  }
+
+  .add-nas-protocol-card__title {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+}
 </style>

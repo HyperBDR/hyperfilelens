@@ -1050,5 +1050,13 @@ watch(
   .host-monitor__charts--pair {
     grid-template-columns: 1fr;
   }
+
+  .chart-card:has(> .chart-card__empty) {
+    min-height: 180px;
+  }
+
+  .chart-card__empty {
+    min-height: 132px;
+  }
 }
 </style>

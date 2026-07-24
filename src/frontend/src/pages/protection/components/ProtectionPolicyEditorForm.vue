@@ -973,7 +973,21 @@ function onSimpleIntervalUnitChange() {
 }
 
 @media (max-width: 640px) {
-  .policy-basic-row,
+  .policy-basic-row {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+
+  .policy-basic-row__control {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .policy-basic-row__control--switch {
+    width: auto;
+    justify-self: start;
+  }
+
   .advanced-setting-row,
   .retention-recent-row,
   .retention-tier-row {

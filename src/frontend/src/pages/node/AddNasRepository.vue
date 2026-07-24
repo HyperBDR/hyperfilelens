@@ -1128,8 +1128,34 @@ watch(enableQuotaAlert, (enabled) => {
 }
 
 @media (max-width: 768px) {
-  .add-nas-protocol-grid {
-    grid-template-columns: 1fr;
+  .resource-add-fullscreen .add-nas-protocol-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .resource-add-fullscreen .add-nas-protocol-card {
+    min-height: 52px;
+    padding: 8px 12px !important;
+  }
+
+  .resource-add-fullscreen .add-nas-protocol-card :deep(.el-radio__label) {
+    min-width: 0;
+    padding-left: 8px;
+  }
+
+  .resource-add-fullscreen .add-nas-protocol-card__inner {
+    min-width: 0;
+    gap: 0;
+  }
+
+  .resource-add-fullscreen .add-nas-protocol-card__icon {
+    display: none;
+  }
+
+  .resource-add-fullscreen .add-nas-protocol-card__text {
+    min-width: 0;
+    font-size: 14px;
+    line-height: 1.35;
   }
 
   .add-nas-proxy-action {

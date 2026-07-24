@@ -200,5 +200,49 @@ onUnmounted(() => {
 .hfl-toast--compact .hfl-toast__message { font-weight: 600; line-height: 20px; }
 
 @keyframes hfl-toast-in { from { opacity: 0; transform: translateX(26px) scale(.97); } }
+
+@media (max-width: 640px) {
+  .hfl-toast {
+    grid-template-columns: 32px minmax(0, 1fr) 44px;
+    gap: 8px;
+    width: min(100%, 340px);
+    max-width: 100%;
+    padding: 12px 0 12px 12px;
+    border-radius: 12px;
+    box-shadow: 0 10px 28px -12px rgba(16, 24, 40, 0.24);
+  }
+
+  .hfl-toast__icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  .hfl-toast__close {
+    width: 44px;
+    height: 44px;
+    align-self: center;
+  }
+
+  .hfl-toast__actions {
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .hfl-toast__actions button {
+    min-height: 44px;
+  }
+
+  .hfl-toast--compact {
+    grid-template-columns: 32px minmax(0, 1fr) 44px;
+    padding: 4px 0 4px 8px;
+    border-radius: 10px;
+  }
+
+  .hfl-toast--compact .hfl-toast__progress {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) { .hfl-toast { animation: none; } .hfl-toast__progress { transition: none; } }
 </style>

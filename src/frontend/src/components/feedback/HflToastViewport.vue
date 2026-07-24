@@ -32,7 +32,14 @@ import { toastState } from '../../lib/toast/store'
 .hfl-toast-list-leave-to { opacity: 0; transform: translateX(20px); }
 
 @media (max-width: 640px) {
-  .hfl-toast-viewport { top: 64px; right: 16px; left: 16px; align-items: stretch; }
+  .hfl-toast-viewport {
+    top: calc(var(--app-header-height) + 8px);
+    right: max(16px, var(--app-safe-right));
+    left: max(16px, var(--app-safe-left));
+    gap: 8px;
+    align-items: center;
+    max-height: calc(var(--app-viewport-height) - var(--app-header-height) - var(--app-safe-bottom) - 16px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

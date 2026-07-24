@@ -1860,6 +1860,37 @@ function applyThemeVars(t: string) {
   }
 }
 
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .app-route-dashboard-skeleton__pipeline {
+    padding: 1.25rem 1.5rem;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-head {
+    margin-bottom: 0.875rem;
+    padding-bottom: 0.875rem;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-flow {
+    padding: 0.25rem 0;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-step {
+    min-height: 132px;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-step i {
+    width: 4rem;
+    height: 4rem;
+    margin-bottom: 0.625rem;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-connector {
+    flex-basis: 80px;
+    min-width: 48px;
+    margin: 0 0.5rem;
+  }
+}
+
 @media (max-width: 960px) {
   .app-route-dashboard-skeleton__pipeline,
   .app-route-dashboard-skeleton__pipeline-flow,
@@ -1873,19 +1904,6 @@ function applyThemeVars(t: string) {
 
   .app-route-dashboard-skeleton__cockpit {
     grid-template-rows: none;
-  }
-
-  .app-route-dashboard-skeleton__pipeline-connector {
-    display: none;
-  }
-
-  .app-route-dashboard-skeleton__pipeline-flow {
-    flex-direction: column;
-    gap: 2rem;
-  }
-
-  .app-route-dashboard-skeleton__pipeline-step {
-    max-width: 100%;
   }
 
   .app-route-dashboard-skeleton__panel,
@@ -1938,6 +1956,65 @@ function applyThemeVars(t: string) {
 
   .app-route-skeleton__table i:nth-child(n + 3) {
     display: none;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .app-route-dashboard-skeleton__pipeline {
+    padding: 1rem;
+    border-radius: 0.75rem;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-head {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) 24px minmax(0, 1fr);
+    align-items: start;
+    gap: 4px;
+    padding: 0;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-step {
+    display: flex;
+    min-height: 124px;
+    max-width: 100%;
+    align-items: center;
+    gap: 6px;
+    padding: 0.5rem 0;
+    border-bottom: 0;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-step::before {
+    content: none;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-step i {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 0.25rem;
+    border-radius: 8px;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-step b,
+  .app-route-dashboard-skeleton__pipeline-step em,
+  .app-route-dashboard-skeleton__pipeline-step small {
+    width: 100%;
+    height: 38px;
+    margin: 0;
+    border-radius: 6px;
+  }
+
+  .app-route-dashboard-skeleton__pipeline-connector {
+    display: block;
+    align-self: start;
+    width: 100%;
+    min-width: 0;
+    height: 1px;
+    margin: 32px 0 0;
   }
 }
 
