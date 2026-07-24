@@ -39,6 +39,12 @@ if [[ "${HFL_FAKE_APT_RESULT:-ok}" == "unresolved" ]]; then
 fi
 printf '0 upgraded, 4 newly installed, 0 to remove and 0 not upgraded.\n'
 SH
+cat >"${tmp}/bin/dpkg" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "--install" ]]
+printf '%s\n' "${@:2}" >"${HFL_DOCKER_TEST_STATE}/installed"
+SH
 chmod +x "${tmp}/bin/"*
 
 for package in \
@@ -53,6 +59,7 @@ done
 
 PATH="${tmp}/bin:${PATH}"
 export PATH
+export HFL_DOCKER_TEST_STATE="${tmp}"
 # shellcheck source=../../deploy/bootstrap/gateway-install-docker-ubuntu-amd64.sh
 source "${ROOT}/deploy/bootstrap/gateway-install-docker-ubuntu-amd64.sh"
 
@@ -68,6 +75,9 @@ done
 
 validate_offline_docker_plan "${tmp}/apt-plan.log" "${deb_files[@]}"
 grep -F '0 upgraded, 4 newly installed' "${tmp}/apt-plan.log" >/dev/null
+install_offline_docker_debs "${tmp}/install.log" "${deb_files[@]}"
+[[ "$(wc -l <"${tmp}/installed")" -eq 4 ]]
+grep -F '/docker-ce_5_29.2.1_amd64.deb' "${tmp}/installed" >/dev/null
 
 set +e
 (
