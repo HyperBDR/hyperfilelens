@@ -304,9 +304,12 @@ onBeforeUnmount(() => {
           <ElDatePicker
             v-model="customRange"
             type="daterange"
+            :id="['usage-start-date', 'usage-end-date']"
             unlink-panels
             format="YYYY-MM-DD"
             value-format="YYYY-MM-DD"
+            :name="['usage_start_date', 'usage_end_date']"
+            aria-label="Usage date range"
             range-separator="~"
             start-placeholder="Start date"
             end-placeholder="End date"
@@ -402,7 +405,20 @@ onBeforeUnmount(() => {
         <div class="usage-panel__head usage-history-head">
           <h2>Question History</h2>
           <div class="usage-history-actions">
-            <div class="usage-search"><Search :size="15" /><input v-model="searchQuery" placeholder="Search Chats or Questions..." /></div>
+            <div class="usage-search">
+              <Search
+                :size="15"
+                aria-hidden="true"
+              />
+              <input
+                id="usage-question-search"
+                v-model="searchQuery"
+                type="search"
+                name="usage_question_search"
+                aria-label="Search chats or questions"
+                placeholder="Search Chats or Questions..."
+              >
+            </div>
             <ElSelect v-model="backupSourceFilter" clearable placeholder="All Backup Sources" class="usage-filter-select">
               <ElOption v-for="name in usage?.backup_sources || []" :key="name" :label="name" :value="name" />
             </ElSelect>
