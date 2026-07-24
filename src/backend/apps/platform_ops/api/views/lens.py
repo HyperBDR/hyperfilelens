@@ -63,6 +63,7 @@ from apps.node.services.internal.node_lifecycle import (
 )
 from apps.node.services.internal.local_platform_gateway import platform_gateway_api_base
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
+from apps.platform_ops.selectors.internal.ai_usage import platform_ai_usage_payload
 from common.deploy.site import enrollment_tls_verify
 
 
@@ -93,6 +94,15 @@ def _deployment_managed_model_error() -> Response:
         },
         status=status.HTTP_409_CONFLICT,
     )
+
+
+class PlatformOpsLensUsageView(APIView):
+    """Cross-account AI usage and cost inventory for platform operators."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def get(self, request):
+        return Response(platform_ai_usage_payload(request.query_params))
 
 
 def _set_platform_default_model_ref(

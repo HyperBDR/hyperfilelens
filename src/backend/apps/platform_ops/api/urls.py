@@ -40,6 +40,7 @@ from apps.platform_ops.api.views.lens import (
     PlatformOpsLensMcpServerView,
     PlatformOpsLensModelProxyView,
     PlatformOpsLensSkillView,
+    PlatformOpsLensUsageView,
 )
 from apps.platform_ops.api.views.overview import PlatformOpsOverviewView
 from apps.platform_ops.api.views.platform import (
@@ -205,6 +206,7 @@ urlpatterns = [
     path("system/audit", PlatformOpsSystemAuditView.as_view(), name="platform-ops-system-audit"),
     path("system/logs", PlatformOpsSystemLogsView.as_view(), name="platform-ops-system-logs"),
     path("lens/gateways", PlatformOpsLensGatewayListView.as_view(), name="platform-ops-lens-gateways"),
+    path("lens/usage", PlatformOpsLensUsageView.as_view(), name="platform-ops-lens-usage"),
     path(
         "lens/gateways/enrollment",
         PlatformOpsLensGatewayEnrollmentView.as_view(),
