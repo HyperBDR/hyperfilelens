@@ -66,6 +66,15 @@ hfl_docker_pull_with_retry() {
 	return 1
 }
 
+hfl_docker_tag_local_alias() {
+	local source=$1 alias=$2
+	[[ "${source}" != "${alias}" ]] || return 0
+	if ! docker tag "${source}" "${alias}"; then
+		HFL_DOCKER_LAST_ERROR="unable to tag ${source} as ${alias}"
+		return 1
+	fi
+}
+
 hfl_docker_ensure_image() {
 	local image=$1 mirror="${2:-}" force_pull=${3:-0} offline=${4:-0}
 	local platform="${5:-}" timeout_seconds=${6:-180} retries=${7:-2}
@@ -77,23 +86,25 @@ hfl_docker_ensure_image() {
 	[[ -z "${mirror_host}" ]] || mirrored="$(hfl_docker_mirror_image_ref "${image}" "${mirror_host}")"
 
 	if [[ "${force_pull}" -eq 0 ]] && hfl_docker_image_matches_platform "${image}" "${platform}"; then
+		hfl_docker_tag_local_alias "${image}" "${local_alias}" || return 1
 		HFL_DOCKER_IMAGE_SOURCE="local"
 		return 0
 	fi
 	if [[ "${force_pull}" -eq 0 && -n "${mirrored}" ]] \
 		&& hfl_docker_image_matches_platform "${mirrored}" "${platform}"; then
-		docker tag "${mirrored}" "${local_alias}"
+		hfl_docker_tag_local_alias "${mirrored}" "${local_alias}" || return 1
 		HFL_DOCKER_IMAGE_SOURCE="local-mirror"
 		return 0
 	fi
 
 	if [[ "${offline}" -eq 1 ]]; then
 		if hfl_docker_image_matches_platform "${image}" "${platform}"; then
+			hfl_docker_tag_local_alias "${image}" "${local_alias}" || return 1
 			HFL_DOCKER_IMAGE_SOURCE="local-offline"
 			return 0
 		fi
 		if [[ -n "${mirrored}" ]] && hfl_docker_image_matches_platform "${mirrored}" "${platform}"; then
-			docker tag "${mirrored}" "${local_alias}"
+			hfl_docker_tag_local_alias "${mirrored}" "${local_alias}" || return 1
 			HFL_DOCKER_IMAGE_SOURCE="local-mirror-offline"
 			return 0
 		fi
@@ -103,21 +114,23 @@ hfl_docker_ensure_image() {
 
 	if [[ -n "${mirrored}" ]] \
 		&& hfl_docker_pull_with_retry "${mirrored}" "${platform}" "${timeout_seconds}" "${retries}"; then
-		docker tag "${mirrored}" "${local_alias}"
+		hfl_docker_tag_local_alias "${mirrored}" "${local_alias}" || return 1
 		HFL_DOCKER_IMAGE_SOURCE="mirror"
 		return 0
 	fi
 	if hfl_docker_pull_with_retry "${image}" "${platform}" "${timeout_seconds}" "${retries}"; then
+		hfl_docker_tag_local_alias "${image}" "${local_alias}" || return 1
 		HFL_DOCKER_IMAGE_SOURCE="official"
 		return 0
 	fi
 
 	if hfl_docker_image_matches_platform "${image}" "${platform}"; then
+		hfl_docker_tag_local_alias "${image}" "${local_alias}" || return 1
 		HFL_DOCKER_IMAGE_SOURCE="local-fallback"
 		return 0
 	fi
 	if [[ -n "${mirrored}" ]] && hfl_docker_image_matches_platform "${mirrored}" "${platform}"; then
-		docker tag "${mirrored}" "${local_alias}"
+		hfl_docker_tag_local_alias "${mirrored}" "${local_alias}" || return 1
 		HFL_DOCKER_IMAGE_SOURCE="local-mirror-fallback"
 		return 0
 	fi
