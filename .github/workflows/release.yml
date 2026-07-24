@@ -86,6 +86,7 @@ jobs:
       turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
+      hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}
       smtp_host: ${{ vars.PREPROD_SMTP_HOST }}
       smtp_port: ${{ vars.PREPROD_SMTP_PORT }}
       smtp_username: ${{ vars.PREPROD_SMTP_USERNAME }}

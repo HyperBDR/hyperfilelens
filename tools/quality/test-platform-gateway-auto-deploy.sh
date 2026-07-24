@@ -22,10 +22,10 @@ printf '%s\n' \
 	'set -euo pipefail' \
 	'[[ "$HFL_ORG_KEY" == "__platform_lens__" ]]' \
 	'[[ "$HFL_NODE_ROLE" == "gateway" ]]' \
-	'[[ "$HFL_API_BASE" == "https://console.example:11443" ]]' \
-	'[[ "$HFL_WSS_URL" == "wss://console.example:11443/ws/node/agent/" ]]' \
+	'[[ "$HFL_API_BASE" == "https://127.0.0.1:11443" ]]' \
+	'[[ "$HFL_WSS_URL" == "wss://127.0.0.1:11443/ws/node/agent/" ]]' \
 	'[[ "$1" == "gateway-install" && "$2" == "--yes" ]]' \
-	'printf "%s" "$HFL_INSECURE_TLS" >"$TEST_PLATFORM_GATEWAY_MARKER"' \
+	'printf "%s|%s|%s" "$HFL_API_BASE" "$HFL_WSS_URL" "$HFL_INSECURE_TLS" >"$TEST_PLATFORM_GATEWAY_MARKER"' \
 	>"${helper}"
 chmod 755 "${helper}"
 
@@ -35,6 +35,7 @@ read_env_value() {
 	case "$1" in
 	HFL_PLATFORM_GATEWAY_AUTO_DEPLOY) printf '%s' "${AUTO_DEPLOY}" ;;
 	HFL_INSECURE_TLS) printf '%s' "${TLS_MODE}" ;;
+	HFL_TENANT_PORT) printf '11443' ;;
 	esac
 }
 skip() { :; }
@@ -46,8 +47,10 @@ require_docker() { :; }
 read_agent_env_value() { :; }
 run_as_root() { "$@"; }
 compose_in_root() {
-	printf '%s\n' 'HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT={"org_key":"__platform_lens__","token":"fixture-token","api_base":"https://console.example:11443","wss_url":"wss://console.example:11443/ws/node/agent/","managed_node_ids":[]}'
+	printf 'HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT={"org_key":"%s","token":"fixture-token","api_base":"https://console.example:11443","wss_url":"wss://console.example:11443/ws/node/agent/","managed_node_ids":[]}\n' "${ENROLLMENT_ORG}"
 }
+
+ENROLLMENT_ORG=__platform_lens__
 
 ensure_local_platform_gateway
 [[ ! -e "${marker}" ]]
@@ -55,12 +58,19 @@ ensure_local_platform_gateway
 AUTO_DEPLOY=true
 export TEST_PLATFORM_GATEWAY_MARKER="${marker}"
 ensure_local_platform_gateway
-[[ "$(<"${marker}")" == "1" ]]
+[[ "$(<"${marker}")" == "https://127.0.0.1:11443|wss://127.0.0.1:11443/ws/node/agent/|1" ]]
 
 TLS_MODE=0
 rm -f "${marker}"
 ensure_local_platform_gateway
-[[ "$(<"${marker}")" == "0" ]]
+[[ "$(<"${marker}")" == "https://127.0.0.1:11443|wss://127.0.0.1:11443/ws/node/agent/|1" ]]
+
+ENROLLMENT_ORG=tenant-org
+if (ensure_local_platform_gateway) 2>/dev/null; then
+	printf 'ERROR: local platform Gateway accepted another organization\n' >&2
+	exit 1
+fi
+ENROLLMENT_ORG=__platform_lens__
 
 read_agent_env_value() {
 	case "$1" in

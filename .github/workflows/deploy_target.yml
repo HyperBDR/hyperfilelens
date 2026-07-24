@@ -56,6 +56,10 @@ on:
         required: false
         default: false
         type: boolean
+      hfl_insecure_tls:
+        description: Environment-wide TLS policy for remotely enrolled HFL Agents (0 verifies, 1 skips)
+        required: true
+        type: string
       smtp_host:
         description: Optional SMTP server hostname; configure all SMTP inputs together
         required: false
@@ -150,6 +154,7 @@ jobs:
           ARTIFACT_CHANNEL: ${{ inputs.channel }}
           ARTIFACT_ID: ${{ inputs.tag }}
           DEPLOY_TARGET: ${{ inputs.target }}
+          HFL_INSECURE_TLS: ${{ inputs.hfl_insecure_tls }}
         shell: bash
         run: |
           set -euo pipefail
@@ -184,6 +189,17 @@ jobs:
             echo 'Production deployment requires a manual workflow_dispatch event' >&2
             exit 1
           fi
+          [[ "$HFL_INSECURE_TLS" =~ ^[01]$ ]] || {
+            echo 'HFL_INSECURE_TLS must be 0 or 1' >&2
+            exit 1
+          }
+          case "$DEPLOY_TARGET:$HFL_INSECURE_TLS" in
+            test:1|preprod:1|prod:0) ;;
+            *)
+              echo "Deployment target $DEPLOY_TARGET refuses HFL_INSECURE_TLS=$HFL_INSECURE_TLS" >&2
+              exit 1
+              ;;
+          esac
 
           smtp_values=(
             "$SMTP_HOST" "$SMTP_PORT" "$SMTP_USERNAME"
@@ -238,6 +254,7 @@ jobs:
 
       - name: Stage runtime configuration
         env:
+          HFL_INSECURE_TLS: ${{ inputs.hfl_insecure_tls }}
           HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ inputs.platform_gateway_auto_deploy }}
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
@@ -256,7 +273,7 @@ jobs:
           umask 077
           printf '%s\n' \
             "HFL_EMAIL_SIGNUP_ENABLED=false" \
-            "HFL_INSECURE_TLS=0" \
+            "HFL_INSECURE_TLS=$HFL_INSECURE_TLS" \
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=$HFL_PLATFORM_GATEWAY_AUTO_DEPLOY" \
             "TURNSTILE_ENABLED=$TURNSTILE_ENABLED" \
             "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \

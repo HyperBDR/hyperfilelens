@@ -556,13 +556,22 @@ def enable_ai_on_gateway(
 
 def build_lens_enroll_config(link: LensGatewayLink) -> dict[str, Any]:
     """LensNode credentials for gateway enrollment / sidecar install."""
-    from apps.lens_bridge.deploy import lens_gateway_base_url
+    from apps.lens_bridge.deploy import (
+        lens_gateway_base_url,
+        local_platform_lens_gateway_base_url,
+    )
+    from apps.node.services.internal.local_platform_gateway import (
+        is_local_platform_gateway_metadata,
+    )
 
     config = link.config_json or {}
     gateway = link.gateway
     lensnode_name = f"hfl-gw-{gateway.id}-{gateway.name}"[:160]
+    gateway_base_url = lens_gateway_base_url()
+    if is_local_platform_gateway_metadata(gateway.metadata):
+        gateway_base_url = local_platform_lens_gateway_base_url()
     return {
-        "lens_base_url": lens_gateway_base_url(),
+        "lens_base_url": gateway_base_url,
         "lensnode_uuid": str(link.sl_lensnode_uuid) if link.sl_lensnode_uuid else None,
         "lensnode_token": config.get("lensnode_token"),
         "lensnode_name": lensnode_name,

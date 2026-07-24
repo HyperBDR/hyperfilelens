@@ -201,11 +201,10 @@ def apply_configuration(
                 "SaaS deployment runtime configuration must disable email sign-up"
             )
         updates["HFL_EMAIL_SIGNUP_ENABLED"] = "false"
-        if runtime_values.get("HFL_INSECURE_TLS", "") != "0":
-            raise SystemExit(
-                "SaaS deployment runtime configuration must enforce TLS verification"
-            )
-        updates["HFL_INSECURE_TLS"] = "0"
+        insecure_tls = runtime_values.get("HFL_INSECURE_TLS", "")
+        if insecure_tls not in {"0", "1"}:
+            raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
+        updates["HFL_INSECURE_TLS"] = insecure_tls
         updates.update(smtp_runtime_updates(runtime_values))
 
         gateway_enabled = runtime_values.get(
