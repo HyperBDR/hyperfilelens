@@ -273,6 +273,10 @@
     width: 100%;
   }
 
+  .platform-monitoring-page .hfl-ops-stat-card {
+    min-height: 0;
+  }
+
   .platform-monitoring-drawer__grid {
     grid-template-columns: 1fr;
   }
@@ -283,7 +287,10 @@
 }
 
 @media (max-width: 620px) {
-  .platform-monitoring-page .hfl-ops-stats-grid--4,
+  .platform-monitoring-page .hfl-ops-stats-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .platform-health-summary__services {
     grid-template-columns: 1fr;
   }

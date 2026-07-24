@@ -303,7 +303,7 @@ watch(
 
 <template>
   <ModulePage :title="t('ops.alertsCenter.active.title')" :menus="opsMenus" body-fill>
-    <div class="hfl-ops-page hfl-ops-page--fill">
+    <div class="hfl-ops-page hfl-ops-page--fill alert-incidents-page">
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
         <OpsStatCard
           :label="t('ops.alertsCenter.common.critical')"

@@ -379,7 +379,14 @@
     min-height: 44px;
   }
 
-  .platform-account-page .hfl-ops-stats-grid--4,
+  .platform-account-page .hfl-ops-stats-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-account-page .hfl-ops-stat-card {
+    min-height: 0;
+  }
+
   .platform-account-form__grid,
   .platform-account-detail__quotas {
     grid-template-columns: 1fr;

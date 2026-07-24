@@ -1401,6 +1401,244 @@ onMounted(refresh)
   background: var(--dashboard-success);
 }
 
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .pipeline {
+    padding: 1.25rem 1.5rem;
+  }
+
+  .pipeline__head {
+    padding-bottom: 0.875rem;
+    margin-bottom: 0.875rem;
+  }
+
+  .pipeline__flow {
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 0;
+    padding: 0.25rem 0;
+  }
+
+  .pipeline__step {
+    max-width: 190px;
+    min-width: 0;
+  }
+
+  .pipeline__orb {
+    width: 4rem;
+    height: 4rem;
+    margin-bottom: 0.625rem;
+  }
+
+  .pipeline__orbit,
+  .pipeline__orb-glow,
+  .pipeline__orb-pulse {
+    display: none;
+  }
+
+  .pipeline__orb-core {
+    inset: 0;
+    border: 0;
+    border-radius: 0.75rem;
+    background: var(--dashboard-primary-soft);
+    box-shadow: none;
+  }
+
+  .pipeline__orb-core--emerald {
+    background: var(--dashboard-success-soft);
+  }
+
+  .pipeline__orb-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    animation: none;
+  }
+
+  .pipeline__step-text p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .pipeline__chip {
+    margin-top: 0.5rem;
+    padding: 0.1875rem 0.5rem;
+    font-size: 12px;
+  }
+
+  .pipeline__connector {
+    flex: 0.6 1 80px;
+    min-width: 48px;
+  }
+
+  .pipeline__connector-badge {
+    padding: 0.1875rem 0.5rem;
+    font-size: 12px;
+  }
+
+  .pipeline__connector-flow,
+  .pipeline__connector-dot {
+    animation: none;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .pipeline {
+    padding: 1rem;
+    border-radius: 0.75rem;
+    box-shadow: none;
+  }
+
+  .pipeline__accent {
+    height: 2px;
+    background: var(--dashboard-primary);
+  }
+
+  .pipeline__head {
+    padding-bottom: 0.75rem;
+    margin-bottom: 0;
+  }
+
+  .pipeline__flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) 24px minmax(0, 1fr);
+    align-items: stretch;
+    gap: 4px;
+    padding: 0;
+  }
+
+  .pipeline__step {
+    display: flex;
+    max-width: none;
+    align-items: center;
+    gap: 0;
+    padding: 0.5rem 0;
+  }
+
+  .pipeline__orb {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 0.5rem;
+    justify-self: center;
+  }
+
+  .pipeline__orbit,
+  .pipeline__orb-glow,
+  .pipeline__orb-pulse {
+    display: none;
+  }
+
+  .pipeline__orb-core {
+    inset: 0;
+    border: 0;
+    border-radius: 0.5rem;
+    background: var(--dashboard-primary-soft);
+    box-shadow: none;
+  }
+
+  .pipeline__orb-core--emerald {
+    background: var(--dashboard-success-soft);
+  }
+
+  .pipeline__orb-icon {
+    width: 20px;
+    height: 20px;
+    animation: none;
+  }
+
+  .pipeline__step-text {
+    width: 100%;
+    min-width: 0;
+    text-align: center;
+  }
+
+  .pipeline__step-text h4 {
+    margin-top: 0;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .pipeline__step-text p {
+    margin-top: 0.125rem;
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .pipeline__chip {
+    justify-content: center;
+    width: 100%;
+    max-width: 100%;
+    min-height: 38px;
+    box-sizing: border-box;
+    margin-top: 0.375rem;
+    padding: 0.1875rem 0.375rem;
+    border-radius: 0.375rem;
+    font-size: 12px;
+    line-height: 1.25;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .pipeline__connector {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    height: 48px;
+    align-items: center;
+    justify-content: center;
+    align-self: start;
+    margin-top: 0.5rem;
+  }
+
+  .pipeline__connector-line {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 1px;
+    overflow: visible;
+    background: var(--color-border, #dde1e6);
+  }
+
+  .pipeline__connector-line::after {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 6px;
+    height: 6px;
+    border-top: 1px solid var(--color-text-tertiary, #a6a6b0);
+    border-right: 1px solid var(--color-text-tertiary, #a6a6b0);
+    content: '';
+    transform: translateY(-50%) rotate(45deg);
+  }
+
+  .pipeline__connector-flow,
+  .pipeline__connector-badge {
+    display: none;
+  }
+
+  .pipeline__connector-dot {
+    animation: none;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .pipeline__step-text p {
+    display: none;
+  }
+}
+
+@media (max-width: 1023.98px) and (prefers-reduced-motion: reduce) {
+  .pipeline__orbit,
+  .pipeline__orb-icon,
+  .pipeline__orb-pulse-ring,
+  .pipeline__connector-flow,
+  .pipeline__connector-dot {
+    animation: none;
+  }
+}
+
 /* ---- Ribbon Cards ---- */
 .ribbon-grid {
   display: grid;

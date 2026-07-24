@@ -3,9 +3,12 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles/list-page-ui.css'), 'utf8')
+const sourceStyles = readFileSync(resolve(process.cwd(), 'src/styles/source-list-ui.css'), 'utf8')
 const tableStyles = readFileSync(resolve(process.cwd(), 'src/styles/element-plus-table.css'), 'utf8')
 const tablePanel = readFileSync(resolve(process.cwd(), 'src/components/HflTablePanel.vue'), 'utf8')
 const nodesPage = readFileSync(resolve(process.cwd(), 'src/pages/node/Nodes.vue'), 'utf8')
+const dataGatewaysPage = readFileSync(resolve(process.cwd(), 'src/pages/insight/InsightDataGateways.vue'), 'utf8')
+const dataProtectionPage = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
 
 describe('responsive list toolbar controls', () => {
   it('keeps nested search field selects at their configured width', () => {
@@ -19,6 +22,8 @@ describe('responsive list toolbar controls', () => {
     expect(styles).toContain('.hfl-list-toolbar__right--mobile-split')
     expect(styles).toContain('grid-template-columns: minmax(0, 1fr) auto')
     expect(styles).toContain('.hfl-list-toolbar__right--mobile-split > .hfl-list-search')
+    expect(styles).toContain('.hfl-list-toolbar__right--mobile-split > .hfl-list-search ~ :not(.hfl-list-toolbar__utility)')
+    expect(styles).toMatch(/\.hfl-list-toolbar__right--mobile-split > \.hfl-list-search ~ :not\(\.hfl-list-toolbar__utility\)\s*{[^}]*grid-column:\s*1 \/ -1;/s)
     expect(styles).toContain('.hfl-list-toolbar__right--mobile-split > .hfl-list-toolbar__utility')
     expect(nodesPage).toContain('hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split')
     expect(nodesPage).toContain('class="hfl-list-toolbar__utility"')
@@ -36,6 +41,23 @@ describe('responsive list toolbar controls', () => {
     expect(styles).toContain('.hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary > .el-dropdown')
     expect(styles).toContain('vertical-align: top')
     expect(styles).toContain('grid-row: 2')
+  })
+
+  it('uses the shared primary and utility mobile layout for data gateways', () => {
+    expect(dataGatewaysPage).toContain('hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility')
+    expect(dataGatewaysPage).toContain('class="hfl-list-toolbar__primary"')
+    expect(dataGatewaysPage).toContain('hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split')
+    expect(dataGatewaysPage).toContain('class="hfl-list-toolbar__utility"')
+  })
+
+  it('uses the shared primary and utility mobile layout for data protection', () => {
+    expect(dataProtectionPage).toContain('class="hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility protection-flow-toolbar"')
+    expect(dataProtectionPage).toContain('class="hfl-list-toolbar__primary"')
+    expect(dataProtectionPage).toContain('hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split')
+    expect(dataProtectionPage).toContain('class="hfl-list-toolbar__utility"')
+    expect(sourceStyles).toMatch(/@media \(max-width: 767\.98px\)[\s\S]*?\.protection-flow-toolbar\s*{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/)
+    expect(sourceStyles).toMatch(/\.protection-flow-toolbar > \.hfl-list-toolbar__primary\s*{[^}]*grid-template-rows:\s*repeat\(2, minmax\(44px, auto\)\);/s)
+    expect(sourceStyles).toMatch(/\.protection-flow-toolbar > \.hfl-list-toolbar__right--mobile-split > \.hfl-list-toolbar__utility\s*{[^}]*position:\s*absolute;[^}]*top:\s*52px;[^}]*right:\s*0;/s)
   })
 
   it('releases wide fixed data columns on phones', () => {

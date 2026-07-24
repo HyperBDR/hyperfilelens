@@ -13,4 +13,19 @@ describe('NAS add form responsive layout', () => {
     expect(mobileRules).toContain('min-width: 0')
     expect(mobileRules).not.toContain('flex-basis: 100%')
   })
+
+  it('keeps protocol choices compact on phones without changing desktop cards', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/NasAddForm.vue'), 'utf8')
+
+    expect(source).toMatch(/\.add-nas-protocol-card__icon\s*{[^}]*display:\s*inline-flex;/s)
+    expect(source).toMatch(
+      /@media \(max-width: 767\.98px\)[\s\S]*?\.add-nas-protocol-grid\s*{[^}]*gap:\s*8px;/,
+    )
+    expect(source).toMatch(
+      /@media \(max-width: 767\.98px\)[\s\S]*?\.add-nas-protocol-grid :deep\(\.add-nas-protocol-card\)\s*{[^}]*min-height:\s*52px;/,
+    )
+    expect(source).toMatch(
+      /@media \(max-width: 767\.98px\)[\s\S]*?\.add-nas-protocol-card__icon\s*{[^}]*display:\s*none;/,
+    )
+  })
 })

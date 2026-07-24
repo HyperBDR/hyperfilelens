@@ -1948,3 +1948,151 @@ html[data-theme='dark'] .fullscreen-form-footer {
     width: 100%;
   }
 }
+
+@media (max-width: 767.98px) {
+  .policy-editor-fullscreen .filter-rule-form > .fullscreen-form-card {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rules-stack {
+    gap: 16px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-preset-grid {
+    gap: 8px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-preset-card {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-guide-button,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-text-toggle,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-add,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__remove {
+    position: relative;
+    min-height: 40px;
+    touch-action: manipulation;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-guide-button::after,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-text-toggle::after,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-add::after,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__remove::after {
+    position: absolute;
+    inset: -2px;
+    content: '';
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-guide-button,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-text-toggle {
+    padding-right: 4px;
+    padding-left: 4px;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-primary);
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-guide-button:hover,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-text-toggle:hover {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-primary-hover, var(--color-primary));
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-group {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 4px 8px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-head > div {
+    display: contents;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-head .filter-rule-group__title {
+    grid-row: 1;
+    grid-column: 1;
+    align-self: center;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-head .filter-rule-group__desc {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    margin-top: 0;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-text-toggle {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-group__notice {
+    gap: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-secondary, #70707e);
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-rule-group__notice > svg {
+    display: none;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row {
+    flex-wrap: nowrap;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__pattern,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__pattern.el-input {
+    --el-input-height: 40px;
+    height: 44px;
+    align-items: center;
+    width: auto;
+    flex: 1 1 auto;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__pattern .el-input__wrapper {
+    height: 40px;
+    min-height: 40px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__remove {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+    border-color: rgba(239, 68, 68, 0.32);
+    background: var(--color-card-bg, #fff);
+    box-shadow: none;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__remove:hover,
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__remove:active {
+    border-color: var(--el-color-danger, #dc2626);
+    background: var(--el-color-danger, #dc2626);
+    color: #fff;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-row__remove:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--el-color-danger, #dc2626) 38%, transparent);
+    outline-offset: 1px;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-rule-add--row {
+    width: 100%;
+  }
+
+  .policy-editor-fullscreen .filter-rule-form .filter-custom-text-mode__textarea .el-textarea__inner {
+    min-height: 160px;
+  }
+}

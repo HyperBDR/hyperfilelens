@@ -714,6 +714,44 @@
   }
 }
 
+@media (max-width: 767.98px) {
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-grid {
+    gap: 10px;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card {
+    position: relative;
+    justify-content: center;
+    min-height: 76px;
+    padding: 12px 48px 12px 66px;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__top {
+    position: static;
+    display: block;
+    width: auto;
+    margin-bottom: 0;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__icon-wrap {
+    position: absolute;
+    top: 50%;
+    left: 14px;
+    transform: translateY(-50%);
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__check {
+    position: absolute;
+    top: 50%;
+    right: 14px;
+    transform: translateY(-50%);
+  }
+
+  .resource-add-fullscreen .agent-install-wizard--source-host .os-icon-card__meta {
+    margin-top: 2px;
+  }
+}
+
 /* Proxy Host deploy — four-card system requirements grid */
 .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
   display: grid;
@@ -807,4 +845,3 @@
     margin-top: 2px;
   }
 }
-

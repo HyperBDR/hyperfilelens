@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { AlertTriangle, Check, Copy, X } from 'lucide-vue-next'
+import { AlertTriangle, Check, ChevronDown, Copy, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import {
@@ -28,6 +28,7 @@ async function copyDetails() {
     :model-value="Boolean(details)"
     width="min(600px, calc(100vw - 32px))"
     class="hfl-error-details"
+    modal-class="hfl-error-details-overlay"
     append-to-body
     destroy-on-close
     :show-close="false"
@@ -69,7 +70,10 @@ async function copyDetails() {
         </ul>
       </section>
 
-      <section v-if="details.traceId || rawText" class="hfl-error-details__section">
+      <section
+        v-if="details.traceId || rawText"
+        class="hfl-error-details__section hfl-error-details__technical-desktop"
+      >
         <h3>{{ t('feedback.errorDetails.technical') }}</h3>
         <div v-if="details.traceId" class="hfl-error-details__trace">
           <span>{{ t('errors.generic.traceId') }}</span>
@@ -77,6 +81,26 @@ async function copyDetails() {
         </div>
         <pre v-if="rawText" class="hfl-error-details__raw">{{ rawText }}</pre>
       </section>
+
+      <details
+        v-if="details.traceId || rawText"
+        class="hfl-error-details__section hfl-error-details__technical-mobile"
+      >
+        <summary class="hfl-error-details__technical-summary">
+          <span>{{ t('feedback.errorDetails.technical') }}</span>
+          <ChevronDown
+            :size="17"
+            aria-hidden="true"
+          />
+        </summary>
+        <div class="hfl-error-details__technical-content">
+          <div v-if="details.traceId" class="hfl-error-details__trace">
+            <span>{{ t('errors.generic.traceId') }}</span>
+            <code>{{ details.traceId }}</code>
+          </div>
+          <pre v-if="rawText" class="hfl-error-details__raw">{{ rawText }}</pre>
+        </div>
+      </details>
     </template>
 
     <template v-if="details" #footer>
@@ -119,4 +143,118 @@ async function copyDetails() {
 .hfl-error-details__footer { display: flex; width: 100%; box-sizing: border-box; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 26px; background: var(--color-grey-1); border-top: 1px solid var(--color-border-light); }
 .hfl-error-details__copy { display: inline-flex; gap: 7px; padding: 8px 0; align-items: center; color: var(--color-text-primary); background: transparent; border: 0; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .hfl-error-details__copy:hover { color: var(--color-primary); }
+.hfl-error-details__technical-mobile { display: none; }
+
+@media (max-width: 640px) {
+  .hfl-error-details-overlay .el-overlay-dialog {
+    display: flex;
+    align-items: flex-end;
+    padding-top: calc(var(--app-safe-top) + 8px);
+  }
+
+  .hfl-error-details.el-dialog {
+    display: flex;
+    width: 100% !important;
+    max-width: none;
+    max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - 8px);
+    margin: 0;
+    flex-direction: column;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .hfl-error-details .el-dialog__header {
+    flex: 0 0 auto;
+  }
+
+  .hfl-error-details .el-dialog__body {
+    min-height: 0;
+    max-height: none;
+    padding: 2px 16px 12px;
+    flex: 1 1 auto;
+  }
+
+  .hfl-error-details .el-dialog__footer {
+    flex: 0 0 auto;
+  }
+
+  .hfl-error-details__header {
+    gap: 12px;
+    padding: 16px 52px 14px 16px;
+  }
+
+  .hfl-error-details__icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .hfl-error-details__title-line h2 {
+    font-size: 16px;
+    line-height: 22px;
+  }
+
+  .hfl-error-details__heading p {
+    margin-top: 2px;
+  }
+
+  .hfl-error-details__close {
+    top: 8px;
+    right: 8px;
+    width: 44px;
+    height: 44px;
+  }
+
+  .hfl-error-details__section + .hfl-error-details__section {
+    margin-top: 16px;
+  }
+
+  .hfl-error-details__technical-desktop {
+    display: none;
+  }
+
+  .hfl-error-details__technical-mobile {
+    display: block;
+  }
+
+  .hfl-error-details__technical-summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    list-style: none;
+    text-transform: uppercase;
+  }
+
+  .hfl-error-details__technical-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .hfl-error-details__technical-summary svg {
+    flex: 0 0 auto;
+    transition: transform var(--transition-fast);
+  }
+
+  .hfl-error-details__technical-mobile[open] .hfl-error-details__technical-summary svg {
+    transform: rotate(180deg);
+  }
+
+  .hfl-error-details__technical-content {
+    padding-bottom: 4px;
+  }
+
+  .hfl-error-details__footer {
+    padding: 10px 16px calc(10px + var(--app-safe-bottom));
+  }
+
+  .hfl-error-details__copy,
+  .hfl-error-details__footer .el-button {
+    min-height: 44px;
+  }
+}
 </style>
