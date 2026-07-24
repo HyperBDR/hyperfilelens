@@ -149,6 +149,19 @@ validate_offline_docker_plan() {
 	fi
 }
 
+install_offline_docker_debs() {
+	local install_log="$1"
+	shift
+	# APT has already proved that the exact local package set is dependency-safe
+	# and requires no upgrades, removals, or downloads. Install those verified
+	# files directly: apt-get --no-download can lose the directory of local debs
+	# and fail with "Pathname to install is not absolute" on Ubuntu 24.04.
+	if ! run_quiet "${install_log}" env DEBIAN_FRONTEND=noninteractive dpkg --install "$@"; then
+		[[ -s "${install_log}" ]] && tail -n 12 "${install_log}" >&2
+		hfl_fail "Docker offline package installation failed." 3
+	fi
+}
+
 main() {
 if [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required." 1
@@ -236,10 +249,7 @@ hfl_step "Selected ${#deb_files[@]} new packages; installed host dependencies wi
 apt_plan="${work_dir}/apt-plan.log"
 validate_offline_docker_plan "${apt_plan}" "${deb_files[@]}"
 apt_log="${work_dir}/apt-install.log"
-if ! run_quiet "${apt_log}" apt-get -y --no-download --no-install-recommends install "${deb_files[@]}"; then
-	[[ -s "${apt_log}" ]] && tail -n 12 "${apt_log}" >&2
-	hfl_fail "Docker offline package installation failed." 3
-fi
+install_offline_docker_debs "${apt_log}" "${deb_files[@]}"
 
 if command -v systemctl >/dev/null 2>&1; then
 	systemctl enable --now docker >/dev/null 2>&1 \
