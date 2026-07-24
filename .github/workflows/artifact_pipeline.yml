@@ -914,14 +914,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          delete_main_artifact() {
+            local artifact_id=$1
+            if gh release view "$artifact_id" --repo "$GITHUB_REPOSITORY" \
+              >/dev/null 2>&1; then
+              gh release delete "$artifact_id" --repo "$GITHUB_REPOSITORY" --yes
+            fi
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${artifact_id}" \
+              --silent >/dev/null 2>&1; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${artifact_id}" --silent
+            fi
+          }
+
           retained_id="$ARTIFACT_ID"
           if [[ "$PUBLISH_RESULT" != "success" ]] \
             && [[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]; then
             if gh release view "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
               --json isDraft --jq '.isDraft' 2>/dev/null \
               | grep -Fx true >/dev/null; then
-              gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
-                --cleanup-tag --yes
+              delete_main_artifact "$ARTIFACT_ID"
             fi
             retained_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
               --jq '.[] | select(.draft == false and .prerelease == true and (.tag_name | test("^main-[0-9a-f]{7}$"))) | [.created_at, .tag_name] | @tsv' \
@@ -938,6 +950,5 @@ jobs:
           done < "$RUNNER_TEMP/all-main-builds.txt"
           while IFS= read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
-            gh release delete "$artifact_id" --repo "$GITHUB_REPOSITORY" \
-              --cleanup-tag --yes
+            delete_main_artifact "$artifact_id"
           done < "$RUNNER_TEMP/expired-main-builds.txt"

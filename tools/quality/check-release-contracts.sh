@@ -297,10 +297,15 @@ grep -F 'needs: [prepare, publish-release]' "${workflow}" >/dev/null
 grep -F 'BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}' "${workflow}" >/dev/null
 grep -F '[[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]' "${workflow}" >/dev/null
 cleanup_body="$(sed -n '/^  cleanup-main-builds:/,$p' "${workflow}")"
-[[ "$(grep -Fc -- '--repo "$GITHUB_REPOSITORY"' <<<"${cleanup_body}")" -eq 3 ]] || {
-	printf 'ERROR: every Main Release view/delete must select the repository explicitly\n' >&2
-	exit 1
-}
+grep -F 'delete_main_artifact()' <<<"${cleanup_body}" >/dev/null
+grep -F 'gh release delete "$artifact_id" --repo "$GITHUB_REPOSITORY" --yes' \
+  <<<"${cleanup_body}" >/dev/null
+grep -F 'git/ref/tags/${artifact_id}' <<<"${cleanup_body}" >/dev/null
+grep -F 'git/refs/tags/${artifact_id}' <<<"${cleanup_body}" >/dev/null
+if grep -F -- '--cleanup-tag' <<<"${cleanup_body}" >/dev/null; then
+  printf 'ERROR: idempotent Main cleanup must not fail when a Release has no Git tag\n' >&2
+  exit 1
+fi
 grep -F 'ubuntu_release: "22.04"' "${workflow}" >/dev/null
 grep -F 'asset: ubuntu2204' "${workflow}" >/dev/null
 
