@@ -209,6 +209,7 @@ jobs:
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-main-channel-contracts.sh
           ./tools/quality/test-shared-host-guard.sh
+          ./tools/quality/test-release-download-proxy.sh
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-payload-tree-hash.sh
           ./tools/quality/test-ci-release-assembly.sh
@@ -824,6 +825,7 @@ jobs:
       channel: main
       tag: ${{ needs.prepare.outputs.tag }}
       public_url: ${{ vars.TEST_PUBLIC_URL }}
+      release_download_proxy_url: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}
       ssh_host: ${{ vars.TEST_SSH_HOST }}
       ssh_port: ${{ vars.TEST_SSH_PORT }}
       ssh_user: ${{ vars.TEST_SSH_USER }}
@@ -862,6 +864,7 @@ jobs:
       channel: release
       tag: ${{ needs.prepare.outputs.tag }}
       public_url: ${{ vars.PREPROD_PUBLIC_URL }}
+      release_download_proxy_url: ${{ vars.PREPROD_RELEASE_DOWNLOAD_PROXY_URL }}
       ssh_host: ${{ vars.PREPROD_SSH_HOST }}
       ssh_port: ${{ vars.PREPROD_SSH_PORT }}
       ssh_user: ${{ vars.PREPROD_SSH_USER }}
