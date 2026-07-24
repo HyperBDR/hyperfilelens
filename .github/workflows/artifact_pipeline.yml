@@ -208,6 +208,7 @@ jobs:
           ./tools/quality/test-platform-gateway-auto-deploy.sh
           ./tools/quality/test-agent-gateway-uninstall.sh
           ./tools/quality/test-installer-image-refresh.sh
+          ./tools/quality/test-docker-image-digest-alias.sh
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-main-channel-contracts.sh
           ./tools/quality/test-shared-host-guard.sh
@@ -916,9 +917,11 @@ jobs:
           retained_id="$ARTIFACT_ID"
           if [[ "$PUBLISH_RESULT" != "success" ]] \
             && [[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]; then
-            if gh release view "$ARTIFACT_ID" --json isDraft --jq '.isDraft' 2>/dev/null \
+            if gh release view "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
+              --json isDraft --jq '.isDraft' 2>/dev/null \
               | grep -Fx true >/dev/null; then
-              gh release delete "$ARTIFACT_ID" --cleanup-tag --yes
+              gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
+                --cleanup-tag --yes
             fi
             retained_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
               --jq '.[] | select(.draft == false and .prerelease == true and (.tag_name | test("^main-[0-9a-f]{7}$"))) | [.created_at, .tag_name] | @tsv' \
@@ -935,5 +938,6 @@ jobs:
           done < "$RUNNER_TEMP/all-main-builds.txt"
           while IFS= read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
-            gh release delete "$artifact_id" --cleanup-tag --yes
+            gh release delete "$artifact_id" --repo "$GITHUB_REPOSITORY" \
+              --cleanup-tag --yes
           done < "$RUNNER_TEMP/expired-main-builds.txt"

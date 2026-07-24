@@ -5,6 +5,9 @@ umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+grep -F './tools/quality/test-docker-image-digest-alias.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
 actual="$(release_package_basename_for_version v0.1.0 69F809F)"
@@ -293,6 +296,11 @@ grep -F 'Retain only the current successful Main build' "${workflow}" >/dev/null
 grep -F 'needs: [prepare, publish-release]' "${workflow}" >/dev/null
 grep -F 'BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}' "${workflow}" >/dev/null
 grep -F '[[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]' "${workflow}" >/dev/null
+cleanup_body="$(sed -n '/^  cleanup-main-builds:/,$p' "${workflow}")"
+[[ "$(grep -Fc -- '--repo "$GITHUB_REPOSITORY"' <<<"${cleanup_body}")" -eq 3 ]] || {
+	printf 'ERROR: every Main Release view/delete must select the repository explicitly\n' >&2
+	exit 1
+}
 grep -F 'ubuntu_release: "22.04"' "${workflow}" >/dev/null
 grep -F 'asset: ubuntu2204' "${workflow}" >/dev/null
 
