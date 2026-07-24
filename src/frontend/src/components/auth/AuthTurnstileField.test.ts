@@ -23,7 +23,7 @@ function mountField(overrides: Partial<typeof baseProps> & { errorMessage?: stri
     props: { ...baseProps, ...overrides },
     global: {
       stubs: {
-        ShieldCheck: true,
+        KeyRound: true,
         TurnstileWidget: true,
       },
     },
@@ -43,6 +43,7 @@ describe('AuthTurnstileField display states', () => {
     const wrapper = mountField({ ready: true, errorMessage: 'Human verification failed or expired' })
 
     expect(wrapper.find('.auth-turnstile-field__widget').exists()).toBe(true)
+    expect(wrapper.find('.auth-turnstile-field__viewport').exists()).toBe(true)
     expect(wrapper.get('.auth-turnstile-field__error').text()).toBe('Human verification failed or expired')
   })
 
@@ -76,8 +77,23 @@ describe('AuthTurnstileField display states', () => {
     expect(fieldSource).toMatch(
       /\.auth-turnstile-field__widget\s*{[^}]*background:\s*transparent;[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*overflow:\s*visible;/s,
     )
+    expect(fieldSource).toMatch(
+      /\.auth-turnstile-field__viewport\s*{[^}]*border:\s*1px solid #3a3b40;[^}]*border-radius:[^}]*overflow:\s*hidden;/s,
+    )
+    expect(fieldSource).toMatch(
+      /\.auth-turnstile-field__viewport :deep\(\.turnstile-widget\)\s*{[^}]*width:\s*calc\(100% \+ 2px\);[^}]*margin:\s*-1px;/s,
+    )
+    expect(fieldSource).toMatch(
+      /\.auth-turnstile-field__viewport :deep\(\.turnstile-widget__loading\)\s*{[^}]*border:\s*0;[^}]*border-radius:\s*0;/s,
+    )
+    expect(fieldSource).toMatch(
+      /\.auth-turnstile-field__control\s*{[^}]*min-height:\s*65px;/s,
+    )
+    expect(fieldSource).toMatch(
+      /\.auth-turnstile-field__spinner\s*{[^}]*width:\s*16px;[^}]*height:\s*16px;/s,
+    )
     expect(widgetSource).toMatch(
-      /\.turnstile-widget__loading\s*{[^}]*background:\s*#313131;[^}]*border:\s*1px solid #3A3B40;[^}]*border-radius:/s,
+      /\.turnstile-widget__loading\s*{[^}]*gap:\s*10px;[^}]*background:\s*#313131;[^}]*border:\s*1px solid #3A3B40;[^}]*border-radius:/s,
     )
   })
 })

@@ -293,7 +293,7 @@ defineExpose({ reset })
   display: flex;
   align-items: center;
   justify-content: left !important;
-  gap: 15px;
+  gap: 10px;
   padding: 0 14px;
   box-sizing: border-box;
   background: #313131;
