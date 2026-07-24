@@ -22,8 +22,13 @@ source "${ROOT}/tools/lib/version.sh"
 source "${ROOT}/tools/lib/logging.sh"
 # shellcheck source=../tools/lib/env-file.sh
 source "${ROOT}/tools/lib/env-file.sh"
+# shellcheck source=../tools/lib/archive.sh
+source "${ROOT}/tools/lib/archive.sh"
 # shellcheck source=../tools/kopia/common.sh
 source "${ROOT}/tools/kopia/common.sh"
+# shellcheck source=../tools/dependencies/versions/runtime-images.env
+source "${ROOT}/tools/dependencies/versions/runtime-images.env"
+export SOURCELENS_NGINX_SOURCE_IMAGE="${NGINX_IMAGE}"
 
 MIRROR_GITHUB_DOWNLOAD=""
 MIRROR_GITHUB_TOKEN=""
@@ -49,7 +54,7 @@ tar_create_gz() {
 	local base_dir=$2
 	local entry=$3
 
-	COPYFILE_DISABLE=1 tar -C "${base_dir}" -czf "${out}" "${entry}"
+	hfl_tar_create_gz "${out}" "${base_dir}" "${entry}"
 }
 
 normalize_release_permissions() {
@@ -215,7 +220,7 @@ Version:
                                      A matching exact Git tag is authoritative when present.
 
   - Full agent bundle (all platforms)
-  - Host Docker CE debs for Ubuntu 20.04/24.04 amd64 (offline install)
+  - Host Docker CE debs for Ubuntu 20.04/22.04/24.04 amd64 (offline install)
   - Control-plane Docker images + postgres/redis
   - Image-only runtime package: images, payload/media, compose, and deploy config
 
@@ -490,7 +495,7 @@ fetch_host_docker_debs() {
 	[[ -n "${MIRROR_APT}" ]] && args+=(--apt-mirror "${MIRROR_APT}")
 	[[ -n "${MIRROR_DOCKER_APT}" ]] && args+=(--docker-apt-mirror "${MIRROR_DOCKER_APT}")
 	local ubuntu_release
-	for ubuntu_release in 20.04 24.04; do
+	for ubuntu_release in 20.04 22.04 24.04; do
 		log "Fetching host Docker CE debs (ubuntu ${ubuntu_release} amd64)"
 		"${ROOT}/tools/dependencies/fetch-docker-ce-debs.sh" \
 			--ubuntu-release "${ubuntu_release}" "${args[@]}"
@@ -501,9 +506,10 @@ stage_host_docker_bundles() {
 	local pkg_root=$1 ubuntu_release release_id source_dir destination
 	local gateway_dir="${pkg_root}/payload/media/gateway-bootstrap"
 	mkdir -p "${gateway_dir}"
-	for ubuntu_release in 20.04 24.04; do
+	for ubuntu_release in 20.04 22.04 24.04; do
 		case "${ubuntu_release}" in
 		20.04) release_id=2004 ;;
+		22.04) release_id=2204 ;;
 		24.04) release_id=2404 ;;
 		esac
 		source_dir="${ROOT}/build/dependencies/docker/ubuntu-${ubuntu_release}/amd64"
@@ -688,17 +694,17 @@ pull_image() {
 		mirrored="$(docker_mirror_image_ref "${image}" "${mirror_host}")"
 		if [[ "${FORCE_PULL}" -eq 0 ]] && image_exists_locally "${mirrored}"; then
 			log "Using local ${mirrored}, tagging as ${image}"
-			docker tag "${mirrored}" "${image}"
+			docker tag "${mirrored}" "${image%@*}"
 			return 0
 		fi
 		log "Pulling ${mirrored} via mirror ${mirror_host}..."
 		if docker pull --help 2>&1 | grep -q -- '--progress'; then
 			if docker pull --progress=plain "${mirrored}"; then
-				docker tag "${mirrored}" "${image}"
+				docker tag "${mirrored}" "${image%@*}"
 				return 0
 			fi
 		elif docker pull "${mirrored}"; then
-			docker tag "${mirrored}" "${image}"
+			docker tag "${mirrored}" "${image%@*}"
 			return 0
 		fi
 		log "Mirror pull failed, trying docker.io ${image}..."
@@ -736,8 +742,7 @@ save_image_archive() {
 	shift
 	local part="${archive}.part"
 	rm -f "${part}"
-	docker save "$@" | gzip -c >"${part}"
-	gzip -t "${part}"
+	hfl_docker_save_gz "${part}" "$@"
 	mv -f "${part}" "${archive}"
 }
 
@@ -789,6 +794,7 @@ import json
 import pathlib
 import re
 import sys
+import tarfile
 
 (
     out_path,
@@ -827,13 +833,24 @@ def sha256_file(path: pathlib.Path) -> str:
 
 
 docker_bundles = []
-for ubuntu_release, release_id in (("20.04", "2004"), ("24.04", "2404")):
+for ubuntu_release, release_id in (("20.04", "2004"), ("22.04", "2204"), ("24.04", "2404")):
     relative = pathlib.Path(
         f"payload/media/gateway-bootstrap/docker-debs-ubuntu{release_id}-amd64.tar.gz"
     )
     archive = pkg_root / relative
     if not archive.is_file():
         raise SystemExit(f"missing Docker offline bundle: {relative}")
+    with tarfile.open(archive, "r:gz") as bundle_archive:
+        manifest_member = next(
+            (member for member in bundle_archive.getmembers() if member.name.lstrip("./") == "MANIFEST.json"),
+            None,
+        )
+        if manifest_member is None:
+            raise SystemExit(f"Docker offline bundle has no MANIFEST.json: {relative}")
+        stream = bundle_archive.extractfile(manifest_member)
+        if stream is None:
+            raise SystemExit(f"Docker offline bundle manifest cannot be read: {relative}")
+        bundle_manifest = json.load(stream)
     docker_bundles.append(
         {
             "ubuntu_release": ubuntu_release,
@@ -841,6 +858,7 @@ for ubuntu_release, release_id in (("20.04", "2004"), ("24.04", "2404")):
             "file": relative.as_posix(),
             "size": archive.stat().st_size,
             "sha256": sha256_file(archive),
+            "versions": bundle_manifest.get("versions", {}),
         }
     )
 
@@ -956,7 +974,7 @@ manifest = {
     "git_commit": commit,
     "host_runtime": {
         "os_id": "ubuntu",
-        "os_versions": ["20.04", "24.04"],
+        "os_versions": ["20.04", "22.04", "24.04"],
         "arch": "amd64",
         "docker": {
             "engine_version": display_engine_version(pins.get("ENGINE_VERSION", "")),
@@ -998,6 +1016,7 @@ validate_release_publish_artifacts() {
 		gateway-lifecycle.sh
 		gateway-install-docker-ubuntu-amd64.sh
 		docker-debs-ubuntu2004-amd64.tar.gz
+		docker-debs-ubuntu2204-amd64.tar.gz
 		docker-debs-ubuntu2404-amd64.tar.gz
 		lensnode-image-linux-amd64.tar.gz
 	)
@@ -1014,7 +1033,7 @@ write_package_readme() {
 	cat > "${pkg_root}/README.md" <<EOF
 # HyperFileLens ${version}
 
-Release installation package for **Ubuntu 20.04/24.04 amd64** air-gap hosts.
+Release installation package for **Ubuntu 20.04/22.04/24.04 amd64** air-gap hosts.
 Includes OS-specific offline Docker CE archives plus application container images.
 When bundled, SourceLens runs from \`/opt/hyperfilelens/sourcelens\` on the private
 \`hyperfilelens-bridge\` Docker network. External Agent and LensNode traffic
@@ -1024,20 +1043,20 @@ enters through the configured HyperFileLens Tenant HTTPS endpoint.
 
 ### Minimum (PoC / lab)
 
-- Ubuntu **20.04 or 24.04 amd64**
+- Ubuntu **20.04, 22.04, or 24.04 amd64**
 - 2 CPU cores · 4GB RAM · 100GB system disk
 - Docker Engine ≥ 24.0 with Compose v2 ≥ 2.20, or no existing Docker installation
 - The configured Tenant, Platform Operations, and bundled SourceLens Console host ports
 
 ### Recommended (production)
 
-- Ubuntu 20.04 / 24.04 amd64
+- Ubuntu 20.04 / 22.04 / 24.04 amd64
 - 4 CPU cores · 8GB–16GB RAM · 200GB+ SSD
 
 ### Notes
 
 - **amd64 only**; ARM64 is not supported for the control-plane host.
-- OS-specific Docker packages target Ubuntu 20.04 and 24.04 amd64.
+- OS-specific Docker packages target Ubuntu 20.04, 22.04, and 24.04 amd64.
 - Existing healthy Docker is reused; an existing but unsuitable installation causes a safe failure.
 - When Docker is absent, the installer uses the matching offline archive without network access.
 - The 2 CPU / 4GB profile is intended for light workloads; use 8GB+ for sustained production scans.
@@ -1135,7 +1154,7 @@ main() {
 	log "Preparing Kopia artifacts for Backend and Agent packaging"
 	prepare_kopia_artifacts
 
-	log "Fetching host Docker CE debs (ubuntu 20.04/24.04 amd64)"
+	log "Fetching host Docker CE debs (ubuntu 20.04/22.04/24.04 amd64)"
 	fetch_host_docker_debs
 
 	log "Building control-plane Docker images"
@@ -1150,10 +1169,14 @@ main() {
 
 	log "Pulling third-party runtime images"
 	local postgres_digest redis_digest backend_digest frontend_digest
-	pull_image postgres:17
-	postgres_digest="$(log_image_digest postgres:17)"
-	pull_image redis:alpine
-	redis_digest="$(log_image_digest redis:alpine)"
+	pull_image "${POSTGRES_IMAGE}"
+	docker tag "${POSTGRES_IMAGE%@*}" postgres:17
+	postgres_digest="${POSTGRES_IMAGE%%:*}@${POSTGRES_IMAGE##*@}"
+	log "  postgres:17 → ${postgres_digest}"
+	pull_image "${REDIS_IMAGE}"
+	docker tag "${REDIS_IMAGE%@*}" redis:alpine
+	redis_digest="${REDIS_IMAGE%%:*}@${REDIS_IMAGE##*@}"
+	log "  redis:alpine → ${redis_digest}"
 	backend_digest="$(log_image_digest hyperfilelens-backend:latest)"
 	frontend_digest="$(log_image_digest hyperfilelens-frontend:latest)"
 
@@ -1193,6 +1216,7 @@ main() {
 	tar_create_gz "${tar_tmp}" "${STAGING_BASE}" "${pkg_name}"
 	mv -f "${tar_tmp}" "${tar_path}"
 	chmod 644 "${tar_path}"
+	python3 "${ROOT}/release/ci/report-release-size.py" "${pkg_root}" "${tar_path}"
 	cp "${ROOT}/deploy/nginx/certs/root-ca.crt" "${DIST_DIR}/hyperfilelens-root-ca.crt"
 	chmod 644 "${DIST_DIR}/hyperfilelens-root-ca.crt"
 	(

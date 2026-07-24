@@ -125,6 +125,7 @@ services:
 
   postgres:
     image: postgres:17
+    platform: linux/amd64
     pull_policy: never
     # Official PostgreSQL image; pin a distribution variant when required.
     env_file:
@@ -152,6 +153,7 @@ services:
 
   redis:
     image: redis:alpine
+    platform: linux/amd64
     pull_policy: never
     volumes:
       - ./data/redis:/data
@@ -168,6 +170,7 @@ services:
 
   ui:
     image: hyperfilelens-frontend:dev
+    platform: linux/amd64
     pull_policy: never
     env_file:
       - ./.env
@@ -205,6 +208,7 @@ services:
 
   nginx:
     image: nginx:stable-alpine
+    platform: linux/amd64
     pull_policy: never
     depends_on:
       api:

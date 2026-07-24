@@ -134,7 +134,7 @@ materialize_install_dir() {
 	fi
 	log "Copying SourceLens bundle ${source} -> ${target}"
 	run_as_root mkdir -p "${target}"
-	run_as_root rsync -a \
+	run_as_root rsync -aH \
 		--exclude '.env' \
 		--exclude 'data/' \
 		"${source}/" "${target}/"
@@ -226,7 +226,7 @@ ensure_data_dirs() {
 	if [[ -d "${root}/data" && ! -L "${root}/data" && "${root_data_abs}" != "${data_abs}" ]]; then
 		local legacy="${root}/data.pre-hfl-bridge.$(date +%Y%m%d%H%M%S)"
 		log "Migrating existing SourceLens data to ${data_dir}"
-		run_as_root rsync -a "${root}/data/" "${data_dir}/"
+		run_as_root rsync -aH "${root}/data/" "${data_dir}/"
 		run_as_root mv "${root}/data" "${legacy}"
 		log "Preserved previous data directory at ${legacy}"
 	fi

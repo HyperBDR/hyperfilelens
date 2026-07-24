@@ -43,8 +43,8 @@ def main() -> int:
     expected_artifact_id = artifact_id(args.version)
 
     candidate_hashes: dict[str, str] = {}
-    for bundle in sorted(args.candidates_dir.glob("_internal-agent-*.tar.gz")):
-        with tarfile.open(bundle, "r:gz") as archive:
+    for bundle in sorted(args.candidates_dir.glob("_internal-agent-*.tar")):
+        with tarfile.open(bundle, "r:*") as archive:
             for member in archive.getmembers():
                 if not member.isfile() or "/agent-releases/" not in member.name:
                     continue

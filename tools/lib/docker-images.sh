@@ -69,7 +69,7 @@ hfl_docker_pull_with_retry() {
 hfl_docker_ensure_image() {
 	local image=$1 mirror="${2:-}" force_pull=${3:-0} offline=${4:-0}
 	local platform="${5:-}" timeout_seconds=${6:-180} retries=${7:-2}
-	local mirror_host mirrored=""
+	local mirror_host mirrored="" local_alias="${image%@*}"
 	HFL_DOCKER_IMAGE_SOURCE=""
 	HFL_DOCKER_LAST_ERROR=""
 
@@ -82,7 +82,7 @@ hfl_docker_ensure_image() {
 	fi
 	if [[ "${force_pull}" -eq 0 && -n "${mirrored}" ]] \
 		&& hfl_docker_image_matches_platform "${mirrored}" "${platform}"; then
-		docker tag "${mirrored}" "${image}"
+		docker tag "${mirrored}" "${local_alias}"
 		HFL_DOCKER_IMAGE_SOURCE="local-mirror"
 		return 0
 	fi
@@ -93,7 +93,7 @@ hfl_docker_ensure_image() {
 			return 0
 		fi
 		if [[ -n "${mirrored}" ]] && hfl_docker_image_matches_platform "${mirrored}" "${platform}"; then
-			docker tag "${mirrored}" "${image}"
+			docker tag "${mirrored}" "${local_alias}"
 			HFL_DOCKER_IMAGE_SOURCE="local-mirror-offline"
 			return 0
 		fi
@@ -103,7 +103,7 @@ hfl_docker_ensure_image() {
 
 	if [[ -n "${mirrored}" ]] \
 		&& hfl_docker_pull_with_retry "${mirrored}" "${platform}" "${timeout_seconds}" "${retries}"; then
-		docker tag "${mirrored}" "${image}"
+		docker tag "${mirrored}" "${local_alias}"
 		HFL_DOCKER_IMAGE_SOURCE="mirror"
 		return 0
 	fi
@@ -117,7 +117,7 @@ hfl_docker_ensure_image() {
 		return 0
 	fi
 	if [[ -n "${mirrored}" ]] && hfl_docker_image_matches_platform "${mirrored}" "${platform}"; then
-		docker tag "${mirrored}" "${image}"
+		docker tag "${mirrored}" "${local_alias}"
 		HFL_DOCKER_IMAGE_SOURCE="local-mirror-fallback"
 		return 0
 	fi

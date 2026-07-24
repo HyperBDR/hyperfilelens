@@ -13,6 +13,26 @@
 # restart --force — clean build caches, rebuild dependency images, force-recreate containers
 set -euo pipefail
 
+configure_macos_dev_shell() {
+	[[ "$(uname -s)" == "Darwin" ]] || return 0
+	command -v brew >/dev/null 2>&1 || return 0
+	if ((BASH_VERSINFO[0] < 5)); then
+		local brew_bash
+		brew_bash="$(brew --prefix bash 2>/dev/null)/bin/bash"
+		if [[ -x "${brew_bash}" ]]; then
+			exec "${brew_bash}" "$0" "$@"
+		fi
+	fi
+	local prefix candidate
+	for prefix in coreutils findutils gnu-sed gnu-tar grep; do
+		candidate="$(brew --prefix "${prefix}" 2>/dev/null || true)/libexec/gnubin"
+		[[ -d "${candidate}" ]] && PATH="${candidate}:${PATH}"
+	done
+	export PATH
+	export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+}
+configure_macos_dev_shell "$@"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=../tools/lib/logging.sh
@@ -173,6 +193,8 @@ print_config() {
 	sourcelens_version="${BASH_REMATCH[1]}"
 	cat <<EOF
 command=${CMD:-<none>}
+host_platform=$(uname -s)/$(uname -m)
+docker_platform=${DOCKER_DEFAULT_PLATFORM:-linux/amd64}
 compose_file=${ROOT}/docker-compose.yml
 data_dir=${ROOT}/data
 source_check=${ROOT}/tools/quality/check-english-source.py
@@ -233,16 +255,32 @@ apply_ubuntu2404_arch_default() {
 	validate_ubuntu2404_arch
 }
 
+version_ge() {
+	python3 - "$1" "$2" <<'PY'
+import re
+import sys
+
+def parts(value):
+    return tuple(int(item) for item in re.findall(r"\d+", value))
+
+raise SystemExit(0 if parts(sys.argv[1]) >= parts(sys.argv[2]) else 1)
+PY
+}
+
 require_docker() {
+	command -v python3 >/dev/null 2>&1 || die "python3 not found in PATH" 2
 	command -v docker >/dev/null 2>&1 || die "docker not found in PATH" 2
 	docker info >/dev/null 2>&1 || die "docker daemon is not reachable"
-	if docker compose version >/dev/null 2>&1; then
-		COMPOSE=(docker compose)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		COMPOSE=(docker-compose)
-	else
-		die "docker compose v2 (or docker-compose) not found" 2
-	fi
+	docker compose version >/dev/null 2>&1 \
+		|| die "Docker Compose v2.20 or newer is required" 2
+	local engine compose
+	engine="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+	compose="$(docker compose version --short 2>/dev/null || true)"
+	[[ -n "${engine}" ]] && version_ge "${engine}" 24.0.0 \
+		|| die "Docker Engine 24.0 or newer is required (current: ${engine:-unknown})" 2
+	[[ -n "${compose}" ]] && version_ge "${compose#v}" 2.20.0 \
+		|| die "Docker Compose v2.20 or newer is required (current: ${compose:-unknown})" 2
+	COMPOSE=(docker compose)
 }
 
 compose() {
@@ -341,6 +379,13 @@ ensure_runtime_images() {
 		fi
 		log "Runtime image ${image} ready (source=${HFL_DOCKER_IMAGE_SOURCE})"
 	done
+}
+
+verify_amd64_runtime() {
+	log "Verifying linux/amd64 container execution"
+	docker run --rm --pull=never --platform linux/amd64 nginx:stable-alpine /bin/true \
+		>/dev/null 2>&1 \
+		|| die "linux/amd64 containers cannot run; enable amd64 emulation in Docker Desktop or Colima" 2
 }
 
 cache_fingerprint() {
@@ -703,6 +748,7 @@ cmd_up() {
 	ensure_env_file
 	require_docker
 	ensure_runtime_images
+	verify_amd64_runtime
 	ensure_bridge_network
 	prepare_sourcelens_dev 0
 	prepare_dev 0
@@ -727,6 +773,7 @@ cmd_restart() {
 	ensure_env_file
 	require_docker
 	ensure_runtime_images
+	verify_amd64_runtime
 	ensure_bridge_network
 	prepare_sourcelens_dev "${force}"
 	prepare_dev "${force}"
@@ -763,7 +810,7 @@ cmd_doctor() {
 	local failures=0 command image mode
 	ensure_env_file
 	apply_mirror_env_defaults
-	for command in docker python3 openssl timeout flock gzip; do
+	for command in docker python3 openssl timeout flock gzip sha256sum realpath; do
 		if command -v "${command}" >/dev/null 2>&1; then
 			printf 'ok      command %s\n' "${command}"
 		else

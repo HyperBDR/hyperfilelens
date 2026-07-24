@@ -53,7 +53,11 @@ def test_latest_published_agent_version_honors_main_build_env(releases_root, mon
 
 @pytest.mark.parametrize(
     ("os_version", "suffix"),
-    [("20.04", "ubuntu2004"), ("24.04", "ubuntu2404")],
+    [
+        ("20.04", "ubuntu2004"),
+        ("22.04", "ubuntu2204"),
+        ("24.04", "ubuntu2404"),
+    ],
 )
 def test_resolve_agent_version_uses_matching_ubuntu_bundle(
     releases_root,

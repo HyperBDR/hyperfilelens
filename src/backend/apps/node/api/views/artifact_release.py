@@ -242,7 +242,7 @@ class AgentReleaseView(APIView):
             and normalize_ubuntu_bundle_release(os_version) is None
         ):
             return Response(
-                {"error": "gateway/proxy supports Ubuntu 20.04 or 24.04"},
+                {"error": "gateway/proxy supports Ubuntu 20.04, 22.04, or 24.04"},
                 status=400,
             )
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline Docker CE install for HyperFileLens Data Gateways (Ubuntu 20.04/24.04 amd64).
+# Offline Docker CE install for HyperFileLens Data Gateways (Ubuntu 20.04/22.04/24.04 amd64).
 # Bundled under /media/gateway-bootstrap/ and invoked by gateway-bootstrap-linux.sh.
 #
 # Host-safe policy: only install packages from the bundled .deb archive. Never run
@@ -82,8 +82,9 @@ assert_host_os() {
 		|| hfl_fail "Docker offline install requires Ubuntu (current: ${ID:-unknown} ${VERSION_ID:-unknown})." 4
 	case "${VERSION_ID:-}" in
 	20.04) DOCKER_DEBS_ARCHIVE="docker-debs-ubuntu2004-amd64.tar.gz" ;;
+	22.04) DOCKER_DEBS_ARCHIVE="docker-debs-ubuntu2204-amd64.tar.gz" ;;
 	24.04) DOCKER_DEBS_ARCHIVE="docker-debs-ubuntu2404-amd64.tar.gz" ;;
-	*) hfl_fail "Docker offline install supports Ubuntu 20.04 or 24.04 (current: ${VERSION_ID:-unknown})." 4 ;;
+	*) hfl_fail "Docker offline install supports Ubuntu 20.04, 22.04, or 24.04 (current: ${VERSION_ID:-unknown})." 4 ;;
 	esac
 	[[ "${arch}" == "x86_64" || "${arch}" == "amd64" ]] \
 		|| hfl_fail "Docker offline install requires amd64 (current: ${arch})." 4

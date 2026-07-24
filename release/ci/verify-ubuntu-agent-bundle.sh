@@ -11,6 +11,7 @@ version=${2#v}
 ubuntu_release=$3
 case "${ubuntu_release}" in
 20.04) flavor=ubuntu2004 ;;
+22.04) flavor=ubuntu2204 ;;
 24.04) flavor=ubuntu2404 ;;
 *) printf 'ERROR: unsupported Ubuntu release: %s\n' "${ubuntu_release}" >&2; exit 2 ;;
 esac
@@ -20,7 +21,7 @@ command -v docker >/dev/null 2>&1 || { printf 'ERROR: docker is required\n' >&2;
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-tar -xzf "${internal_bundle}" -C "${tmp}"
+tar -xf "${internal_bundle}" -C "${tmp}"
 archive="${tmp}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-${flavor}.tar.gz"
 [[ -s "${archive}" ]] \
 	|| { printf 'ERROR: Ubuntu-specific Agent archive is missing: %s\n' "${archive}" >&2; exit 1; }

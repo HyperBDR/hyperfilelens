@@ -83,9 +83,10 @@ Purpose:
   does not compile source, fetch dependencies, or call another Agent script.
 
 Bundle kinds (default: all):
-  all                    Standard archives plus Linux Ubuntu 20.04/24.04 offline archives
+  all                    Standard archives plus Linux Ubuntu 20.04/22.04/24.04 offline archives
   standard               Standard archives only
   ubuntu2004             Ubuntu 20.04 archives from existing standard archives
+  ubuntu2204             Ubuntu 22.04 archives from existing standard archives
   ubuntu2404             Ubuntu 24.04 archives from existing standard archives
 
 Inputs:
@@ -93,7 +94,7 @@ Inputs:
   build/kopia/KOPIA_INFO.json
   build/kopia/dist/<os>/<arch>/kopia[.exe]
   build/agent/<version>/<os>/<arch>/hfl-agent-*
-  build/dependencies/agent/ubuntu-{20.04,24.04}/<arch>/MANIFEST.json
+  build/dependencies/agent/ubuntu-{20.04,22.04,24.04}/<arch>/MANIFEST.json
   src/agent/packaging/
 
 Outputs:
@@ -104,7 +105,7 @@ Options:
   --version VERSION          Release version (env: RELEASE_VERSION)
   --matrix MATRIX            Space-separated os:arch list (env: AGENT_MATRIX)
   --commit COMMIT            Full build commit (env: AGENT_COMMIT)
-  --bundle KIND              all | standard | ubuntu2004 | ubuntu2404 (env: AGENT_BUNDLE)
+  --bundle KIND              all | standard | ubuntu2004 | ubuntu2204 | ubuntu2404 (env: AGENT_BUNDLE)
   --ubuntu2404-arch ARCH     amd64 | arm64 | all for both Ubuntu bundles (compatibility name)
   --log-file FILE            Append console output to FILE (env: AGENT_LOG_FILE)
   --verbose                  Enable detailed configuration logging (env: AGENT_VERBOSE=1)
@@ -164,11 +165,12 @@ SYSTEMD_UNIT="${AGENT_ROOT}/packaging/systemd/hyperfilelens-agent.service"
 GATEWAY_LIFECYCLE_SCRIPT="${REPO_ROOT}/deploy/bootstrap/gateway-lifecycle.sh"
 
 case "${BUNDLE}" in
-all) DO_STANDARD=1; UBUNTU_RELEASES="20.04 24.04" ;;
+all) DO_STANDARD=1; UBUNTU_RELEASES="20.04 22.04 24.04" ;;
 standard) DO_STANDARD=1; UBUNTU_RELEASES="" ;;
 ubuntu2004) DO_STANDARD=0; UBUNTU_RELEASES="20.04" ;;
+ubuntu2204) DO_STANDARD=0; UBUNTU_RELEASES="22.04" ;;
 ubuntu2404) DO_STANDARD=0; UBUNTU_RELEASES="24.04" ;;
-*) log_fail "Invalid bundle ${BUNDLE}; use all, standard, ubuntu2004, or ubuntu2404" 2 ;;
+*) log_fail "Invalid bundle ${BUNDLE}; use all, standard, ubuntu2004, ubuntu2204, or ubuntu2404" 2 ;;
 esac
 
 validate_matrix() {
@@ -201,7 +203,7 @@ commit=${COMMIT}
 matrix=${MATRIX}
 ubuntu2404_arch=${UBUNTU2404_ARCH:-<from-matrix>}
 build_input=${WORK_ROOT}
-nas_input=${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}
+nas_input=${NAS_DEPS_BASE}/ubuntu-{20.04,22.04,24.04}
 kopia_input=${KOPIA_ROOT}
 output=${PACKAGE_DIR}
 CONFIG
@@ -317,7 +319,7 @@ def agent_binary_name(goos: str, goarch: str) -> str:
 
 def package_name(goos: str, goarch: str, flavor: str = "standard") -> str:
     name = f"hfl-agent-{version}-{goos}-{goarch}"
-    if flavor in {"ubuntu2004", "ubuntu2404"}:
+    if flavor in {"ubuntu2004", "ubuntu2204", "ubuntu2404"}:
         name += f"-{flavor}"
     return name
 
@@ -537,7 +539,7 @@ try:
     if ubuntu_releases:
         arches = selected_ubuntu_arches()
         if not arches:
-            if bundle in {"ubuntu2004", "ubuntu2404"}:
+            if bundle in {"ubuntu2004", "ubuntu2204", "ubuntu2404"}:
                 raise PrerequisiteError(
                     f"no selected Linux architecture for Ubuntu bundle (matrix={' '.join(matrix)})"
                 )
@@ -576,7 +578,7 @@ log_info "Matrix: ${MATRIX}"
 if [[ "${VERBOSE}" -eq 1 ]]; then
 	log_info "Ubuntu architecture: ${UBUNTU2404_ARCH:-from matrix}"
 	log_info "Build input: ${WORK_ROOT}"
-	log_info "NAS dependency input: ${NAS_DEPS_BASE}/ubuntu-{20.04,24.04}"
+	log_info "NAS dependency input: ${NAS_DEPS_BASE}/ubuntu-{20.04,22.04,24.04}"
 	log_info "Output: ${PACKAGE_DIR}"
 fi
 package_archives

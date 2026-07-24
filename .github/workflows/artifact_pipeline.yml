@@ -15,7 +15,9 @@ on:
 
 concurrency:
   group: hyperfilelens-${{ inputs.channel == 'main' && 'main' || 'release' }}
-  cancel-in-progress: false
+  # Main is a moving development target, while formal release builds must
+  # always run to completion once a version tag has been accepted.
+  cancel-in-progress: ${{ inputs.channel == 'main' }}
 
 permissions:
   contents: read
@@ -175,15 +177,15 @@ jobs:
       DJANGO_DEBUG: "true"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: src/agent/go.mod
           cache-dependency-path: src/agent/go.sum
@@ -244,7 +246,7 @@ jobs:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    needs: [prepare, agent-release-gate]
+    needs: [prepare, quality]
     permissions:
       contents: write
     strategy:
@@ -265,10 +267,10 @@ jobs:
             needs_kopia: false
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         if: matrix.needs_kopia
         with:
-          go-version: stable
+          go-version-file: src/agent/go.mod
           cache: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -328,7 +330,7 @@ jobs:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    needs: [prepare, agent-release-gate]
+    needs: [prepare, quality]
     permissions:
       contents: write
     strategy:
@@ -391,7 +393,7 @@ jobs:
             asset: windows-amd64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: src/agent/go.mod
           cache-dependency-path: src/agent/go.sum
@@ -404,13 +406,13 @@ jobs:
             "${{ matrix.target }}" \
             "${{ needs.prepare.outputs.version }}" \
             "${{ needs.prepare.outputs.commit }}" \
-            "_internal-agent-${{ matrix.asset }}.tar.gz"
+            "_internal-agent-${{ matrix.asset }}.tar"
       - name: Upload Agent asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ needs.prepare.outputs.tag }}" \
-            "_internal-agent-${{ matrix.asset }}.tar.gz" --clobber
+            "_internal-agent-${{ matrix.asset }}.tar" --clobber
 
   certify-source-host:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
@@ -451,7 +453,7 @@ jobs:
             runner: windows-2022
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - name: Download immutable Agent candidate
@@ -460,13 +462,13 @@ jobs:
         shell: bash
         run: >-
           gh release download "${{ needs.prepare.outputs.tag }}"
-          --pattern "_internal-agent-${{ matrix.asset }}.tar.gz"
+          --pattern "_internal-agent-${{ matrix.asset }}.tar"
           --dir build/agent-candidate
       - name: Run native Source Host certification
         shell: bash
         run: >-
           python release/ci/certify-agent-candidate.py
-          --internal-bundle "build/agent-candidate/_internal-agent-${{ matrix.asset }}.tar.gz"
+          --internal-bundle "build/agent-candidate/_internal-agent-${{ matrix.asset }}.tar"
           --version "${{ needs.prepare.outputs.version }}"
           --commit "${{ needs.prepare.outputs.commit }}"
           --expected-platform "${{ matrix.platform }}"
@@ -477,9 +479,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for ubuntu_release in 20.04 24.04; do
+          for ubuntu_release in 20.04 22.04 24.04; do
             ./release/ci/verify-ubuntu-agent-bundle.sh \
-              "build/agent-candidate/_internal-agent-${{ matrix.asset }}.tar.gz" \
+              "build/agent-candidate/_internal-agent-${{ matrix.asset }}.tar" \
               "${{ needs.prepare.outputs.version }}" \
               "$ubuntu_release"
           done
@@ -503,7 +505,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - name: Download Agent candidates and certification evidence
@@ -513,7 +515,7 @@ jobs:
         run: |
           mkdir -p build/agent-candidates build/certification
           gh release download "${{ needs.prepare.outputs.tag }}" \
-            --pattern '_internal-agent-*.tar.gz' \
+            --pattern '_internal-agent-*.tar' \
             --dir build/agent-candidates
           gh release download "${{ needs.prepare.outputs.tag }}" \
             --pattern '_internal-agent-cert-*.json' \
@@ -542,7 +544,7 @@ jobs:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    needs: [prepare, agent-release-gate]
+    needs: [prepare, quality]
     permissions:
       contents: write
     strategy:
@@ -551,6 +553,8 @@ jobs:
         include:
           - ubuntu_release: "20.04"
             asset: ubuntu2004
+          - ubuntu_release: "22.04"
+            asset: ubuntu2204
           - ubuntu_release: "24.04"
             asset: ubuntu2404
     steps:
@@ -561,18 +565,18 @@ jobs:
         run: >-
           ./release/ci/build-host-debs-asset.sh
           "${{ matrix.ubuntu_release }}"
-          "_internal-host-debs-${{ matrix.asset }}.tar.gz"
+          "_internal-host-debs-${{ matrix.asset }}.tar"
       - name: Verify host dependencies install offline
         run: >-
           ./release/ci/verify-host-debs-asset.sh
           "${{ matrix.ubuntu_release }}"
-          "_internal-host-debs-${{ matrix.asset }}.tar.gz"
+          "_internal-host-debs-${{ matrix.asset }}.tar"
       - name: Upload host dependency asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release upload "${{ needs.prepare.outputs.tag }}"
-          "_internal-host-debs-${{ matrix.asset }}.tar.gz" --clobber
+          "_internal-host-debs-${{ matrix.asset }}.tar" --clobber
 
   export-hfl-images:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
@@ -600,11 +604,11 @@ jobs:
           ./release/ci/export-hfl-images.sh \
             build/ci-metadata \
             "${{ needs.prepare.outputs.version }}" \
-            _internal-hfl-images.tar.gz
+            _internal-hfl-images.tar
       - name: Upload offline HFL archive
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar.gz --clobber
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar --clobber
 
   export-sourcelens-bundle:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
@@ -634,17 +638,17 @@ jobs:
           ./release/ci/export-sourcelens-bundle.sh \
             build/ci-metadata \
             "${{ needs.prepare.outputs.version }}" \
-            _internal-sourcelens-bundle.tar.gz
+            _internal-sourcelens-bundle.tar
       - name: Upload bundled SourceLens runtime
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-sourcelens-bundle.tar.gz --clobber
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-sourcelens-bundle.tar --clobber
 
   export-runtime-images:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: [prepare, agent-release-gate]
+    needs: [prepare, quality]
     permissions:
       contents: write
     steps:
@@ -654,11 +658,11 @@ jobs:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
-      - run: ./release/ci/export-runtime-images.sh _internal-runtime-images.tar.gz
+      - run: ./release/ci/export-runtime-images.sh _internal-runtime-images.tar
       - name: Upload runtime images
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar.gz --clobber
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar --clobber
 
   assemble-release:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
@@ -681,7 +685,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p build/ci-input
-          gh release download "${{ needs.prepare.outputs.tag }}" --pattern '_internal-*.tar.gz' --dir build/ci-input
+          gh release download "${{ needs.prepare.outputs.tag }}" --pattern '_internal-*.tar' --dir build/ci-input
       - name: Assemble canonical offline release
         run: |
           ./release/ci/assemble-release.sh \
@@ -890,28 +894,45 @@ jobs:
   cleanup-main-builds:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    needs: [prepare, deploy-test]
+    needs: [prepare, publish-release]
     if: >-
       ${{
         always() &&
         needs.prepare.outputs.channel == 'main' &&
-        needs.deploy-test.result == 'success'
+        needs.prepare.result == 'success'
       }}
     permissions:
       contents: write
     steps:
-      - name: Retain the three newest Main build releases
+      - name: Retain only the current successful Main build
         env:
           GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
+          BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}
+          PUBLISH_RESULT: ${{ needs.publish-release.result }}
         shell: bash
         run: |
           set -euo pipefail
+          retained_id="$ARTIFACT_ID"
+          if [[ "$PUBLISH_RESULT" != "success" ]] \
+            && [[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]; then
+            if gh release view "$ARTIFACT_ID" --json isDraft --jq '.isDraft' 2>/dev/null \
+              | grep -Fx true >/dev/null; then
+              gh release delete "$ARTIFACT_ID" --cleanup-tag --yes
+            fi
+            retained_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
+              --jq '.[] | select(.draft == false and .prerelease == true and (.tag_name | test("^main-[0-9a-f]{7}$"))) | [.created_at, .tag_name] | @tsv' \
+              | sort -r | head -1 | cut -f2)"
+          fi
+
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
-            --jq '.[] | select(.prerelease == true and (.tag_name | test("^main-[0-9a-f]{7}$"))) | [.created_at, .tag_name] | @tsv' \
-            | sort -r \
-            | tail -n +4 \
-            | cut -f2 \
-            > "$RUNNER_TEMP/expired-main-builds.txt"
+            --jq '.[] | select(.tag_name | test("^main-[0-9a-f]{7}$")) | .tag_name' \
+            > "$RUNNER_TEMP/all-main-builds.txt"
+          : > "$RUNNER_TEMP/expired-main-builds.txt"
+          while IFS= read -r artifact_id; do
+            [[ -n "$artifact_id" && "$artifact_id" != "$retained_id" ]] || continue
+            printf '%s\n' "$artifact_id" >> "$RUNNER_TEMP/expired-main-builds.txt"
+          done < "$RUNNER_TEMP/all-main-builds.txt"
           while IFS= read -r artifact_id; do
             [[ -n "$artifact_id" ]] || continue
             gh release delete "$artifact_id" --cleanup-tag --yes

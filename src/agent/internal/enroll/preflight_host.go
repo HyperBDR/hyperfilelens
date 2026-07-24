@@ -110,7 +110,7 @@ func checkNASMountHelpers(role string) (ok bool, warning bool, title, detail str
 		return true, false, "", ""
 	}
 	if !nasMountHelpersReady() {
-		return false, true, "NAS mount helpers missing", "need mount.nfs and mount.cifs for role " + role + "; on Ubuntu 20.04+ use apt install nfs-common cifs-utils (offline bundle targets 24.04)"
+		return false, true, "NAS mount helpers missing", "need mount.nfs and mount.cifs for role " + role + "; use the matching Ubuntu 20.04, 22.04, or 24.04 offline bundle"
 	}
 	if !kernelModuleAvailable("nls_utf8") {
 		return false, true, "NAS SMB UTF-8 kernel module missing", `install linux-modules-extra-$(uname -r), then run modprobe nls_utf8; SMB mounts can fall back without iocharset`

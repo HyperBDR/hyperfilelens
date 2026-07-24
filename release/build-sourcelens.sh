@@ -8,6 +8,8 @@ umask 022
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../tools/sourcelens/common.sh
 source "${ROOT}/tools/sourcelens/common.sh"
+# shellcheck source=../tools/lib/archive.sh
+source "${ROOT}/tools/lib/archive.sh"
 
 log() { hfl_log_info "$@"; }
 die() { hfl_die "$1" "${2:-1}"; }
@@ -189,8 +191,7 @@ save_image_archive() {
 	shift
 	local part="${archive}.part"
 	rm -f "${part}"
-	docker save "$@" | gzip -c >"${part}"
-	gzip -t "${part}"
+	hfl_docker_save_gz "${part}" "$@"
 	mv -f "${part}" "${archive}"
 }
 

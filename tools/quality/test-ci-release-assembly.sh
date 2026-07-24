@@ -30,14 +30,14 @@ hfl="${fixtures}/hfl"
 make_gzip "${hfl}/images/00-hyperfilelens.tar.gz" hfl-images
 make_metadata "${hfl}/metadata/hfl-backend.json" hfl-backend "example/hfl-backend:${version}" 1
 make_metadata "${hfl}/metadata/hfl-frontend.json" hfl-frontend "example/hfl-frontend:${version}" 2
-tar -C "${hfl}" -czf "${input}/_internal-hfl-images.tar.gz" images metadata
+tar -C "${hfl}" -cf "${input}/_internal-hfl-images.tar" images metadata
 
 runtime="${fixtures}/runtime"
 make_gzip "${runtime}/images/01-postgres-17.tar.gz" postgres
 make_gzip "${runtime}/images/02-redis-alpine.tar.gz" redis
 make_metadata "${runtime}/metadata/postgres.json" postgres hyperfilelens-postgres:17 3
 make_metadata "${runtime}/metadata/redis.json" redis hyperfilelens-redis:alpine 4
-tar -C "${runtime}" -czf "${input}/_internal-runtime-images.tar.gz" images metadata
+tar -C "${runtime}" -cf "${input}/_internal-runtime-images.tar" images metadata
 
 sl="${fixtures}/sourcelens"
 make_gzip "${sl}/images/10-sourcelens-app.tar.gz" sourcelens-app
@@ -73,15 +73,20 @@ cat >"${sl}/sourcelens/BUILD_INFO.json" <<JSON
   }
 }
 JSON
-tar -C "${sl}" -czf "${input}/_internal-sourcelens-bundle.tar.gz" images sourcelens payload
+tar -C "${sl}" -cf "${input}/_internal-sourcelens-bundle.tar" images sourcelens payload
 
-for release_id in 2004 2404; do
+for release_id in 2004 2204 2404; do
 	host="${fixtures}/host-${release_id}"
+	debs="${fixtures}/debs-${release_id}"
 	mkdir -p "${host}/payload/media/gateway-bootstrap"
-	make_gzip \
-		"${host}/payload/media/gateway-bootstrap/docker-debs-ubuntu${release_id}-amd64.tar.gz" \
-		"synthetic ubuntu ${release_id} Docker deb bundle"
-	tar -C "${host}" -czf "${input}/_internal-host-debs-ubuntu${release_id}.tar.gz" payload
+	mkdir -p "${debs}"
+	printf 'synthetic deb\n' >"${debs}/docker-ce_fixture_amd64.deb"
+	cat >"${debs}/MANIFEST.json" <<JSON
+{"platform":"ubuntu-${release_id}-amd64","versions":{"engine":"fixture","compose":"fixture","min_engine":"24.0.0","min_compose":"2.20.0"},"packages":[]}
+JSON
+	tar -C "${debs}" -czf \
+		"${host}/payload/media/gateway-bootstrap/docker-debs-ubuntu${release_id}-amd64.tar.gz" .
+	tar -C "${host}" -cf "${input}/_internal-host-debs-ubuntu${release_id}.tar" payload
 done
 
 for asset in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
@@ -92,11 +97,13 @@ for asset in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
 	if [[ "${asset}" == "linux-amd64" ]]; then
 		printf 'ubuntu 20.04 fixture\n' \
 			>"${agent}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz"
+		printf 'ubuntu 22.04 fixture\n' \
+			>"${agent}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-ubuntu2204.tar.gz"
 		printf 'ubuntu 24.04 fixture\n' \
 			>"${agent}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-ubuntu2404.tar.gz"
 	fi
 	printf '%s\n' "${asset}" >"${agent}/payload/media/enroll-bootstrap/${asset}.fixture"
-	tar -C "${agent}" -czf "${input}/_internal-agent-${asset}.tar.gz" payload
+	tar -C "${agent}" -cf "${input}/_internal-agent-${asset}.tar" payload
 done
 
 HFL_CI_RELEASE_BUILD_DIR="${output}" \
@@ -142,6 +149,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	key_mode="$(tar -tvzf "${archive}" | awk '$NF ~ /\/deploy\/nginx\/certs\/tls\.key$/ {mode=$1} END {print mode}')"
 	[[ "${key_mode}" == "-rw-------" ]]
 	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz" >/dev/null
+	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2204.tar.gz" >/dev/null
 	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2404.tar.gz" >/dev/null
 	"${ROOT}/release/ci/verify-release.sh" --archive "$(realpath "${archive}")"
 )

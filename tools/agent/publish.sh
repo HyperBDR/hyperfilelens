@@ -29,7 +29,7 @@ Options:
   --version VERSION                Release version (default: exact Git tag or 0.1.0; env: RELEASE_VERSION)
   --matrix MATRIX                  os:arch list (default: full matrix; env: AGENT_MATRIX)
   --commit COMMIT                  Full build commit (env: AGENT_COMMIT)
-  --bundle KIND                    all | standard | ubuntu2004 | ubuntu2404 (env: AGENT_BUNDLE)
+  --bundle KIND                    all | standard | ubuntu2004 | ubuntu2204 | ubuntu2404 (env: AGENT_BUNDLE)
   --ubuntu2404-arch ARCH           NAS deb arch for either Ubuntu bundle: amd64 | arm64 | all
                                    (env: AGENT_UBUNTU2404_ARCH; default: amd64)
   --force-fetch                    Re-download fetch-deps.sh inputs (--force)
@@ -62,6 +62,7 @@ Examples:
   ./tools/agent/publish.sh --bundle standard
   ./tools/agent/publish.sh --bundle standard --version VERSION --matrix MATRIX --force-fetch --releases-dir DIR --github-download-mirror URL --github-token TOKEN
   ./tools/agent/publish.sh --bundle ubuntu2004
+  ./tools/agent/publish.sh --bundle ubuntu2204
   ./tools/agent/publish.sh --bundle ubuntu2404
   ./tools/agent/publish.sh --bundle ubuntu2404 --version VERSION --ubuntu2404-arch ARCH --force-fetch --releases-dir DIR --github-download-mirror URL --github-token TOKEN --docker-download-mirror URL --apt-mirror URL
   ./tools/agent/publish.sh --bundle all
@@ -242,9 +243,9 @@ if [[ -n "${OPT_BUNDLE}" ]]; then
 fi
 
 case "${BUNDLE}" in
-all | standard | ubuntu2004 | ubuntu2404) ;;
+all | standard | ubuntu2004 | ubuntu2204 | ubuntu2404) ;;
 *)
-	hfl_die "Invalid --bundle ${BUNDLE} (use all, standard, ubuntu2004, or ubuntu2404)" 2
+	hfl_die "Invalid --bundle ${BUNDLE} (use all, standard, ubuntu2004, ubuntu2204, or ubuntu2404)" 2
 	;;
 esac
 
@@ -270,7 +271,7 @@ ubuntu2404_matrix() {
 	esac
 }
 
-if [[ ( "${BUNDLE}" == "ubuntu2004" || "${BUNDLE}" == "ubuntu2404" ) && -z "${OPT_MATRIX}" ]]; then
+if [[ ( "${BUNDLE}" == "ubuntu2004" || "${BUNDLE}" == "ubuntu2204" || "${BUNDLE}" == "ubuntu2404" ) && -z "${OPT_MATRIX}" ]]; then
 	MATRIX="$(ubuntu2404_matrix)"
 fi
 
@@ -419,7 +420,7 @@ publish_archives() {
 
 	mkdir -p "${RELEASES_DIR}/${VERSION}"
 
-	if [[ "${BUNDLE}" == "ubuntu2004" || "${BUNDLE}" == "ubuntu2404" ]]; then
+	if [[ "${BUNDLE}" == "ubuntu2004" || "${BUNDLE}" == "ubuntu2204" || "${BUNDLE}" == "ubuntu2404" ]]; then
 		local flavor="${BUNDLE}"
 		shopt -s nullglob
 		for archive in "${BUILD_DIR}/${VERSION}/package"/hfl-agent-"${VERSION}"-*-"${flavor}".tar.gz; do
@@ -463,7 +464,7 @@ publish_archives() {
 
 			if [[ "${goos}" == "linux" ]]; then
 				local ubuntu_flavor
-				for ubuntu_flavor in ubuntu2004 ubuntu2404; do
+				for ubuntu_flavor in ubuntu2004 ubuntu2204 ubuntu2404; do
 					archive="${BUILD_DIR}/${VERSION}/package/hfl-agent-${VERSION}-${goos}-${goarch}-${ubuntu_flavor}.tar.gz"
 					if [[ -f "${archive}" ]]; then
 						dest="${RELEASES_DIR}/${VERSION}/$(basename "${archive}")"
@@ -528,8 +529,8 @@ publish_archives() {
 	chmod 755 "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}"
 	hfl_log_ok "Published ${GATEWAY_DOCKER_INSTALL_SCRIPT}"
 	local ubuntu_release release_id host_debs_dir docker_debs_archive
-	for ubuntu_release in 20.04 24.04; do
-		case "${ubuntu_release}" in 20.04) release_id=2004 ;; 24.04) release_id=2404 ;; esac
+	for ubuntu_release in 20.04 22.04 24.04; do
+		case "${ubuntu_release}" in 20.04) release_id=2004 ;; 22.04) release_id=2204 ;; 24.04) release_id=2404 ;; esac
 		host_debs_dir="${ROOT}/build/dependencies/docker/ubuntu-${ubuntu_release}/amd64"
 		docker_debs_archive="docker-debs-ubuntu${release_id}-amd64.tar.gz"
 		if [[ -d "${host_debs_dir}" ]] && compgen -G "${host_debs_dir}/*.deb" >/dev/null; then
@@ -562,7 +563,7 @@ if [[ "${BUNDLE}" != "standard" ]]; then
 fi
 
 if [[ "${BUNDLE}" != "standard" ]] && matrix_has_linux; then
-	hfl_log_step "Fetching Ubuntu 20.04/24.04 NAS dependency debs"
+	hfl_log_step "Fetching Ubuntu 20.04/22.04/24.04 NAS dependency debs"
 	"${AGENT_DIR}/scripts/fetch-deps.sh" --nas-deps "${fetch_common_args[@]}" \
 		--version "${VERSION}" \
 		--matrix "${MATRIX}" \

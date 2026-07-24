@@ -256,14 +256,14 @@ run_as_root() {
 
 assert_host_os() {
 	local id version_id arch
-	[[ -f /etc/os-release ]] || die "missing /etc/os-release (Ubuntu 20.04/24.04 amd64 only)"
+	[[ -f /etc/os-release ]] || die "missing /etc/os-release (Ubuntu 20.04/22.04/24.04 amd64 only)"
 	# shellcheck disable=SC1091
 	source /etc/os-release
 	id="${ID:-}"
 	version_id="${VERSION_ID:-}"
 	arch="$(uname -m)"
-	[[ "${id}" == "ubuntu" && ( "${version_id}" == "20.04" || "${version_id}" == "24.04" ) ]] \
-		|| die "host must be Ubuntu 20.04 or 24.04 (current: ${id:-unknown} ${version_id:-unknown})"
+	[[ "${id}" == "ubuntu" && ( "${version_id}" == "20.04" || "${version_id}" == "22.04" || "${version_id}" == "24.04" ) ]] \
+		|| die "host must be Ubuntu 20.04, 22.04, or 24.04 (current: ${id:-unknown} ${version_id:-unknown})"
 	[[ "${arch}" == "x86_64" ]] || die "host must be amd64/x86_64 (current: ${arch})"
 }
 
@@ -377,6 +377,7 @@ materialize_to_install_dir() {
 	if command -v rsync >/dev/null 2>&1; then
 		local -a rsync_args=(
 			-a
+			-H
 			--checksum
 			--delete
 			--exclude '.env'
@@ -591,7 +592,7 @@ sync_runtime_media() {
 	local packaged_media="${ROOT}/payload/media"
 	[[ -d "${packaged_media}" ]] || return 0
 	mkdir -p "${ROOT}/data/media"
-	rsync -a "${packaged_media}/" "${ROOT}/data/media/"
+	rsync -aH "${packaged_media}/" "${ROOT}/data/media/"
 	local dir
 	for dir in agent-releases enroll-bootstrap gateway-bootstrap; do
 		[[ -d "${ROOT}/data/media/${dir}" ]] || continue
@@ -684,7 +685,7 @@ sync_default_tls_bundle() {
 	missing)
 		step "Installing repository-pinned default TLS certificates ..."
 		mkdir -p "${target_dir}"
-		rsync -a "${source_dir}/" "${target_dir}/"
+		rsync -aH "${source_dir}/" "${target_dir}/"
 		validate_tls_pair "${target_dir}"
 		secure_tls_permissions "${target_dir}"
 		;;
@@ -1145,8 +1146,8 @@ apply_upgrade_files() {
 	step "Overwriting application files and release payload ..."
 	mkdir -p "${ROOT}/deploy/nginx" "${ROOT}/images" "${ROOT}/host" "${ROOT}/payload"
 	sync_default_tls_bundle "${from_root}/deploy/nginx/certs"
-	rsync -a --delete "${from_root}/payload/" "${ROOT}/payload/"
-	rsync -a --delete "${from_root}/images/" "${ROOT}/images/"
+	rsync -aH --delete "${from_root}/payload/" "${ROOT}/payload/"
+	rsync -aH --delete "${from_root}/images/" "${ROOT}/images/"
 	if [[ -d "${ROOT}/src" ]]; then
 		safe_assert_path_under_dir "${ROOT}/src" "${ROOT}" "legacy runtime source path"
 		safe_rm_dir "${ROOT}/src"
@@ -1156,12 +1157,12 @@ apply_upgrade_files() {
 		safe_assert_path_under_dir "${ROOT}/sourcelens" "${ROOT}" "SourceLens runtime path"
 		safe_rm_dir "${ROOT}/sourcelens"
 	elif [[ -d "${from_root}/sourcelens" ]]; then
-		rsync -a --delete "${from_root}/sourcelens/" "${ROOT}/sourcelens/"
+		rsync -aH --delete "${from_root}/sourcelens/" "${ROOT}/sourcelens/"
 	fi
 	cp "${from_root}/docker-compose.yml" "${ROOT}/docker-compose.yml"
 	mkdir -p "${ROOT}/deploy/nginx/snippets"
 	if [[ -d "${from_root}/deploy/nginx/snippets" ]]; then
-		rsync -a "${from_root}/deploy/nginx/snippets/" "${ROOT}/deploy/nginx/snippets/"
+		rsync -aH "${from_root}/deploy/nginx/snippets/" "${ROOT}/deploy/nginx/snippets/"
 	fi
 	cp "${from_root}/deploy/nginx/default.conf" "${ROOT}/deploy/nginx/default.conf"
 	if [[ -f "${from_root}/deploy/logrotate/hyperfilelens.conf" ]]; then
@@ -1176,7 +1177,7 @@ apply_upgrade_files() {
 	[[ -f "${from_root}/LICENSE" ]] && cp "${from_root}/LICENSE" "${ROOT}/LICENSE"
 	[[ -f "${from_root}/install.sh" ]] && cp "${from_root}/install.sh" "${ROOT}/install.sh" && chmod +x "${ROOT}/install.sh"
 	if [[ -d "${from_root}/host" ]]; then
-		rsync -a "${from_root}/host/" "${ROOT}/host/"
+		rsync -aH "${from_root}/host/" "${ROOT}/host/"
 	fi
 	log "File overwrite complete"
 }
@@ -1498,6 +1499,7 @@ PY
 			gateway-lifecycle.sh
 			gateway-install-docker-ubuntu-amd64.sh
 			docker-debs-ubuntu2004-amd64.tar.gz
+			docker-debs-ubuntu2204-amd64.tar.gz
 			docker-debs-ubuntu2404-amd64.tar.gz
 			lensnode-image-linux-amd64.tar.gz
 		)
