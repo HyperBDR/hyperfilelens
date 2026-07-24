@@ -184,6 +184,9 @@ grep -F 'turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED' "${workflow}" >/dev
 grep -F 'public_url: ${{ vars.TEST_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${production_workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${production_workflow}" >/dev/null
+grep -F 'release_download_proxy_url: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}' "${workflow}" >/dev/null
+grep -F 'release_download_proxy_url: ${{ vars.PREPROD_RELEASE_DOWNLOAD_PROXY_URL }}' "${workflow}" >/dev/null
+grep -F 'release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}' "${production_workflow}" >/dev/null
 if grep -F 'PROD_PUBLIC_HOST' "${workflow}" "${production_workflow}" >/dev/null; then
 	printf 'ERROR: release workflow still uses the ambiguous PROD_PUBLIC_HOST variable\n' >&2
 	exit 1
@@ -275,11 +278,11 @@ grep -F "vars.TEST_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
 grep -F "vars.PREPROD_DEPLOY_ENABLED == 'true'" "${workflow}" >/dev/null
 grep -F 'PROD_DEPLOY_ENABLED' "${production_workflow}" >/dev/null
 deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
-[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 7 ]] || {
+[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 5 ]] || {
 	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
 	exit 1
 }
-[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 7 ]] || {
+[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 5 ]] || {
 	printf 'ERROR: every deployment SSH call must set ServerAliveCountMax\n' >&2
 	exit 1
 }
@@ -422,13 +425,24 @@ fi
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
 grep -F -- '--runtime-env-file "${RUNTIME_ENV_FILE}"' "${remote_deploy}" >/dev/null
-grep -F 'Download, verify, and stage the release package' "${deploy_workflow}" >/dev/null
-grep -F 'gh release download "$ARTIFACT_ID"' "${deploy_workflow}" >/dev/null
-grep -F '"${package_assets[@]}"' "${deploy_workflow}" >/dev/null
-grep -F -- '--staged-assets-dir "${{ steps.release-package.outputs.remote_dir }}"' \
+grep -F 'Download and deploy the complete release package on the target' "${deploy_workflow}" >/dev/null
+grep -F 'download_proxy_args=(--download-proxy-url "$RELEASE_DOWNLOAD_PROXY_URL")' \
 	"${deploy_workflow}" >/dev/null
-grep -F -- '--staged-assets-dir) STAGED_ASSETS_DIR=' "${remote_deploy}" >/dev/null
-grep -F 'Using runner-staged release assets' "${remote_deploy}" >/dev/null
+grep -F '"${download_proxy_args[@]}"' "${deploy_workflow}" >/dev/null
+grep -F -- '--download-proxy-url) DOWNLOAD_PROXY_URL=' "${remote_deploy}" >/dev/null
+grep -F 'Target-side Release download proxy is enabled' "${remote_deploy}" >/dev/null
+grep -F 'retrying directly' "${remote_deploy}" >/dev/null
+grep -F -- '--proxy "${DOWNLOAD_PROXY_URL}"' "${remote_deploy}" >/dev/null
+grep -F 'DOWNLOAD_PROXY_URL}" == "UNCONFIGURED"' "${remote_deploy}" >/dev/null
+[[ "$(grep -c 'RELEASE_DOWNLOAD_PROXY_URL.*!=.*UNCONFIGURED' "${deploy_workflow}")" -eq 2 ]] || {
+	printf 'ERROR: UNCONFIGURED Release proxy placeholders must select direct target downloads\n' >&2
+	exit 1
+}
+if grep -E 'gh release download|(^|[[:space:]])scp([[:space:]]|$)|staged-assets-dir|STAGED_ASSETS_DIR' \
+	"${deploy_workflow}" "${remote_deploy}" >/dev/null; then
+	printf 'ERROR: deployment must download the complete Release package on the target host\n' >&2
+	exit 1
+fi
 if grep -F -- '--force-recreate' "${remote_deploy}" >/dev/null; then
 	printf 'ERROR: production deployment must apply runtime configuration before startup\n' >&2
 	exit 1
@@ -446,6 +460,7 @@ done
 grep -F 'Verified that unrelated Docker containers, networks, and volumes are unchanged' "${remote_deploy}" >/dev/null
 grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy}" >/dev/null
 grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-release-download-proxy.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
@@ -558,6 +573,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
+	"${ROOT}/tools/quality/test-release-download-proxy.sh" \
 	"${ROOT}"/release/ci/*.sh \
 	"${ROOT}/release/ci/write-sbom.py"; do
 	[[ -x "${executable}" ]] || {

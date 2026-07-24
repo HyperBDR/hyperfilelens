@@ -21,6 +21,11 @@ on:
         required: false
         default: ''
         type: string
+      release_download_proxy_url:
+        description: Optional target-side HTTP(S) proxy; empty or UNCONFIGURED means direct download
+        required: false
+        default: ''
+        type: string
       ssh_host:
         description: SSH deployment hostname or IP address
         required: true
@@ -124,6 +129,7 @@ jobs:
       DEPLOY_SSH_PORT: ${{ inputs.ssh_port }}
       DEPLOY_SSH_USER: ${{ inputs.ssh_user }}
       DEPLOY_SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
+      RELEASE_DOWNLOAD_PROXY_URL: ${{ inputs.release_download_proxy_url }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -154,6 +160,15 @@ jobs:
           [[ -n "$DEPLOY_SSH_PRIVATE_KEY" ]]
           [[ "$DEPLOY_TARGET" =~ ^(test|preprod|prod)$ ]]
           [[ "$ARTIFACT_CHANNEL" =~ ^(release|main)$ ]]
+          if [[ -n "$RELEASE_DOWNLOAD_PROXY_URL" && "$RELEASE_DOWNLOAD_PROXY_URL" != "UNCONFIGURED" ]]; then
+            [[ "$RELEASE_DOWNLOAD_PROXY_URL" =~ ^https?://[A-Za-z0-9.-]+:[0-9]{1,5}$ ]] || {
+              echo 'Release download proxy must use http://host:port or https://host:port without credentials' >&2
+              exit 2
+            }
+            proxy_address="${RELEASE_DOWNLOAD_PROXY_URL#*://}"
+            proxy_port="${proxy_address##*:}"
+            ((proxy_port >= 1 && proxy_port <= 65535))
+          fi
           case "$ARTIFACT_CHANNEL" in
             release) [[ "$ARTIFACT_ID" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
             main) [[ "$ARTIFACT_ID" =~ ^main-[0-9a-f]{7}$ ]] ;;
@@ -221,56 +236,6 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
 
-      - name: Download, verify, and stage the release package
-        id: release-package
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ inputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          local_dir="$RUNNER_TEMP/hyperfilelens-release"
-          remote_dir="/var/tmp/hyperfilelens-assets-${GITHUB_RUN_ID}"
-          mkdir -p "$local_dir"
-          gh release download "$ARTIFACT_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern SHA256SUMS \
-            --pattern 'hyperfilelens-*.tar.gz*' \
-            --dir "$local_dir"
-          [[ -s "$local_dir/SHA256SUMS" ]]
-          mapfile -t package_assets < <(
-            find "$local_dir" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz*' -print | sort
-          )
-          ((${#package_assets[@]} > 0))
-          for asset in "${package_assets[@]}"; do
-            name="$(basename "$asset")"
-            expected="$(awk -v file="$name" '$2 == file || $2 == "*" file {print $1; exit}' \
-              "$local_dir/SHA256SUMS")"
-            [[ -n "$expected" ]]
-            printf '%s  %s\n' "$expected" "$asset" | sha256sum -c -
-          done
-          ssh -i ~/.ssh/hyperfilelens_deploy \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=20 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=20 \
-            -o TCPKeepAlive=yes \
-            -p "$DEPLOY_SSH_PORT" \
-            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            "rm -rf -- '$remote_dir' && install -d -m 0700 '$remote_dir'"
-          scp -i ~/.ssh/hyperfilelens_deploy \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=20 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=20 \
-            -o TCPKeepAlive=yes \
-            -P "$DEPLOY_SSH_PORT" \
-            "$local_dir/SHA256SUMS" "${package_assets[@]}" \
-            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$remote_dir/"
-          echo "remote_dir=$remote_dir" >> "$GITHUB_OUTPUT"
-
       - name: Stage runtime configuration
         env:
           HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ inputs.platform_gateway_auto_deploy }}
@@ -315,10 +280,14 @@ jobs:
             "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < "$runtime_env"
 
-      - name: Deploy the runner-staged complete release package
+      - name: Download and deploy the complete release package on the target
         shell: bash
         run: |
           set -euo pipefail
+          download_proxy_args=()
+          if [[ -n "$RELEASE_DOWNLOAD_PROXY_URL" && "$RELEASE_DOWNLOAD_PROXY_URL" != "UNCONFIGURED" ]]; then
+            download_proxy_args=(--download-proxy-url "$RELEASE_DOWNLOAD_PROXY_URL")
+          fi
           ssh -i ~/.ssh/hyperfilelens_deploy \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
@@ -334,7 +303,7 @@ jobs:
               --public-url "$APP_PUBLIC_URL" \
               --direct-host "$DEPLOY_SSH_HOST" \
               --install-dir /opt/hyperfilelens \
-              --staged-assets-dir "${{ steps.release-package.outputs.remote_dir }}" \
+              "${download_proxy_args[@]}" \
               --runtime-env-file "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < .github/scripts/remote-deploy.sh
 
@@ -352,7 +321,7 @@ jobs:
               -o TCPKeepAlive=yes \
               -p "$DEPLOY_SSH_PORT" \
               "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-              "rm -f -- '/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env'; rm -rf -- '/var/tmp/hyperfilelens-assets-${GITHUB_RUN_ID}'"
+              rm -f -- "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
           fi
 
       - name: Post-deploy internal health checks
