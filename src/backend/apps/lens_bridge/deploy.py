@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from project.settings.env import env_str
+from project.settings.env import env_int, env_str
 
 # Public HTTPS path used by bundled SourceLens Data Gateways.
 LENS_GATEWAY_PUBLIC_PATH = "/sourcelens"
@@ -37,6 +37,16 @@ def lens_gateway_base_url() -> str:
     if "host.docker.internal" in base:
         return base.replace("host.docker.internal", "127.0.0.1")
     return base
+
+
+def local_platform_lens_gateway_base_url() -> str:
+    """Return the bundled SourceLens URL for the installer-managed local Gateway."""
+    if sourcelens_mode() != "bundled":
+        return lens_gateway_base_url()
+    port = env_int("HFL_TENANT_PORT", 11443)
+    if port < 1 or port > 65535:
+        port = 11443
+    return f"https://127.0.0.1:{port}{LENS_GATEWAY_PUBLIC_PATH}"
 
 
 def lens_bridge_username() -> str:

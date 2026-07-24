@@ -1768,6 +1768,18 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 '
 	)" || die "failed to parse local platform Gateway enrollment credentials"
 	IFS=$'\t' read -r org_key token api_base wss_url managed_node_ids <<<"${parsed}"
+	[[ "${org_key}" == "__platform_lens__" ]] \
+		|| die "local platform Gateway enrollment returned an unexpected organization"
+
+	local tenant_port
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
+	[[ "${tenant_port}" =~ ^[0-9]+$ ]] && ((tenant_port >= 1 && tenant_port <= 65535)) \
+		|| die "invalid HFL_TENANT_PORT for local platform Gateway: ${tenant_port}"
+	# This installer owns both endpoints on the same host. Keep its Agent off
+	# public/NAT paths and scope the TLS exception to this local managed Gateway.
+	api_base="https://127.0.0.1:${tenant_port}"
+	wss_url="wss://127.0.0.1:${tenant_port}/ws/node/agent/"
 
 	local existing_org existing_role existing_node_id existing_token
 	existing_org="$(read_agent_env_value HFL_ORG_KEY)"
@@ -1787,16 +1799,13 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		fi
 	fi
 
-	local insecure_tls
-	insecure_tls="$(read_env_value HFL_INSECURE_TLS)"
-	[[ -n "${insecure_tls}" ]] || insecure_tls=1
 	run_as_root env \
 		HFL_ORG_KEY="${org_key}" \
 		HFL_NODE_ROLE="gateway" \
 		HFL_NODE_TOKEN="${token}" \
 		HFL_API_BASE="${api_base}" \
 		HFL_WSS_URL="${wss_url}" \
-		HFL_INSECURE_TLS="${insecure_tls}" \
+		HFL_INSECURE_TLS=1 \
 		"${helper}" gateway-install --yes
 	ok "Installer-managed local platform Gateway is ready"
 }

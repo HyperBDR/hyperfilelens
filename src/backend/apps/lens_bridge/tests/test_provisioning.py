@@ -16,6 +16,69 @@ class SlClientErrorFormatTests(SimpleTestCase):
         self.assertIn("name", sl_client._format_sl_error(body))
 
 
+class BuildLensEnrollConfigTests(SimpleTestCase):
+    @patch(
+        "apps.lens_bridge.deploy.local_platform_lens_gateway_base_url",
+        return_value="https://127.0.0.1:11443/sourcelens",
+    )
+    @patch(
+        "apps.lens_bridge.deploy.lens_gateway_base_url",
+        return_value="https://console.example/sourcelens",
+    )
+    def test_installer_managed_gateway_gets_local_lens_url(
+        self, _public_url, _local_url
+    ):
+        from apps.lens_bridge.services.provisioning import build_lens_enroll_config
+        from apps.node.services.internal.local_platform_gateway import (
+            LOCAL_PLATFORM_GATEWAY_METADATA,
+        )
+
+        gateway = MagicMock(
+            id=7,
+            name="platform-gateway",
+            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
+        )
+        link = MagicMock(
+            gateway=gateway,
+            config_json={},
+            sl_lensnode_uuid=None,
+        )
+        link.resolved_workspace_root.return_value = "/workspace/platform"
+
+        result = build_lens_enroll_config(link)
+
+        self.assertEqual(
+            result["lens_base_url"],
+            "https://127.0.0.1:11443/sourcelens",
+        )
+
+    @patch(
+        "apps.lens_bridge.deploy.local_platform_lens_gateway_base_url",
+        return_value="https://127.0.0.1:11443/sourcelens",
+    )
+    @patch(
+        "apps.lens_bridge.deploy.lens_gateway_base_url",
+        return_value="https://console.example/sourcelens",
+    )
+    def test_unmanaged_gateway_keeps_public_lens_url(self, _public_url, _local_url):
+        from apps.lens_bridge.services.provisioning import build_lens_enroll_config
+
+        gateway = MagicMock(id=8, name="user-gateway", metadata={})
+        link = MagicMock(
+            gateway=gateway,
+            config_json={},
+            sl_lensnode_uuid=None,
+        )
+        link.resolved_workspace_root.return_value = "/workspace/user"
+
+        result = build_lens_enroll_config(link)
+
+        self.assertEqual(
+            result["lens_base_url"],
+            "https://console.example/sourcelens",
+        )
+
+
 class LensnodeDirPathsTests(SimpleTestCase):
     def test_collects_top_level_and_children(self):
         data = {

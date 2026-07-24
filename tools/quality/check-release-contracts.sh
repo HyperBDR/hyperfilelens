@@ -189,6 +189,10 @@ grep -F 'turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED' "${workflow}" >/dev
 grep -F 'public_url: ${{ vars.TEST_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${production_workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${production_workflow}" >/dev/null
+grep -F 'hfl_insecure_tls: ${{ vars.TEST_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
+grep -F 'hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
+grep -F 'hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}' "${release_workflow}" >/dev/null
+grep -F 'hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}' "${production_workflow}" >/dev/null
 grep -F 'release_download_proxy_url: ${{ vars.TEST_RELEASE_DOWNLOAD_PROXY_URL }}' "${workflow}" >/dev/null
 grep -F 'release_download_proxy_url: ${{ vars.PREPROD_RELEASE_DOWNLOAD_PROXY_URL }}' "${workflow}" >/dev/null
 grep -F 'release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}' "${production_workflow}" >/dev/null
@@ -197,6 +201,10 @@ if grep -F 'PROD_PUBLIC_HOST' "${workflow}" "${production_workflow}" >/dev/null;
 	exit 1
 fi
 grep -F '"TURNSTILE_ENABLED=$TURNSTILE_ENABLED"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F '"HFL_INSECURE_TLS=$HFL_INSECURE_TLS"' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'test:1|preprod:1|prod:0' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 for variable in \
 	SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_SECURITY EMAIL_FROM; do

@@ -155,14 +155,25 @@ cat >"${insecure_runtime}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=false
 HFL_INSECURE_TLS=1
 ENV
-before_insecure="$(sha256sum "${insecure_env}" | awk '{print $1}')"
-if python3 "${helper}" --env-file "${insecure_env}" \
-	--runtime-env-file "${insecure_runtime}" >/dev/null 2>&1; then
-	printf 'ERROR: SaaS runtime configuration must reject insecure TLS\n' >&2
+python3 "${helper}" --env-file "${insecure_env}" \
+	--runtime-env-file "${insecure_runtime}" >/dev/null
+grep -Fx 'HFL_INSECURE_TLS=1' "${insecure_env}" >/dev/null
+
+invalid_tls_env="${tmp}/invalid-tls.env"
+invalid_tls_runtime="${tmp}/invalid-tls-runtime.env"
+cp "${env_file}" "${invalid_tls_env}"
+cat >"${invalid_tls_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=2
+ENV
+before_invalid_tls="$(sha256sum "${invalid_tls_env}" | awk '{print $1}')"
+if python3 "${helper}" --env-file "${invalid_tls_env}" \
+	--runtime-env-file "${invalid_tls_runtime}" >/dev/null 2>&1; then
+	printf 'ERROR: runtime configuration accepted invalid HFL_INSECURE_TLS\n' >&2
 	exit 1
 fi
-after_insecure="$(sha256sum "${insecure_env}" | awk '{print $1}')"
-[[ "${before_insecure}" == "${after_insecure}" ]]
+after_invalid_tls="$(sha256sum "${invalid_tls_env}" | awk '{print $1}')"
+[[ "${before_invalid_tls}" == "${after_invalid_tls}" ]]
 
 ln -s "${runtime_file}" "${tmp}/runtime-link.env"
 if python3 "${helper}" --env-file "${invalid_env}" \
