@@ -100,6 +100,56 @@ run_quiet() {
 	fi
 }
 
+select_offline_docker_debs() {
+	local root="$1"
+	local deb package status filename normalized
+	local -a bundled_debs=()
+	deb_files=()
+
+	mapfile -d '' -t bundled_debs < <(find "${root}" -name '*.deb' -type f -print0 | sort -z)
+	for deb in "${bundled_debs[@]}"; do
+		# APT treats the epoch separator in an absolute local filename as a URI
+		# delimiter and can silently ignore that package. Verify the archive before
+		# this function, then give every deb an APT-safe local filename.
+		filename="${deb##*/}"
+		normalized="${deb%/*}/${filename//:/_}"
+		if [[ "${normalized}" != "${deb}" ]]; then
+			[[ ! -e "${normalized}" ]] \
+				|| hfl_fail "Docker offline package filename collision: ${normalized##*/}" 3
+			mv -- "${deb}" "${normalized}"
+			deb="${normalized}"
+		fi
+
+		package="$(dpkg-deb --field "${deb}" Package 2>/dev/null || true)"
+		[[ "${package}" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+			|| hfl_fail "Docker offline bundle contains an invalid deb: ${filename}" 3
+		status="$(dpkg-query -W -f='${db:Status-Abbrev}' -- "${package}" 2>/dev/null || true)"
+		if [[ "${status}" == "ii " ]]; then
+			hfl_ok "Using installed host dependency ${package}."
+			continue
+		fi
+		deb_files+=("${deb}")
+	done
+
+	((${#deb_files[@]} > 0)) \
+		|| hfl_fail "Docker offline bundle has no packages left to install." 3
+}
+
+validate_offline_docker_plan() {
+	local apt_plan="$1"
+	shift
+	if ! apt-get --simulate --no-download --no-install-recommends install "$@" \
+		>"${apt_plan}" 2>&1; then
+		tail -n 12 "${apt_plan}" >&2 || true
+		hfl_fail "Docker offline package plan could not be resolved without downloads." 3
+	fi
+	if grep -Eq '^The following packages will be (REMOVED|upgraded):|^[1-9][0-9]* upgraded,' "${apt_plan}"; then
+		cat "${apt_plan}" >&2
+		hfl_fail "Docker offline install would upgrade or remove existing host packages." 3
+	fi
+}
+
+main() {
 if [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required." 1
 fi
@@ -177,20 +227,14 @@ for package in manifest.get("packages", []):
 PY
 
 hfl_step "Installing Docker CE from offline packages (${deb_count} debs)."
-mapfile -t deb_files < <(find "${work_dir}" -name '*.deb' -type f | sort)
-
 command -v apt-get >/dev/null 2>&1 \
 	|| hfl_fail "apt-get is required for the verified offline Docker install." 2
+command -v dpkg-deb >/dev/null 2>&1 \
+	|| hfl_fail "dpkg-deb is required for the verified offline Docker install." 2
+select_offline_docker_debs "${work_dir}"
+hfl_step "Selected ${#deb_files[@]} new packages; installed host dependencies will remain unchanged."
 apt_plan="${work_dir}/apt-plan.log"
-if ! apt-get --simulate --no-download --no-install-recommends install "${deb_files[@]}" \
-	>"${apt_plan}" 2>&1; then
-	tail -n 12 "${apt_plan}" >&2 || true
-	hfl_fail "Docker offline package plan could not be resolved without downloads." 3
-fi
-if grep -Eq '^The following packages will be (REMOVED|upgraded):|^[1-9][0-9]* upgraded,' "${apt_plan}"; then
-	cat "${apt_plan}" >&2
-	hfl_fail "Docker offline install would upgrade or remove existing host packages." 3
-fi
+validate_offline_docker_plan "${apt_plan}" "${deb_files[@]}"
 apt_log="${work_dir}/apt-install.log"
 if ! run_quiet "${apt_log}" apt-get -y --no-download --no-install-recommends install "${deb_files[@]}"; then
 	[[ -s "${apt_log}" ]] && tail -n 12 "${apt_log}" >&2
@@ -207,3 +251,8 @@ docker_runtime_ready "${MIN_ENGINE_VERSION}" \
 	|| hfl_fail "Docker post-install check failed (need engine >= ${MIN_ENGINE_VERSION} and Compose v2 >= ${MIN_COMPOSE_VERSION})." 5
 
 hfl_ok "Docker CE installed (engine $(docker_engine_version), compose $(docker_compose_version))."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
