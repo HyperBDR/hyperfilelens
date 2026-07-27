@@ -54,6 +54,8 @@ class NotificationDelivery(models.Model):
         db_table = "notification_deliveries"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["organization", "status", "created_at"]),
+            models.Index(
+                fields=["organization", "status", "created_at"],
+                name="notif_del_org_status_cr_idx",
+            ),
         ]
-

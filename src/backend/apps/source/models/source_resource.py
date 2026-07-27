@@ -77,9 +77,15 @@ class SourceResource(OrganizationScopedModel):
             )
         ]
         indexes = [
-            models.Index(fields=["organization", "resource_type"]),
-            models.Index(fields=["organization", "status"]),
-            models.Index(fields=["bound_node"]),
+            models.Index(
+                fields=["organization", "resource_type"],
+                name="src_res_org_type_idx",
+            ),
+            models.Index(
+                fields=["organization", "status"],
+                name="src_res_org_status_idx",
+            ),
+            models.Index(fields=["bound_node"], name="src_res_bound_node_idx"),
         ]
 
     def __str__(self) -> str:

@@ -376,6 +376,11 @@ class LensSlUserLink(models.Model):
 class LensChatBinding(OrganizationScopedModel):
     """Copilot context: backup source + snapshot + gateway → KS/Assistant."""
 
+    organization = models.ForeignKey(
+        "iam.Organization",
+        on_delete=models.CASCADE,
+        related_name="%(class)s_set",
+    )
     hfl_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
