@@ -32,8 +32,8 @@ services:
       redis:
         condition: service_healthy
     command: gunicorn
-    mem_limit: 384m
-    cpus: 0.25
+    mem_limit: 512m
+    cpus: 0.50
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -60,8 +60,8 @@ services:
       api:
         condition: service_healthy
     command: celery
-    mem_limit: 384m
-    cpus: 0.30
+    mem_limit: 512m
+    cpus: 0.50
 
   scheduler:
     image: __SOURCELENS_BACKEND_IMAGE__
@@ -78,8 +78,8 @@ services:
       api:
         condition: service_healthy
     command: celery-beat
-    mem_limit: 128m
-    cpus: 0.10
+    mem_limit: 256m
+    cpus: 0.25
 
   ui:
     image: __SOURCELENS_FRONTEND_IMAGE__
@@ -91,8 +91,8 @@ services:
       sourcelens_network:
         aliases:
           - frontend
-    mem_limit: 64m
-    cpus: 0.05
+    mem_limit: 128m
+    cpus: 0.125
 
 # HFL_EMBED_LENSNODE_SERVICE_BEGIN
   local-lensnode:
@@ -112,8 +112,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    mem_limit: 320m
-    cpus: 0.20
+    mem_limit: 512m
+    cpus: 0.50
 # HFL_EMBED_LENSNODE_SERVICE_END
 
   nginx:
@@ -141,8 +141,8 @@ services:
         condition: service_healthy
       ui:
         condition: service_started
-    mem_limit: 64m
-    cpus: 0.05
+    mem_limit: 128m
+    cpus: 0.125
 
   postgres:
     image: hyperfilelens-postgres:17
@@ -176,8 +176,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    mem_limit: 320m
-    cpus: 0.20
+    mem_limit: 512m
+    cpus: 0.50
 
   redis:
     image: hyperfilelens-redis:alpine
@@ -195,8 +195,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    mem_limit: 128m
-    cpus: 0.05
+    mem_limit: 256m
+    cpus: 0.25
 
 networks:
   sourcelens_network:

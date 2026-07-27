@@ -8,6 +8,7 @@ name: hyperfilelens
 x-backend-image: &backend-image
   image: hyperfilelens-backend:${APP_VERSION:-latest}
   platform: linux/amd64
+  restart: unless-stopped
   env_file:
     - ./.env
   # Reach the WSL/host HTTP proxy (127.0.0.1:port) from containers via host.docker.internal
@@ -36,8 +37,8 @@ services:
       redis:
         condition: service_healthy
     command: worker
-    mem_limit: 320m
-    cpus: 0.30
+    mem_limit: 512m
+    cpus: 0.50
     healthcheck:
       test:
         [
@@ -71,8 +72,8 @@ services:
       worker:
         condition: service_healthy
     command: scheduler
-    mem_limit: 128m
-    cpus: 0.10
+    mem_limit: 256m
+    cpus: 0.25
     healthcheck:
       test:
         [
@@ -109,8 +110,8 @@ services:
       scheduler:
         condition: service_healthy
     command: api
-    mem_limit: 448m
-    cpus: 0.30
+    mem_limit: 512m
+    cpus: 0.50
     healthcheck:
       test:
         [
@@ -128,6 +129,7 @@ services:
 
   postgres:
     image: hyperfilelens-postgres:17
+    restart: unless-stopped
     # Official PostgreSQL image; pin a distribution variant when required.
     env_file:
       - ./.env
@@ -151,11 +153,12 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
-    mem_limit: 320m
-    cpus: 0.15
+    mem_limit: 512m
+    cpus: 0.50
 
   redis:
     image: hyperfilelens-redis:alpine
+    restart: unless-stopped
     volumes:
       - ./data/redis:/data
     healthcheck:
@@ -168,11 +171,12 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
-    mem_limit: 128m
-    cpus: 0.05
+    mem_limit: 1g
+    cpus: 1.00
 
   nginx:
     image: hyperfilelens-frontend:${APP_VERSION:-latest}
+    restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -212,8 +216,8 @@ services:
       options:
         max-size: "10m"
         max-file: "10"
-    mem_limit: 64m
-    cpus: 0.10
+    mem_limit: 128m
+    cpus: 0.125
 
 networks:
   bridge:

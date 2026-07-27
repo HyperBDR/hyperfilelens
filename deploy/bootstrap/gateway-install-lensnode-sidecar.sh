@@ -33,14 +33,6 @@ if [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required." 1
 fi
 
-if [[ "${HFL_FORCE_SIDECAR_INSTALL:-0}" != "1" ]] && command -v docker >/dev/null 2>&1; then
-	if docker ps --format '{{.Names}}' 2>/dev/null | grep -Eq '^hyperfilelens-gateway[-_]lensnode[-_]1$'; then
-		hfl_ok "LensNode sidecar (hyperfilelens-gateway-lensnode-1) is already running."
-		printf '[%s] [INFO ] Set HFL_FORCE_SIDECAR_INSTALL=1 to force reinstall.\n' "$(hfl_now)"
-		exit 0
-	fi
-fi
-
 if [[ ! -f "${ENV_FILE}" ]]; then
 	hfl_fail "Missing ${ENV_FILE} (run hfl-enroll gateway-install first)." 2
 fi
@@ -179,14 +171,25 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_SSL_VERIFY: "${ssl_verify}"
     volumes:
       - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}
-    mem_limit: 320m
+    mem_limit: 512m
     cpus: 0.50
 EOF
 	if docker compose version >/dev/null 2>&1; then
 		remove_owned_legacy_gateway_containers
 		(
 			cd "${COMPOSE_DIR}"
-			docker compose -p "${COMPOSE_PROJECT}" up -d --pull never
+			current_container="$(docker compose -p "${COMPOSE_PROJECT}" ps -q lensnode 2>/dev/null || true)"
+			current_image_id=""
+			desired_image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
+			if [[ -n "${current_container}" ]]; then
+				current_image_id="$(docker inspect --format '{{.Image}}' "${current_container}" 2>/dev/null || true)"
+			fi
+			compose_args=(up -d --pull never)
+			if [[ -n "${current_container}" && "${current_image_id}" != "${desired_image_id}" ]]; then
+				hfl_step "Recreating LensNode because its loaded image ID changed."
+				compose_args+=(--force-recreate)
+			fi
+			docker compose -p "${COMPOSE_PROJECT}" "${compose_args[@]}"
 		)
 	else
 		hfl_fail "Docker Compose v2 is required when using a LensNode container image." 3

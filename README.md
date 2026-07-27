@@ -79,11 +79,19 @@ started with an amd64-capable VM configuration.
 
 The offline installer targets **Ubuntu 20.04/22.04/24.04 amd64**. The minimum
 host size is 2 CPU cores and 4 GB of memory; 4 CPU cores and 8 GB are
-recommended. Data Gateways use the same Ubuntu/amd64 support matrix. Existing
+recommended. CPU, memory, and Swap recommendations produce warnings rather
+than blocking installation. Runtime containers use fixed, human-readable
+resource ceilings across all environments. Data Gateways use the same
+Ubuntu/amd64 support matrix. Existing
 Docker Engine 24+ and Compose v2.20+ installations are used without being
 upgraded or repaired; Docker is installed from the offline bundle only when it
 is completely absent. Docker Buildx is used by Release CI but is not required
 on installation or Data Gateway hosts.
+
+Before an upgrade, the installer creates one checksummed backup set containing
+logical PostgreSQL dumps, Redis persistence, configuration, and deployment
+metadata. It retains the latest three valid sets. A backup can also be created
+manually with `sudo ./install.sh backup`.
 
 ## Quick Start
 

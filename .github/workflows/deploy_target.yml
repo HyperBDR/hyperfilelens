@@ -1,4 +1,4 @@
-name: HFL - Target Deployment (Reusable)
+name: HFL - Target Deploy (Reusable)
 
 on:
   workflow_call:
@@ -122,6 +122,7 @@ permissions:
 
 jobs:
   deploy:
+    name: ${{ inputs.target == 'test' && 'Deploy · TEST' || inputs.target == 'preprod' && 'Deploy · PREPROD' || 'Deploy · PROD' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     concurrency:
@@ -137,7 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Validate deployment configuration
+      - name: Validate Deployment Inputs
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
           SMTP_HOST: ${{ inputs.smtp_host }}
@@ -241,7 +242,7 @@ jobs:
             [[ "$AI_MODEL_API_KEY" != *$'\n'* && "$AI_MODEL_API_KEY" != *$'\r'* ]]
           fi
 
-      - name: Install SSH credentials
+      - name: Install SSH Credentials
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
         shell: bash
@@ -252,7 +253,7 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 0600 ~/.ssh/hyperfilelens_deploy ~/.ssh/known_hosts
 
-      - name: Stage runtime configuration
+      - name: Stage Runtime Configuration
         env:
           HFL_INSECURE_TLS: ${{ inputs.hfl_insecure_tls }}
           HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ inputs.platform_gateway_auto_deploy }}
@@ -297,7 +298,7 @@ jobs:
             "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < "$runtime_env"
 
-      - name: Download and deploy the complete release package on the target
+      - name: Download and Install Release
         shell: bash
         run: |
           set -euo pipefail
@@ -324,7 +325,7 @@ jobs:
               --runtime-env-file "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < .github/scripts/remote-deploy.sh
 
-      - name: Remove staged runtime configuration
+      - name: Remove Staged Runtime Configuration
         if: ${{ always() }}
         shell: bash
         run: |
@@ -341,7 +342,7 @@ jobs:
               rm -f -- "/var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env"
           fi
 
-      - name: Post-deploy internal health checks
+      - name: Verify Internal Health
         shell: bash
         run: |
           set -euo pipefail
@@ -356,7 +357,7 @@ jobs:
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             'curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null && curl -kfsS https://127.0.0.1:11444/ >/dev/null && curl -kfsS https://127.0.0.1:11445/ >/dev/null'
 
-      - name: Apply deployment-managed AI model
+      - name: Configure Default AI Model
         env:
           AI_MODEL_PROVIDER: ${{ inputs.ai_model_provider }}
           AI_MODEL_ID: ${{ inputs.ai_model_id }}
@@ -417,7 +418,7 @@ jobs:
             printf '### AI model deployment\n\nPassed: deployment-managed model was applied and tested successfully.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Optional public endpoint check
+      - name: Check Public Endpoint
         shell: bash
         run: |
           set +e

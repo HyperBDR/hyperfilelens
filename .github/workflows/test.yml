@@ -1,5 +1,5 @@
-name: HFL - Test Pipeline
-run-name: Test main ${{ github.sha }}
+name: HFL - TEST Build & Deploy
+run-name: TEST · main · Build & deploy
 
 on:
   workflow_dispatch:
@@ -18,12 +18,13 @@ permissions:
 
 jobs:
   require-main:
+    name: Prepare · TEST
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       should_run: ${{ steps.target.outputs.should_run }}
     steps:
-      - name: Reject non-Main manual runs
+      - name: Validate Main Ref
         shell: bash
         run: |
           set -euo pipefail
@@ -33,7 +34,7 @@ jobs:
           }
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-      - name: Check the Main commit deployed to TEST
+      - name: Resolve TEST Build Target
         id: target
         env:
           DEPLOY_ENABLED: ${{ vars.TEST_DEPLOY_ENABLED }}
@@ -84,6 +85,7 @@ jobs:
           fi
 
   build-and-deploy-test:
+    name: Build & Deploy · TEST
     needs: require-main
     if: ${{ needs.require-main.outputs.should_run == 'true' }}
     uses: ./.github/workflows/artifact_pipeline.yml
