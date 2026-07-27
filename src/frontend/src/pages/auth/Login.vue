@@ -204,6 +204,12 @@ function onTurnstileSuccess(token: string) {
 
 function onTurnstileExpire() {
   turnstileToken.value = ''
+  turnstileError.value = t('login.captchaExpired')
+}
+
+function onTurnstileInvalidate() {
+  turnstileToken.value = ''
+  turnstileError.value = ''
 }
 
 function onTurnstileError() {
@@ -673,6 +679,7 @@ onMounted(async () => {
           @retry="retryTurnstile"
           @success="onTurnstileSuccess"
           @expire="onTurnstileExpire"
+          @invalidate="onTurnstileInvalidate"
           @error="onTurnstileError"
           @load-failed="onTurnstileLoadFailed"
         />

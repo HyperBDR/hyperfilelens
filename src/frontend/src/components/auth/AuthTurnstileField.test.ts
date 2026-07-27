@@ -45,6 +45,18 @@ describe('AuthTurnstileField display states', () => {
     expect(wrapper.find('.auth-turnstile-field__widget').exists()).toBe(true)
     expect(wrapper.find('.auth-turnstile-field__viewport').exists()).toBe(true)
     expect(wrapper.get('.auth-turnstile-field__error').text()).toBe('Human verification failed or expired')
+    expect(wrapper.get('.auth-turnstile-field__error').attributes('role')).toBe('alert')
+  })
+
+  it('forwards challenge invalidation separately from expiration', async () => {
+    const wrapper = mountField({ ready: true })
+    const widget = wrapper.getComponent({ name: 'TurnstileWidget' })
+
+    widget.vm.$emit('invalidate')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('invalidate')).toHaveLength(1)
+    expect(wrapper.emitted('expire')).toBeUndefined()
   })
 
   it('shows an unavailable message only once and exposes retry', async () => {
@@ -91,6 +103,12 @@ describe('AuthTurnstileField display states', () => {
     )
     expect(fieldSource).toMatch(
       /\.auth-turnstile-field__spinner\s*{[^}]*width:\s*16px;[^}]*height:\s*16px;/s,
+    )
+    expect(widgetSource).toMatch(
+      /\.turnstile-widget\s*{[^}]*height:\s*65px;[^}]*min-height:\s*65px;[^}]*position:\s*relative;/s,
+    )
+    expect(widgetSource).toMatch(
+      /\.turnstile-widget__container\s*{[^}]*height:\s*100%;[^}]*min-height:\s*65px;/s,
     )
     expect(widgetSource).toMatch(
       /\.turnstile-widget__loading\s*{[^}]*gap:\s*10px;[^}]*background:\s*#313131;[^}]*border:\s*1px solid #3A3B40;[^}]*border-radius:/s,

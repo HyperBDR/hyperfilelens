@@ -3479,6 +3479,7 @@ export const en = {
     captchaErrRequired: 'Please complete human verification',
     captchaLoading: 'Loading Cloudflare human verification...',
     captchaUnavailable: 'Cloudflare verification unavailable.',
+    captchaExpired: 'Human verification expired. Please complete the new challenge.',
     captchaRetry: 'Retry',
     btnSubmit: 'Sign In',
     btnSubmitLoading: 'Signing in...',

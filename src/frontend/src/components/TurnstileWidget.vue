@@ -60,6 +60,7 @@ const effectiveLanguage = computed(() =>
 const emit = defineEmits<{
   success: [token: string]
   expire: []
+  invalidate: []
   error: []
   'load-failed': []
 }>()
@@ -162,7 +163,7 @@ function renderWidget() {
       callback: (token: string) => {
         emitSuccess(token)
       },
-      'expired-callback': () => emit('expire'),
+      'expired-callback': handleExpire,
       'error-callback': () => {
         if (markReadyIfWidgetPresent()) return
         failWidget()
@@ -210,11 +211,19 @@ async function initWidget(attempt = 0) {
 }
 
 function reset() {
+  // A successful token is single-use. Every reset starts a new challenge and
+  // must allow its callback to emit the replacement token.
+  successEmitted.value = false
   if (widgetId.value && window.turnstile) {
     window.turnstile.reset(widgetId.value)
   } else {
     void initWidget()
   }
+}
+
+function handleExpire() {
+  emit('expire')
+  reset()
 }
 
 onMounted(() => {
@@ -224,13 +233,10 @@ onMounted(() => {
 watch(
   () => [props.siteKey, props.action, props.theme, props.size, props.language, effectiveLanguage.value] as const,
   () => {
+    emit('invalidate')
     void initWidget()
   },
 )
-
-watch(effectiveLanguage, () => {
-  emit('expire')
-})
 
 onBeforeUnmount(() => {
   clearLoadTimeout()
@@ -268,6 +274,7 @@ defineExpose({ reset })
 <style scoped>
 .turnstile-widget {
   width: 100%;
+  height: 65px;
   min-height: 65px;
   display: block;
   position: relative;
@@ -275,6 +282,7 @@ defineExpose({ reset })
 
 .turnstile-widget__container {
   width: 100%;
+  height: 100%;
   min-height: 65px;
 }
 

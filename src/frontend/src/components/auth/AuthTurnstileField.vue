@@ -20,6 +20,7 @@ const emit = defineEmits<{
   retry: []
   success: [token: string]
   expire: []
+  invalidate: []
   error: []
   'load-failed': []
 }>()
@@ -60,6 +61,7 @@ defineExpose({ reset })
           size="flexible"
           @success="emit('success', $event)"
           @expire="emit('expire')"
+          @invalidate="emit('invalidate')"
           @error="emit('error')"
           @load-failed="emit('load-failed')"
         />
