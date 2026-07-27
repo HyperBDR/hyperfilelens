@@ -267,4 +267,63 @@ describe('Login Turnstile lifecycle', () => {
     expect(submittedBody(emailLoginCalls()[1]).turnstile_token).toBe('accepted-token')
     wrapper.unmount()
   })
+
+  it('accepts corrected credentials after a password error resets Turnstile', async () => {
+    let loginAttempt = 0
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/google/config') {
+        return { code: '0000', data: { enabled: false } }
+      }
+      if (path === '/api/v1/auth/email-login') {
+        loginAttempt += 1
+        if (loginAttempt === 1) {
+          return {
+            code: '1001',
+            data: {},
+            error: {
+              fields: {
+                password: ['Incorrect password'],
+              },
+            },
+          }
+        }
+        return successfulLoginResponse
+      }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+
+    const wrapper = await mountLogin(1440)
+    const credentials = await fillCredentials(wrapper)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    const submit = wrapper.get('button.submit-btn')
+
+    turnstile.vm.$emit('success', 'initial-token')
+    await wrapper.vm.$nextTick()
+    await submit.trigger('click')
+    await flushPromises()
+
+    expect(mocks.resetWidget).toHaveBeenCalledTimes(1)
+    expect(submit.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Incorrect password')
+
+    await wrapper.findAll('input')[1].setValue('CorrectPass123')
+    turnstile.vm.$emit('success', 'replacement-token')
+    await wrapper.vm.$nextTick()
+
+    expect(submit.attributes('disabled')).toBeUndefined()
+    await submit.trigger('click')
+    await flushPromises()
+
+    expect(emailLoginCalls()).toHaveLength(2)
+    expect(submittedBody(emailLoginCalls()[0])).toMatchObject({
+      password: 'ValidPass123',
+      turnstile_token: 'initial-token',
+    })
+    expect(submittedBody(emailLoginCalls()[1])).toMatchObject({
+      password: 'CorrectPass123',
+      turnstile_token: 'replacement-token',
+    })
+    expect(credentials.password.value).toBe('CorrectPass123')
+    wrapper.unmount()
+  })
 })
