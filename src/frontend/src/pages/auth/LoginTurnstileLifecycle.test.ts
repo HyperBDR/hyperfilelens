@@ -196,6 +196,32 @@ describe('Login Turnstile lifecycle', () => {
     replayMount.unmount()
   })
 
+  it('requires valid credentials after Turnstile succeeds', async () => {
+    const wrapper = await mountLogin(1440)
+    const inputs = wrapper.findAll('input')
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    const submit = wrapper.get('button.submit-btn')
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    expect(submit.attributes('disabled')).toBeDefined()
+    await submit.trigger('click')
+    await flushPromises()
+    expect(emailLoginCalls()).toHaveLength(0)
+
+    await inputs[0].setValue('person@example.com')
+    expect(submit.attributes('disabled')).toBeDefined()
+
+    await inputs[1].setValue('invalid')
+    expect(submit.attributes('disabled')).toBeDefined()
+
+    await inputs[1].setValue('ValidPass123')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    expect(emailLoginCalls()).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+
   it.each([
     ['mobile', 390],
     ['tablet', 820],
