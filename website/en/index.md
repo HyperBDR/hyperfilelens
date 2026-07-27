@@ -1,5 +1,5 @@
 ---
 layout: hfl-home
 title: HyperFileLens
-description: Protect, understand, and recover your files with confidence.
+description: Open-source data protection and file intelligence for distributed infrastructure.
 ---
