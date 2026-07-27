@@ -23,12 +23,16 @@ LENS_GATEWAY_BASE_URL=https://47.237.161.194:11443/sourcelens
 HFL_ADMIN_PUBLIC_URL=
 HFL_INSECURE_TLS=1
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false
+HFL_GOOGLE_OAUTH_ENABLED=false
+GOOGLE_CLIENT_ID=123-old.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=old-google-secret
 TURNSTILE_ENABLED=true
 TURNSTILE_SITE_KEY=old-site
 TURNSTILE_SECRET_KEY=old-secret
 ENV
 cat >"${runtime_file}" <<'ENV'
-HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_EMAIL_SIGNUP_ENABLED=true
+HFL_GOOGLE_OAUTH_ENABLED=true
 HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
@@ -40,6 +44,8 @@ SMTP_USERNAME=mailer@example.com
 SMTP_PASSWORD=pa$$ word'with\slashes
 SMTP_SECURITY=ssl
 EMAIL_FROM=HyperFileLens <mailer@example.com>
+GOOGLE_CLIENT_ID=123-new.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=new-google-secret
 ENV
 
 runtime_output="$(python3 "${helper}" \
@@ -47,7 +53,7 @@ runtime_output="$(python3 "${helper}" \
 	--runtime-env-file "${runtime_file}" \
 	--public-url "https://hyperfilelens.com" \
 	--direct-host "47.237.161.194")"
-if grep -F "pa\$\$ word" <<<"${runtime_output}" >/dev/null; then
+if grep -E "pa\$\$ word|new-google-secret" <<<"${runtime_output}" >/dev/null; then
 	printf 'ERROR: runtime configuration output exposed the SMTP password\n' >&2
 	exit 1
 fi
@@ -62,7 +68,10 @@ grep -E '^CORS_ALLOWED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperf
 grep -Fx 'TURNSTILE_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${env_file}" >/dev/null
-grep -Fx 'HFL_EMAIL_SIGNUP_ENABLED=false' "${env_file}" >/dev/null
+grep -Fx 'HFL_EMAIL_SIGNUP_ENABLED=true' "${env_file}" >/dev/null
+grep -Fx 'HFL_GOOGLE_OAUTH_ENABLED=true' "${env_file}" >/dev/null
+grep -Fx 'GOOGLE_CLIENT_ID=123-new.apps.googleusercontent.com' "${env_file}" >/dev/null
+grep -Fx 'GOOGLE_CLIENT_SECRET="new-google-secret"' "${env_file}" >/dev/null
 grep -Fx 'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend' "${env_file}" >/dev/null
 grep -Fx 'EMAIL_HOST=smtp.example.com' "${env_file}" >/dev/null
 grep -Fx 'EMAIL_PORT=465' "${env_file}" >/dev/null
@@ -139,14 +148,28 @@ SMTP_PASSWORD=
 SMTP_SECURITY=ssl
 EMAIL_FROM=HyperFileLens <mailer@example.com>
 ENV
-before_partial="$(sha256sum "${partial_env}" | awk '{print $1}')"
-if python3 "${helper}" --env-file "${partial_env}" \
-	--runtime-env-file "${partial_runtime}" >/dev/null 2>&1; then
-	printf 'ERROR: partial SMTP deployment configuration must fail\n' >&2
-	exit 1
-fi
-after_partial="$(sha256sum "${partial_env}" | awk '{print $1}')"
-[[ "${before_partial}" == "${after_partial}" ]]
+partial_output="$(python3 "${helper}" --env-file "${partial_env}" \
+	--runtime-env-file "${partial_runtime}")"
+grep -F 'WARNING: partial SMTP deployment configuration' <<<"${partial_output}" >/dev/null
+grep -Fx 'EMAIL_HOST=smtp.example.com' "${partial_env}" >/dev/null
+grep -Fx 'EMAIL_PORT=465' "${partial_env}" >/dev/null
+grep -F 'EMAIL_HOST_PASSWORD="pa$$$$ word' "${partial_env}" >/dev/null
+
+invalid_google_env="${tmp}/invalid-google.env"
+invalid_google_runtime="${tmp}/invalid-google-runtime.env"
+cp "${env_file}" "${invalid_google_env}"
+cat >"${invalid_google_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=true
+HFL_GOOGLE_OAUTH_ENABLED=true
+HFL_INSECURE_TLS=0
+GOOGLE_CLIENT_ID=invalid-client
+GOOGLE_CLIENT_SECRET=replacement-secret
+ENV
+google_output="$(python3 "${helper}" --env-file "${invalid_google_env}" \
+	--runtime-env-file "${invalid_google_runtime}")"
+grep -F 'WARNING: invalid Google OAuth client ID' <<<"${google_output}" >/dev/null
+grep -Fx 'GOOGLE_CLIENT_ID=123-new.apps.googleusercontent.com' "${invalid_google_env}" >/dev/null
+grep -Fx 'GOOGLE_CLIENT_SECRET="new-google-secret"' "${invalid_google_env}" >/dev/null
 
 insecure_env="${tmp}/insecure.env"
 insecure_runtime="${tmp}/insecure-runtime.env"

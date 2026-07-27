@@ -88,6 +88,9 @@ jobs:
       ssh_known_hosts: ${{ vars.PREPROD_SSH_KNOWN_HOSTS }}
       turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED == 'true' }}
+      email_signup_enabled: ${{ vars.PREPROD_EMAIL_SIGNUP_ENABLED == 'true' }}
+      google_oauth_enabled: ${{ vars.PREPROD_GOOGLE_OAUTH_ENABLED == 'true' }}
+      google_client_id: ${{ vars.PREPROD_GOOGLE_CLIENT_ID }}
       platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}
       smtp_host: ${{ vars.PREPROD_SMTP_HOST }}
@@ -102,5 +105,6 @@ jobs:
       ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}
       smtp_password: ${{ secrets.PREPROD_SMTP_PASSWORD }}
+      google_client_secret: ${{ secrets.PREPROD_GOOGLE_CLIENT_SECRET }}
       ai_model_api_base: ${{ secrets.PREPROD_AI_MODEL_API_BASE }}
       ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
