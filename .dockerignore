@@ -8,6 +8,8 @@ build/**
 !build/kopia/dist/linux/
 !build/kopia/dist/linux/amd64/
 !build/kopia/dist/linux/amd64/kopia
+!build/website/
+!build/website/**
 logs
 *.log
 node_modules

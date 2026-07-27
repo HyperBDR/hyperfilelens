@@ -697,13 +697,41 @@ grep -F 'HFL_WEBSITE_PORT=11442' "${ROOT}/.env.example" >/dev/null
 grep -F 'HFL_ADMIN_PORT=11444' "${ROOT}/.env.example" >/dev/null
 grep -F 'FRONTEND_URL=https://127.0.0.1:11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
-grep -F '${HFL_WEBSITE_PORT:-11442}:10442' \
-	"${ROOT}/deploy/docker-compose.yml" >/dev/null
-grep -F 'HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}' \
-	"${ROOT}/deploy/docker-compose.yml" >/dev/null
-grep -F 'listen 10442 ssl;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
-grep -F 'website-runtime-config.sh' "${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
+for compose_file in "${ROOT}/docker-compose.yml" "${ROOT}/deploy/docker-compose.yml"; do
+	grep -F '${HFL_WEBSITE_PORT:-11442}:11442' "${compose_file}" >/dev/null
+	grep -F '${HFL_TENANT_PORT:-11443}:11443' "${compose_file}" >/dev/null
+	grep -F '${HFL_ADMIN_PORT:-11444}:11444' "${compose_file}" >/dev/null
+done
+dev_nginx_block="$(sed -n '/^  nginx:/,/^networks:/p' "${ROOT}/docker-compose.yml")"
+grep -F './build/website/public:/usr/share/nginx/website:ro' <<<"${dev_nginx_block}" >/dev/null
+if grep -Eq '^  website:|website-node-modules|development-website-locations' \
+	"${ROOT}/docker-compose.yml"; then
+	printf 'ERROR: development Website must be a static Nginx artifact, not a service\n' >&2
+	exit 1
+fi
+release_worker_block="$(sed -n '/^  worker:/,/^  scheduler:/p' "${ROOT}/deploy/docker-compose.yml")"
+release_nginx_block="$(sed -n '/^  nginx:/,/^networks:/p' "${ROOT}/deploy/docker-compose.yml")"
+if grep -F 'HFL_WEBSITE_APP_URL:' <<<"${release_worker_block}" >/dev/null; then
+	printf 'ERROR: Website runtime URL must not be injected into the worker\n' >&2
+	exit 1
+fi
+grep -F 'HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}' <<<"${release_nginx_block}" >/dev/null
+for listener in 11442 11443 11444; do
+	grep -F "listen ${listener} ssl;" "${ROOT}/deploy/nginx/default.conf" >/dev/null
+done
+grep -F 'COPY build/website/public /usr/share/nginx/website' \
+	"${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
+grep -F 'COPY build/website/runtime-config.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh' \
+	"${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
+if grep -F 'COPY website/' "${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null; then
+	printf 'ERROR: HFL frontend image must consume the standalone Website artifact only\n' >&2
+	exit 1
+fi
+grep -F 'Prepare standalone Website artifact' "${workflow}" >/dev/null
+grep -F '${ROOT}/website/build.sh' "${ROOT}/release/build.sh" >/dev/null
 [[ -f "${ROOT}/website/en/index.md" && -f "${ROOT}/website/package-lock.json" ]]
+[[ -f "${ROOT}/website/Dockerfile" && -x "${ROOT}/website/build.sh" \
+	&& -x "${ROOT}/website/runtime-config.sh" ]]
 grep -F 'SEED_ADMIN_PASSWORD=Admin@123' "${ROOT}/.env.example" >/dev/null
 if grep -E 'HFL_TLS_SAN_(IP|DNS)' "${ROOT}/.env.example" "${installer}" >/dev/null; then
 	printf 'ERROR: runtime-generated TLS SAN configuration must not remain\n' >&2
@@ -726,7 +754,7 @@ for cert_file in tls.crt tls.key root-ca.crt SHA256SUMS README.md; do
 	}
 done
 [[ ! -e "${ROOT}/deploy/nginx/certs/.gitignore" ]]
-legacy_public_port_pattern='104(43|45|46)'
+legacy_public_port_pattern='104(42|43|44|45|46)'
 if git -C "${ROOT}" grep -n -E "${legacy_public_port_pattern}" -- .; then
 	printf 'ERROR: tracked HFL files must not reference legacy 104xx public ports\n' >&2
 	exit 1
@@ -759,7 +787,9 @@ grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
 grep -F 'map $server_port $hfl_site {' \
 	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
-grep -E '^[[:space:]]*10444[[:space:]]+ops;' \
+grep -E '^[[:space:]]*11442[[:space:]]+website;' \
+	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
+grep -E '^[[:space:]]*11444[[:space:]]+ops;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
 grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-backend-proxy-headers.inc" >/dev/null

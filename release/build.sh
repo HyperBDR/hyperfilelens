@@ -623,6 +623,17 @@ build_control_plane_images() {
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
 		"${ROOT}"
 
+	log "Building standalone Website artifact for hyperfilelens-frontend:${HFL_VERSION}"
+	local -a website_args=(
+		--output "${ROOT}/build/website"
+		--image-tag "hyperfilelens-website-builder:${HFL_VERSION}"
+		--platform linux/amd64
+	)
+	[[ -z "${NPM_REGISTRY:-}" ]] || website_args+=(--npm-registry "${NPM_REGISTRY}")
+	[[ "${NO_CACHE}" -eq 0 ]] || website_args+=(--no-cache)
+	[[ "${FORCE_PULL}" -eq 0 ]] || website_args+=(--pull)
+	"${ROOT}/website/build.sh" "${website_args[@]}"
+
 	log "Building hyperfilelens-frontend:${HFL_VERSION} (alias: latest)"
 	docker build "${common_args[@]}" \
 		-f "${ROOT}/deploy/docker/frontend.Dockerfile" \

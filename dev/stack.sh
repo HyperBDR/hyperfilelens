@@ -69,13 +69,16 @@ DOCKER_PULL_RETRIES="${DOCKER_PULL_RETRIES:-}"
 CLEAN_SCOPE=""
 CLEAN_YES=0
 STATE_FILE="${ROOT}/build/state/dev-stack.json"
+WEBSITE_OUTPUT="${ROOT}/build/website"
+WEBSITE_BUILDER_IMAGE="hyperfilelens-website-builder:dev"
+WEBSITE_BASE_IMAGE="node:22-alpine"
 
 usage() {
 	cat <<'USAGE'
 Usage: ./dev/stack.sh <command> [options]
 
 Commands:
-  up                 Prepare dependencies and start the hot-reload development stack
+  up                 Prepare dependencies and start the development stack
   down               Stop HyperFileLens + bundled SourceLens
   down --hfl-only    Stop HyperFileLens only; leave SourceLens running
   restart            Refresh dependencies/configuration and recreate changed services
@@ -94,6 +97,7 @@ Prepare (up / restart) always includes:
   Unified Kopia binary matrix for Backend and Agent packages
   backend source bind mount with automatic API/worker/scheduler restart
   frontend source bind mount with Vite HMR and persistent node_modules
+  Website static artifact served by the shared Nginx gateway (no Website container)
   agent publish (full bundle) → data/media/agent-releases/
   SourceLens bundled mode (default): clone/update only as a build input, then run images
   SourceLens external mode: prepare the Gateway LensNode bundle without touching the external stack
@@ -201,8 +205,10 @@ source_check=${ROOT}/tools/quality/check-english-source.py
 backend_source_mount=${ROOT}/src/backend:/opt/backend
 frontend_source_mount=${ROOT}/src/frontend:/app
 frontend_modules_volume=frontend-node-modules
-website_source_mount=${ROOT}/website:/website
-website_modules_volume=website-node-modules
+website_source=${ROOT}/website
+website_artifact=${WEBSITE_OUTPUT}
+website_builder_image=${WEBSITE_BUILDER_IMAGE}
+website_runtime=static-nginx
 with_sourcelens=${WITH_SOURCELENS}
 sourcelens_runtime=image-only
 sourcelens_ref=${SOURCELENS_GIT_REF}
@@ -413,6 +419,40 @@ cache_update() {
 		--state "${STATE_FILE}" --key "$1" --fingerprint "$2"
 }
 
+prepare_website_static() {
+	local force=$1 fingerprint app_url
+	fingerprint="$(cache_fingerprint website -- "npm=${OPT_NPM_REGISTRY}" "platform=linux/amd64")"
+	if [[ "${force}" -eq 1 ]] || [[ ! -f "${WEBSITE_OUTPUT}/public/en/index.html" ]] \
+		|| ! cache_matches website-static "${fingerprint}"; then
+		[[ "${DEV_OFFLINE}" -eq 0 ]] \
+			|| die "Website static artifact is missing or stale in offline mode"
+		log "Resolving Website build image ${WEBSITE_BASE_IMAGE}"
+		if ! hfl_docker_ensure_image "${WEBSITE_BASE_IMAGE}" "${MIRROR_DOCKER_DOWNLOAD}" \
+			"${FORCE_PULL}" "${DEV_OFFLINE}" "linux/amd64" \
+			"${DOCKER_PULL_TIMEOUT}" "${DOCKER_PULL_RETRIES}"; then
+			die "unable to prepare ${WEBSITE_BASE_IMAGE}: ${HFL_DOCKER_LAST_ERROR}"
+		fi
+		log "Building standalone Website static artifact"
+		local -a args=(
+			--output "${WEBSITE_OUTPUT}"
+			--image-tag "${WEBSITE_BUILDER_IMAGE}"
+			--platform linux/amd64
+		)
+		[[ -z "${OPT_NPM_REGISTRY}" ]] || args+=(--npm-registry "${OPT_NPM_REGISTRY}")
+		[[ "${force}" -eq 0 ]] || args+=(--no-cache)
+		[[ "${FORCE_PULL}" -eq 0 ]] || args+=(--pull)
+		"${ROOT}/website/build.sh" "${args[@]}"
+		cache_update website-static "${fingerprint}"
+	else
+		log "Website static fingerprint unchanged; reusing build/website"
+	fi
+
+	app_url="$(read_env_value FRONTEND_URL)"
+	HFL_WEBSITE_CONFIG_OUTPUT="${WEBSITE_OUTPUT}/public/website-runtime-config.js" \
+		HFL_WEBSITE_APP_URL="${app_url}" \
+		sh "${WEBSITE_OUTPUT}/runtime-config.sh"
+}
+
 build_dev_images() {
 	local force=$1 backend_fingerprint frontend_fingerprint
 	backend_fingerprint="$(cache_fingerprint \
@@ -606,6 +646,7 @@ prepare_dev() {
 	prepare_kopia_artifacts "${force}"
 	strip_bundled_lang_packs "${ROOT}/src/frontend"
 	publish_agent "${force}"
+	prepare_website_static "${force}"
 	build_dev_images "${force}"
 }
 
@@ -740,6 +781,7 @@ EOF
 
 Notes
   - HFL backend and frontend source changes reload automatically; no stack restart is required
+  - Website source changes are rebuilt by ./dev/stack.sh restart and served as static files
   - SourceLens always runs from images; its source cache is never mounted into a container
   - Self-signed TLS: accept the browser warning for localhost
   - Change default passwords after first login
@@ -809,6 +851,11 @@ cmd_status() {
 	else
 		log "SourceLens runtime has not been prepared"
 	fi
+	if [[ -f "${WEBSITE_OUTPUT}/public/en/index.html" ]]; then
+		printf 'ok      Website static artifact %s\n' "${WEBSITE_OUTPUT}"
+	else
+		printf 'pending Website static artifact (created by up)\n'
+	fi
 }
 
 cmd_doctor() {
@@ -869,10 +916,12 @@ clean_runtime() {
 clean_cache() {
 	require_docker
 	local image
-	for image in hyperfilelens-backend:dev hyperfilelens-frontend:dev; do
+	for image in hyperfilelens-backend:dev hyperfilelens-frontend:dev \
+		"${WEBSITE_BUILDER_IMAGE}"; do
 		docker image rm "${image}" >/dev/null 2>&1 || true
 	done
-	rm -rf "${ROOT}/build/agent" "${ROOT}/build/state" "${ROOT}/build/sourcelens"
+	rm -rf "${ROOT}/build/agent" "${ROOT}/build/state" \
+		"${ROOT}/build/sourcelens" "${WEBSITE_OUTPUT}"
 	log "Removed generated build caches and local HFL development images"
 }
 
