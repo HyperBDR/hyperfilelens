@@ -119,3 +119,25 @@ class PersonalApiKey(models.Model):
             self.token = self.generate_token()
         return super().save(*args, **kwargs)
 
+
+class OAuthErrorEvent(models.Model):
+    """Short-lived, single-use handoff for verified OAuth failures."""
+
+    class Reason(models.TextChoices):
+        OAUTH_FAILED = "oauth_failed", "OAuth failed"
+        STATE_LOST = "state_lost", "OAuth state lost"
+        INVALID_GRANT = "invalid_grant", "Invalid OAuth grant"
+        NO_EMAIL = "no_email", "Email unavailable"
+        DISABLED = "disabled", "OAuth disabled"
+        NOT_AUTHENTICATED = "not_authenticated", "Authentication incomplete"
+        ACCOUNT_DISABLED = "account_disabled", "Account disabled"
+        PROVISION_FAILED = "provision_failed", "Provisioning failed"
+
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    reason = models.CharField(max_length=32, choices=Reason.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "iam_oauth_error_event"
+        ordering = ["-created_at", "id"]

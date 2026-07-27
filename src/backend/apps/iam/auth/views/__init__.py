@@ -4,7 +4,11 @@ Views for user authentication and management.
 
 from .turnstile import TurnstileConfigView
 from .login import EmailLoginView, TokenRefreshView, LogoutView, OrgSelectView
-from .oauth import GoogleOAuthCallbackView, GoogleOAuthConfigView
+from .oauth import (
+    GoogleOAuthCallbackView,
+    GoogleOAuthConfigView,
+    GoogleOAuthErrorEventConsumeView,
+)
 from .registration import (
     ChangePasswordView,
     EmailRegisterView,
@@ -28,6 +32,7 @@ __all__ = [
     "GetAvailableScenesView",
     "GoogleOAuthCallbackView",
     "GoogleOAuthConfigView",
+    "GoogleOAuthErrorEventConsumeView",
     "OrgSelectView",
     "TokenRefreshView",
     "TurnstileConfigView",

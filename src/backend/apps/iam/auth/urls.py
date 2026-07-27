@@ -14,6 +14,7 @@ from apps.iam.auth.views import (
     ForgotPasswordConfirmView,
     GetAvailableScenesView,
     GoogleOAuthConfigView,
+    GoogleOAuthErrorEventConsumeView,
     OrgSelectView,
     TokenRefreshView,
     TurnstileConfigView,
@@ -28,6 +29,11 @@ class CustomLoginView(LoginView):
 urlpatterns = [
     path("api/v1/auth/turnstile/config", TurnstileConfigView.as_view(), name="turnstile_config"),
     path("api/v1/auth/google/config", GoogleOAuthConfigView.as_view(), name="google_oauth_config"),
+    path(
+        "api/v1/auth/google/error-events/consume",
+        GoogleOAuthErrorEventConsumeView.as_view(),
+        name="google_oauth_error_event_consume",
+    ),
     path("api/v1/auth/email-login", EmailLoginView.as_view(), name="email_login"),
     path("api/v1/auth/org-select", OrgSelectView.as_view(), name="org_select"),
     path("api/v1/auth/email-register/send-code", EmailRegisterSendCodeView.as_view(), name="email_register_send_code"),

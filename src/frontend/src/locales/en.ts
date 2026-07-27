@@ -3490,6 +3490,7 @@ export const en = {
     googleRedirecting: 'Redirecting…',
     googleLoginFailed: 'Google sign-in failed. Try again or select your work Google account.',
     googleErrorTitle: 'Google Sign-In Failed',
+    googleErrorChecking: 'Checking sign-in status…',
     googleErrorOAuthDisabled: 'Google sign-in is disabled by the administrator.',
     googleErrorNoEmail: 'Google did not return an email address. Select a work Google account with email enabled.',
     googleErrorDisabled: 'This account is disabled.',

@@ -12,6 +12,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.auth.token_cookies import issue_auth_tokens_for_user, set_auth_cookies
+from apps.iam.services.oauth_error_events import (
+    build_oauth_error_redirect,
+    consume_oauth_error_event,
+)
 from apps.iam.services.registration_service import complete_social_user_registration
 from common.http.public_api import AnonymousPublicViewMixin
 
@@ -52,6 +56,29 @@ class GoogleOAuthConfigView(AnonymousPublicViewMixin, APIView):
         return Response({"code": "0000", "data": data})
 
 
+class GoogleOAuthErrorEventConsumeView(AnonymousPublicViewMixin, APIView):
+    """POST /api/v1/auth/google/error-events/consume"""
+
+    @extend_schema(
+        tags=["auth"],
+        summary="Consume a short-lived OAuth error event",
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        reason = consume_oauth_error_event(request.data.get("event_id"))
+        response = Response(
+            {
+                "code": "0000",
+                "data": {
+                    "verified": reason is not None,
+                    "reason": reason or "oauth_failed",
+                },
+            }
+        )
+        response["Cache-Control"] = "no-store"
+        return response
+
+
 class GoogleOAuthCallbackView(View):
     """
     Complete Google OAuth: issue JWT cookies and redirect to the SPA.
@@ -66,20 +93,28 @@ class GoogleOAuthCallbackView(View):
 
         if not is_google_oauth_enabled():
             logout(request)
-            return HttpResponseRedirect(f"{frontend}/auth/oauth/error?reason=disabled")
+            return HttpResponseRedirect(
+                build_oauth_error_redirect(frontend, "disabled")
+            )
 
         if not request.user.is_authenticated:
-            return HttpResponseRedirect(f"{frontend}/auth/oauth/error?reason=not_authenticated")
+            return HttpResponseRedirect(
+                build_oauth_error_redirect(frontend, "not_authenticated")
+            )
 
         user = request.user
 
         if not user.is_active:
-            return HttpResponseRedirect(f"{frontend}/auth/oauth/error?reason=account_disabled")
+            return HttpResponseRedirect(
+                build_oauth_error_redirect(frontend, "account_disabled")
+            )
 
         try:
             org = complete_social_user_registration(user)
         except Exception:
-            return HttpResponseRedirect(f"{frontend}/auth/oauth/error?reason=provision_failed")
+            return HttpResponseRedirect(
+                build_oauth_error_redirect(frontend, "provision_failed")
+            )
 
         access_token, refresh_token, family_id, membership = issue_auth_tokens_for_user(user, request)
         if membership is None:

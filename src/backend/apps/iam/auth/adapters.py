@@ -15,6 +15,7 @@ from django.shortcuts import redirect
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 
+from apps.iam.services.oauth_error_events import build_oauth_error_redirect
 from apps.iam.services.registration_service import complete_social_user_registration
 from apps.platform_ops.services.internal.runtime_settings import google_oauth_enabled
 from common.deploy.site import tenant_public_url
@@ -84,14 +85,20 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             extra,
         )
         raise ImmediateHttpResponse(
-            redirect(f"{tenant_public_url()}/auth/oauth/error?reason={reason}")
+            redirect(build_oauth_error_redirect(tenant_public_url(), reason))
         )
 
     def pre_social_login(self, request, sociallogin):
-        email = (sociallogin.account.extra_data.get("email") or sociallogin.user.email or "").strip().lower()
+        email = (
+            sociallogin.account.extra_data.get("email")
+            or sociallogin.user.email
+            or ""
+        ).strip().lower()
         if not email:
             raise ImmediateHttpResponse(
-                redirect(f"{settings.FRONTEND_URL.rstrip('/')}/auth/oauth/error?reason=no_email")
+                redirect(
+                    build_oauth_error_redirect(settings.FRONTEND_URL, "no_email")
+                )
             )
 
         if sociallogin.user.pk:
