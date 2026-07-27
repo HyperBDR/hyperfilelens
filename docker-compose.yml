@@ -215,7 +215,10 @@ services:
         condition: service_healthy
       ui:
         condition: service_healthy
+      website:
+        condition: service_healthy
     ports:
+      - "${HFL_WEBSITE_BIND_ADDRESS:-0.0.0.0}:${HFL_WEBSITE_PORT:-11442}:10442"
       - "${HFL_TENANT_BIND_ADDRESS:-0.0.0.0}:${HFL_TENANT_PORT:-11443}:443"
       - "${HFL_ADMIN_BIND_ADDRESS:-0.0.0.0}:${HFL_ADMIN_PORT:-11444}:10444"
     volumes:
@@ -223,6 +226,7 @@ services:
       - ./deploy/nginx/snippets:/etc/nginx/snippets:ro
       - ./deploy/nginx/development-spa-locations.conf:/etc/nginx/snippets/hfl-tenant-spa-locations.conf:ro
       - ./deploy/nginx/development-spa-locations.conf:/etc/nginx/snippets/hfl-ops-spa-locations.conf:ro
+      - ./deploy/nginx/development-website-locations.conf:/etc/nginx/snippets/hfl-website-locations.conf:ro
       - ./data/lang-packs:/opt/hyperfilelens/lang-packs:ro
       - ./data/media:/opt/backend/media:ro
       - ./data/staticfiles:/opt/django-static:ro
@@ -235,11 +239,31 @@ services:
       test:
         [
           "CMD-SHELL",
-          "nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1/health >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1/ >/dev/null",
+          "nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1/health >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1/ >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:10442/en/ >/dev/null",
         ]
       interval: 5s
       timeout: 3s
       retries: 30
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "10"
+
+  website:
+    image: node:22-alpine
+    platform: linux/amd64
+    pull_policy: never
+    working_dir: /website
+    command: ["sh", "-c", "npm ci && npm run dev -- --host 0.0.0.0"]
+    volumes:
+      - ./website:/website
+      - website-node-modules:/website/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5174/en/ >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
     logging:
       driver: "json-file"
       options:
@@ -253,3 +277,4 @@ networks:
 
 volumes:
   frontend-node-modules:
+  website-node-modules:

@@ -206,6 +206,7 @@ Common settings include:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
+| `HFL_WEBSITE_PORT` | `11442` | English product website HTTPS port |
 | `HFL_TENANT_PORT` | `11443` | Tenant HTTPS console port |
 | `HFL_ADMIN_PORT` | `11444` | Platform Operations and Django Admin port |
 | `SOURCELENS_CONSOLE_PORT` | `11445` | SourceLens HTTPS console port |

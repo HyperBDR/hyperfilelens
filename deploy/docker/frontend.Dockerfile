@@ -41,6 +41,18 @@ ENV SENTRY_ENABLED=${SENTRY_ENABLED} \
     VITE_SHOW_EULA=${VITE_SHOW_EULA}
 RUN npm run build
 
+# English product website. It is served by the same gateway image on a
+# dedicated listener, without adding another runtime container or base image.
+FROM node:22-alpine AS website-build
+
+ARG NPM_REGISTRY
+WORKDIR /website
+COPY website/package.json website/package-lock.json ./
+RUN if [ -n "${NPM_REGISTRY}" ]; then npm config set registry "${NPM_REGISTRY}"; fi
+RUN npm ci
+COPY website/ ./
+RUN npm run build
+
 # Stage 2: Serve the SPA and reverse proxy through the official stable Nginx Alpine image.
 FROM nginx:stable-alpine
 
@@ -59,13 +71,15 @@ ENV TZ=UTC \
 RUN apk add --no-cache logrotate
 
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
+COPY --from=website-build /website/.vitepress/dist /usr/share/nginx/website
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/nginx/snippets /etc/nginx/snippets
 COPY deploy/logrotate/hyperfilelens.conf /etc/logrotate.d/hyperfilelens
 COPY deploy/docker/frontend-logrotate-loop.sh /usr/local/bin/logrotate-loop.sh
+COPY deploy/docker/website-runtime-config.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh
 
 RUN chmod 0644 /etc/logrotate.d/hyperfilelens \
- && chmod 0755 /usr/local/bin/logrotate-loop.sh \
+ && chmod 0755 /usr/local/bin/logrotate-loop.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh \
  && printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/logrotate-loop.sh --daemon' \
     > /docker-entrypoint.d/99-logrotate-loop.sh \
  && chmod 0755 /docker-entrypoint.d/99-logrotate-loop.sh

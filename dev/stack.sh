@@ -201,6 +201,8 @@ source_check=${ROOT}/tools/quality/check-english-source.py
 backend_source_mount=${ROOT}/src/backend:/opt/backend
 frontend_source_mount=${ROOT}/src/frontend:/app
 frontend_modules_volume=frontend-node-modules
+website_source_mount=${ROOT}/website:/website
+website_modules_volume=website-node-modules
 with_sourcelens=${WITH_SOURCELENS}
 sourcelens_runtime=image-only
 sourcelens_ref=${SOURCELENS_GIT_REF}
@@ -631,7 +633,7 @@ print_urls() {
 	local env_file="${ROOT}/.env"
 	local sl_env="${ROOT}/data/sourcelens/config/.env"
 	local seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
-	local tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
+	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
 	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_user lens_pass
 	local sl_user sl_email sl_pass
 
@@ -640,6 +642,8 @@ print_urls() {
 	seed_pass="$(read_env_value_or SEED_ADMIN_PASSWORD 'Admin@123' "${env_file}")"
 	seed_org="$(read_env_value_or SEED_ORG_NAME HyperFileLens "${env_file}")"
 	sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${env_file}" | tr 'A-Z' 'a-z')"
+	website_bind="$(read_env_value_or HFL_WEBSITE_BIND_ADDRESS 0.0.0.0 "${env_file}")"
+	website_port="$(read_env_value_or HFL_WEBSITE_PORT 11442 "${env_file}")"
 	tenant_bind="$(read_env_value_or HFL_TENANT_BIND_ADDRESS 0.0.0.0 "${env_file}")"
 	tenant_port="$(read_env_value_or HFL_TENANT_PORT 11443 "${env_file}")"
 	admin_bind="$(read_env_value_or HFL_ADMIN_BIND_ADDRESS 0.0.0.0 "${env_file}")"
@@ -666,6 +670,7 @@ print_urls() {
 ======================================================================
 
 HyperFileLens
+  Website          https://localhost:${website_port}/en/  (${website_bind})
   Tenant           https://localhost:${tenant_port}/  (${tenant_bind})
   Platform Ops     https://localhost:${admin_port}/  (${admin_bind})
   Django Admin     https://localhost:${admin_port}/admin/

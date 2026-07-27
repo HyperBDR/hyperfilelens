@@ -125,6 +125,7 @@ sudo env HFL_PUBLIC_HOST="${smoke_host}" HFL_SHOW_GENERATED_CREDENTIALS=0 \
 	bash "${pkg_root}/install.sh" "${upgrade_args[@]}"
 wait_for_release_services
 
+export HFL_WEBSITE_PORT=11442
 export HFL_TENANT_PORT=11443
 export HFL_ADMIN_PORT=11444
 export SOURCELENS_CONSOLE_PORT=11445
@@ -136,6 +137,7 @@ SEED_ADMIN_PASSWORD="$(sudo sed -n 's/^SEED_ADMIN_PASSWORD=//p' /opt/hyperfilele
 export SMOKE_REQUIRE_HMR=0
 export SMOKE_SOURCELENS_ENV_FILE=/opt/hyperfilelens/data/sourcelens/config/.env
 sudo env \
+	HFL_WEBSITE_PORT="${HFL_WEBSITE_PORT}" \
 	HFL_TENANT_PORT="${HFL_TENANT_PORT}" \
 	HFL_ADMIN_PORT="${HFL_ADMIN_PORT}" \
 	SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT}" \
