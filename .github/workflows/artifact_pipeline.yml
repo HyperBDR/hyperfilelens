@@ -233,6 +233,7 @@ jobs:
           set -euo pipefail
           uv sync --locked --group dev
           uv run ruff check src/backend
+          uv run python src/backend/manage.py makemigrations --check --dry-run
           uv run python src/backend/manage.py test
 
       - name: Frontend checks

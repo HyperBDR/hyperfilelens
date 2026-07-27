@@ -34,7 +34,10 @@ class InsightReport(models.Model):
         db_table = "insight_report"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["organization", "report_type", "created_at"]),
+            models.Index(
+                fields=["organization", "report_type", "created_at"],
+                name="insight_rep_organ_8e0d6a_idx",
+            ),
         ]
 
 
@@ -64,6 +67,12 @@ class InsightFinding(models.Model):
         db_table = "insight_finding"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["organization", "snapshot", "created_at"]),
-            models.Index(fields=["organization", "finding_type", "created_at"]),
+            models.Index(
+                fields=["organization", "snapshot", "created_at"],
+                name="insight_fin_organ_6ee5f6_idx",
+            ),
+            models.Index(
+                fields=["organization", "finding_type", "created_at"],
+                name="insight_fin_organ_8fcb32_idx",
+            ),
         ]

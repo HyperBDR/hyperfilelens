@@ -32,8 +32,14 @@ class SourceBackupPipelineEntry(OrganizationScopedModel):
             )
         ]
         indexes = [
-            models.Index(fields=["organization", "step"]),
-            models.Index(fields=["organization", "source_kind", "ref_id"]),
+            models.Index(
+                fields=["organization", "step"],
+                name="source_back_organiz_0f0f0f_idx",
+            ),
+            models.Index(
+                fields=["organization", "source_kind", "ref_id"],
+                name="source_back_organiz_1a1a1a_idx",
+            ),
         ]
 
     def __str__(self) -> str:

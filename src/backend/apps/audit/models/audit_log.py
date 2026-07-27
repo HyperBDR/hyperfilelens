@@ -67,11 +67,20 @@ class AuditLog(models.Model):
         db_table = "audit_logs"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["organization", "created_at"]),
-            models.Index(fields=["organization", "action", "created_at"]),
-            models.Index(fields=["correlation_id"], name="audit_correlation_id_idx"),
+            models.Index(
+                fields=["organization", "created_at"],
+                name="audit_log_orga_9b4d4b_idx",
+            ),
+            models.Index(
+                fields=["organization", "action", "created_at"],
+                name="audit_log_orga_5c1b2b_idx",
+            ),
+            models.Index(fields=["correlation_id"], name="audit_corr_id_idx"),
             models.Index(fields=["resource_type", "resource_id"], name="audit_resource_idx"),
-            models.Index(fields=["organization", "result", "created_at"]),
+            models.Index(
+                fields=["organization", "result", "created_at"],
+                name="audit_org_result_created_idx",
+            ),
         ]
 
     def save(self, *args, **kwargs):

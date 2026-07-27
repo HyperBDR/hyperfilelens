@@ -106,27 +106,16 @@ const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
 const resetStep = ref<'request' | 'reset'>('request')
 
-// Email validation
-const regEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
-
 function checkMail(value: string) {
-  if (!value) {
+  if (!value.trim()) {
     return t('login.emailErrRequired')
-  }
-  if (!regEmail.test(value)) {
-    return t('login.emailErrFormat')
   }
   return ''
 }
 
-// Password validation: 8-20 chars, must contain letters and digits
 function checkPassword(value: string) {
   if (!value) {
     return t('login.passwordErrRequired')
-  }
-  const pattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z\d.!"@#$%&'*():;\\+/=?^_`{|}~><-]{8,20}$/
-  if (!pattern.test(value)) {
-    return t('login.passwordErrFormat')
   }
   return ''
 }
@@ -154,23 +143,6 @@ function validatePasswordOnInput() {
     formItems.password.showError = false
   }
 }
-
-// Password strength calculation
-const passwordStrength = computed(() => {
-  const pwd = formItems.password.value
-  if (!pwd) return { level: 0, text: '' }
-
-  let score = 0
-  if (pwd.length >= 8) score++
-  if (pwd.length >= 12) score++
-  if (/[a-z]/.test(pwd) && /[A-Z]/.test(pwd)) score++
-  if (/\d/.test(pwd)) score++
-  if (/[!"@#$%&'*():;\\+/=?^_`{|}~><-]/.test(pwd)) score++
-
-  if (score <= 2) return { level: 1, text: t('login.passwordWeak'), color: 'var(--color-error)' }
-  if (score <= 3) return { level: 2, text: t('login.passwordMedium'), color: 'var(--color-warning)' }
-  return { level: 3, text: t('login.passwordStrong'), color: 'var(--color-success)' }
-})
 
 function blockUnavailableTurnstile() {
   blockTurnstile()
@@ -484,14 +456,14 @@ const cardTitle = computed(() => {
   return t('findPwd.welcomeTitle')
 })
 
-const credentialsValid = computed(() => (
+const credentialsPresent = computed(() => (
   checkMail(formItems.email.value) === '' &&
   checkPassword(formItems.password.value) === ''
 ))
 
 const canSubmitLogin = computed(() => {
   if (submitLoading.value) return false
-  if (!credentialsValid.value) return false
+  if (!credentialsPresent.value) return false
   if (isTurnstilePending.value) return false
   if (isTurnstileBlocked.value) return false
   if (isTurnstileReady.value) return Boolean(turnstileToken.value)
@@ -642,16 +614,6 @@ onMounted(async () => {
               <EyeOff v-if="showPassword" class="eye-icon" :size="16" />
               <Eye v-else class="eye-icon" :size="16" />
             </button>
-          </div>
-          <!-- Password strength indicator -->
-          <div v-if="formItems.password.value" class="strength-bar-wrapper">
-            <div class="strength-bar">
-              <div
-                class="strength-fill"
-                :style="{ width: (passwordStrength.level / 3 * 100) + '%', background: passwordStrength.color }"
-              ></div>
-            </div>
-            <span class="strength-text" :style="{ color: passwordStrength.color }">{{ passwordStrength.text }}</span>
           </div>
           <p v-if="formItems.password.showError" class="error-msg">{{ formItems.password.errorMsg }}</p>
         </div>
@@ -1005,31 +967,6 @@ onMounted(async () => {
   font-size: 12px;
   color: #f85149;
   padding-left: 2px;
-}
-
-/* Password strength */
-.strength-bar-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.strength-bar {
-  flex: 1;
-  height: 3px;
-  background: #3A3B40;
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.strength-fill {
-  height: 100%;
-  transition: width 0.3s, background 0.3s;
-}
-
-.strength-text {
-  font-size: 12px;
-  font-weight: 500;
 }
 
 /* Submit button */

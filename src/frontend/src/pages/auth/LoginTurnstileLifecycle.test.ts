@@ -196,7 +196,7 @@ describe('Login Turnstile lifecycle', () => {
     replayMount.unmount()
   })
 
-  it('requires valid credentials after Turnstile succeeds', async () => {
+  it('requires non-empty credentials after Turnstile succeeds', async () => {
     const wrapper = await mountLogin(1440)
     const inputs = wrapper.findAll('input')
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
@@ -213,12 +213,36 @@ describe('Login Turnstile lifecycle', () => {
     expect(submit.attributes('disabled')).toBeDefined()
 
     await inputs[1].setValue('invalid')
-    expect(submit.attributes('disabled')).toBeDefined()
-
-    await inputs[1].setValue('ValidPass123')
     expect(submit.attributes('disabled')).toBeUndefined()
     expect(emailLoginCalls()).toHaveLength(0)
 
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['short legacy password', 'legacy'],
+    ['password longer than twenty characters', 'This-password-is-longer-than-twenty-characters'],
+    ['Unicode password', '历史密码-正确'],
+  ])('submits a %s without applying password-creation rules', async (_name, password) => {
+    const wrapper = await mountLogin(1440)
+    const inputs = wrapper.findAll('input')
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    await inputs[0].setValue('person@example.com')
+    await inputs[1].setValue(password)
+    expect(wrapper.find('.strength-bar-wrapper').exists()).toBe(false)
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    await inputs[1].trigger('keyup.enter')
+    await flushPromises()
+
+    expect(emailLoginCalls()).toHaveLength(1)
+    expect(submittedBody(emailLoginCalls()[0])).toMatchObject({
+      email: 'person@example.com',
+      password,
+      turnstile_token: 'verified-token',
+    })
     wrapper.unmount()
   })
 

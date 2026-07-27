@@ -37,8 +37,14 @@ class PlatformAuditLog(models.Model):
         db_table = "platform_ops_audit_log"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["action", "created_at"]),
-            models.Index(fields=["target_type", "created_at"]),
+            models.Index(
+                fields=["action", "created_at"],
+                name="platform_op_action_6a0f0d_idx",
+            ),
+            models.Index(
+                fields=["target_type", "created_at"],
+                name="platform_op_target__f8d4b2_idx",
+            ),
         ]
 
     def __str__(self) -> str:
