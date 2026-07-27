@@ -15,9 +15,9 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-vue-next'
-import HflPagination from '../../../components/HflPagination.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
+import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import { apiErrorMessage } from '../../../lib/api'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import PlatformOpsOrgLink from '../../components/PlatformOpsOrgLink.vue'
@@ -266,8 +266,7 @@ watch(() => filters.search, () => {
     reloadFromFirstPage()
   }, 320)
 })
-watch(() => pagination.page, () => void load())
-watch(() => pagination.pageSize, () => reloadFromFirstPage())
+watch(() => [pagination.page, pagination.pageSize], () => void load())
 
 onMounted(() => {
   const values = presetRange('today')
@@ -366,7 +365,7 @@ onBeforeUnmount(() => {
         <el-table-column label="Cost" width="120"><template #default="{ row }">{{ formatCost(row.estimated_cost, row.cost_currency) }}</template></el-table-column>
         <template #empty><el-empty description="No AI requests match the current filters" :image-size="68" /></template>
       </el-table>
-      <div class="platform-ai-usage__pagination"><HflPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></div>
+      <div class="hfl-list-footer"><PlatformOpsPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" :size="drawerSize" destroy-on-close>
@@ -404,7 +403,6 @@ onBeforeUnmount(() => {
 .platform-ai-usage__account-button:hover,.platform-ai-usage__request-button:hover { color: var(--color-primary, #6d5ef6); text-decoration: underline; text-underline-offset: 3px; }
 .platform-ai-usage__cell-meta { display: block; margin-top: 2px; overflow: hidden; color: var(--color-text-secondary, #70707e); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .platform-ai-usage .is-attention { color: var(--color-warning, #e08b0b); font-weight: 600; }
-.platform-ai-usage__pagination { padding: 10px 16px; border-top: 1px solid var(--color-border-light, #f2f2f6); }
 @media (max-width: 1500px) { .platform-ai-usage__stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .platform-ai-usage__lead { flex-direction: column; } .platform-ai-usage__period { width: 100%; flex-wrap: wrap; } .platform-ai-usage__analysis-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .platform-ai-usage__stats { grid-template-columns: 1fr; } .platform-ai-usage__period,.platform-ai-usage__segments { width: 100%; } .platform-ai-usage__segments button { flex: 1; padding-inline: 4px; } .platform-ai-usage__period :deep(.el-date-editor) { width: calc(100% - 44px); } .platform-ai-usage__filters { grid-template-columns: 1fr; } .platform-ai-usage__panel { overflow-x: auto; } }

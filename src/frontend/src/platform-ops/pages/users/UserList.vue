@@ -14,10 +14,10 @@ import {
   UserX,
   Users,
 } from 'lucide-vue-next'
-import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
 import HflTypeLabel from '../../../components/HflTypeLabel.vue'
 import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
+import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import ModulePage from '../../../components/ModulePage.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
@@ -413,7 +413,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           </el-table>
         </template>
         <template #footer>
-          <HflPagination
+          <PlatformOpsPagination
             v-model:current-page="pagination.page"
             v-model:page-size="pagination.pageSize"
             :total="pagination.count"

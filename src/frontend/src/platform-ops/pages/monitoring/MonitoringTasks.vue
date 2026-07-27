@@ -6,9 +6,9 @@ import { ElMessage } from 'element-plus'
 import { Activity, CircleCheck, CircleX, Clock3, RefreshCw, Search } from 'lucide-vue-next'
 import DangerConfirmDialog, { type DangerConfirmItem } from '../../../components/DangerConfirmDialog.vue'
 import ModulePage from '../../../components/ModulePage.vue'
-import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
+import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import TaskTypeLabel from '../../../components/TaskTypeLabel.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
@@ -374,7 +374,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           </el-table>
         </template>
         <template #footer>
-          <HflPagination
+          <PlatformOpsPagination
             v-model:current-page="pagination.page"
             v-model:page-size="pagination.pageSize"
             :total="pagination.count"

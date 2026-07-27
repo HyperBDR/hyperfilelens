@@ -4,8 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { RefreshCw } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
-import HflPagination from '../../../components/HflPagination.vue'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
+import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import { fetchAgentReleases } from '../../lib/platformOpsApi'
 import { PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT, PLATFORM_OPS_TABLE_HEADER_STYLE } from '../../lib/tableUi'
 import { apiErrorMessage } from '../../../lib/api'
@@ -155,10 +155,9 @@ watch([currentPage, pageSize], load)
         </el-table>
 
         <div class="hfl-list-footer">
-          <HflPagination
+          <PlatformOpsPagination
             v-model:current-page="currentPage"
             v-model:page-size="pageSize"
-            class="hfl-list-footer__pagination"
             :total="totalCount"
           />
         </div>
