@@ -23,6 +23,9 @@ const i18n = createI18n({
     en: {
       login: { captchaLoading: 'Loading Cloudflare human verification...' },
     },
+    fr: {
+      login: { captchaLoading: 'Chargement de la vérification humaine...' },
+    },
   },
 })
 
@@ -40,6 +43,7 @@ describe('TurnstileWidget lifecycle', () => {
     vi.useFakeTimers()
     vi.mocked(preloadTurnstileScript).mockReset().mockResolvedValue(undefined)
     vi.mocked(resetTurnstileScriptLoad).mockReset()
+    i18n.global.locale.value = 'en'
     delete window.turnstile
   })
 
@@ -48,7 +52,7 @@ describe('TurnstileWidget lifecycle', () => {
     delete window.turnstile
   })
 
-  it('moves from loading to challenge, success, expiration, and reset', async () => {
+  it('resets expired challenges and accepts replacement tokens repeatedly', async () => {
     let renderOptions: RenderOptions | undefined
     const reset = vi.fn()
     const remove = vi.fn()
@@ -77,9 +81,34 @@ describe('TurnstileWidget lifecycle', () => {
 
     renderOptions!['expired-callback']?.()
     expect(wrapper.emitted('expire')).toHaveLength(1)
+    expect(reset).toHaveBeenNthCalledWith(1, 'widget-1')
+
+    renderOptions!.callback('replacement-token')
+    expect(wrapper.emitted('success')).toEqual([
+      ['verified-token'],
+      ['replacement-token'],
+    ])
+
+    renderOptions!['expired-callback']?.()
+    expect(wrapper.emitted('expire')).toHaveLength(2)
+    expect(reset).toHaveBeenNthCalledWith(2, 'widget-1')
+
+    renderOptions!.callback('second-replacement-token')
+    expect(wrapper.emitted('success')).toEqual([
+      ['verified-token'],
+      ['replacement-token'],
+      ['second-replacement-token'],
+    ])
 
     wrapper.vm.reset()
-    expect(reset).toHaveBeenCalledWith('widget-1')
+    expect(reset).toHaveBeenNthCalledWith(3, 'widget-1')
+    renderOptions!.callback('manual-reset-token')
+    expect(wrapper.emitted('success')).toEqual([
+      ['verified-token'],
+      ['replacement-token'],
+      ['second-replacement-token'],
+      ['manual-reset-token'],
+    ])
     wrapper.unmount()
     expect(remove).toHaveBeenCalledWith('widget-1')
   })
@@ -103,6 +132,34 @@ describe('TurnstileWidget lifecycle', () => {
 
     expect(wrapper.emitted('error')).toHaveLength(1)
     expect(wrapper.find('.turnstile-widget__loading').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('invalidates the token without reporting expiration when language changes', async () => {
+    const renderOptions: RenderOptions[] = []
+    const remove = vi.fn()
+    window.turnstile = {
+      ready: callback => callback(),
+      render: (container, options) => {
+        renderOptions.push(options)
+        container.append(document.createElement('iframe'))
+        return `widget-${renderOptions.length}`
+      },
+      reset: vi.fn(),
+      remove,
+    }
+
+    const wrapper = mountWidget()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(100)
+
+    i18n.global.locale.value = 'fr'
+    await flushPromises()
+
+    expect(wrapper.emitted('invalidate')).toHaveLength(1)
+    expect(wrapper.emitted('expire')).toBeUndefined()
+    expect(remove).toHaveBeenCalledWith('widget-1')
+    expect(renderOptions.at(-1)?.language).toBe('fr')
     wrapper.unmount()
   })
 
