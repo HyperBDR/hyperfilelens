@@ -7,6 +7,7 @@ import { beginRouteRequestScope } from '../lib/routeRequestAbort'
 import { beginRouteTransition, finishRouteTransition } from '../lib/routeTransition'
 import { lazyRoute } from './lazyRoute'
 import { isDynamicImportFailure, reloadOnceForChunkLoadFailure } from './chunkLoadRecovery'
+import { LOGIN_ROUTE_NAME, withoutLegacySessionReason } from '../lib/loginNavigation'
 
 import { prefetchAuthTurnstile } from '../composables/useTurnstileConfig'
 
@@ -62,7 +63,7 @@ const GlobalSearchPage = lazyRoute(() => import('../pages/Search.vue'))
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', component: LoginPage, beforeEnter: authTurnstilePrefetch },
+    { path: '/login', name: LOGIN_ROUTE_NAME, component: LoginPage, beforeEnter: authTurnstilePrefetch },
     { path: '/register', component: RegisterPage, beforeEnter: authTurnstilePrefetch },
     { path: '/auth/oauth/callback', component: OAuthCallbackPage },
     { path: '/auth/oauth/error', component: OAuthErrorPage },
@@ -173,6 +174,18 @@ export const router = createRouter({
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
+})
+
+router.beforeEach((to) => {
+  if (to.name !== LOGIN_ROUTE_NAME) return
+  const query = withoutLegacySessionReason(to.query)
+  if (!query) return
+  return {
+    path: to.path,
+    query,
+    hash: to.hash,
+    replace: true,
+  }
 })
 
 router.beforeEach((to, from) => {

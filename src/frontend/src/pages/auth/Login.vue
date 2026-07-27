@@ -12,6 +12,11 @@ import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
+import { resolveSafeLoginRedirect } from '../../lib/loginNavigation'
+import {
+  consumeSessionNotice,
+  sessionNoticeMessageKey,
+} from '../../lib/sessionNotice'
 
 const emailSignupEnabled = ref(false)
 const passwordResetAvailable = ref(false)
@@ -26,6 +31,7 @@ const {
 const router = useRouter()
 const route = useRoute()
 const sessionNoticeDismissed = ref(false)
+const sessionNoticeReason = ref(consumeSessionNotice())
 
 const {
   turnstileSiteKey,
@@ -45,17 +51,6 @@ const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(nu
 const googleEnabled = ref(false)
 const googleLoginUrl = ref('/accounts/google/login/?process=login')
 const googleLoading = ref(false)
-
-const SESSION_REASON_MESSAGE_KEYS: Record<string, string> = {
-  TOKEN_EXPIRED: 'login.sessionExpired',
-  REFRESH_EXPIRED: 'login.sessionExpired',
-  OTHER_DEVICE_LOGIN: 'login.sessionOtherDevice',
-  PASSWORD_CHANGED: 'login.sessionPasswordChanged',
-  ACCOUNT_DISABLED: 'login.sessionAccountDisabled',
-  TOKEN_REUSED: 'login.sessionTokenReused',
-  INVALID_TOKEN: 'login.sessionInvalid',
-  TOKEN_BLACKLISTED: 'login.sessionInvalid',
-}
 
 // Session invalid error codes that should show a dialog
 const SESSION_INVALID_CODES = [
@@ -95,9 +90,7 @@ if (typeof emailFromQuery === 'string' && emailFromQuery.trim()) {
 
 const sessionNoticeMessage = computed(() => {
   if (sessionNoticeDismissed.value) return ''
-  const reason = route.query.reason
-  if (typeof reason !== 'string') return ''
-  const key = SESSION_REASON_MESSAGE_KEYS[reason]
+  const key = sessionNoticeMessageKey(sessionNoticeReason.value)
   return key ? t(key) : ''
 })
 
@@ -264,7 +257,7 @@ function validateForm() {
 }
 
 function showSessionErrorDialog(errorCode: string) {
-  const message = t(SESSION_REASON_MESSAGE_KEYS[errorCode] || 'login.sessionExpired')
+  const message = t(sessionNoticeMessageKey(errorCode) || 'login.sessionExpired')
   ElMessageBox.alert(message, t('login.sessionExpired'), {
     confirmButtonText: t('login.btnSubmit'),
     type: 'warning',
@@ -274,15 +267,8 @@ function showSessionErrorDialog(errorCode: string) {
 }
 
 async function resolveLoginTargetPath(): Promise<string> {
-  const redirect = route.query.redirect
-  if (
-    typeof redirect === 'string' &&
-    redirect.startsWith('/') &&
-    !redirect.startsWith('//') &&
-    !redirect.startsWith('/login')
-  ) {
-    return redirect
-  }
+  const redirect = resolveSafeLoginRedirect(route.query.redirect)
+  if (redirect) return redirect
   return resolvePostLoginPath()
 }
 

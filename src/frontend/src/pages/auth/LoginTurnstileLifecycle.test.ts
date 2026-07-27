@@ -7,6 +7,7 @@ import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../../locales/en'
+import { storeSessionNotice } from '../../lib/sessionNotice'
 import Login from './Login.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   fetchDeployProfile: vi.fn(),
   loadTurnstileConfig: vi.fn(),
   resetWidget: vi.fn(),
+  routeQuery: {} as Record<string, string>,
   routerPush: vi.fn(),
   setStoredOrgKey: vi.fn(),
   setUser: vi.fn(),
@@ -62,7 +64,7 @@ vi.mock('../../lib/appConfig', () => ({
 }))
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: {} }),
+  useRoute: () => ({ query: mocks.routeQuery }),
   useRouter: () => ({ push: mocks.routerPush }),
 }))
 
@@ -155,6 +157,10 @@ function submittedBody(call: unknown[]) {
 describe('Login Turnstile lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.sessionStorage.clear()
+    for (const key of Object.keys(mocks.routeQuery)) {
+      delete mocks.routeQuery[key]
+    }
     mocks.fetchDeployProfile.mockResolvedValue({
       email_signup_enabled: false,
       password_reset_available: false,
@@ -164,6 +170,30 @@ describe('Login Turnstile lifecycle', () => {
       token ? { turnstile_token: token } : {}
     ))
     installDefaultApiMock()
+  })
+
+  it('ignores a forged session reason from the public URL', async () => {
+    mocks.routeQuery.reason = 'TOKEN_REUSED'
+    mocks.routeQuery.redirect = '/ops/alerts/incidents'
+
+    const wrapper = await mountLogin(1440)
+
+    expect(wrapper.find('.session-alert').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows a backend-produced session notice only once', async () => {
+    expect(storeSessionNotice('TOKEN_REUSED')).toBe(true)
+
+    const firstMount = await mountLogin(1440)
+    expect(firstMount.get('.session-alert').text()).toContain(
+      'Unusual sign-in activity. Sign in again.',
+    )
+    firstMount.unmount()
+
+    const replayMount = await mountLogin(1440)
+    expect(replayMount.find('.session-alert').exists()).toBe(false)
+    replayMount.unmount()
   })
 
   it.each([

@@ -12,6 +12,7 @@ import { getCorrelationHeaders } from './requestContext'
 import { getTraceId, logger, setTraceId } from './logger'
 import { refreshAuthToken } from './authRefresh'
 import { getRouteRequestSignal } from './routeRequestAbort'
+import { isSessionInvalidReason, storeSessionNotice } from './sessionNotice'
 
 export type ApiError = {
   status: number
@@ -26,15 +27,6 @@ const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 
 let currentLocale = 'en'
 let isHandlingSessionExpired = false
-
-const SESSION_INVALID_CODES = [
-  'OTHER_DEVICE_LOGIN',
-  'PASSWORD_CHANGED',
-  'ACCOUNT_DISABLED',
-  'TOKEN_REUSED',
-  'INVALID_TOKEN',
-  'TOKEN_BLACKLISTED',
-]
 
 export function setLocale(locale: string) {
   currentLocale = locale
@@ -149,10 +141,10 @@ async function handleSessionExpired(reason = 'REFRESH_EXPIRED'): Promise<void> {
     clearAuth()
 
     if (currentRoute.path !== '/login') {
+      storeSessionNotice(reason)
       await router.replace({
         path: '/login',
         query: {
-          reason,
           redirect,
         },
       })
@@ -161,7 +153,8 @@ async function handleSessionExpired(reason = 'REFRESH_EXPIRED'): Promise<void> {
     clearAuth()
     if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
       const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`
-      const params = new URLSearchParams({ reason, redirect })
+      storeSessionNotice(reason)
+      const params = new URLSearchParams({ redirect })
       window.location.assign(`/login?${params.toString()}`)
     }
   } finally {
@@ -297,7 +290,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
       // These security/lifecycle errors cannot be repaired by refreshing.
       // A plain missing/expired access token must still try the refresh endpoint.
-      if (errorCode && SESSION_INVALID_CODES.includes(errorCode)) {
+      if (isSessionInvalidReason(errorCode)) {
         void handleSessionExpired(errorCode)
         throw buildApiError(res, data)
       }
