@@ -200,9 +200,9 @@ if grep -F 'PROD_PUBLIC_HOST' "${workflow}" "${production_workflow}" >/dev/null;
 	printf 'ERROR: release workflow still uses the ambiguous PROD_PUBLIC_HOST variable\n' >&2
 	exit 1
 fi
-grep -F '"TURNSTILE_ENABLED=$TURNSTILE_ENABLED"' \
+grep -F '"TURNSTILE_ENABLED"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F '"HFL_INSECURE_TLS=$HFL_INSECURE_TLS"' \
+grep -F '"HFL_INSECURE_TLS"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'test:1|preprod:1|prod:0' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -236,9 +236,33 @@ if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
 	printf 'ERROR: AI model API key must not be persisted in the runtime .env\n' >&2
 	exit 1
 fi
-grep -F '"HFL_EMAIL_SIGNUP_ENABLED=false"' \
+for variable in EMAIL_SIGNUP_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
+	grep -F "vars.TEST_${variable}" "${workflow}" >/dev/null
+	grep -F "vars.PREPROD_${variable}" "${workflow}" >/dev/null
+	grep -F "vars.PROD_${variable}" "${production_workflow}" >/dev/null
+done
+grep -F 'secrets.TEST_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
+grep -F 'secrets.PREPROD_GOOGLE_CLIENT_SECRET' "${workflow}" "${release_workflow}" >/dev/null
+grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${production_workflow}" >/dev/null
+for runtime_key in \
+	HFL_EMAIL_SIGNUP_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
+	GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SMTP_PASSWORD; do
+	grep -F "\"${runtime_key}\"" "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+done
+if grep -F 'HFL_EMAIL_SIGNUP_ENABLED=false' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
+	printf 'ERROR: reusable deployment must not hardcode email sign-up off\n' >&2
+	exit 1
+fi
+grep -F 'Google OAuth settings are missing or malformed' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F '"SMTP_PASSWORD=$SMTP_PASSWORD"' \
+grep -F 'SMTP settings are partial; deployment will preserve' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'No SMTP settings were staged' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'python manage.py ensure_deployment_identity_settings' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'HFL_IDENTITY_STATUS=warning' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'umask 077 && cat > /var/tmp/hyperfilelens-runtime-' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -353,11 +377,11 @@ grep -F 'DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"' \
 	"${ROOT}/dev/stack.sh" >/dev/null
 [[ -x "${ROOT}/dev/bootstrap-macos.sh" && -f "${ROOT}/dev/Brewfile" ]]
 deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
-[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 5 ]] || {
+[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 6 ]] || {
 	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
 	exit 1
 }
-[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 5 ]] || {
+[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 6 ]] || {
 	printf 'ERROR: every deployment SSH call must set ServerAliveCountMax\n' >&2
 	exit 1
 }

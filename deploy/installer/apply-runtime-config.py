@@ -13,6 +13,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 RUNTIME_KEYS = {
     "HFL_EMAIL_SIGNUP_ENABLED",
+    "HFL_GOOGLE_OAUTH_ENABLED",
     "HFL_INSECURE_TLS",
     "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
     "TURNSTILE_ENABLED",
@@ -24,8 +25,13 @@ RUNTIME_KEYS = {
     "SMTP_PASSWORD",
     "SMTP_SECURITY",
     "EMAIL_FROM",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
 }
 KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+GOOGLE_CLIENT_ID_PATTERN = re.compile(
+    r"^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$"
+)
 
 
 def warn(message: str) -> None:
@@ -111,12 +117,15 @@ def smtp_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     )
     present = [name for name in names if values.get(name, "") != ""]
     if not present:
+        warn("SMTP deployment configuration is empty; preserving installed email settings")
         return {}
     missing = [name for name in names if values.get(name, "") == ""]
     if missing:
-        raise SystemExit(
-            "partial SMTP deployment configuration; missing: " + ", ".join(missing)
+        warn(
+            "partial SMTP deployment configuration; preserving installed email "
+            "settings (missing: " + ", ".join(missing) + ")"
         )
+        return {}
 
     host = values["SMTP_HOST"].strip()
     username = values["SMTP_USERNAME"].strip()
@@ -124,21 +133,28 @@ def smtp_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     security = values["SMTP_SECURITY"].strip().lower()
     from_email = values["EMAIL_FROM"].strip()
     if not host or re.search(r"\s", host):
-        raise SystemExit("SMTP_HOST must be a non-empty hostname without whitespace")
+        warn("invalid SMTP host; preserving installed email settings")
+        return {}
     if not username or re.search(r"[\r\n]", username):
-        raise SystemExit("SMTP_USERNAME must be non-empty and single-line")
+        warn("invalid SMTP username; preserving installed email settings")
+        return {}
     if not password or re.search(r"[\x00\r\n]", password):
-        raise SystemExit("SMTP_PASSWORD must be non-empty and single-line")
+        warn("invalid SMTP password; preserving installed email settings")
+        return {}
     if not from_email or re.search(r"[\r\n]", from_email):
-        raise SystemExit("EMAIL_FROM must be non-empty and single-line")
+        warn("invalid sender identity; preserving installed email settings")
+        return {}
     try:
         port = int(values["SMTP_PORT"])
-    except ValueError as exc:
-        raise SystemExit("SMTP_PORT must be an integer between 1 and 65535") from exc
+    except ValueError:
+        warn("invalid SMTP port; preserving installed email settings")
+        return {}
     if port < 1 or port > 65535:
-        raise SystemExit("SMTP_PORT must be an integer between 1 and 65535")
+        warn("SMTP port is outside 1-65535; preserving installed email settings")
+        return {}
     if security not in {"ssl", "starttls", "none"}:
-        raise SystemExit("SMTP_SECURITY must be one of: ssl, starttls, none")
+        warn("invalid SMTP security mode; preserving installed email settings")
+        return {}
 
     return {
         "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
@@ -149,6 +165,60 @@ def smtp_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
         "EMAIL_USE_TLS": "true" if security == "starttls" else "false",
         "EMAIL_USE_SSL": "true" if security == "ssl" else "false",
         "DEFAULT_FROM_EMAIL": from_email,
+    }
+
+
+def google_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
+    """Apply Google OAuth as one optional group, preserving installed values on errors."""
+    enabled = values.get("HFL_GOOGLE_OAUTH_ENABLED", "").strip().lower()
+    client_id = values.get("GOOGLE_CLIENT_ID", "").strip()
+    client_secret = values.get("GOOGLE_CLIENT_SECRET", "")
+    if enabled not in {"true", "false"}:
+        warn("invalid Google OAuth enabled value; preserving installed Google settings")
+        return {}
+    if enabled == "false":
+        return {"HFL_GOOGLE_OAUTH_ENABLED": "false"}
+    if not GOOGLE_CLIENT_ID_PATTERN.fullmatch(client_id):
+        warn("invalid Google OAuth client ID; preserving installed Google settings")
+        return {}
+    if not client_secret or re.search(r"[\x00\r\n]", client_secret):
+        warn("invalid Google OAuth client secret; preserving installed Google settings")
+        return {}
+    return {
+        "HFL_GOOGLE_OAUTH_ENABLED": "true",
+        "GOOGLE_CLIENT_ID": client_id,
+        "GOOGLE_CLIENT_SECRET": client_secret,
+    }
+
+
+def turnstile_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
+    """Apply Turnstile atomically without replacing usable installed credentials."""
+    enabled = values.get("TURNSTILE_ENABLED", "").strip().lower()
+    site_key = values.get("TURNSTILE_SITE_KEY", "").strip()
+    secret_key = values.get("TURNSTILE_SECRET_KEY", "")
+    if enabled not in {"true", "false"}:
+        warn("invalid Turnstile enabled value; preserving installed settings")
+        return {}
+
+    credentials_present = bool(site_key or secret_key)
+    credentials_valid = bool(
+        KEY_PATTERN.fullmatch(site_key)
+        and secret_key
+        and KEY_PATTERN.fullmatch(secret_key)
+    )
+    if enabled == "false" and not credentials_present:
+        return {"TURNSTILE_ENABLED": "false"}
+    if not credentials_valid:
+        warn("incomplete or malformed Turnstile credentials; preserving installed settings")
+        return (
+            {"TURNSTILE_ENABLED": "false"}
+            if enabled == "false"
+            else {}
+        )
+    return {
+        "TURNSTILE_ENABLED": enabled,
+        "TURNSTILE_SITE_KEY": site_key,
+        "TURNSTILE_SECRET_KEY": secret_key,
     }
 
 
@@ -196,16 +266,16 @@ def apply_configuration(
     runtime_values = read_runtime_values(runtime_path)
     if runtime_path is not None:
         signup_enabled = runtime_values.get("HFL_EMAIL_SIGNUP_ENABLED", "").lower()
-        if signup_enabled != "false":
-            raise SystemExit(
-                "SaaS deployment runtime configuration must disable email sign-up"
-            )
-        updates["HFL_EMAIL_SIGNUP_ENABLED"] = "false"
+        if signup_enabled in {"true", "false"}:
+            updates["HFL_EMAIL_SIGNUP_ENABLED"] = signup_enabled
+        else:
+            warn("invalid email sign-up value; preserving installed sign-up setting")
         insecure_tls = runtime_values.get("HFL_INSECURE_TLS", "")
         if insecure_tls not in {"0", "1"}:
             raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
         updates["HFL_INSECURE_TLS"] = insecure_tls
         updates.update(smtp_runtime_updates(runtime_values))
+        updates.update(google_runtime_updates(runtime_values))
 
         gateway_enabled = runtime_values.get(
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", ""
@@ -217,18 +287,7 @@ def apply_configuration(
                 "invalid platform Gateway auto-deploy value; preserving installed value"
             )
 
-        enabled = runtime_values.get("TURNSTILE_ENABLED", "").lower()
-        if enabled in {"true", "false"}:
-            updates["TURNSTILE_ENABLED"] = enabled
-        else:
-            warn("invalid Turnstile enabled value; preserving installed value")
-
-        for name in ("TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"):
-            value = runtime_values.get(name, "")
-            if value and KEY_PATTERN.fullmatch(value):
-                updates[name] = value
-            else:
-                warn(f"{name} is empty or malformed; preserving installed value")
+        updates.update(turnstile_runtime_updates(runtime_values))
 
     direct_host = direct_host.strip()
     if direct_host and (
@@ -290,7 +349,7 @@ def apply_configuration(
         key = line.split("=", 1)[0] if "=" in line else ""
         if key in updates:
             value = updates[key]
-            if key == "EMAIL_HOST_PASSWORD":
+            if key in {"EMAIL_HOST_PASSWORD", "GOOGLE_CLIENT_SECRET"}:
                 value = compose_env_value(value)
             updated.append(f"{key}={value}")
             seen.add(key)
@@ -298,7 +357,7 @@ def apply_configuration(
             updated.append(line)
     for key, value in updates.items():
         if key not in seen:
-            if key == "EMAIL_HOST_PASSWORD":
+            if key in {"EMAIL_HOST_PASSWORD", "GOOGLE_CLIENT_SECRET"}:
                 value = compose_env_value(value)
             updated.append(f"{key}={value}")
     atomic_write(env_path, updated)

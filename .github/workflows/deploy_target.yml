@@ -51,6 +51,21 @@ on:
         description: Require Turnstile on the SaaS deployment target
         required: true
         type: boolean
+      email_signup_enabled:
+        description: Allow anonymous email/password registration
+        required: false
+        default: false
+        type: boolean
+      google_oauth_enabled:
+        description: Allow Google OAuth sign-in when credentials are valid
+        required: false
+        default: false
+        type: boolean
+      google_client_id:
+        description: Optional Google OAuth web client ID
+        required: false
+        default: ''
+        type: string
       platform_gateway_auto_deploy:
         description: Automatically deploy an HFL-managed local platform Gateway
         required: false
@@ -110,6 +125,9 @@ on:
       smtp_password:
         description: Optional SMTP account password
         required: false
+      google_client_secret:
+        description: Optional Google OAuth web client secret
+        required: false
       ai_model_api_base:
         description: Optional HTTPS API base for the deployment-managed model
         required: false
@@ -147,6 +165,13 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.smtp_password }}
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
+          EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
+          GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
+          GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
+          TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
+          TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
           AI_MODEL_PROVIDER: ${{ inputs.ai_model_provider }}
           AI_MODEL_ID: ${{ inputs.ai_model_id }}
           AI_MODEL_DISPLAY_NAME: ${{ inputs.ai_model_display_name }}
@@ -210,15 +235,34 @@ jobs:
           for value in "${smtp_values[@]}"; do
             [[ -z "$value" ]] || smtp_configured=$((smtp_configured + 1))
           done
-          if (( smtp_configured != 0 && smtp_configured != ${#smtp_values[@]} )); then
-            echo 'SMTP deployment configuration is partial; configure all SMTP variables and the password secret, or leave all of them empty' >&2
-            exit 1
+          if (( smtp_configured == 0 )); then
+            echo '::warning title=SMTP configuration::No SMTP settings were staged; deployment will preserve installed email settings, and password-reset delivery was not verified.'
+          elif (( smtp_configured != ${#smtp_values[@]} )); then
+            echo '::warning title=SMTP configuration::SMTP settings are partial; deployment will preserve the installed email configuration.'
           fi
-          if (( smtp_configured > 0 )); then
-            [[ "$SMTP_HOST" != *[[:space:]]* ]]
-            [[ "$SMTP_PORT" =~ ^[0-9]+$ ]] && (( SMTP_PORT >= 1 && SMTP_PORT <= 65535 ))
-            [[ "$SMTP_SECURITY" =~ ^(ssl|starttls|none)$ ]]
-            [[ "$SMTP_PASSWORD" != *$'\n'* && "$SMTP_PASSWORD" != *$'\r'* ]]
+          if (( smtp_configured == ${#smtp_values[@]} )); then
+            if [[ "$SMTP_HOST" == *[[:space:]]* ]] \
+              || [[ ! "$SMTP_PORT" =~ ^[0-9]+$ ]] \
+              || (( SMTP_PORT < 1 || SMTP_PORT > 65535 )) \
+              || [[ ! "$SMTP_SECURITY" =~ ^(ssl|starttls|none)$ ]] \
+              || [[ "$SMTP_PASSWORD" == *$'\n'* || "$SMTP_PASSWORD" == *$'\r'* ]]; then
+              echo '::warning title=SMTP configuration::SMTP settings are malformed; deployment will preserve the installed email configuration.'
+            fi
+          fi
+          if [[ "$EMAIL_SIGNUP_ENABLED" == "true" && "$smtp_configured" -ne "${#smtp_values[@]}" ]]; then
+            echo '::warning title=Email sign-up::Email sign-up is enabled without a complete staged SMTP configuration; deployment will continue.'
+          fi
+
+          if [[ "$GOOGLE_OAUTH_ENABLED" == "true" ]]; then
+            if [[ ! "$GOOGLE_CLIENT_ID" =~ ^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]] \
+              || [[ -z "$GOOGLE_CLIENT_SECRET" ]] \
+              || [[ "$GOOGLE_CLIENT_SECRET" == *$'\n'* || "$GOOGLE_CLIENT_SECRET" == *$'\r'* ]]; then
+              echo '::warning title=Google OAuth configuration::Google OAuth settings are missing or malformed; deployment will preserve the installed Google configuration.'
+            fi
+          fi
+          if [[ "$TURNSTILE_ENABLED" == "true" ]] \
+            && { [[ -z "$TURNSTILE_SITE_KEY" ]] || [[ -z "$TURNSTILE_SECRET_KEY" ]]; }; then
+            echo '::warning title=Turnstile configuration::Turnstile is enabled without complete credentials; deployment will continue.'
           fi
 
           ai_model_values=(
@@ -266,26 +310,50 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.smtp_password }}
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
+          HFL_EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
+          HFL_GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
+          GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
         shell: bash
         run: |
           set -euo pipefail
           runtime_env="$RUNNER_TEMP/hyperfilelens-runtime.env"
           trap 'rm -f -- "$runtime_env"' EXIT
           umask 077
-          printf '%s\n' \
-            "HFL_EMAIL_SIGNUP_ENABLED=false" \
-            "HFL_INSECURE_TLS=$HFL_INSECURE_TLS" \
-            "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=$HFL_PLATFORM_GATEWAY_AUTO_DEPLOY" \
-            "TURNSTILE_ENABLED=$TURNSTILE_ENABLED" \
-            "TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY" \
-            "TURNSTILE_SECRET_KEY=$TURNSTILE_SECRET_KEY" \
-            "SMTP_HOST=$SMTP_HOST" \
-            "SMTP_PORT=$SMTP_PORT" \
-            "SMTP_USERNAME=$SMTP_USERNAME" \
-            "SMTP_PASSWORD=$SMTP_PASSWORD" \
-            "SMTP_SECURITY=$SMTP_SECURITY" \
-            "EMAIL_FROM=$EMAIL_FROM" \
-            > "$runtime_env"
+          python3 - "$runtime_env" <<'PY'
+          import os
+          import pathlib
+          import sys
+
+          names = (
+              "HFL_EMAIL_SIGNUP_ENABLED",
+              "HFL_GOOGLE_OAUTH_ENABLED",
+              "HFL_INSECURE_TLS",
+              "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
+              "TURNSTILE_ENABLED",
+              "TURNSTILE_SITE_KEY",
+              "TURNSTILE_SECRET_KEY",
+              "SMTP_HOST",
+              "SMTP_PORT",
+              "SMTP_USERNAME",
+              "SMTP_PASSWORD",
+              "SMTP_SECURITY",
+              "EMAIL_FROM",
+              "GOOGLE_CLIENT_ID",
+              "GOOGLE_CLIENT_SECRET",
+          )
+          lines = []
+          for name in names:
+              value = os.environ.get(name, "")
+              if "\r" in value or "\n" in value or "\x00" in value:
+                  print(
+                      f"::warning title=Optional deployment configuration::{name} "
+                      "is not single-line and was omitted; installed configuration will be preserved."
+                  )
+                  continue
+              lines.append(f"{name}={value}")
+          pathlib.Path(sys.argv[1]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
           ssh -i ~/.ssh/hyperfilelens_deploy \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
@@ -356,6 +424,35 @@ jobs:
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             'curl -kfsS https://127.0.0.1:11443/health/ready >/dev/null && curl -kfsS https://127.0.0.1:11444/ >/dev/null && curl -kfsS https://127.0.0.1:11445/ >/dev/null'
+
+      - name: Configure Optional Identity and Email Services
+        shell: bash
+        run: |
+          set +e
+          output="$(ssh -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            'cd /opt/hyperfilelens && docker compose exec -T api python manage.py ensure_deployment_identity_settings' \
+            2>&1)"
+          command_status=$?
+          set -e
+          printf '%s\n' "$output"
+          if (( command_status != 0 )); then
+            echo '::warning title=Optional service configuration::Unable to synchronize optional signup, Google OAuth, Turnstile, or SMTP settings; core deployment remains healthy.'
+            printf '### Optional service configuration\n\nWarning: optional identity or email settings could not be synchronized. Core deployment remains healthy.\n' >> "$GITHUB_STEP_SUMMARY"
+          elif grep -F 'HFL_IDENTITY_STATUS=warning' <<<"$output" >/dev/null; then
+            echo '::warning title=Optional service configuration::One or more optional settings were invalid and the installed values were preserved.'
+            printf '### Optional service configuration\n\nWarning: invalid optional settings were preserved without blocking deployment.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '### Optional service configuration\n\nPassed: deployment-managed signup, Google OAuth, Turnstile, and SMTP settings were synchronized without external connectivity checks.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
 
       - name: Configure Default AI Model
         env:
