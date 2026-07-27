@@ -190,6 +190,7 @@ for container in read("containers.json"):
         "id": container.get("Id", ""),
         "status": runtime.get("Status", ""),
         "started_at": runtime.get("StartedAt", ""),
+        "restart_count": container.get("RestartCount", 0),
     }
 
 owned_networks = {
@@ -208,7 +209,7 @@ for network in read("networks.json"):
         "hyperfilelens-sourcelens",
         "hyperfilelens-gateway",
     }
-    if ownership_marker and attached and set(attached).issubset(owned_container_ids):
+    if ownership_marker and (not attached or set(attached).issubset(owned_container_ids)):
         continue
     state["networks"][name] = {
         "id": network.get("Id", ""),
@@ -244,9 +245,46 @@ PY
 verify_unrelated_state() {
 	local before=$1 after=$2
 	capture_unrelated_state "${after}"
-	if ! cmp -s "${before}" "${after}"; then
-		printf 'ERROR: unrelated Docker containers, networks, or volumes changed during HFL deployment\n' >&2
-		diff -u "${before}" "${after}" >&2 || true
+	if ! python3 - "${before}" "${after}" <<'PY'
+import json
+import pathlib
+import sys
+
+before = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+after = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+errors = []
+warnings = []
+
+before_containers = before.get("containers", {})
+after_containers = after.get("containers", {})
+for name in sorted(set(before_containers) | set(after_containers)):
+    old = before_containers.get(name)
+    new = after_containers.get(name)
+    if old is None:
+        errors.append(f"unrelated container {name} was created")
+    elif new is None:
+        errors.append(f"unrelated container {name} was removed")
+    elif old.get("id") != new.get("id"):
+        errors.append(f"unrelated container {name} was replaced")
+    elif old != new:
+        warnings.append(
+            f"unrelated container {name} changed runtime state without replacement "
+            f"({old.get('status')} -> {new.get('status')}, restarts "
+            f"{old.get('restart_count')} -> {new.get('restart_count')})"
+        )
+
+for kind in ("networks", "volumes"):
+    if before.get(kind, {}) != after.get(kind, {}):
+        errors.append(f"unrelated Docker {kind} changed")
+
+for warning in warnings:
+    print(f"WARNING: {warning}", file=sys.stderr)
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+	then
 		return 1
 	fi
 	printf '[deploy] Verified that unrelated Docker containers, networks, and volumes are unchanged\n'
@@ -263,7 +301,11 @@ cleanup() {
 	trap - EXIT INT TERM
 	if [[ "${docker_preexisting}" == "1" && "${shared_host_guard_verified}" != "1" ]]; then
 		if ! verify_unrelated_state "${work}/unrelated-before.json" "${work}/unrelated-after.json"; then
-			status=90
+			if [[ "${status}" -eq 0 ]]; then
+				status=90
+			else
+				printf 'WARNING: preserving original deployment exit status %s after shared-host verification failure\n' "${status}" >&2
+			fi
 		fi
 	fi
 	rm -rf "${work}"
@@ -457,10 +499,9 @@ if [[ "${docker_preexisting}" == "1" ]]; then
 	fi
 fi
 
-mkdir -p "${INSTALL_DIR}/packages"
-install -m 0644 "${package}" "${INSTALL_DIR}/packages/${package_name}"
-mapfile -t old_packages < <(find "${INSTALL_DIR}/packages" -maxdepth 1 -type f -name 'hyperfilelens-*.tar.gz' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2-)
-if ((${#old_packages[@]})); then
-	rm -f -- "${old_packages[@]}"
+if [[ -d "${INSTALL_DIR}/packages" ]]; then
+	find "${INSTALL_DIR}/packages" -maxdepth 1 -type f \
+		-name 'hyperfilelens-*.tar.gz' -delete
+	rmdir "${INSTALL_DIR}/packages" 2>/dev/null || true
 fi
 printf '[deploy] HFL %s deployment completed\n' "${TAG}"

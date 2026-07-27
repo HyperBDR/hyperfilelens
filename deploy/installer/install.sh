@@ -17,6 +17,9 @@ PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"
 PUBLIC_URL="${HFL_PUBLIC_URL:-}"
 RUNTIME_ENV_FILE="${HFL_RUNTIME_ENV_FILE:-}"
 SHOW_GENERATED_CREDENTIALS="${HFL_SHOW_GENERATED_CREDENTIALS:-auto}"
+UPGRADE_RECOVERY_ARMED=0
+UPGRADE_HFL_WAS_RUNNING=0
+UPGRADE_SOURCELENS_WAS_RUNNING=0
 
 usage() {
 	cat <<'USAGE'
@@ -26,6 +29,7 @@ When no command is given, equivalent to: install.sh install
 
 Commands:
   install       Fresh install from this package and start services (install dir /opt/hyperfilelens)
+  backup        Create and verify one managed backup set; retain the latest three valid sets
   start         docker compose up -d --no-build
   stop          docker compose down
   restart       stop then start
@@ -50,7 +54,8 @@ Options:
 
   upgrade:
     --from PATH             Path to new package directory or hyperfilelens-*.tar.gz (required)
-                            Backs up .env and data/ to a timestamped tar.gz under backup/ before upgrade
+                            Creates a verified managed backup set under backup/ before upgrade
+                            and retains the latest three valid sets
                             Extracts the new package to upgrade_tmp, merges keys from its .env.example into .env,
                             overwrites app files, loads images, and restarts; removes upgrade_tmp on success
     --with-sourcelens       Upgrade bundled SourceLens when sourcelens/ is present (default when present)
@@ -87,6 +92,7 @@ Options:
 Examples:
   sudo ./install.sh
   sudo ./install.sh install
+  sudo ./install.sh backup
   sudo ./install.sh upgrade --from /path/to/hyperfilelens-0.1.0-<commit7>.tar.gz
   sudo ./install.sh uninstall
   sudo ./install.sh uninstall --purge-all
@@ -141,8 +147,32 @@ finish_session() {
 
 cleanup_upgrade_and_finish() {
 	local rc=$?
+	if [[ "${rc}" -ne 0 && "${UPGRADE_RECOVERY_ARMED}" == "1" ]]; then
+		recover_upgrade_services || true
+	fi
 	cleanup_upgrade_tmp
 	finish_session "${rc}"
+}
+
+recover_upgrade_services() {
+	local recovered=1
+	warn "upgrade failed after the maintenance window began; attempting best-effort service recovery"
+	set +e
+	if [[ "${UPGRADE_SOURCELENS_WAS_RUNNING}" == "1" ]] && sourcelens_installed; then
+		sourcelens_compose up -d --no-build
+		[[ $? -eq 0 ]] || recovered=0
+	fi
+	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" && -f "${ROOT}/.env" ]]; then
+		compose_in_root up -d --no-build
+		[[ $? -eq 0 ]] || recovered=0
+	fi
+	set -e
+	if [[ "${recovered}" == "1" ]]; then
+		ok "best-effort service recovery command completed; database backups were not restored automatically"
+	else
+		warn "best-effort service recovery was incomplete; inspect container status and the managed backup before manual recovery"
+	fi
+	return 0
 }
 
 print_config() {
@@ -453,18 +483,32 @@ ensure_bridge_network() {
 	docker network create --label com.hyperfilelens.managed=true "${HFL_BRIDGE_NETWORK}" >/dev/null
 }
 
-preflight_install_capacity() {
-	local cpu_count mem_total_kib mem_available_kib disk_available_bytes
-	local tenant_bind tenant_port admin_bind admin_port sourcelens_bind sourcelens_port
+warn_host_resources() {
+	local cpu_count mem_total_kib mem_available_kib swap_total_kib
 	cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 0)"
-	[[ "${cpu_count}" =~ ^[0-9]+$ && "${cpu_count}" -ge 2 ]] \
-		|| die "at least 2 CPU cores are required (detected ${cpu_count:-unknown})"
+	if [[ ! "${cpu_count}" =~ ^[0-9]+$ || "${cpu_count}" -lt 2 ]]; then
+		warn "fewer than 2 CPU cores detected (${cpu_count:-unknown}); installation will continue with reduced throughput"
+	fi
 	mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
 	mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)"
-	[[ "${mem_total_kib:-0}" -ge $((3500 * 1024)) ]] \
-		|| die "at least 4 GB RAM is required"
-	[[ "${mem_available_kib:-0}" -ge $((2500 * 1024)) ]] \
-		|| die "at least 2.5 GiB available memory is required before installation"
+	swap_total_kib="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
+	if [[ "${mem_total_kib:-0}" -lt $((4 * 1024 * 1024)) ]]; then
+		warn "less than 4 GiB physical memory detected; installation will continue but may be unstable under concurrent load"
+	elif [[ "${mem_total_kib:-0}" -lt $((8 * 1024 * 1024)) ]]; then
+		warn "less than the recommended 8 GiB physical memory detected; installation will continue"
+	fi
+	if [[ "${mem_available_kib:-0}" -lt $((2500 * 1024)) ]]; then
+		warn "less than 2.5 GiB memory is currently available; installation will continue"
+	fi
+	if [[ "${swap_total_kib:-0}" -eq 0 ]]; then
+		warn "no swap is configured; installation will continue, but memory pressure can invoke the host OOM killer"
+	fi
+}
+
+preflight_install_capacity() {
+	local disk_available_bytes
+	local tenant_bind tenant_port admin_bind admin_port sourcelens_bind sourcelens_port
+	warn_host_resources
 	disk_available_bytes="$(df -PB1 "$(dirname "${INSTALL_DIR}")" | awk 'NR == 2 {print $4}')"
 	[[ "${disk_available_bytes:-0}" -ge $((20 * 1024 * 1024 * 1024)) ]] \
 		|| die "at least 20 GiB free disk space is required under $(dirname "${INSTALL_DIR}")"
@@ -493,7 +537,7 @@ for bind_address, raw_port in zip(arguments, arguments):
     finally:
         sock.close()
 PY
-	ok "Host capacity and ports satisfy the 2 CPU / 4 GB installation profile"
+	ok "Host capacity checks completed; CPU, memory, and swap recommendations are advisory"
 }
 
 read_version_from_dir() {
@@ -988,9 +1032,8 @@ PY
 }
 
 backup_env_and_data() {
-	local stamp=$1 archive rc
-	mkdir -p "${ROOT}/backup"
-	archive="${ROOT}/backup/hyperfilelens-backup-${stamp}.tar.gz"
+	local target_dir=$1 archive rc
+	archive="${target_dir}/config-and-data.tar.gz"
 	step "Backing up config and non-database data -> ${archive} ..."
 	local -a items=()
 	[[ -f "${ROOT}/.env" ]] && items+=(".env")
@@ -1001,7 +1044,7 @@ backup_env_and_data() {
 		return 0
 	fi
 	set +e
-	tar -czf "${archive}" \
+	tar -czf "${archive}.part" \
 		--exclude='data/postgresql' \
 		--exclude='data/sourcelens/postgresql' \
 		--exclude='data/redis' \
@@ -1012,132 +1055,368 @@ backup_env_and_data() {
 	rc=$?
 	set -e
 	if [[ "${rc}" -gt 1 ]]; then
-		die "backup failed (tar exit ${rc})"
+		return "${rc}"
 	fi
 	if [[ "${rc}" -eq 1 ]]; then
 		warn "backup completed with warnings (live files such as nginx logs changed during archive)"
 	fi
+	mv "${archive}.part" "${archive}" || return 1
+	chmod 600 "${archive}" || return 1
 	log "Backup complete: ${archive}"
 }
 
 backup_postgresql_dump() {
-	local stamp=$1
+	local target_dir=$1
 	[[ -f "${ROOT}/.env" ]] || return 0
 	if ! command -v docker >/dev/null 2>&1 \
 		|| ! docker info >/dev/null 2>&1 \
 		|| ! docker compose version >/dev/null 2>&1; then
-		warn "Docker Compose is unavailable; skipping logical database backup before file backup"
+		warn "Docker Compose is unavailable; a complete managed backup cannot be created"
+		BACKUP_DATABASES_COMPLETE=0
 		return 0
 	fi
 	COMPOSE=(docker compose)
 	local cid
 	if ! cid="$(compose_in_root ps -q postgres 2>/dev/null | head -1)"; then
-		warn "Unable to inspect PostgreSQL with Docker Compose; skipping logical database backup"
+		warn "Unable to inspect PostgreSQL; a complete managed backup cannot be created"
+		BACKUP_DATABASES_COMPLETE=0
 		return 0
 	fi
-	[[ -n "${cid}" ]] || { warn "PostgreSQL is not running; skipping logical database dump"; return 0; }
+	if [[ -z "${cid}" ]]; then
+		warn "PostgreSQL is not running; no new managed backup will replace existing valid backups"
+		BACKUP_DATABASES_COMPLETE=0
+		return 0
+	fi
 	local dump globals
-	mkdir -p "${ROOT}/backup"
-	dump="${ROOT}/backup/hyperfilelens-postgresql-${stamp}.dump"
-	globals="${ROOT}/backup/hyperfilelens-postgresql-globals-${stamp}.sql"
+	dump="${target_dir}/hyperfilelens-postgresql.dump"
+	globals="${target_dir}/hyperfilelens-postgresql-globals.sql"
 	step "Creating consistent PostgreSQL logical backup ..."
 	compose_in_root exec -T postgres sh -ec \
 		'exec pg_dump -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-hyperfilelens}" -Fc' \
-		>"${dump}.part"
+		>"${dump}.part" || return 1
 	compose_in_root exec -T postgres sh -ec \
 		'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --globals-only' \
-		>"${globals}.part"
-	mv "${dump}.part" "${dump}"
-	mv "${globals}.part" "${globals}"
-	chmod 600 "${dump}" "${globals}"
-	ok "PostgreSQL logical backup created under ${ROOT}/backup"
+		>"${globals}.part" || return 1
+	[[ -s "${dump}.part" && -s "${globals}.part" ]] || return 1
+	mv "${dump}.part" "${dump}" || return 1
+	mv "${globals}.part" "${globals}" || return 1
+	chmod 600 "${dump}" "${globals}" || return 1
+	ok "PostgreSQL logical backup created"
 
 	if sourcelens_installed; then
 		local sl_cid sl_dump sl_globals
 		if ! sl_cid="$(sourcelens_compose ps -q postgres 2>/dev/null | head -1)"; then
-			warn "Unable to inspect bundled SourceLens PostgreSQL; skipping its logical database backup"
+			warn "Unable to inspect bundled SourceLens PostgreSQL; no new managed backup will replace existing valid backups"
+			BACKUP_DATABASES_COMPLETE=0
 			return 0
 		fi
 		if [[ -n "${sl_cid}" ]]; then
-			sl_dump="${ROOT}/backup/sourcelens-postgresql-${stamp}.dump"
-			sl_globals="${ROOT}/backup/sourcelens-postgresql-globals-${stamp}.sql"
+			sl_dump="${target_dir}/sourcelens-postgresql.dump"
+			sl_globals="${target_dir}/sourcelens-postgresql-globals.sql"
 			step "Creating consistent bundled SourceLens PostgreSQL backup ..."
 			sourcelens_compose exec -T postgres sh -ec \
 				'exec pg_dump -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-backend}" -Fc' \
-				>"${sl_dump}.part"
+				>"${sl_dump}.part" || return 1
 			sourcelens_compose exec -T postgres sh -ec \
 				'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --globals-only' \
-				>"${sl_globals}.part"
-			mv "${sl_dump}.part" "${sl_dump}"
-			mv "${sl_globals}.part" "${sl_globals}"
-			chmod 600 "${sl_dump}" "${sl_globals}"
+				>"${sl_globals}.part" || return 1
+			[[ -s "${sl_dump}.part" && -s "${sl_globals}.part" ]] || return 1
+			mv "${sl_dump}.part" "${sl_dump}" || return 1
+			mv "${sl_globals}.part" "${sl_globals}" || return 1
+			chmod 600 "${sl_dump}" "${sl_globals}" || return 1
 			ok "Bundled SourceLens PostgreSQL logical backup created"
+		else
+			warn "Bundled SourceLens PostgreSQL is not running; no new managed backup will replace existing valid backups"
+			BACKUP_DATABASES_COMPLETE=0
 		fi
 	fi
 }
 
-prune_upgrade_backups() {
-	local retention_count retention_days retention_bytes
-	retention_count="${HFL_BACKUP_RETENTION_COUNT:-$(read_env_value HFL_BACKUP_RETENTION_COUNT)}"
-	retention_days="${HFL_BACKUP_RETENTION_DAYS:-$(read_env_value HFL_BACKUP_RETENTION_DAYS)}"
-	retention_bytes="${HFL_BACKUP_RETENTION_BYTES:-$(read_env_value HFL_BACKUP_RETENTION_BYTES)}"
-	retention_count="${retention_count:-3}"
-	retention_days="${retention_days:-30}"
-	retention_bytes="${retention_bytes:-10737418240}"
-	[[ "${retention_count}" =~ ^[1-9][0-9]*$ ]] \
-		|| die "HFL_BACKUP_RETENTION_COUNT must be a positive integer"
-	[[ "${retention_days}" =~ ^[1-9][0-9]*$ ]] \
-		|| die "HFL_BACKUP_RETENTION_DAYS must be a positive integer"
-	[[ "${retention_bytes}" =~ ^[1-9][0-9]*$ ]] \
-		|| die "HFL_BACKUP_RETENTION_BYTES must be a positive integer"
+backup_redis_data() {
+	local target_dir=$1
+	if [[ -f "${ROOT}/data/redis/dump.rdb" ]]; then
+		install -m 0600 "${ROOT}/data/redis/dump.rdb" "${target_dir}/hyperfilelens-redis.rdb" || return 1
+	fi
+	if [[ -f "${ROOT}/data/sourcelens/redis/dump.rdb" ]]; then
+		install -m 0600 "${ROOT}/data/sourcelens/redis/dump.rdb" "${target_dir}/sourcelens-redis.rdb" || return 1
+	fi
+}
 
-	python3 - "${ROOT}/backup" "${retention_count}" "${retention_days}" "${retention_bytes}" <<'PY'
-import datetime as dt
+backup_running_image_metadata() {
+	local target_dir=$1 id name ref image_id
+	local -a ids=()
+	if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+		mapfile -t ids < <(
+			{
+				compose_in_root ps -aq 2>/dev/null || true
+				sourcelens_installed && sourcelens_compose ps -aq 2>/dev/null || true
+				docker ps -aq --no-trunc \
+					--filter 'label=com.hyperfilelens.managed=true' \
+					--filter 'label=com.hyperfilelens.component=gateway-lensnode' 2>/dev/null || true
+			} | awk 'NF && !seen[$0]++'
+		)
+	fi
+	((${#ids[@]})) || return 0
+	: >"${target_dir}/running-images.tsv.part" || return 1
+	for id in "${ids[@]}"; do
+		name="$(docker inspect --format '{{.Name}}' "${id}" 2>/dev/null | sed 's#^/##' || true)"
+		ref="$(docker inspect --format '{{.Config.Image}}' "${id}" 2>/dev/null || true)"
+		image_id="$(docker inspect --format '{{.Image}}' "${id}" 2>/dev/null || true)"
+		[[ -n "${name}" && -n "${ref}" && -n "${image_id}" ]] || continue
+		printf '%s\t%s\t%s\n' "${name}" "${ref}" "${image_id}" >>"${target_dir}/running-images.tsv.part"
+	done
+	if [[ -s "${target_dir}/running-images.tsv.part" ]]; then
+		mv "${target_dir}/running-images.tsv.part" "${target_dir}/running-images.tsv" || return 1
+		chmod 600 "${target_dir}/running-images.tsv" || return 1
+	else
+		rm -f "${target_dir}/running-images.tsv.part"
+	fi
+}
+
+write_backup_manifest() {
+	local target_dir=$1 stamp=$2
+	python3 - "${target_dir}" "${stamp}" "$(read_version 2>/dev/null || true)" <<'PY' || return 1
+import hashlib
+import json
 import pathlib
-import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
-retention_count = int(sys.argv[2])
-retention_days = int(sys.argv[3])
-retention_bytes = int(sys.argv[4])
-pattern = re.compile(
-    r"^(?:hyperfilelens-backup|hyperfilelens-postgresql(?:-globals)?|"
-    r"sourcelens-postgresql(?:-globals)?)-"
-    r"(?P<stamp>\d{8}-\d{6})\.(?:tar\.gz|dump|sql)(?:\.part)?$"
+files = []
+for path in sorted(root.iterdir()):
+    if not path.is_file() or path.name == "backup-manifest.json" or path.name.endswith(".part"):
+        continue
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    files.append({"name": path.name, "size": path.stat().st_size, "sha256": digest.hexdigest()})
+manifest = {
+    "format": 1,
+    "created_at": sys.argv[2],
+    "version": sys.argv[3],
+    "complete": True,
+    "files": files,
+}
+(root / "backup-manifest.json").write_text(
+    json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
-groups = {}
-paths = root.iterdir() if root.is_dir() else ()
-for path in paths:
-    match = pattern.fullmatch(path.name)
-    if match and path.is_file():
-        groups.setdefault(match.group("stamp"), []).append(path)
+PY
+	chmod 600 "${target_dir}/backup-manifest.json" || return 1
+}
 
-if not groups:
+prune_upgrade_backups() {
+	python3 - "${ROOT}/backup" <<'PY' || return 1
+import pathlib
+import re
+import shutil
+import sys
+import time
+
+root = pathlib.Path(sys.argv[1])
+if not root.is_dir():
     raise SystemExit(0)
 
-ordered = sorted(groups, reverse=True)
-newest = ordered[0]
-cutoff = dt.datetime.now() - dt.timedelta(days=retention_days)
-keep = set(ordered[:retention_count])
-for stamp in ordered:
-    created = dt.datetime.strptime(stamp, "%Y%m%d-%H%M%S")
-    if created < cutoff and stamp != newest:
-        keep.discard(stamp)
-
-def group_size(stamp):
-    return sum(path.stat().st_size for path in groups[stamp] if path.exists())
-
-while sum(group_size(stamp) for stamp in keep) > retention_bytes and len(keep) > 1:
-    keep.remove(min(keep))
-
-for stamp in ordered:
-    if stamp in keep:
+now = time.time()
+for path in root.glob(".partial-*"):
+    if now - path.stat().st_mtime <= 24 * 60 * 60:
         continue
+    print(f"[install.sh] pruning incomplete backup {path.name}")
+    shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
+
+directory_pattern = re.compile(r"^upgrade-(?P<stamp>\d{8}-\d{6})$")
+legacy_pattern = re.compile(
+    r"^(?:hyperfilelens-backup|hyperfilelens-postgresql(?:-globals)?|"
+    r"sourcelens-postgresql(?:-globals)?)-"
+    r"(?P<stamp>\d{8}-\d{6})\.(?:tar\.gz|dump|sql)$"
+)
+groups = {}
+for path in root.iterdir():
+    match = directory_pattern.fullmatch(path.name) if path.is_dir() else legacy_pattern.fullmatch(path.name)
+    if match:
+        groups.setdefault(match.group("stamp"), []).append(path)
+
+for stamp in sorted(groups, reverse=True)[3:]:
     for path in groups[stamp]:
-        print(f"[install.sh] pruning expired upgrade backup {path.name}")
-        path.unlink(missing_ok=True)
+        print(f"[install.sh] pruning expired managed backup {path.name}")
+        shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
 PY
+}
+
+create_managed_backup() {
+	local stamp=${1:-$(date +%Y%m%d-%H%M%S)} strict=${2:-0}
+	local backup_root="${ROOT}/backup" partial final
+	backup_root="$(safe_normalize_dir "${backup_root}")"
+	partial="${backup_root}/.partial-${stamp}-$$"
+	final="${backup_root}/upgrade-${stamp}"
+	mkdir -p "${partial}"
+	chmod 700 "${backup_root}" "${partial}"
+	BACKUP_DATABASES_COMPLETE=1
+	if ! backup_postgresql_dump "${partial}"; then
+		warn "database backup command failed; existing valid backups were not changed"
+		rm -rf "${partial}"
+		return 1
+	fi
+	if ! backup_env_and_data "${partial}"; then
+		warn "configuration backup command failed; existing valid backups were not changed"
+		rm -rf "${partial}"
+		return 1
+	fi
+	if ! backup_redis_data "${partial}" || ! backup_running_image_metadata "${partial}"; then
+		warn "runtime backup command failed; existing valid backups were not changed"
+		rm -rf "${partial}"
+		return 1
+	fi
+	for metadata in VERSION MANIFEST.json docker-compose.yml; do
+		if [[ -f "${ROOT}/${metadata}" ]] && ! install -m 0600 "${ROOT}/${metadata}" "${partial}/${metadata}"; then
+			rm -rf "${partial}"
+			return 1
+		fi
+	done
+	if [[ -f "${ROOT}/sourcelens/docker-compose.yml" ]]; then
+		install -m 0600 "${ROOT}/sourcelens/docker-compose.yml" "${partial}/sourcelens-docker-compose.yml" \
+			|| { rm -rf "${partial}"; return 1; }
+	fi
+	if [[ "${BACKUP_DATABASES_COMPLETE}" != "1" ]]; then
+		warn "managed backup is incomplete because a required PostgreSQL service was unavailable"
+		rm -rf "${partial}"
+		if [[ "${strict}" == "1" ]]; then
+			return 1
+		fi
+		return 0
+	fi
+	if ! write_backup_manifest "${partial}" "${stamp}"; then
+		rm -rf "${partial}"
+		return 1
+	fi
+	if [[ -e "${final}" ]] || ! mv "${partial}" "${final}"; then
+		rm -rf "${partial}"
+		return 1
+	fi
+	prune_upgrade_backups || return 1
+	ok "Managed backup created and verified: ${final}"
+}
+
+preflight_redis_recovery() {
+	local rdb="${ROOT}/data/redis/dump.rdb" cid output creation_bytes safe_bytes
+	local warn_bytes=$((768 * 1024 * 1024)) limit_bytes=$((1024 * 1024 * 1024))
+	[[ -s "${rdb}" ]] || { skip "Redis has no persisted RDB to validate"; return 0; }
+	if ! cid="$(compose_in_root ps -q redis 2>/dev/null | head -1)" || [[ -z "${cid}" ]]; then
+		warn "Redis is not running; persisted RDB recovery memory could not be measured"
+		return 0
+	fi
+	step "Checking Redis RDB integrity and recovery memory requirement ..."
+	if ! output="$(compose_in_root exec -T redis redis-check-rdb /data/dump.rdb 2>&1)"; then
+		printf '%s\n' "${output}" >&2
+		die "Redis RDB integrity check failed before the maintenance window"
+	fi
+	creation_bytes="$(printf '%s\n' "${output}" | python3 -c '
+import re, sys
+units = {"k": 1024, "kb": 1024, "kib": 1024, "m": 1024**2, "mb": 1024**2, "mib": 1024**2, "g": 1024**3, "gb": 1024**3, "gib": 1024**3}
+for line in sys.stdin:
+    lowered = line.lower()
+    if "memory" not in lowered or ("creation" not in lowered and "created" not in lowered):
+        continue
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*([kmgt]i?b?|bytes?)", lowered)
+    if match:
+        unit = match.group(2)
+        multiplier = 1 if unit.startswith("byte") else units.get(unit, 0)
+        if multiplier:
+            print(int(float(match.group(1)) * multiplier))
+            break
+')"
+	if [[ ! "${creation_bytes}" =~ ^[0-9]+$ ]]; then
+		creation_bytes="$(compose_in_root exec -T redis redis-cli --raw INFO memory 2>/dev/null \
+			| tr -d '\r' | awk -F: '$1 == "used_memory" {print $2; exit}' || true)"
+	fi
+	if [[ ! "${creation_bytes}" =~ ^[0-9]+$ ]]; then
+		warn "Redis RDB is valid, but its creation memory could not be measured; deployment will continue"
+		return 0
+	fi
+	safe_bytes=$((creation_bytes * 2))
+	if ((safe_bytes > limit_bytes)); then
+		die "Redis RDB needs approximately $((safe_bytes / 1024 / 1024)) MiB to recover, exceeding the fixed 1 GiB container limit; current services were not stopped"
+	elif ((safe_bytes >= warn_bytes)); then
+		warn "Redis RDB recovery may need approximately $((safe_bytes / 1024 / 1024)) MiB of the 1 GiB limit"
+	else
+		ok "Redis RDB recovery estimate is $((safe_bytes / 1024 / 1024)) MiB within the 1 GiB limit"
+	fi
+}
+
+prune_old_managed_image_refs() {
+	local backup_manifest="" ref output
+	local -a removable=()
+	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || return 0
+	backup_manifest="$(find "${ROOT}/backup" -mindepth 2 -maxdepth 2 -type f \
+		-path '*/upgrade-*/MANIFEST.json' -print 2>/dev/null | sort -r | head -1)"
+	if ! output="$(python3 - "${ROOT}/MANIFEST.json" "${backup_manifest}" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+managed_repositories = {
+    "hyperfilelens-backend",
+    "hyperfilelens-frontend",
+    "hyperfilelens-sourcelens-backend",
+    "hyperfilelens-sourcelens-frontend",
+    "hyperfilelens-sourcelens-lensnode",
+}
+protected = set()
+for raw in sys.argv[1:]:
+    path = pathlib.Path(raw) if raw else None
+    if not path or not path.is_file():
+        continue
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    for image in manifest.get("images", []):
+        protected.update(str(ref) for ref in image.get("refs", []) if ref)
+
+containers = subprocess.run(
+    ["docker", "ps", "-aq", "--no-trunc"],
+    check=False,
+    text=True,
+    stdout=subprocess.PIPE,
+).stdout.split()
+if containers:
+    inspected = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Config.Image}}", *containers],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    protected.update(line.strip() for line in inspected.stdout.splitlines() if line.strip())
+
+listed = subprocess.run(
+    ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
+    check=True,
+    text=True,
+    stdout=subprocess.PIPE,
+).stdout.splitlines()
+for ref in sorted(set(line.strip() for line in listed if line.strip())):
+    repository, separator, tag = ref.rpartition(":")
+    if not separator or repository not in managed_repositories or tag == "<none>":
+        continue
+    if ref not in protected:
+        print(ref)
+PY
+	)"; then
+		warn "unable to resolve old HFL image references; skipping image cleanup"
+		return 0
+	fi
+	if [[ -n "${output}" ]]; then
+		mapfile -t removable <<<"${output}"
+	fi
+	for ref in "${removable[@]}"; do
+		[[ -n "${ref}" ]] || continue
+		if docker image rm "${ref}" >/dev/null 2>&1; then
+			log "Removed unreferenced old HFL image tag ${ref}"
+		else
+			warn "Unable to remove old HFL image tag ${ref}; deployment remains healthy"
+		fi
+	done
 }
 
 apply_upgrade_files() {
@@ -2478,6 +2757,15 @@ cmd_uninstall() {
 	log "Host Docker CE (if installed from the bundled archive) is not removed by uninstall."
 }
 
+cmd_backup() {
+	[[ $# -eq 0 ]] || die "backup does not accept options" 2
+	init_existing_install_root
+	log "======== HyperFileLens managed backup ========"
+	if ! create_managed_backup "$(date +%Y%m%d-%H%M%S)" 1; then
+		die "managed backup was not created; existing valid backups were preserved"
+	fi
+}
+
 cmd_upgrade() {
 	local from="" allow_main_build=0
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
@@ -2506,6 +2794,7 @@ cmd_upgrade() {
 
 	init_existing_install_root
 	preflight_package_layout
+	warn_host_resources
 	cur_version="$(read_version)"
 	log "======== HyperFileLens upgrade ${cur_version} ========"
 
@@ -2528,13 +2817,16 @@ cmd_upgrade() {
 
 	log "Upgrading: ${cur_version} -> ${new_version}"
 
-	step "[1/7] Backing up current config and data ..."
-	backup_stamp="$(date +%Y%m%d-%H%M%S)"
-	backup_postgresql_dump "${backup_stamp}"
-	backup_env_and_data "${backup_stamp}"
-	prune_upgrade_backups
+	step "[1/8] Validating persisted Redis recovery requirements ..."
+	require_docker
+	preflight_redis_recovery
 
-	step "[2/7] Validating upgrade package ..."
+	step "[2/8] Backing up current config and data ..."
+	backup_stamp="$(date +%Y%m%d-%H%M%S)"
+	create_managed_backup "${backup_stamp}" 0 \
+		|| die "managed upgrade backup failed; existing services were not stopped"
+
+	step "[3/8] Validating upgrade package ..."
 	validate_publish_artifacts "${src_root}"
 	validate_default_tls_bundle "${src_root}/deploy/nginx/certs"
 	case "$(tls_pair_state "${ROOT}/deploy/nginx/certs")" in
@@ -2555,7 +2847,7 @@ cmd_upgrade() {
 		upgrade_sourcelens=0
 	fi
 
-	step "[3/7] Checking/upgrading Docker ..."
+	step "[4/8] Checking/upgrading Docker ..."
 	upgrade_host_docker_from_source "${ROOT}" "${src_root}"
 	require_docker
 	ensure_bridge_network
@@ -2563,7 +2855,14 @@ cmd_upgrade() {
 	step "Preloading verified target images before the maintenance window ..."
 	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
 
-	step "[4/7] Stopping current services ..."
+	step "[5/8] Stopping current services ..."
+	if compose_in_root ps -q 2>/dev/null | grep -q .; then
+		UPGRADE_HFL_WAS_RUNNING=1
+	fi
+	if sourcelens_installed && sourcelens_compose ps -q 2>/dev/null | grep -q .; then
+		UPGRADE_SOURCELENS_WAS_RUNNING=1
+	fi
+	UPGRADE_RECOVERY_ARMED=1
 	if [[ -f "${ROOT}/.env" ]]; then
 		compose_in_root down || true
 	fi
@@ -2574,7 +2873,7 @@ cmd_upgrade() {
 		remove_sourcelens_images
 	fi
 
-	step "[5/7] Merging .env and overwriting app files ..."
+	step "[6/8] Merging .env and overwriting app files ..."
 	sync_env_from_example "${src_root}/.env.example"
 	apply_upgrade_files "${src_root}" "${remove_sourcelens}"
 	update_env_versions "${new_version}" "${new_channel}"
@@ -2588,7 +2887,7 @@ cmd_upgrade() {
 		log "SourceLens application runtime removed from this host"
 	fi
 
-	step "[6/7] Loading images and starting services ..."
+	step "[7/8] Loading images and starting services ..."
 	if [[ "${upgrade_sourcelens}" -eq 1 ]]; then
 		install_bundled_sourcelens
 	fi
@@ -2605,8 +2904,10 @@ cmd_upgrade() {
 	wait_for_hfl_health || die "HyperFileLens failed its post-upgrade health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-upgrade health gate"
 	ensure_local_platform_gateway
+	UPGRADE_RECOVERY_ARMED=0
+	prune_old_managed_image_refs
 
-	step "[7/7] Cleaning up temporary directory ..."
+	step "[8/8] Cleaning up temporary directory ..."
 	cleanup_upgrade_tmp
 	trap finish_session EXIT
 
@@ -2665,7 +2966,7 @@ main() {
 
 	local cmd=$1
 	case "${cmd}" in
-	install | start | stop | restart | status | platform-gateway | uninstall | upgrade | lang-pack)
+	install | backup | start | stop | restart | status | platform-gateway | uninstall | upgrade | lang-pack)
 		shift
 		;;
 	-*)
@@ -2679,6 +2980,7 @@ main() {
 
 	case "${cmd}" in
 	install) cmd_install "$@" ;;
+	backup) cmd_backup "$@" ;;
 	start) cmd_start "$@" ;;
 	stop) cmd_stop "$@" ;;
 	restart) cmd_restart "$@" ;;

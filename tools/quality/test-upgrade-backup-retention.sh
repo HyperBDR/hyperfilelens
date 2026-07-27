@@ -8,6 +8,7 @@ trap 'rm -rf "${tmp}"' EXIT
 
 ROOT="${tmp}/install"
 mkdir -p \
+	"${ROOT}/backup" \
 	"${ROOT}/data/postgresql" \
 	"${ROOT}/data/sourcelens/postgresql" \
 	"${ROOT}/data/redis" \
@@ -27,10 +28,13 @@ warn() { :; }
 log() { :; }
 die() { printf 'ERROR: %s\n' "$1" >&2; return "${2:-1}"; }
 read_env_value() { :; }
+read_version() { printf '0.1.7'; }
 source <(sed -n '/^backup_env_and_data()/,/^apply_upgrade_files()/p' "${installer}" | sed '$d')
 
-backup_env_and_data 20260723-010000
-archive="${ROOT}/backup/hyperfilelens-backup-20260723-010000.tar.gz"
+target="${ROOT}/backup/.partial-20260723-010000-test"
+mkdir -p "${target}"
+backup_env_and_data "${target}"
+archive="${target}/config-and-data.tar.gz"
 tar -tzf "${archive}" >"${tmp}/contents.txt"
 grep -F 'data/sourcelens/workspace/document.txt' "${tmp}/contents.txt" >/dev/null
 if grep -E 'data/(postgresql|redis|logs)|data/sourcelens/(postgresql|redis|logs)' \
@@ -39,17 +43,28 @@ if grep -E 'data/(postgresql|redis|logs)|data/sourcelens/(postgresql|redis|logs)
 	exit 1
 fi
 
-for stamp in 20260720-010000 20260721-010000 20260722-010000; do
-	printf 'dump\n' >"${ROOT}/backup/hyperfilelens-postgresql-${stamp}.dump"
-	printf 'globals\n' >"${ROOT}/backup/hyperfilelens-postgresql-globals-${stamp}.sql"
-done
-HFL_BACKUP_RETENTION_COUNT=2 \
-HFL_BACKUP_RETENTION_DAYS=3650 \
-HFL_BACKUP_RETENTION_BYTES=10737418240 \
-	prune_upgrade_backups
+write_backup_manifest "${target}" 20260723-010000
+python3 - "${target}/backup-manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert manifest["complete"] is True
+assert any(item["name"] == "config-and-data.tar.gz" for item in manifest["files"])
+PY
 
-[[ ! -e "${ROOT}/backup/hyperfilelens-postgresql-20260720-010000.dump" ]]
-[[ ! -e "${ROOT}/backup/hyperfilelens-postgresql-20260721-010000.dump" ]]
-[[ -e "${ROOT}/backup/hyperfilelens-postgresql-20260722-010000.dump" ]]
-[[ -e "${ROOT}/backup/hyperfilelens-backup-20260723-010000.tar.gz" ]]
+rm -rf "${target}"
+for stamp in 20260720-010000 20260721-010000 20260722-010000 20260723-010000; do
+	mkdir -p "${ROOT}/backup/upgrade-${stamp}"
+	printf '{"complete": true}\n' >"${ROOT}/backup/upgrade-${stamp}/backup-manifest.json"
+done
+mkdir -p "${ROOT}/backup/.partial-stale"
+touch -d '2 days ago' "${ROOT}/backup/.partial-stale"
+prune_upgrade_backups
+
+[[ ! -e "${ROOT}/backup/upgrade-20260720-010000" ]]
+[[ -e "${ROOT}/backup/upgrade-20260721-010000" ]]
+[[ -e "${ROOT}/backup/upgrade-20260722-010000" ]]
+[[ -e "${ROOT}/backup/upgrade-20260723-010000" ]]
+[[ ! -e "${ROOT}/backup/.partial-stale" ]]
 printf 'Upgrade backup retention checks passed.\n'

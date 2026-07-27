@@ -1059,7 +1059,9 @@ enters through the configured HyperFileLens Tenant HTTPS endpoint.
 - OS-specific Docker packages target Ubuntu 20.04, 22.04, and 24.04 amd64.
 - Existing healthy Docker is reused; an existing but unsuitable installation causes a safe failure.
 - When Docker is absent, the installer uses the matching offline archive without network access.
-- The 2 CPU / 4GB profile is intended for light workloads; use 8GB+ for sustained production scans.
+- The 2 CPU / 4GB baseline is intended for light workloads; use 8GB+ for sustained production scans.
+- CPU, memory, and Swap recommendations warn but do not block installation.
+- Runtime containers use the same fixed resource ceilings in every environment.
 
 ## Install
 
@@ -1068,6 +1070,18 @@ tar xzf hyperfilelens-${version}-<commit7>.tar.gz
 cd hyperfilelens-${version}
 sudo ./install.sh install
 \`\`\`
+
+## Backup
+
+Create a verified managed backup set at any time:
+
+\`\`\`bash
+sudo ./install.sh backup
+\`\`\`
+
+Upgrades create the same backup automatically. The installer retains the latest
+three valid backup sets and never prunes existing valid backups when a new backup
+cannot be completed.
 
 The default \`SOURCELENS_MODE=bundled\` deploys the packaged SourceLens stack and configures its private bridge URL.
 Set \`SOURCELENS_MODE=external\` and \`LENS_BASE_URL=https://sourcelens.example.com\` to use an existing platform without installing, stopping, or upgrading it. Use \`sudo ./install.sh install --hfl-only\` for a one-time SourceLens skip.

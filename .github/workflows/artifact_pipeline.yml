@@ -1,4 +1,4 @@
-name: HFL - Artifact Pipeline (Reusable)
+name: HFL - Build & Package (Reusable)
 
 on:
   workflow_call:
@@ -29,6 +29,7 @@ env:
 
 jobs:
   prepare:
+    name: Prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -141,6 +142,7 @@ jobs:
           fi
 
   quality:
+    name: Quality
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -211,6 +213,8 @@ jobs:
           ./tools/quality/test-docker-image-digest-alias.sh
           ./tools/quality/test-offline-docker-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
+          ./tools/quality/test-redis-rdb-preflight.sh
+          ./tools/quality/test-managed-image-retention.sh
           ./tools/quality/test-main-channel-contracts.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-release-download-proxy.sh
@@ -245,6 +249,7 @@ jobs:
         run: go test ./...
 
   build-hfl-images:
+    name: Build · HFL · ${{ matrix.component == 'hfl-backend' && 'backend' || 'frontend' }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -329,6 +334,7 @@ jobs:
           docker system df || true
 
   build-sourcelens-images:
+    name: Build · SourceLens · ${{ matrix.component }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -373,6 +379,7 @@ jobs:
           docker builder prune -af || true
 
   build-agent:
+    name: Build · Agent · ${{ matrix.asset }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -418,7 +425,7 @@ jobs:
 
   certify-source-host:
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
-    name: Certify Source Host (${{ matrix.target }})
+    name: Certify · Agent · ${{ matrix.asset }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     needs: [prepare, build-agent]
@@ -499,6 +506,7 @@ jobs:
           fi
 
   agent-release-gate:
+    name: Gate · Agent release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -543,6 +551,7 @@ jobs:
           build/certification/_internal-agent-certification-summary.json --clobber
 
   build-host-debs:
+    name: Package · Host dependencies · Ubuntu ${{ matrix.ubuntu_release }}
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -581,6 +590,7 @@ jobs:
           "_internal-host-debs-${{ matrix.asset }}.tar" --clobber
 
   export-hfl-images:
+    name: Package · HFL images
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -613,6 +623,7 @@ jobs:
         run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar --clobber
 
   export-sourcelens-bundle:
+    name: Package · SourceLens
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -647,6 +658,7 @@ jobs:
         run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-sourcelens-bundle.tar --clobber
 
   export-runtime-images:
+    name: Package · Runtime images
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -667,6 +679,7 @@ jobs:
         run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar --clobber
 
   assemble-release:
+    name: Assemble · Release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -714,6 +727,7 @@ jobs:
         run: df -h
 
   verify-release:
+    name: Verify · Release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -780,6 +794,7 @@ jobs:
           df -h
 
   publish-release:
+    name: Publish · Release
     if: ${{ needs.prepare.outputs.build_required == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -810,6 +825,7 @@ jobs:
           fi
 
   deploy-test:
+    name: Deploy · TEST
     needs: [prepare, publish-release]
     if: >-
       ${{
@@ -856,6 +872,7 @@ jobs:
       ai_model_api_key: ${{ secrets.TEST_AI_MODEL_API_KEY }}
 
   deploy-preprod:
+    name: Deploy · PREPROD
     needs: [prepare, publish-release]
     if: >-
       ${{
@@ -896,6 +913,7 @@ jobs:
       ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
 
   cleanup-main-builds:
+    name: Cleanup · Main releases
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: [prepare, publish-release]

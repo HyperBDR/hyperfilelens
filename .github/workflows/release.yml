@@ -1,5 +1,5 @@
-name: HFL - Release Pipeline
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('Redeploy {0} to pre-production', inputs.tag) || format('Release {0}', github.ref_name) }}
+name: HFL - PREPROD Release & Deploy
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('PREPROD · {0} · Redeploy', inputs.tag) || format('PREPROD · {0} · Build, release & deploy', github.ref_name) }}
 
 on:
   push:
@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   build-publish-and-deploy-preprod:
+    name: Build, Release & Deploy · PREPROD
     if: ${{ github.event_name == 'push' }}
     uses: ./.github/workflows/artifact_pipeline.yml
     with:
@@ -25,6 +26,7 @@ jobs:
     secrets: inherit
 
   validate-preprod-release:
+    name: Validate · PREPROD release
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -32,7 +34,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - name: Validate manual pre-production redeployment
+      - name: Validate PREPROD Release
         env:
           GH_TOKEN: ${{ github.token }}
           PREPROD_DEPLOY_ENABLED: ${{ vars.PREPROD_DEPLOY_ENABLED }}
@@ -70,6 +72,7 @@ jobs:
           }
 
   redeploy-preprod:
+    name: Deploy · PREPROD
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: validate-preprod-release
     uses: ./.github/workflows/deploy_target.yml

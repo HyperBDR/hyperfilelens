@@ -263,7 +263,11 @@ fi
 grep -F 'workflow_call:' "${workflow}" >/dev/null
 grep -F 'tags:' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${release_workflow}" >/dev/null
-grep -F 'Validate manual pre-production redeployment' "${release_workflow}" >/dev/null
+grep -F 'name: HFL - TEST Build & Deploy' "${test_workflow}" >/dev/null
+grep -F 'name: HFL - PREPROD Release & Deploy' "${release_workflow}" >/dev/null
+grep -F 'name: HFL - PROD Release Promotion' "${production_workflow}" >/dev/null
+grep -F 'name: HFL - Build & Package (Reusable)' "${workflow}" >/dev/null
+grep -F 'Validate PREPROD Release' "${release_workflow}" >/dev/null
 grep -F 'uses: ./.github/workflows/deploy_target.yml' "${release_workflow}" >/dev/null
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${test_workflow}" >/dev/null
@@ -496,7 +500,7 @@ fi
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
 grep -F -- '--runtime-env-file "${RUNTIME_ENV_FILE}"' "${remote_deploy}" >/dev/null
-grep -F 'Download and deploy the complete release package on the target' "${deploy_workflow}" >/dev/null
+grep -F 'Download and Install Release' "${deploy_workflow}" >/dev/null
 grep -F 'download_proxy_args=(--download-proxy-url "$RELEASE_DOWNLOAD_PROXY_URL")' \
 	"${deploy_workflow}" >/dev/null
 grep -F '"${download_proxy_args[@]}"' "${deploy_workflow}" >/dev/null
@@ -541,7 +545,7 @@ grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
-grep -F 'Post-deploy internal health checks' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F '::warning::Public endpoint is not ready' \
@@ -569,7 +573,7 @@ grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}
 grep -F 'apply_runtime_configuration' "${installer}" >/dev/null
 backup_body="$(sed -n '/^backup_postgresql_dump()/,/^}/p' "${installer}")"
 grep -F 'COMPOSE=(docker compose)' <<<"${backup_body}" >/dev/null
-grep -F 'skipping logical database backup before file backup' <<<"${backup_body}" >/dev/null
+grep -F 'a complete managed backup cannot be created' <<<"${backup_body}" >/dev/null
 [[ "$(grep -Fc 'sourcelens_compose exec -T postgres' <<<"${backup_body}")" -eq 2 ]]
 if grep -E 'sourcelens_compose (ps -q|exec -T) postgresql' <<<"${backup_body}" >/dev/null; then
 	printf 'ERROR: bundled SourceLens PostgreSQL Compose service is named postgres\n' >&2
@@ -579,9 +583,15 @@ file_backup_body="$(sed -n '/^backup_env_and_data()/,/^}/p' "${installer}")"
 grep -F -- "--exclude='data/postgresql'" <<<"${file_backup_body}" >/dev/null
 grep -F -- "--exclude='data/sourcelens/postgresql'" <<<"${file_backup_body}" >/dev/null
 grep -F 'prune_upgrade_backups' "${installer}" >/dev/null
-grep -F 'HFL_BACKUP_RETENTION_COUNT' "${installer}" >/dev/null
-grep -F 'HFL_BACKUP_RETENTION_DAYS' "${installer}" >/dev/null
-grep -F 'HFL_BACKUP_RETENTION_BYTES' "${installer}" >/dev/null
+grep -F 'create_managed_backup' "${installer}" >/dev/null
+grep -F 'backup-manifest.json' "${installer}" >/dev/null
+grep -F 'sorted(groups, reverse=True)[3:]' "${installer}" >/dev/null
+grep -F 'preflight_redis_recovery' "${installer}" >/dev/null
+grep -F 'fixed 1 GiB container limit' "${installer}" >/dev/null
+grep -F 'recover_upgrade_services' "${installer}" >/dev/null
+grep -F 'prune_old_managed_image_refs' "${installer}" >/dev/null
+grep -F 'docker image rm "${ref}"' "${installer}" >/dev/null
+grep -F 'protected.update(line.strip() for line in inspected.stdout.splitlines()' "${installer}" >/dev/null
 grep -F 'python3 "${sync_script}" --env-file "${env_file}" --example "${example}"' "${installer}" >/dev/null
 grep -F 'host must be Ubuntu 20.04, 22.04, or 24.04' "${installer}" >/dev/null
 grep -F 'gateway-install-docker-ubuntu-amd64.sh' "${installer}" >/dev/null
@@ -644,6 +654,8 @@ for executable in \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
+	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \
+	"${ROOT}/tools/quality/test-managed-image-retention.sh" \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}/tools/quality/test-release-download-proxy.sh" \
 	"${ROOT}"/release/ci/*.sh \
@@ -717,7 +729,21 @@ grep -E '^[[:space:]]*10444[[:space:]]+ops;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
 grep -F 'proxy_set_header X-HFL-Site-Role $hfl_site;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-backend-proxy-headers.inc" >/dev/null
-grep -F 'mem_limit: 448m' "${ROOT}/deploy/docker-compose.yml" >/dev/null
+for resource in \
+	'mem_limit: 128m' 'mem_limit: 256m' 'mem_limit: 512m' 'mem_limit: 1g' \
+	'cpus: 0.125' 'cpus: 0.25' 'cpus: 0.50' 'cpus: 1.00'; do
+	grep -F "${resource}" "${ROOT}/deploy/docker-compose.yml" \
+		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+done
+if grep -E 'mem_limit: (64|320|384|448)m|cpus: (0\.05|0\.10|0\.15|0\.20|0\.30)' \
+	"${ROOT}/deploy/docker-compose.yml" \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null; then
+	printf 'ERROR: deployment resources must use the normalized human-readable limits\n' >&2
+	exit 1
+fi
+grep -F 'MemoryHigh=512M' "${ROOT}/src/agent/packaging/install/install.sh" >/dev/null
+grep -F 'CPUQuota=50%' "${ROOT}/src/agent/packaging/install/install.sh" >/dev/null
 grep -F 'name: hyperfilelens-sourcelens' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 grep -F 'target: prod' "${production_workflow}" >/dev/null

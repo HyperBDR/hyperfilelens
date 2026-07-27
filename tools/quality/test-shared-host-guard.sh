@@ -12,7 +12,7 @@ cat >"${tmp}/bin/docker" <<'SH'
 set -euo pipefail
 case "$1 $2 ${3:-}" in
 "ps -aq --no-trunc") printf '%s\n' owned-hfl owned-legacy owned-gateway foreign-hfl foreign-sl ;;
-"network ls -q") printf '%s\n' owned-network owned-gateway-network foreign-network foreign-project-collision ;;
+"network ls -q") printf '%s\n' owned-network owned-empty-network owned-gateway-network foreign-network foreign-project-collision ;;
 "volume ls -q") printf '%s\n' owned-volume foreign-volume foreign-volume-collision ;;
 "inspect "*) cat "${HFL_TEST_STATE_DIR}/containers.json" ;;
 "network inspect "*) cat "${HFL_TEST_STATE_DIR}/networks.json" ;;
@@ -34,6 +34,7 @@ JSON
 cat >"${tmp}/state/networks.json" <<'JSON'
 [
   {"Id":"owned-network","Name":"hyperfilelens_default","Driver":"bridge","Scope":"local","Labels":{"com.docker.compose.project":"hyperfilelens"},"Containers":{"owned-hfl":{"Name":"hyperfilelens-api-1"}}},
+  {"Id":"owned-empty-network","Name":"hyperfilelens-sourcelens_sourcelens_network","Driver":"bridge","Scope":"local","Labels":{"com.docker.compose.project":"hyperfilelens-sourcelens"},"Containers":{}},
   {"Id":"owned-gateway-network","Name":"hyperfilelens-gateway_default","Driver":"bridge","Scope":"local","Labels":{"com.docker.compose.project":"hyperfilelens-gateway"},"Containers":{"owned-gateway":{"Name":"hyperfilelens-gateway-lensnode-1"}}},
   {"Id":"foreign-network","Name":"customer_default","Driver":"bridge","Scope":"local","Labels":{"com.docker.compose.project":"customer"},"Containers":{"foreign-sl":{"Name":"foreign-sl"}}},
   {"Id":"foreign-project-collision","Name":"hyperfilelens-sourcelens_default","Driver":"bridge","Scope":"local","Labels":{"com.docker.compose.project":"hyperfilelens-sourcelens"},"Containers":{"foreign-sl":{"Name":"foreign-sl"}}}
@@ -61,12 +62,25 @@ grep -F '"customer_default"' "${tmp}/before.json" >/dev/null
 grep -F '"hyperfilelens-sourcelens_default"' "${tmp}/before.json" >/dev/null
 grep -F '"customer_data"' "${tmp}/before.json" >/dev/null
 grep -F '"foreign_hfl_data"' "${tmp}/before.json" >/dev/null
-if grep -E 'owned-hfl|owned-legacy|owned-gateway|hyperfilelens_default|hyperfilelens-gateway_default|hyperfilelens_cache' "${tmp}/before.json" >/dev/null; then
+if grep -E 'owned-hfl|owned-legacy|owned-gateway|hyperfilelens_default|hyperfilelens-sourcelens_sourcelens_network|hyperfilelens-gateway_default|hyperfilelens_cache' "${tmp}/before.json" >/dev/null; then
 	printf 'ERROR: shared-host guard included HFL-owned resources in the sentinel state\n' >&2
 	exit 1
 fi
 
 verify_unrelated_state "${tmp}/before.json" "${tmp}/same.json"
+python3 - "${tmp}/state/containers.json" <<'PY'
+import json
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+containers = json.loads(path.read_text(encoding="utf-8"))
+for container in containers:
+    if container.get("Name") == "/foreign-sl":
+        container["State"]["StartedAt"] = "foreign-sl-restarted"
+        container["RestartCount"] = 1
+path.write_text(json.dumps(containers), encoding="utf-8")
+PY
+verify_unrelated_state "${tmp}/before.json" "${tmp}/restart.json"
 sed -i 's/"Id":"foreign-network"/"Id":"changed-network"/' "${tmp}/state/networks.json"
 if verify_unrelated_state "${tmp}/before.json" "${tmp}/changed.json" 2>/dev/null; then
 	printf 'ERROR: shared-host guard did not detect an unrelated network change\n' >&2

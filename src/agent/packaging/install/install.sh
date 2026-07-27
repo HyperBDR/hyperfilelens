@@ -977,11 +977,12 @@ configure_gateway_resource_policy() {
 	cat >"${GATEWAY_RESOURCE_DROPIN}" <<'EOF'
 [Service]
 CPUAccounting=true
+CPUQuota=50%
 CPUWeight=50
 IOAccounting=true
 IOWeight=50
 MemoryAccounting=true
-MemoryHigh=768M
+MemoryHigh=512M
 TasksMax=256
 EOF
 	chmod 644 "${GATEWAY_RESOURCE_DROPIN}"
@@ -994,7 +995,7 @@ gateway_resource_preflight() {
 	available_kb="$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)"
 	if [[ "${available_kb}" =~ ^[0-9]+$ ]]; then
 		if [[ "${available_kb}" -lt 1048576 ]]; then
-			log_fail "Data Gateway installation needs at least 1GiB available memory; found $((available_kb / 1024))MiB." 2
+			log_warn "Data Gateway has less than 1GiB available memory ($((available_kb / 1024))MiB); installation will continue."
 		elif [[ "${available_kb}" -lt 2097152 ]]; then
 			log_warn "Data Gateway has less than 2GiB available memory ($((available_kb / 1024))MiB)."
 		else
@@ -1008,7 +1009,7 @@ gateway_resource_preflight() {
 	free_kb="$(df -Pk "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
 	if [[ "${free_kb}" =~ ^[0-9]+$ ]]; then
 		if [[ "${free_kb}" -lt 10485760 ]]; then
-			log_fail "Data Gateway installation needs at least 10GiB free disk space; found $((free_kb / 1024))MiB." 2
+			log_warn "Data Gateway has less than 10GiB free disk space ($((free_kb / 1024))MiB); installation will continue."
 		elif [[ "${free_kb}" -lt 20971520 ]]; then
 			log_warn "Data Gateway has less than 20GiB free disk space ($((free_kb / 1024))MiB)."
 		else
