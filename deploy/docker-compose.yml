@@ -25,6 +25,7 @@ services:
     <<: *backend-image
     environment:
       TZ: UTC
+      HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}
       LOG_FILE: /var/log/hyperfilelens/worker.log
     volumes:
       - ./data/lang-packs:/opt/backend/lang-packs:ro
@@ -188,6 +189,7 @@ services:
       api:
         condition: service_healthy
     ports:
+      - "${HFL_WEBSITE_BIND_ADDRESS:-0.0.0.0}:${HFL_WEBSITE_PORT:-11442}:10442"
       - "${HFL_TENANT_BIND_ADDRESS:-0.0.0.0}:${HFL_TENANT_PORT:-11443}:443"
       - "${HFL_ADMIN_BIND_ADDRESS:-0.0.0.0}:${HFL_ADMIN_PORT:-11444}:10444"
     volumes:
@@ -206,7 +208,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "test -f /usr/share/nginx/html/index.html && nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1/health >/dev/null",
+          "test -f /usr/share/nginx/html/index.html && test -f /usr/share/nginx/website/en/index.html && nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1/health >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:10442/health >/dev/null",
         ]
       interval: 5s
       timeout: 3s

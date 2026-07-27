@@ -507,11 +507,13 @@ warn_host_resources() {
 
 preflight_install_capacity() {
 	local disk_available_bytes
-	local tenant_bind tenant_port admin_bind admin_port sourcelens_bind sourcelens_port
+	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_bind sourcelens_port
 	warn_host_resources
 	disk_available_bytes="$(df -PB1 "$(dirname "${INSTALL_DIR}")" | awk 'NR == 2 {print $4}')"
 	[[ "${disk_available_bytes:-0}" -ge $((20 * 1024 * 1024 * 1024)) ]] \
 		|| die "at least 20 GiB free disk space is required under $(dirname "${INSTALL_DIR}")"
+	website_bind="$(read_env_value HFL_WEBSITE_BIND_ADDRESS)"
+	website_port="$(read_env_value HFL_WEBSITE_PORT)"
 	tenant_bind="$(read_env_value HFL_TENANT_BIND_ADDRESS)"
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
 	admin_bind="$(read_env_value HFL_ADMIN_BIND_ADDRESS)"
@@ -519,6 +521,7 @@ preflight_install_capacity() {
 	sourcelens_bind="$(read_env_value SOURCELENS_CONSOLE_BIND_ADDRESS)"
 	sourcelens_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	python3 - \
+		"${website_bind:-0.0.0.0}" "${website_port:-11442}" \
 		"${tenant_bind:-0.0.0.0}" "${tenant_port:-11443}" \
 		"${admin_bind:-0.0.0.0}" "${admin_port:-11444}" \
 		"${sourcelens_bind:-0.0.0.0}" "${sourcelens_port:-11445}" <<'PY'
@@ -844,7 +847,9 @@ stack_containers_present() {
 wait_for_hfl_health() {
 	local timeout_seconds="${HFL_HEALTH_TIMEOUT_SECONDS:-600}"
 	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || die "HFL_HEALTH_TIMEOUT_SECONDS must be positive"
-	local tenant_port
+	local website_port tenant_port
+	website_port="$(read_env_value HFL_WEBSITE_PORT)"
+	[[ -n "${website_port}" ]] || website_port=11442
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
 	[[ -n "${tenant_port}" ]] || tenant_port=11443
 	local deadline=$((SECONDS + timeout_seconds))
@@ -865,6 +870,7 @@ wait_for_hfl_health() {
 			fi
 		done
 		if [[ "${ready}" -eq 1 ]] \
+			&& curl -kfsS "https://127.0.0.1:${website_port}/en/" >/dev/null 2>&1 \
 			&& curl -kfsS "https://127.0.0.1:${tenant_port}/health/ready" >/dev/null 2>&1; then
 			ok "HyperFileLens health gate passed"
 			return 0
@@ -1591,7 +1597,7 @@ print_console_access_summary() {
 	[[ -f "${env_file}" ]] || return 0
 
 	local host seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
-	local tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
+	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
 	host="$(resolve_console_host)"
 	seed="$(read_env_value SEED_INITIAL_DATA)"
 	seed_email="$(read_env_value SEED_ADMIN_EMAIL)"
@@ -1599,6 +1605,10 @@ print_console_access_summary() {
 	seed_org="$(read_env_value SEED_ORG_NAME)"
 	sourcelens_mode="$(read_env_value SOURCELENS_MODE | tr 'A-Z' 'a-z')"
 	[[ -n "${sourcelens_mode}" ]] || sourcelens_mode="bundled"
+	website_bind="$(read_env_value HFL_WEBSITE_BIND_ADDRESS)"
+	[[ -n "${website_bind}" ]] || website_bind="0.0.0.0"
+	website_port="$(read_env_value HFL_WEBSITE_PORT)"
+	[[ -n "${website_port}" ]] || website_port="11442"
 	tenant_bind="$(read_env_value HFL_TENANT_BIND_ADDRESS)"
 	[[ -n "${tenant_bind}" ]] || tenant_bind="0.0.0.0"
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
@@ -1612,6 +1622,7 @@ print_console_access_summary() {
 	sourcelens_console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${sourcelens_console_port}" ]] || sourcelens_console_port="11445"
 
+	log "Website URL: https://${host}:${website_port}/en/ (bind ${website_bind})"
 	log "Tenant URL: https://${host}:${tenant_port}/ (bind ${tenant_bind})"
 	log "Platform Operations URL: https://${host}:${admin_port}/ (bind ${admin_bind})"
 	log "Django Admin URL: https://${host}:${admin_port}/admin/"

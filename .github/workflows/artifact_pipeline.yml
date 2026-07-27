@@ -219,6 +219,7 @@ jobs:
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-release-download-proxy.sh
           ./tools/quality/test-deployment-optional-config.sh
+          ./tools/quality/test-website-runtime-config.sh
           ./tools/quality/test-payload-tree-hash.sh
           ./tools/quality/test-ci-release-assembly.sh
           HFL_TEST_VERSION=main-0123456 ./tools/quality/test-ci-release-assembly.sh
@@ -242,6 +243,14 @@ jobs:
           npm ci
           npm run lint
           npm run test:ci
+          npm run build
+
+      - name: Website checks
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
           npm run build
 
       - name: Agent checks

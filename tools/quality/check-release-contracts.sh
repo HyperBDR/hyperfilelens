@@ -572,6 +572,8 @@ grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'https://127.0.0.1:11442/en/' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F '::warning::Public endpoint is not ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 if grep -F 'APP_PUBLIC_HOST' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
@@ -691,9 +693,17 @@ for executable in \
 done
 
 grep -F 'HFL_TENANT_PORT=11443' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_WEBSITE_PORT=11442' "${ROOT}/.env.example" >/dev/null
 grep -F 'HFL_ADMIN_PORT=11444' "${ROOT}/.env.example" >/dev/null
 grep -F 'FRONTEND_URL=https://127.0.0.1:11443' "${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_CONSOLE_PORT=11445' "${ROOT}/.env.example" >/dev/null
+grep -F '${HFL_WEBSITE_PORT:-11442}:10442' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}' \
+	"${ROOT}/deploy/docker-compose.yml" >/dev/null
+grep -F 'listen 10442 ssl;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
+grep -F 'website-runtime-config.sh' "${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
+[[ -f "${ROOT}/website/en/index.md" && -f "${ROOT}/website/package-lock.json" ]]
 grep -F 'SEED_ADMIN_PASSWORD=Admin@123' "${ROOT}/.env.example" >/dev/null
 if grep -E 'HFL_TLS_SAN_(IP|DNS)' "${ROOT}/.env.example" "${installer}" >/dev/null; then
 	printf 'ERROR: runtime-generated TLS SAN configuration must not remain\n' >&2
