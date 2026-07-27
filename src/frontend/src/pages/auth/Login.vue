@@ -484,8 +484,14 @@ const cardTitle = computed(() => {
   return t('findPwd.welcomeTitle')
 })
 
+const credentialsValid = computed(() => (
+  checkMail(formItems.email.value) === '' &&
+  checkPassword(formItems.password.value) === ''
+))
+
 const canSubmitLogin = computed(() => {
   if (submitLoading.value) return false
+  if (!credentialsValid.value) return false
   if (isTurnstilePending.value) return false
   if (isTurnstileBlocked.value) return false
   if (isTurnstileReady.value) return Boolean(turnstileToken.value)
