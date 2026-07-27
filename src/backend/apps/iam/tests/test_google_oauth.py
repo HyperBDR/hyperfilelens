@@ -1,14 +1,22 @@
 """Tests for Google OAuth login and social registration."""
 
+from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.iam.models import Membership, Organization
+from apps.iam.models import Membership, OAuthErrorEvent, Organization
+from apps.iam.services.oauth_error_events import (
+    build_oauth_error_redirect,
+    consume_oauth_error_event,
+    create_oauth_error_event,
+)
 from apps.iam.services.registration_service import complete_social_user_registration
 
 
@@ -76,6 +84,79 @@ class SocialRegistrationServiceTests(APITestCase):
         self.assertEqual(Membership.objects.filter(user=user).count(), 1)
 
 
+class OAuthErrorEventTests(APITestCase):
+    def test_event_is_hashed_and_consumed_once(self):
+        event_id = create_oauth_error_event("account_disabled")
+        event = OAuthErrorEvent.objects.get()
+
+        self.assertNotEqual(event.token_hash, event_id)
+        self.assertEqual(len(event.token_hash), 64)
+        self.assertEqual(consume_oauth_error_event(event_id), "account_disabled")
+        self.assertIsNone(consume_oauth_error_event(event_id))
+        self.assertFalse(OAuthErrorEvent.objects.exists())
+
+    def test_expired_unknown_and_oversized_events_fail_closed(self):
+        event_id = create_oauth_error_event("invalid_grant")
+        OAuthErrorEvent.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
+
+        self.assertIsNone(consume_oauth_error_event(event_id))
+        self.assertIsNone(consume_oauth_error_event("unknown"))
+        self.assertIsNone(consume_oauth_error_event("x" * 257))
+        self.assertFalse(OAuthErrorEvent.objects.exists())
+
+    def test_unknown_reason_is_reduced_to_generic(self):
+        event_id = create_oauth_error_event("attacker_controlled")
+
+        self.assertEqual(consume_oauth_error_event(event_id), "oauth_failed")
+
+    def test_consume_endpoint_returns_verified_reason_then_generic_replay(self):
+        event_id = create_oauth_error_event("state_lost")
+        url = reverse("google_oauth_error_event_consume")
+
+        verified = self.client.post(url, {"event_id": event_id}, format="json")
+        replay = self.client.post(url, {"event_id": event_id}, format="json")
+
+        self.assertEqual(verified.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            verified.data["data"],
+            {"verified": True, "reason": "state_lost"},
+        )
+        self.assertEqual(verified["Cache-Control"], "no-store")
+        self.assertEqual(
+            replay.data["data"],
+            {"verified": False, "reason": "oauth_failed"},
+        )
+
+    def test_redirect_contains_only_an_opaque_event_id(self):
+        redirect_url = build_oauth_error_redirect(
+            "https://app.example.com/",
+            "no_email",
+        )
+        parsed = urlparse(redirect_url)
+        query = parse_qs(parsed.query)
+
+        self.assertEqual(parsed.path, "/auth/oauth/error")
+        self.assertNotIn("reason", query)
+        self.assertEqual(len(query["event_id"]), 1)
+        self.assertEqual(
+            consume_oauth_error_event(query["event_id"][0]),
+            "no_email",
+        )
+
+    @patch(
+        "apps.iam.services.oauth_error_events.create_oauth_error_event",
+        side_effect=RuntimeError("database unavailable"),
+    )
+    def test_redirect_falls_back_to_generic_page_when_storage_fails(self, _create):
+        self.assertEqual(
+            build_oauth_error_redirect(
+                "https://app.example.com/",
+                "account_disabled",
+            ),
+            "https://app.example.com/auth/oauth/error",
+        )
+
+
 @override_settings(
     GOOGLE_CLIENT_ID="test-client-id",
     GOOGLE_CLIENT_SECRET="test-client-secret",
@@ -84,6 +165,19 @@ class SocialRegistrationServiceTests(APITestCase):
 )
 @patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "true"})
 class GoogleOAuthCallbackTests(APITestCase):
+    def test_incomplete_oauth_redirects_with_a_consumable_event(self):
+        response = self.client.get(reverse("oauth_callback"))
+        parsed = urlparse(response["Location"])
+        query = parse_qs(parsed.query)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(parsed.path, "/auth/oauth/error")
+        self.assertNotIn("reason", query)
+        self.assertEqual(
+            consume_oauth_error_event(query["event_id"][0]),
+            "not_authenticated",
+        )
+
     def test_oauth_callback_issues_cookies_and_redirects(self):
         user = User.objects.create_user(
             username="oauth-callback",

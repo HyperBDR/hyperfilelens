@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { api } from '../../lib/api'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
-const reason = computed(() => String(route.query.reason || 'unknown'))
+const verifiedReason = ref('')
+const checking = ref(true)
 
 const message = computed(() => {
-  switch (reason.value) {
+  if (checking.value) return t('login.googleErrorChecking')
+  switch (verifiedReason.value) {
     case 'disabled':
       return t('login.googleErrorOAuthDisabled')
     case 'no_email':
@@ -33,13 +36,59 @@ const message = computed(() => {
 function backToLogin() {
   router.push('/login')
 }
+
+onMounted(async () => {
+  const eventId = typeof route.query.event_id === 'string'
+    ? route.query.event_id
+    : ''
+  const query = { ...route.query }
+  delete query.event_id
+  delete query.reason
+
+  if (Object.keys(query).length !== Object.keys(route.query).length) {
+    try {
+      await router.replace({
+        path: route.path,
+        query,
+        hash: route.hash,
+      })
+    } catch {
+      // URL cleanup failure must not prevent one-time event consumption.
+    }
+  }
+
+  if (!eventId) {
+    checking.value = false
+    return
+  }
+
+  try {
+    const response = await api<{
+      code: string
+      data?: {
+        verified?: boolean
+        reason?: string
+      }
+    }>('/api/v1/auth/google/error-events/consume', {
+      method: 'POST',
+      body: JSON.stringify({ event_id: eventId }),
+    })
+    if (response.code === '0000' && response.data?.verified === true) {
+      verifiedReason.value = response.data.reason || ''
+    }
+  } catch {
+    verifiedReason.value = ''
+  } finally {
+    checking.value = false
+  }
+})
 </script>
 
 <template>
   <div class="oauth-error">
     <div class="oauth-error-card">
       <h1>{{ t('login.googleErrorTitle') }}</h1>
-      <p>{{ message }}</p>
+      <p aria-live="polite">{{ message }}</p>
       <button type="button" class="back-btn" @click="backToLogin">
         {{ t('login.backToLogin') }}
       </button>
