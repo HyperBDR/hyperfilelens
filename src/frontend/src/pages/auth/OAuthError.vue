@@ -117,6 +117,7 @@ onMounted(async () => {
 
 .oauth-error-card h1 {
   margin: 0 0 12px;
+  color: inherit;
   font-size: 20px;
 }
 
