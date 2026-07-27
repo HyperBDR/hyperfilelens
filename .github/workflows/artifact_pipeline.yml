@@ -299,6 +299,14 @@ jobs:
         if: matrix.needs_kopia
         run: ./tools/kopia/prepare.sh --matrix linux:amd64
 
+      - name: Prepare standalone Website artifact
+        if: matrix.component == 'hfl-frontend'
+        run: |
+          ./website/build.sh \
+            --output build/website \
+            --image-tag "hyperfilelens-website-builder:${GITHUB_RUN_ID}" \
+            --platform linux/amd64
+
       - name: Build and push image
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -339,6 +347,7 @@ jobs:
       - name: Disk report
         if: always()
         run: |
+          docker image rm "hyperfilelens-website-builder:${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
           df -h
           docker system df || true
 
