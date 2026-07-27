@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -128,6 +130,20 @@ describe('OAuth error event verification', () => {
     expect(mocks.api).toHaveBeenCalledOnce()
     expect(wrapper.get('p').text()).toBe(
       'Your sign-in session expired during the Google redirect. Please try again.',
+    )
+  })
+
+  it('keeps the heading readable on the dark error page', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/pages/auth/OAuthError.vue'),
+      'utf8',
+    )
+
+    expect(source).toMatch(
+      /\.oauth-error\s*{[^}]*background:\s*#08090c;[^}]*color:\s*#fff;/s,
+    )
+    expect(source).toMatch(
+      /\.oauth-error-card h1\s*{[^}]*color:\s*inherit;/s,
     )
   })
 })
