@@ -3,9 +3,9 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { AlertTriangle, CircleX, Layers3, RefreshCw, ScrollText, Search } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
-import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
+import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
 import { apiErrorMessage } from '../../../lib/api'
@@ -72,7 +72,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           <el-table-column label="Message" min-width="420"><template #default="{ row }"><button type="button" class="platform-monitoring-page__title-button platform-log-table__message" @click="openDrawer(row)">{{ row.message }}</button></template></el-table-column>
           <template #empty><el-empty description="No log events found" :image-size="72" /></template>
         </el-table></template>
-        <template #footer><HflPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></template>
+        <template #footer><PlatformOpsPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></template>
       </HflTablePanel>
     </div>
     <el-drawer v-model="drawerOpen" :size="drawerSize" destroy-on-close><template #header><div class="platform-monitoring-drawer__header"><h2>Log Event</h2><p>{{ selected?.service }} · {{ selected?.level }}</p></div></template><template v-if="selected"><section class="platform-monitoring-drawer__section"><h3>Event Details</h3><div class="platform-monitoring-drawer__grid"><div class="platform-monitoring-drawer__field"><span>Time</span><strong>{{ selected.timestamp || '—' }}</strong></div><div class="platform-monitoring-drawer__field"><span>Service</span><strong>{{ selected.service }}</strong></div></div></section><section class="platform-monitoring-drawer__section"><h3>Message</h3><pre class="platform-monitoring-drawer__message">{{ selected.message }}</pre></section></template></el-drawer>

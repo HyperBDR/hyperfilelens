@@ -3,9 +3,9 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { BellRing, CircleCheck, CircleOff, RefreshCw, Search, ShieldAlert } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
-import HflPagination from '../../../components/HflPagination.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
+import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
 import { apiErrorMessage } from '../../../lib/api'
@@ -103,7 +103,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
             <template #empty><el-empty description="No alert policies found" :image-size="72" /></template>
           </el-table>
         </template>
-        <template #footer><HflPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></template>
+        <template #footer><PlatformOpsPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></template>
       </HflTablePanel>
     </div>
     <el-drawer v-model="drawerOpen" :size="drawerSize" destroy-on-close>
