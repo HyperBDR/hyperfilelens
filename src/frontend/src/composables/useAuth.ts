@@ -9,6 +9,11 @@ import {
 import { getCorrelationHeaders } from '../lib/requestContext'
 import { refreshAuthToken } from '../lib/authRefresh'
 import { i18n } from '../i18n'
+import {
+  isSessionInvalidReason,
+  sessionNoticeMessageKey,
+  storeSessionNotice,
+} from '../lib/sessionNotice'
 
 export interface User {
   id: number
@@ -213,16 +218,6 @@ export function clearAuth() {
   })
 }
 
-// Error codes that require redirect to login
-const SESSION_INVALID_CODES = [
-  'OTHER_DEVICE_LOGIN',
-  'PASSWORD_CHANGED',
-  'ACCOUNT_DISABLED',
-  'TOKEN_REUSED',
-  'INVALID_TOKEN',
-  'TOKEN_BLACKLISTED',
-]
-
 const WATCHDOG_INTERVAL_MS = 15_000
 let sessionWatchdogTimer: number | null = null
 let sessionWatchdogChecking = false
@@ -248,10 +243,10 @@ async function redirectToLoginForSession(reason = 'REFRESH_EXPIRED'): Promise<vo
     clearAuth()
 
     if (!isPublicSessionPath(currentRoute.path)) {
+      storeSessionNotice(reason)
       await router.replace({
         path: '/login',
         query: {
-          reason,
           redirect,
         },
       })
@@ -271,7 +266,7 @@ async function checkSessionForWatchdog(): Promise<void> {
     const result = await fetchCurrentUserWithRefresh()
     if (result.user) return
 
-    if (result.errorCode && SESSION_INVALID_CODES.includes(result.errorCode)) {
+    if (isSessionInvalidReason(result.errorCode)) {
       await redirectToLoginForSession(result.errorCode)
       return
     }
@@ -297,7 +292,7 @@ export function useAuth() {
   }
 
   function handleAuthError(error: LoginError) {
-    if (error.errorCode && SESSION_INVALID_CODES.includes(error.errorCode)) {
+    if (isSessionInvalidReason(error.errorCode)) {
       logout()
     }
   }
@@ -319,24 +314,12 @@ export function useAuth() {
   }
 
   function isSessionInvalidError(errorCode?: string): boolean {
-    return errorCode !== undefined && SESSION_INVALID_CODES.includes(errorCode)
+    return isSessionInvalidReason(errorCode)
   }
 
   function getErrorMessage(error: LoginError): string {
-    const errorMessages: Record<string, string> = {
-      'TOKEN_EXPIRED': i18n.global.t('login.sessionExpired'),
-      'REFRESH_EXPIRED': i18n.global.t('login.sessionExpired'),
-      'OTHER_DEVICE_LOGIN': i18n.global.t('login.sessionOtherDevice'),
-      'PASSWORD_CHANGED': i18n.global.t('login.sessionPasswordChanged'),
-      'ACCOUNT_DISABLED': i18n.global.t('login.sessionAccountDisabled'),
-      'TOKEN_REUSED': i18n.global.t('login.sessionTokenReused'),
-      'INVALID_TOKEN': i18n.global.t('login.sessionInvalid'),
-      'TOKEN_BLACKLISTED': i18n.global.t('login.sessionInvalid'),
-    }
-
-    if (error.errorCode && errorMessages[error.errorCode]) {
-      return errorMessages[error.errorCode]
-    }
+    const messageKey = sessionNoticeMessageKey(error.errorCode)
+    if (messageKey) return i18n.global.t(messageKey)
     return error.message
   }
 

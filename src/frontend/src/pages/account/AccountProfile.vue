@@ -283,7 +283,7 @@ async function updatePassword() {
     resetPasswordFormState()
     clearAuth()
     ElMessage.success({ message: res.data?.message || t('account.passwordChangedRelogin'), duration: 2500, grouping: true })
-    await router.replace({ path: '/login', query: { reason: 'password_changed' } })
+    await router.replace('/login')
   } catch (err: unknown) {
     const fields = err && typeof err === 'object' ? (err as { fields?: Record<string, string[]> }).fields : undefined
     if (!applyPasswordFieldErrors(fields)) {
