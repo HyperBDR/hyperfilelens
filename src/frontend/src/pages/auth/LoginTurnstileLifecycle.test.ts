@@ -222,7 +222,7 @@ describe('Login Turnstile lifecycle', () => {
   it.each([
     ['short legacy password', 'legacy'],
     ['password longer than twenty characters', 'This-password-is-longer-than-twenty-characters'],
-    ['Unicode password', '历史密码-正确'],
+    ['password with spaces and symbols', 'Legacy password ! accepted'],
   ])('submits a %s without applying password-creation rules', async (_name, password) => {
     const wrapper = await mountLogin(1440)
     const inputs = wrapper.findAll('input')
