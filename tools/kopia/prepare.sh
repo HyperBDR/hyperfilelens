@@ -303,7 +303,7 @@ download_matrix() {
 			download_file "${base}/${archive}" "${cache}/${archive}" || die "unable to download ${archive}"
 		fi
 		actual="$(sha256sum "${cache}/${archive}" | awk '{print $1}')"
-		[[ "${actual}" == "${expected,,}" ]] || die "checksum mismatch for ${archive}"
+		[[ "${actual}" == "$(printf '%s' "${expected}" | tr '[:upper:]' '[:lower:]')" ]] || die "checksum mismatch for ${archive}"
 		output="$(kopia_binary_path "${goos}" "${goarch}")"
 		mkdir -p "$(dirname "${output}")"
 		ARCHIVE="${cache}/${archive}" OUTPUT="${output}.part" GOOS_VALUE="${goos}" python3 - <<'PY'

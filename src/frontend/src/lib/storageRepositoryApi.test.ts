@@ -5,6 +5,7 @@ import { api } from './api'
 import {
   deleteStorageRepository,
   preflightStorageRepositoryCleanup,
+  storageRepositoryS3BucketMode,
   storageRepositoryCreateErrorMessage,
 } from './storageRepositoryApi'
 
@@ -61,6 +62,15 @@ describe('storageRepositoryCreateErrorMessage', () => {
       errorCode: 'VALIDATION.FAILED',
       meta: { diagnostic: 'exit 1: exit status 1' },
     }, t)).toBe('Check the form and try again.')
+  })
+})
+
+describe('storageRepositoryS3BucketMode', () => {
+  it.each([
+    ['existing', 'existing'],
+    ['new', 'new'],
+  ] as const)('maps the %s UI selection to the API value', (selection, expected) => {
+    expect(storageRepositoryS3BucketMode(selection)).toBe(expected)
   })
 })
 

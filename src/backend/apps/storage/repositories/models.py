@@ -94,6 +94,10 @@ class Repository(models.Model):
         ALIYUN = "aliyun", "Aliyun"
         CUSTOM = "custom", "Custom"
 
+    class S3BucketMode(models.TextChoices):
+        EXISTING = "existing", "Existing bucket"
+        NEW = "new", "Bucket created for this repository"
+
     class CleanupResult(models.TextChoices):
         DELETED = "deleted", "Physical repository deleted"
         FORCE_SKIPPED = "force_skipped", "Physical repository retained"
@@ -139,6 +143,11 @@ class Repository(models.Model):
         null=True,
     )
     s3_bucket = models.CharField(max_length=100, blank=True, null=True)
+    s3_bucket_mode = models.CharField(
+        max_length=16,
+        choices=S3BucketMode.choices,
+        default=S3BucketMode.EXISTING,
+    )
     removed_at = models.DateTimeField(blank=True, null=True, db_index=True)
     cleanup_result = models.CharField(
         max_length=24,

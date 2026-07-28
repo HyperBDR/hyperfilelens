@@ -1,16 +1,51 @@
 from __future__ import annotations
 
+import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
+from xml.etree import ElementTree
 
 import boto3
 from botocore.client import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
+from botocore.regions import EndpointResolverBuiltins
 
 from apps.storage.services.internal.s3_url_style import boto3_s3_addressing_style
 
 
 DEFAULT_S3_ENDPOINT = "https://s3.amazonaws.com"
+BUCKET_REGION_LOOKUP_WORKERS = 10
+BUCKET_REGION_LOOKUP_TIMEOUT_SECONDS = 5
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class BucketSummary:
+    name: str
+    region_id: str | None = None
+
+
+# Keep SDK/API capabilities in backend code. Provider Catalog remains focused
+# on user-managed endpoint and Region data.
+_PROVIDER_BUCKET_CAPABILITIES = {
+    "aws": {"regional_list_buckets": True},
+}
+_BUCKET_REGION_FIELDS = (
+    "BucketRegion",
+    "LocationConstraint",
+    "Location",
+    "Region",
+    "region",
+    "location",
+)
+_REGIONAL_LIST_UNSUPPORTED_CODES = {
+    "NotImplemented",
+    "UnsupportedArgument",
+    "UnsupportedOperation",
+}
 
 
 class S3ClientError(Exception):
@@ -68,6 +103,102 @@ def list_s3_buckets(
     ]
 
 
+def list_s3_buckets_by_region(
+    *,
+    platform: str,
+    endpoint: str | None,
+    region: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = BUCKET_REGION_LOOKUP_TIMEOUT_SECONDS,
+) -> list[str]:
+    """List buckets confirmed to belong to ``region``.
+
+    Providers with an explicitly declared native Region filter use that first.
+    Other providers are filtered from ordinary ListBuckets metadata, with
+    GetBucketLocation used only for buckets whose ListBuckets item has no
+    Region metadata.
+    """
+    normalized_platform = str(platform or "").strip().lower()
+    normalized_region = str(region or "").strip()
+    if not normalized_region:
+        raise S3ClientError("Region is required to list S3 buckets by Region.")
+
+    client = _client(
+        endpoint=endpoint,
+        region=normalized_region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    _register_list_buckets_region_parser(client)
+    if normalized_platform == "huaweicloud":
+        _register_huawei_bucket_location_compatibility(client)
+    capabilities = _PROVIDER_BUCKET_CAPABILITIES.get(normalized_platform, {})
+    if capabilities.get("regional_list_buckets"):
+        try:
+            summaries = _list_bucket_summaries(
+                client,
+                request_args={"BucketRegion": normalized_region, "MaxBuckets": 1000},
+            )
+        except ParamValidationError as exc:
+            if "BucketRegion" not in str(exc):
+                raise S3ClientError(
+                    _error_message("Unable to list S3 buckets by Region", exc)
+                ) from exc
+        except ClientError as exc:
+            if _client_error_code(exc) not in _REGIONAL_LIST_UNSUPPORTED_CODES:
+                raise S3ClientError(
+                    _error_message("Unable to list S3 buckets by Region", exc)
+                ) from exc
+        except BotoCoreError as exc:
+            raise S3ClientError(
+                _error_message("Unable to list S3 buckets by Region", exc)
+            ) from exc
+        else:
+            return _sorted_bucket_names(
+                summary
+                for summary in summaries
+                if not summary.region_id
+                or _bucket_region_matches(
+                    platform=normalized_platform,
+                    expected=normalized_region,
+                    actual=summary.region_id,
+                )
+            )
+
+    try:
+        summaries = _list_bucket_summaries(client)
+    except (BotoCoreError, ClientError) as exc:
+        raise S3ClientError(_error_message("Unable to list S3 buckets", exc)) from exc
+
+    matched = [
+        summary
+        for summary in summaries
+        if summary.region_id
+        and _bucket_region_matches(
+            platform=normalized_platform,
+            expected=normalized_region,
+            actual=summary.region_id,
+        )
+    ]
+    unresolved = [summary for summary in summaries if not summary.region_id]
+    if unresolved:
+        matched.extend(
+            _resolve_matching_bucket_regions(
+                client=client,
+                platform=normalized_platform,
+                expected_region=normalized_region,
+                buckets=unresolved,
+            )
+        )
+    return _sorted_bucket_names(matched)
+
+
 def ensure_s3_bucket(
     *,
     endpoint: str | None,
@@ -110,6 +241,49 @@ def ensure_s3_bucket(
     except ClientError as exc:
         if _client_error_code(exc) in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
             return
+        raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
+    except BotoCoreError as exc:
+        raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
+
+
+def create_s3_bucket(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 15,
+) -> None:
+    """Create a bucket and reject any existing-name collision."""
+    if not str(bucket or "").strip():
+        raise S3ClientError("Bucket name is required.")
+    client = _client(
+        endpoint=endpoint,
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        s3_url_style=s3_url_style,
+        use_tls=use_tls,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        create_args = {"Bucket": bucket}
+        create_bucket_configuration = _create_bucket_configuration(region)
+        if create_bucket_configuration:
+            create_args["CreateBucketConfiguration"] = create_bucket_configuration
+        client.create_bucket(**create_args)
+    except ClientError as exc:
+        if _client_error_code(exc) in {
+            "BucketAlreadyOwnedByYou",
+            "BucketAlreadyExists",
+            "OperationAborted",
+        }:
+            raise S3ClientError(
+                f"Unable to create S3 bucket {bucket}: bucket already exists."
+            ) from exc
         raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
     except BotoCoreError as exc:
         raise S3ClientError(_error_message(f"Unable to create S3 bucket {bucket}", exc)) from exc
@@ -287,6 +461,80 @@ def delete_s3_prefix(
     }
 
 
+def delete_s3_bucket_if_empty(
+    *,
+    endpoint: str | None,
+    region: str | None,
+    bucket: str,
+    access_key_id: str,
+    secret_access_key: str,
+    s3_url_style: str | None = None,
+    use_tls: bool = True,
+    timeout_seconds: float = 30,
+) -> dict[str, str]:
+    """Best-effort deletion of an empty repository-owned bucket.
+
+    This helper never raises: prefix cleanup remains the mandatory operation,
+    while bucket cleanup is recorded as a secondary outcome on the task.
+    """
+    try:
+        client = _client(
+            endpoint=endpoint,
+            region=region,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            s3_url_style=s3_url_style,
+            use_tls=use_tls,
+            timeout_seconds=timeout_seconds,
+        )
+        nonempty_reason = _bucket_nonempty_reason(client=client, bucket=bucket)
+        if nonempty_reason:
+            return {
+                "bucket": bucket,
+                "status": "skipped_not_empty",
+                "reason": nonempty_reason,
+            }
+        client.delete_bucket(Bucket=bucket)
+        return {"bucket": bucket, "status": "deleted", "reason": "bucket_empty"}
+    except ClientError as exc:
+        if _client_error_code(exc) in {"BucketNotEmpty", "BucketNotEmptyException"}:
+            return {
+                "bucket": bucket,
+                "status": "skipped_not_empty",
+                "reason": "bucket_became_non_empty",
+            }
+        return {
+            "bucket": bucket,
+            "status": "failed",
+            "reason": _error_message(f"Unable to delete S3 bucket {bucket}", exc),
+        }
+    except BotoCoreError as exc:
+        return {
+            "bucket": bucket,
+            "status": "failed",
+            "reason": _error_message(f"Unable to delete S3 bucket {bucket}", exc),
+        }
+
+
+def _bucket_nonempty_reason(*, client, bucket: str) -> str:
+    objects = client.list_objects_v2(Bucket=bucket, MaxKeys=1)
+    if objects.get("Contents"):
+        return "objects_present"
+    try:
+        versions = client.list_object_versions(Bucket=bucket, MaxKeys=1)
+        if versions.get("Versions"):
+            return "object_versions_present"
+        if versions.get("DeleteMarkers"):
+            return "delete_markers_present"
+    except ClientError as exc:
+        if not _is_unsupported_s3_header_error(exc):
+            raise
+    uploads = client.list_multipart_uploads(Bucket=bucket, MaxUploads=1)
+    if uploads.get("Uploads"):
+        return "multipart_uploads_present"
+    return ""
+
+
 def _chunks(items: list[dict], size: int):
     for offset in range(0, len(items), size):
         yield items[offset : offset + size]
@@ -339,6 +587,349 @@ def _verify_s3_prefix_empty(*, client, bucket: str, prefix: str) -> None:
         raise S3ClientError("Repository object prefix still contains multipart uploads after cleanup.")
 
 
+def _register_list_buckets_region_parser(client) -> None:
+    client.meta.events.register(
+        "after-call.s3.ListBuckets",
+        _merge_list_buckets_regions,
+        unique_id="hfl-list-buckets-regions",
+    )
+
+
+def _register_huawei_bucket_location_compatibility(client) -> None:
+    # Botocore forces path-style specifically for GetBucketLocation because
+    # that is safer for AWS when the Bucket Region is unknown. Huawei OBS
+    # requires virtual-hosted addressing for this operation instead.
+    client.meta.events.register_last(
+        "before-endpoint-resolution.s3",
+        _force_virtual_hosted_bucket_location,
+        unique_id="hfl-huawei-bucket-location-addressing",
+    )
+    # Botocore's built-in handler only reads the XML root text. Huawei may
+    # wrap the value in a LocationConstraint child, so restore it from the
+    # raw response after Botocore has run its parser.
+    client.meta.events.register_last(
+        "after-call.s3.GetBucketLocation",
+        _merge_huawei_bucket_location,
+        unique_id="hfl-huawei-bucket-location-response",
+    )
+
+
+def _force_virtual_hosted_bucket_location(builtins, model, **_kwargs) -> None:
+    if model.name == "GetBucketLocation":
+        builtins[EndpointResolverBuiltins.AWS_S3_FORCE_PATH_STYLE] = False
+
+
+def _merge_huawei_bucket_location(parsed, http_response, **_kwargs) -> None:
+    if not isinstance(parsed, dict):
+        return
+    if int(getattr(http_response, "status_code", 0) or 0) >= 300:
+        return
+    response_body = getattr(http_response, "content", b"")
+    if not response_body:
+        return
+    try:
+        region = _bucket_location_from_xml(response_body)
+    except (ElementTree.ParseError, TypeError, ValueError):
+        logger.warning("Unable to parse Huawei Bucket Location response XML")
+        return
+    if region:
+        parsed["LocationConstraint"] = region
+
+
+def _bucket_location_from_xml(response_body: bytes | str) -> str | None:
+    root = ElementTree.fromstring(response_body)
+    for element in root.iter():
+        if _xml_local_name(element.tag) not in {
+            "LocationConstraint",
+            "Location",
+            "Region",
+        }:
+            continue
+        region = str(element.text or "").strip()
+        if region:
+            return region
+    return str(root.text or "").strip() or None
+
+
+def _merge_list_buckets_regions(parsed, http_response, **_kwargs) -> None:
+    """Restore vendor ListBuckets Region fields discarded by Botocore."""
+    if not isinstance(parsed, dict):
+        return
+    if int(getattr(http_response, "status_code", 0) or 0) >= 300:
+        return
+    response_body = getattr(http_response, "content", b"")
+    if not response_body:
+        return
+    try:
+        raw_regions = _list_buckets_regions_from_xml(response_body)
+    except (ElementTree.ParseError, TypeError, ValueError):
+        logger.warning("Unable to parse vendor Region fields from ListBuckets XML")
+        return
+    for item in parsed.get("Buckets", []):
+        if not isinstance(item, dict) or _bucket_region_value(item):
+            continue
+        name = str(item.get("Name") or "").strip()
+        field_and_region = raw_regions.get(name)
+        if field_and_region:
+            field, region = field_and_region
+            item[field] = region
+
+
+def _list_buckets_regions_from_xml(
+    response_body: bytes | str,
+) -> dict[str, tuple[str, str]]:
+    root = ElementTree.fromstring(response_body)
+    regions: dict[str, tuple[str, str]] = {}
+    for bucket_element in root.iter():
+        if _xml_local_name(bucket_element.tag) != "Bucket":
+            continue
+        values: dict[str, str] = {}
+        for child in bucket_element:
+            field = _xml_local_name(child.tag)
+            if field not in {"Name", "BucketRegion", "Location", "Region"}:
+                continue
+            value = str(child.text or "").strip()
+            if value:
+                values[field] = value
+        name = values.get("Name", "")
+        if not name:
+            continue
+        for field in ("BucketRegion", "Location", "Region"):
+            region = values.get(field)
+            if region:
+                regions[name] = (field, region)
+                break
+    return regions
+
+
+def _xml_local_name(tag: object) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _list_bucket_summaries(
+    client,
+    *,
+    request_args: dict | None = None,
+) -> list[BucketSummary]:
+    args = dict(request_args or {})
+    summaries: list[BucketSummary] = []
+    seen_tokens: set[str] = set()
+    while True:
+        response = client.list_buckets(**args)
+        for item in response.get("Buckets", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("Name") or "").strip()
+            if not name:
+                continue
+            summaries.append(
+                BucketSummary(name=name, region_id=_bucket_region_value(item))
+            )
+        continuation_token = str(
+            response.get("ContinuationToken")
+            or response.get("NextContinuationToken")
+            or ""
+        ).strip()
+        if not continuation_token or continuation_token in seen_tokens:
+            return summaries
+        seen_tokens.add(continuation_token)
+        args["ContinuationToken"] = continuation_token
+
+
+def _resolve_matching_bucket_regions(
+    *,
+    client,
+    platform: str,
+    expected_region: str,
+    buckets: list[BucketSummary],
+) -> list[BucketSummary]:
+    matched: list[BucketSummary] = []
+    worker_count = min(BUCKET_REGION_LOOKUP_WORKERS, len(buckets))
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="s3-bucket-region",
+    ) as executor:
+        pending = {
+            executor.submit(
+                _get_bucket_region,
+                client=client,
+                platform=platform,
+                bucket=summary.name,
+            ): summary
+            for summary in buckets
+        }
+        for future in as_completed(pending):
+            summary = pending[future]
+            try:
+                actual_region = future.result()
+            except (BotoCoreError, ClientError) as exc:
+                error_code, http_status, request_id = _bucket_region_error_details(exc)
+                logger.warning(
+                    "Unable to resolve S3 bucket Region; bucket excluded "
+                    "platform=%s bucket=%s error_code=%s http_status=%s request_id=%s",
+                    platform,
+                    summary.name,
+                    error_code,
+                    http_status,
+                    request_id,
+                )
+                continue
+            if not actual_region:
+                logger.warning(
+                    "S3 bucket Location response has no Region; bucket excluded "
+                    "platform=%s bucket=%s",
+                    platform,
+                    summary.name,
+                )
+                continue
+            if _bucket_region_matches(
+                platform=platform,
+                expected=expected_region,
+                actual=actual_region,
+            ):
+                matched.append(
+                    BucketSummary(name=summary.name, region_id=actual_region)
+                )
+    return matched
+
+
+def _get_bucket_region(*, client, platform: str, bucket: str) -> str | None:
+    try:
+        response = client.get_bucket_location(Bucket=bucket)
+    except ClientError as exc:
+        response_region = _bucket_region_from_error(exc)
+        if response_region:
+            return response_region
+        raise
+    return _bucket_region_value(response, platform=platform)
+
+
+def _bucket_region_value(
+    payload: dict,
+    *,
+    platform: str = "",
+) -> str | None:
+    for field in _BUCKET_REGION_FIELDS:
+        if field not in payload:
+            continue
+        value = str(payload.get(field) or "").strip()
+        if value:
+            return value
+        if platform == "aws" and field == "LocationConstraint":
+            return "us-east-1"
+    return None
+
+
+def _bucket_region_from_error(exc: ClientError) -> str | None:
+    response = exc.response if isinstance(exc.response, dict) else {}
+    error = response.get("Error") if isinstance(response.get("Error"), dict) else {}
+    region = _bucket_region_value(error)
+    if region:
+        return region
+    for field in ("Endpoint", "endpoint"):
+        endpoint = str(error.get(field) or "").strip()
+        if endpoint:
+            return endpoint
+    metadata = (
+        response.get("ResponseMetadata")
+        if isinstance(response.get("ResponseMetadata"), dict)
+        else {}
+    )
+    headers = (
+        metadata.get("HTTPHeaders")
+        if isinstance(metadata.get("HTTPHeaders"), dict)
+        else {}
+    )
+    normalized_headers = {str(key).lower(): value for key, value in headers.items()}
+    for key in (
+        "x-amz-bucket-region",
+        "x-oss-bucket-region",
+        "x-obs-bucket-region",
+        "x-obs-bucket-location",
+    ):
+        value = str(normalized_headers.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _bucket_region_matches(*, platform: str, expected: str, actual: str) -> bool:
+    return _canonical_bucket_region(platform, expected) == _canonical_bucket_region(
+        platform, actual
+    )
+
+
+def _canonical_bucket_region(platform: str, value: object) -> str:
+    normalized_platform = str(platform or "").strip().lower()
+    raw = str(value or "").strip().lower().rstrip(".")
+    if normalized_platform == "aws":
+        if not raw or raw == "us":
+            return "us-east-1"
+        if raw == "eu":
+            return "eu-west-1"
+        return raw
+    if normalized_platform == "aliyun":
+        host = urlparse(raw if "://" in raw else f"https://{raw}").hostname or raw
+        labels = host.split(".")
+        if "aliyuncs" in labels and labels.index("aliyuncs") > 0:
+            region_label = labels[labels.index("aliyuncs") - 1]
+        else:
+            region_label = next(
+                (label for label in labels if label.startswith("oss-")),
+                labels[0],
+            )
+        if region_label.endswith("-internal"):
+            region_label = region_label.removesuffix("-internal")
+        return (
+            region_label
+            if region_label.startswith("oss-")
+            else f"oss-{region_label}"
+        )
+    if normalized_platform == "huaweicloud":
+        host = urlparse(raw if "://" in raw else f"https://{raw}").hostname or raw
+        parts = host.split(".")
+        if "obs" in parts:
+            obs_index = len(parts) - 1 - parts[::-1].index("obs")
+            if len(parts) > obs_index + 1:
+                return parts[obs_index + 1]
+    return raw
+
+
+def _sorted_bucket_names(summaries) -> list[str]:
+    return sorted({summary.name for summary in summaries if summary.name})
+
+
+def _bucket_region_error_details(exc: Exception) -> tuple[str, str, str]:
+    if isinstance(exc, ClientError):
+        response = exc.response if isinstance(exc.response, dict) else {}
+        metadata = (
+            response.get("ResponseMetadata")
+            if isinstance(response.get("ResponseMetadata"), dict)
+            else {}
+        )
+        headers = (
+            metadata.get("HTTPHeaders")
+            if isinstance(metadata.get("HTTPHeaders"), dict)
+            else {}
+        )
+        normalized_headers = {
+            str(key).lower(): value for key, value in headers.items()
+        }
+        request_id = str(
+            metadata.get("RequestId")
+            or normalized_headers.get("x-amz-request-id")
+            or normalized_headers.get("x-oss-request-id")
+            or normalized_headers.get("x-obs-request-id")
+            or "-"
+        )
+        return (
+            _client_error_code(exc) or "ClientError",
+            str(metadata.get("HTTPStatusCode") or "-"),
+            request_id,
+        )
+    return type(exc).__name__, "-", "-"
+
+
 def _client(
     *,
     endpoint: str | None,
@@ -359,6 +950,7 @@ def _client(
         signature_version="s3v4",
         connect_timeout=timeout_seconds,
         read_timeout=timeout_seconds,
+        max_pool_connections=BUCKET_REGION_LOOKUP_WORKERS,
         retries={"max_attempts": 1},
         s3={"addressing_style": address_style},
         # Some S3-compatible endpoints reject botocore's optional checksum

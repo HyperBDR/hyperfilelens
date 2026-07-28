@@ -23,6 +23,11 @@ configure_macos_dev_shell() {
 			exec "${brew_bash}" "$0" "$@"
 		fi
 	fi
+	# Make `#!/usr/bin/env bash` child scripts resolve to Homebrew Bash as well.
+	# Without this, macOS falls back to its Bash 3.2 after this script re-execs.
+	local brew_bash_dir
+	brew_bash_dir="$(brew --prefix bash 2>/dev/null)/bin"
+	[[ -x "${brew_bash_dir}/bash" ]] && PATH="${brew_bash_dir}:${PATH}"
 	local prefix candidate
 	for prefix in coreutils findutils gnu-sed gnu-tar grep; do
 		candidate="$(brew --prefix "${prefix}" 2>/dev/null || true)/libexec/gnubin"

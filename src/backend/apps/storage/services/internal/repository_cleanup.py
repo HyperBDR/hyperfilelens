@@ -38,7 +38,11 @@ from apps.storage.services.internal.repository_endpoints import repository_contr
 from apps.storage.services.internal.repository_task_naming import (
     repository_operation_display_name,
 )
-from apps.storage.services.internal.s3_client import S3ClientError, delete_s3_prefix
+from apps.storage.services.internal.s3_client import (
+    S3ClientError,
+    delete_s3_bucket_if_empty,
+    delete_s3_prefix,
+)
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 from apps.task.models import Task, TaskResource, TaskStep
 from apps.task.services.interface import complete_task, create_task, start_task
@@ -838,11 +842,10 @@ def _execute_physical_cleanup(
             return {"physical_cleanup": "not_required", "scope": "metadata"}
         config = sanitize_repository_config(repository.config)
         secrets_payload = resolve_repository_secrets(repository)
-        result = delete_s3_prefix(
+        s3_args = dict(
             endpoint=repository_control_endpoint(config),
             region=str(config.get("region") or ""),
             bucket=str(repository.s3_bucket or ""),
-            prefix=str(config.get("prefix") or ""),
             access_key_id=str(config.get("access_key_id") or ""),
             secret_access_key=str(secrets_payload.get("secret_access_key") or ""),
             s3_url_style=normalize_s3_url_style(
@@ -850,8 +853,25 @@ def _execute_physical_cleanup(
             ),
             use_tls=config.get("use_tls") is not False,
         )
+        result = delete_s3_prefix(
+            **s3_args,
+            prefix=str(config.get("prefix") or ""),
+        )
+        if repository.s3_bucket_mode == Repository.S3BucketMode.NEW:
+            bucket_cleanup = delete_s3_bucket_if_empty(**s3_args)
+        else:
+            bucket_cleanup = {
+                "bucket": str(repository.s3_bucket or ""),
+                "status": "skipped_existing_bucket",
+                "reason": "bucket_not_created_for_repository",
+            }
         _remove_controller_repository_state(repository.id)
-        return {"physical_cleanup": "deleted", "scope": "s3_prefix", **result}
+        return {
+            "physical_cleanup": "deleted",
+            "scope": "s3_prefix",
+            **result,
+            "bucket_cleanup": bucket_cleanup,
+        }
 
     node = Node.objects.filter(
         id=target.owner_node_id,

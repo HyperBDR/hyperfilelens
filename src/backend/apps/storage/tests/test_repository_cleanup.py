@@ -82,6 +82,51 @@ class RepositoryCleanupTests(TestCase):
         execute_cleanup.assert_called_once()
 
     @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty",
+        return_value={"bucket": "cleanup-bucket", "status": "failed", "reason": "denied"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    def test_owned_bucket_cleanup_outcome_is_recorded_without_failing_task(
+        self,
+        _delete_prefix,
+        delete_bucket,
+    ):
+        repository = self._s3_repository("owned-s3")
+        repository.s3_bucket_mode = Repository.S3BucketMode.NEW
+        repository.save(update_fields=["s3_bucket_mode"])
+        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(
+            repository_task.task.result_payload["bucket_cleanup"]["status"],
+            "failed",
+        )
+        delete_bucket.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.repository_cleanup.delete_s3_bucket_if_empty")
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup.delete_s3_prefix",
+        return_value={"bucket": "cleanup-bucket", "prefix": "managed/repository/"},
+    )
+    def test_existing_bucket_is_never_deleted(self, _delete_prefix, delete_bucket):
+        repository = self._s3_repository("existing-s3")
+        repository_task = create_repository_cleanup_task(repository=repository, dispatch=False)
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        self.assertEqual(
+            result["bucket_cleanup"]["status"],
+            "skipped_existing_bucket",
+        )
+        delete_bucket.assert_not_called()
+
+    @mock.patch(
         "apps.storage.services.internal.repository_cleanup._tombstone_repository",
         side_effect=RuntimeError("metadata finalize failed"),
     )

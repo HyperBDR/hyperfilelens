@@ -17,6 +17,13 @@ export type StorageRepositoryHealth = 'online' | 'offline' | 'unverified'
 export type StorageRepositoryNasProtocol = 'smb' | 'nfs'
 export type StorageRepositoryBindNodeType = 'proxy'
 export type StorageRepositoryS3Platform = string
+export type StorageRepositoryS3BucketMode = 'existing' | 'new'
+
+export function storageRepositoryS3BucketMode(
+  mode: 'existing' | 'new',
+): StorageRepositoryS3BucketMode {
+  return mode
+}
 export type StorageRepositoryCrossProxyAccess = {
   enabled: boolean
   ready: boolean
@@ -36,6 +43,7 @@ export type StorageRepository = {
   credential_id?: number | null
   s3_platform?: StorageRepositoryS3Platform | string | null
   s3_bucket?: string | null
+  s3_bucket_mode?: StorageRepositoryS3BucketMode
   capacity_bytes: number
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
@@ -86,6 +94,7 @@ export type StorageRepositoryCreatePayload = {
   config?: Record<string, unknown>
   s3_platform?: StorageRepositoryS3Platform
   s3_bucket?: string
+  s3_bucket_mode?: StorageRepositoryS3BucketMode
   nas_protocol?: StorageRepositoryNasProtocol
   bind_node_type?: StorageRepositoryBindNodeType
   bind_node_id?: number
