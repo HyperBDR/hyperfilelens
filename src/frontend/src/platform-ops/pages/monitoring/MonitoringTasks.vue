@@ -249,7 +249,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               :placeholder="t('platformOps.monitoring.filterTaskType')"
             >
               <el-option
-                v-for="type in ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'repository_operation']"
+                v-for="type in ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'repository_operation', 'storage_provider_validation']"
                 :key="type"
                 :value="type"
                 :label="type"
@@ -330,9 +330,11 @@ watch(() => [pagination.page, pagination.pageSize], load)
             >
               <template #default="{ row }">
                 <PlatformOpsOrgLink
+                  v-if="row.organization_id !== null"
                   :org-id="row.organization_id"
                   :org-key="row.organization_key"
                 />
+                <span v-else>{{ t('platformOps.monitoring.platformLevel') }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -415,7 +417,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
         <section class="platform-monitoring-drawer__section">
           <h3>{{ t('platformOps.monitoring.taskDetails') }}</h3><div class="platform-monitoring-drawer__grid">
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.account') }}</span><strong>{{ selected.organization_key }}</strong>
+              <span>{{ t('platformOps.monitoring.account') }}</span><strong>{{ selected.organization_id === null ? t('platformOps.monitoring.platformLevel') : selected.organization_key }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
               <span>{{ t('platformOps.monitoring.colTaskType') }}</span><strong>{{ selected.task_type }}</strong>

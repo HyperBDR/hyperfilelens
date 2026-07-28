@@ -127,7 +127,9 @@ class VerifyAccessApiTests(TestCase):
             s3_platform=Repository.S3Platform.AWS,
             s3_bucket="hfl-primary",
             config={
-                "endpoint": "https://s3.amazonaws.com",
+                "endpoint": "s3.amazonaws.com",
+                "external_endpoint": "s3.amazonaws.com",
+                "internal_endpoint": "s3.internal.example.com",
                 "region": "us-east-1",
                 "access_key_id": "AKIA_TEST",
                 "secret_access_key": "super-secret",
@@ -162,6 +164,7 @@ class VerifyAccessApiTests(TestCase):
         self.assertEqual(kwargs["bucket"], "hfl-primary")
         self.assertEqual(kwargs["access_key_id"], "AKIA_TEST")
         self.assertEqual(kwargs["secret_access_key"], "super-secret")
+        self.assertEqual(kwargs["endpoint"], "s3.amazonaws.com")
 
     @mock.patch("apps.storage.repositories.views.verify_s3_bucket_access")
     def test_verify_access_failure_returns_sanitized_detail(self, verify_s3_bucket_access):
@@ -207,7 +210,7 @@ class VerifyAccessApiTests(TestCase):
         kwargs = verify_s3_bucket_access.call_args.kwargs
         # Locked fields still come from the repository row.
         self.assertEqual(kwargs["bucket"], "hfl-primary")
-        self.assertEqual(kwargs["endpoint"], "https://s3.amazonaws.com")
+        self.assertEqual(kwargs["endpoint"], "s3.amazonaws.com")
         # Overrides applied.
         self.assertEqual(kwargs["region"], "ap-east-1")
         self.assertEqual(kwargs["s3_url_style"], "path")

@@ -12,7 +12,7 @@ S3_URL_STYLES = frozenset(
 
 
 def default_s3_url_style(platform: str | None) -> str:
-    if str(platform or "").strip().lower() == Repository.S3Platform.HUAWEI:
+    if str(platform or "").strip().lower() == Repository.S3Platform.HUAWEICLOUD:
         return S3_URL_STYLE_VIRTUAL_HOSTED
     return S3_URL_STYLE_AUTO
 

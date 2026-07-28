@@ -62,6 +62,8 @@ def resolve_repository_reader(
     fallback_node: Node | None,
     source_type: str = "agent",
     source_ref_id: int | None = None,
+    repository_endpoint_type: object = "external",
+    repository_endpoint: object = None,
 ) -> RepositoryAccess:
     """Resolve the node that is allowed to read/write the repository.
 
@@ -72,11 +74,27 @@ def resolve_repository_reader(
 
     if repository.repo_type == Repository.Type.NAS and repository.bind_node_type == Repository.BindNodeType.PROXY:
         node = _bound_proxy(repository=repository, message_prefix="NAS repository")
-        return _access(repository=repository, node=node, source_type="proxy", source_ref_id=node.id, mode="bound_proxy")
+        return _access(
+            repository=repository,
+            node=node,
+            source_type="proxy",
+            source_ref_id=node.id,
+            mode="bound_proxy",
+            repository_endpoint_type=repository_endpoint_type,
+            repository_endpoint=repository_endpoint,
+        )
 
     if repository.repo_type == Repository.Type.PROXY_FS:
         node = _bound_proxy(repository=repository, message_prefix="Proxy filesystem repository")
-        return _access(repository=repository, node=node, source_type="proxy", source_ref_id=node.id, mode="bound_proxy")
+        return _access(
+            repository=repository,
+            node=node,
+            source_type="proxy",
+            source_ref_id=node.id,
+            mode="bound_proxy",
+            repository_endpoint_type=repository_endpoint_type,
+            repository_endpoint=repository_endpoint,
+        )
 
     if fallback_node is None:
         raise ValidationError({"repository_id": "Repository access requires an execution node."})
@@ -86,6 +104,8 @@ def resolve_repository_reader(
         source_type=source_type,
         source_ref_id=source_ref_id if source_ref_id is not None else int(fallback_node.id),
         mode="fallback_node",
+        repository_endpoint_type=repository_endpoint_type,
+        repository_endpoint=repository_endpoint,
     )
 
 
@@ -95,6 +115,8 @@ def repository_payload_for_node(
     node: Node,
     source_type: str = "agent",
     source_ref_id: int | None = None,
+    repository_endpoint_type: object = "external",
+    repository_endpoint: object = None,
 ) -> dict[str, Any]:
     """Build a repository payload for a specific execution node.
 
@@ -107,7 +129,12 @@ def repository_payload_for_node(
         source_type=source_type,
         source_ref_id=source_ref_id if source_ref_id is not None else int(node.id),
     )
-    return build_repository_runtime_payload(repository=repository, execution_target=target)
+    return build_repository_runtime_payload(
+        repository=repository,
+        execution_target=target,
+        repository_endpoint_type=repository_endpoint_type,
+        repository_endpoint=repository_endpoint,
+    )
 
 
 def repository_uses_bound_proxy(repository: Repository) -> bool:
@@ -157,6 +184,8 @@ def _access(
     source_type: str,
     source_ref_id: int,
     mode: str,
+    repository_endpoint_type: object = "external",
+    repository_endpoint: object = None,
 ) -> RepositoryAccess:
     return RepositoryAccess(
         node=node,
@@ -165,6 +194,8 @@ def _access(
             node=node,
             source_type=source_type,
             source_ref_id=source_ref_id,
+            repository_endpoint_type=repository_endpoint_type,
+            repository_endpoint=repository_endpoint,
         ),
         mode=mode,
     )

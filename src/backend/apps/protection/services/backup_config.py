@@ -40,6 +40,11 @@ from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
     agent_result_has_repository_conflict,
 )
+from apps.storage.services.internal.repository_endpoints import (
+    S3_ENDPOINT_EXTERNAL,
+    S3_ENDPOINT_INTERNAL,
+    normalize_s3_endpoint_host,
+)
 from common.errors import AppError
 
 COMPRESSION_LEVELS = {"none", "balanced", "high"}
@@ -197,6 +202,7 @@ def _config_payload(
             "source_type": current.source_type,
             "source_ref_id": current.source_ref_id,
             "repository_id": current.repository_id,
+            "repository_endpoint_type": current.repository_endpoint_type,
             "backup_policy_id": current.backup_policy_id,
             "file_filter_rule_id": current.file_filter_rule_id,
             "compression_level": current.compression_level,
@@ -223,13 +229,14 @@ def _config_payload(
     backup_policy_id = _optional_int(merged, "backup_policy_id")
     file_filter_rule_id = _optional_int(merged, "file_filter_rule_id")
 
+    repository = None
     if effective_org_id is not None:
         _validate_source_exists(
             organization_id=effective_org_id,
             source_type=source_type,
             source_ref_id=source_ref_id,
         )
-        _validate_repository_exists(
+        repository = _validate_repository_exists(
             organization_id=effective_org_id,
             source_type=source_type,
             source_ref_id=source_ref_id,
@@ -265,12 +272,22 @@ def _config_payload(
 
     recovery_plan_enabled = bool(merged.get("recovery_plan_enabled", False))
 
+    repository_endpoint_type = S3_ENDPOINT_EXTERNAL
+    if repository is not None:
+        repository_endpoint_type = _validated_repository_endpoint_type(
+            repository=repository,
+            requested=merged.get("repository_endpoint_type"),
+            explicit="repository_endpoint_type" in data,
+            require_explicit=current is None or current.repository_id != repository_id,
+        )
+
     result = {
         "name": name,
         "remark": str(merged.get("remark") or "").strip(),
         "source_type": source_type,
         "source_ref_id": source_ref_id,
         "repository_id": repository_id,
+        "repository_endpoint_type": repository_endpoint_type,
         "backup_policy_id": backup_policy_id,
         "file_filter_rule_id": file_filter_rule_id,
         "compression_level": compression,
@@ -325,13 +342,63 @@ def _validate_repository_exists(
     source_type: str,
     source_ref_id: int,
     repository_id: int,
-) -> None:
-    validate_backup_repository_compatible(
+) -> Repository:
+    return validate_backup_repository_compatible(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,
         repository_id=repository_id,
     )
+
+
+def _validated_repository_endpoint_type(
+    *,
+    repository: Repository,
+    requested: object,
+    explicit: bool,
+    require_explicit: bool,
+) -> str:
+    requested_type = str(requested or "").strip().lower()
+    if repository.repo_type != Repository.Type.S3:
+        if explicit and requested_type not in ("", S3_ENDPOINT_EXTERNAL):
+            raise ValidationError(
+                {"repository_endpoint_type": "Only object storage supports Endpoint selection."}
+            )
+        return S3_ENDPOINT_EXTERNAL
+
+    config = repository.config if isinstance(repository.config, dict) else {}
+    external = normalize_s3_endpoint_host(
+        config.get("endpoint") or config.get("external_endpoint")
+    )
+    internal = normalize_s3_endpoint_host(config.get("internal_endpoint")) or external
+    if not external:
+        raise ValidationError(
+            {"repository_endpoint_type": "Object storage external Endpoint is missing."}
+        )
+    if internal == external:
+        if explicit and requested_type == S3_ENDPOINT_INTERNAL:
+            raise ValidationError(
+                {
+                    "repository_endpoint_type": (
+                        "Internal Endpoint is not available for this repository; use external."
+                    )
+                }
+            )
+        return S3_ENDPOINT_EXTERNAL
+
+    if require_explicit and not explicit:
+        raise ValidationError(
+            {
+                "repository_endpoint_type": (
+                    "Select external or internal Endpoint for this object storage repository."
+                )
+            }
+        )
+    if requested_type not in {S3_ENDPOINT_EXTERNAL, S3_ENDPOINT_INTERNAL}:
+        raise ValidationError(
+            {"repository_endpoint_type": "Select external or internal Endpoint."}
+        )
+    return requested_type
 
 
 def _normalized_nas_endpoint(*, protocol: str, server: object, share_path: object) -> tuple[str, str, str]:
@@ -955,43 +1022,89 @@ def update_backup_config(
     config: BackupConfig,
     data: dict[str, Any],
 ) -> BackupConfig:
+    requested_repository_id = int(data.get("repository_id") or config.repository_id)
+    if requested_repository_id != config.repository_id:
+        raise ValidationError(
+            {"repository_id": "Backup repository cannot be modified."}
+        )
+
     previous_repository_id = config.repository_id
     previous_source_type = config.source_type
     previous_source_ref_id = config.source_ref_id
-    payload = _config_payload(data, current=config)
-    directories_data = payload.pop("directories", None)
-    payload.pop("recovery_plans", None)
-    effective_directories = directories_data
-    if effective_directories is None:
-        effective_directories = list(
-            config.directories.order_by("sort_order", "id").values("path", "path_type")
-        )
-    _validate_no_repository_self_backup(
-        organization_id=config.organization_id,
-        source_type=payload["source_type"],
-        source_ref_id=payload["source_ref_id"],
-        repository_id=payload["repository_id"],
-        directories=effective_directories,
-    )
     logger.info(
         "backup config update started config_id=%s org_id=%s fields=%s",
         config.id,
         config.organization_id,
         sorted(data.keys()),
     )
-    if _should_initialize_direct_nas_repository(current=config, payload=payload):
+    preflight_payload = _config_payload(data, current=config)
+    if _should_initialize_direct_nas_repository(
+        current=config, payload=preflight_payload
+    ):
         _initialize_direct_nas_repository_for_agent(
+            organization_id=config.organization_id,
+            source_type=preflight_payload["source_type"],
+            source_ref_id=preflight_payload["source_ref_id"],
+            repository_id=preflight_payload["repository_id"],
+        )
+
+    with transaction.atomic():
+        config = BackupConfig.objects.select_for_update().get(pk=config.pk)
+        requested_repository_id = int(
+            data.get("repository_id") or config.repository_id
+        )
+        if requested_repository_id != config.repository_id:
+            raise ValidationError(
+                {"repository_id": "Backup repository cannot be modified."}
+            )
+        payload = _config_payload(data, current=config)
+        directories_data = payload.pop("directories", None)
+        payload.pop("recovery_plans", None)
+        effective_directories = directories_data
+        if effective_directories is None:
+            effective_directories = list(
+                config.directories.order_by("sort_order", "id").values(
+                    "path", "path_type"
+                )
+            )
+        _validate_no_repository_self_backup(
             organization_id=config.organization_id,
             source_type=payload["source_type"],
             source_ref_id=payload["source_ref_id"],
-            repository_id=payload["repository_id"],
+            repository_id=config.repository_id,
+            directories=effective_directories,
         )
-    for field in ("name", "remark", "source_type", "source_ref_id", "repository_id",
-                  "backup_policy_id", "file_filter_rule_id", "compression_level",
-                  "recovery_plan_enabled"):
-        if field in payload:
-            setattr(config, field, payload[field])
-    with transaction.atomic():
+        if payload["repository_endpoint_type"] != config.repository_endpoint_type:
+            from apps.protection.services.backup_task import find_active_backup_task
+
+            active_task = find_active_backup_task(
+                organization_id=config.organization_id,
+                source_type=config.source_type,
+                source_ref_id=config.source_ref_id,
+                backup_config_id=config.id,
+            )
+            if active_task is not None:
+                raise ValidationError(
+                    {
+                        "repository_endpoint_type": (
+                            "Endpoint type cannot be modified while a backup task "
+                            "is pending or running."
+                        )
+                    }
+                )
+        for field in (
+            "name",
+            "remark",
+            "source_type",
+            "source_ref_id",
+            "repository_endpoint_type",
+            "backup_policy_id",
+            "file_filter_rule_id",
+            "compression_level",
+            "recovery_plan_enabled",
+        ):
+            if field in payload:
+                setattr(config, field, payload[field])
         config.save()
         if directories_data is not None:
             _sync_backup_config_directories(

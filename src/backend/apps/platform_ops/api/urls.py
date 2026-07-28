@@ -72,9 +72,89 @@ from apps.platform_ops.api.views.users import (
     PlatformOpsUserListCreateView,
     PlatformOpsUserResetPasswordView,
 )
+from apps.platform_ops.api.views.storage_providers import (
+    PlatformOpsStorageProviderExportView,
+    PlatformOpsStorageProviderImportApplyView,
+    PlatformOpsStorageProviderImportDiffView,
+    PlatformOpsStorageProviderImportReviewView,
+    PlatformOpsStorageProviderResetReviewView,
+    PlatformOpsStorageProviderResetView,
+    PlatformOpsStorageProvidersResetReviewView,
+    PlatformOpsStorageProvidersResetView,
+    PlatformOpsStorageProvidersView,
+    PlatformOpsStorageProviderValidationRunCancelView,
+    PlatformOpsStorageProviderValidationRunCreateView,
+    PlatformOpsStorageProviderValidationRunDetailView,
+    PlatformOpsStorageProviderValidationRunRetryView,
+)
 
 urlpatterns = [
     path("", PlatformOpsOverviewView.as_view(), name="platform-ops-overview"),
+    path(
+        "storage-provider-validation-runs",
+        PlatformOpsStorageProviderValidationRunCreateView.as_view(),
+        name="platform-ops-storage-provider-validation-run-create",
+    ),
+    path(
+        "storage-provider-validation-runs/<uuid:run_id>",
+        PlatformOpsStorageProviderValidationRunDetailView.as_view(),
+        name="platform-ops-storage-provider-validation-run-detail",
+    ),
+    path(
+        "storage-provider-validation-runs/<uuid:run_id>/cancel",
+        PlatformOpsStorageProviderValidationRunCancelView.as_view(),
+        name="platform-ops-storage-provider-validation-run-cancel",
+    ),
+    path(
+        "storage-provider-validation-runs/<uuid:run_id>/retry",
+        PlatformOpsStorageProviderValidationRunRetryView.as_view(),
+        name="platform-ops-storage-provider-validation-run-retry",
+    ),
+    path(
+        "storage-providers",
+        PlatformOpsStorageProvidersView.as_view(),
+        name="platform-ops-storage-providers",
+    ),
+    path(
+        "storage-providers/import/diff",
+        PlatformOpsStorageProviderImportDiffView.as_view(),
+        name="platform-ops-storage-provider-import-diff",
+    ),
+    path(
+        "storage-providers/import/review",
+        PlatformOpsStorageProviderImportReviewView.as_view(),
+        name="platform-ops-storage-provider-import-review",
+    ),
+    path(
+        "storage-providers/import/apply",
+        PlatformOpsStorageProviderImportApplyView.as_view(),
+        name="platform-ops-storage-provider-import-apply",
+    ),
+    path(
+        "storage-providers/export",
+        PlatformOpsStorageProviderExportView.as_view(),
+        name="platform-ops-storage-provider-export",
+    ),
+    path(
+        "storage-providers/reset/review",
+        PlatformOpsStorageProvidersResetReviewView.as_view(),
+        name="platform-ops-storage-providers-reset-review",
+    ),
+    path(
+        "storage-providers/reset",
+        PlatformOpsStorageProvidersResetView.as_view(),
+        name="platform-ops-storage-providers-reset",
+    ),
+    path(
+        "storage-providers/<str:provider_id>/reset/review",
+        PlatformOpsStorageProviderResetReviewView.as_view(),
+        name="platform-ops-storage-provider-reset-review",
+    ),
+    path(
+        "storage-providers/<str:provider_id>/reset",
+        PlatformOpsStorageProviderResetView.as_view(),
+        name="platform-ops-storage-provider-reset",
+    ),
     path("users", PlatformOpsUserListCreateView.as_view(), name="platform-ops-users"),
     path(
         "users/<int:user_id>",

@@ -80,17 +80,18 @@ def _schedule_lifecycle_advance(*, node_id: int) -> None:
     advance_node_lifecycle_for_node.delay(node_id=int(node_id))
 
 
-def handle_uplink(*, node_id: int, message: ParsedUplink) -> None:
+def handle_uplink(*, node_id: int, message: ParsedUplink) -> NodeTask | None:
     if message.msg_type == WireType.HEARTBEAT:
         _process_heartbeat_followup(node_id=node_id, inventory=message.heartbeat_payload)
-        return
+        return None
 
     if message.msg_type in (WireType.TASK_PROGRESS, WireType.TASK_ALIVE):
         _handle_task_progress(node_id=node_id, message=message)
-        return
+        return None
 
     if message.msg_type == WireType.TASK_RESULT:
-        _handle_task_result(node_id=node_id, message=message)
+        return _handle_task_result(node_id=node_id, message=message)
+    return None
 
 
 def _inventory_throttle_key(*, node_id: int) -> str:
@@ -222,50 +223,39 @@ def _handle_task_progress(*, node_id: int, message: ParsedUplink) -> None:
         logger.debug("backup advance after progress failed task_id=%s", message.task_id, exc_info=True)
 
 
-def _handle_task_result(*, node_id: int, message: ParsedUplink) -> None:
+def _handle_task_result(*, node_id: int, message: ParsedUplink) -> NodeTask:
     if not message.task_id:
-        return
-    ctx = task_log_context(
-        node_id=node_id,
+        raise LookupError("task_id is required")
+    task = complete_task(
         task_id=message.task_id,
-        kind=str(message.status or ""),
+        node_id=node_id,
+        status=message.status or "success",
+        result=message.result or {},
+        error=message.error,
     )
+    logger.info(
+        "agent task result committed %s status=%s",
+        task_log_context(node_id=node_id, task_id=message.task_id, kind=task.kind),
+        task.status,
+    )
+    return task
+
+
+def trigger_task_result_followup(*, node_task_id) -> None:
+    """Run domain follow-up after NodeTask commit/ACK; periodic jobs remain the fallback."""
+    task = NodeTask.objects.filter(pk=node_task_id).first()
+    if task is None:
+        return
     try:
-        task = complete_task(
-            task_id=message.task_id,
-            node_id=node_id,
-            status=message.status or "success",
-            result=message.result or {},
-            error=message.error,
-        )
-        try:
-            from apps.protection.services.backup_orchestrator import maybe_trigger_backup_advance
+        from apps.protection.services.backup_orchestrator import queue_backup_result_projection
 
-            maybe_trigger_backup_advance(node_task=task)
-        except Exception:
-            logger.debug(
-                "backup advance after result failed task_id=%s",
-                message.task_id,
-                exc_info=True,
-            )
-        try:
-            from apps.restore.services.restore_progress import maybe_trigger_restore_progress
-
-            maybe_trigger_restore_progress(node_task=task)
-        except Exception:
-            logger.debug(
-                "restore progress after result failed task_id=%s",
-                message.task_id,
-                exc_info=True,
-            )
-        logger.info(
-            "agent task result received %s status=%s",
-            task_log_context(node_id=node_id, task_id=message.task_id, kind=task.kind),
-            task.status,
-        )
-    except LookupError:
-        logger.debug("agent task result ignored (unknown task) %s", ctx)
-    except DatabaseError as exc:
-        logger.warning("agent task result persist failed %s error=%s", ctx, exc)
+        if queue_backup_result_projection(node_task=task):
+            return
     except Exception:
-        logger.exception("agent task result handling failed %s", ctx)
+        logger.exception("backup result projection queue failed task_id=%s", task.id)
+    try:
+        from apps.restore.services.restore_progress import maybe_trigger_restore_progress
+
+        maybe_trigger_restore_progress(node_task=task)
+    except Exception:
+        logger.debug("restore progress after result failed task_id=%s", task.id, exc_info=True)

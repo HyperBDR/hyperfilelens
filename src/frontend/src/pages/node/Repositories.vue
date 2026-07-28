@@ -17,6 +17,7 @@ import { useListSearch } from '../../composables/useListSearch'
 import { nasMountProtocolIcon } from '../../lib/resourceIcons'
 import {
   DEFAULT_S3_OBJECT_PREFIX,
+  distinctS3EndpointPair,
   s3EndpointDisplay,
   s3PlatformLabelKey,
 } from '../../lib/s3PlatformDisplay'
@@ -92,6 +93,8 @@ export type RepositoryConfig = {
   bucket?: string
   region?: string
   endpoint?: string
+  external_endpoint?: string
+  internal_endpoint?: string
   prefix?: string
   access_key_id?: string
   secret_access_key?: string
@@ -323,7 +326,7 @@ function normalizeS3UrlStyle(raw: string | undefined | null, platform?: string):
   const s = (raw || '').toString().toLowerCase().trim().replace(/-/g, '_')
   if (s === 'path' || s === 'path_style') return 'path'
   if (s === 'virtual_hosted' || s === 'virtual') return 'virtual_hosted'
-  return platform === 'huawei' ? 'virtual_hosted' : 'auto'
+  return platform === 'huaweicloud' ? 'virtual_hosted' : 'auto'
 }
 
 function mapApiToRow(r: ApiRepository): RepositoryRow {
@@ -399,6 +402,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
         bucket,
         region: configString(config, 'region') || r.region || '',
         endpoint: configString(config, 'endpoint') || r.endpoint || '',
+        external_endpoint: configString(config, 'external_endpoint'),
+        internal_endpoint: configString(config, 'internal_endpoint'),
         prefix,
         access_key_id: configString(config, 'access_key_id') || r.access_key_id || '',
         secret_access_key: configString(config, 'secret_access_key') || '',
@@ -537,6 +542,10 @@ const {
 } = useListTableLayout(tableRef, tableBlockRef)
 const drawerDetailOpen = ref(false)
 const detailRow = ref<RepositoryRow | null>(null)
+const detailDistinctS3Endpoints = computed(() => {
+  const config = detailRow.value?.config
+  return distinctS3EndpointPair(config?.external_endpoint, config?.internal_endpoint)
+})
 const detailActiveTab = ref('basic')
 const associatedSources = ref<StorageRepositoryAssociatedSource[]>([])
 const associatedSourcesLoading = ref(false)
@@ -2377,6 +2386,20 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                       />
                     </span>
                   </div>
+                  <template v-if="detailDistinctS3Endpoints">
+                    <div class="hfl-detail-row">
+                      <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldExternalEndpoint') }}</span>
+                      <span class="hfl-detail-row__value hfl-detail-row__value--mono">
+                        <span class="hfl-detail-row__text">{{ detailDistinctS3Endpoints.external }}</span>
+                      </span>
+                    </div>
+                    <div class="hfl-detail-row">
+                      <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldInternalEndpoint') }}</span>
+                      <span class="hfl-detail-row__value hfl-detail-row__value--mono">
+                        <span class="hfl-detail-row__text">{{ detailDistinctS3Endpoints.internal }}</span>
+                      </span>
+                    </div>
+                  </template>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldBucket') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ detailRow.config.bucket || DETAIL_EMPTY }}</span>
@@ -3043,6 +3066,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
       :drawer-size="repositoryTaskDetailDrawerSize"
       resource-list-mode="target_repositories"
       @open-task="openRepositoryTaskByUuid"
+      @task-updated="loadRepositoryTasks(false)"
     />
 
     <Modal :open="modalOpen" :title="modalTitle" @close="modalOpen = false; resetForm()">

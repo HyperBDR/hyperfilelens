@@ -5,8 +5,10 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone as datetime_timezone
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from common.errors import AppError
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -21,8 +23,19 @@ from apps.storage.repositories.models import (
 from apps.storage.services.internal.repository_task_naming import (
     repository_operation_display_name,
 )
-from apps.task.models import Task, TaskResource, TaskStep
-from apps.task.services.interface import append_task_event, complete_task, create_task, start_task
+from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
+from apps.task.services.interface import (
+    TERMINAL_STATUSES,
+    append_task_event,
+    cancel_task as cancel_platform_task,
+    complete_task,
+    create_task,
+    start_task,
+)
+
+
+REPOSITORY_OPERATION_NOT_CANCELLABLE = "STORAGE.REPOSITORY_OPERATION_NOT_CANCELLABLE"
+REPOSITORY_OPERATION_NOT_ACTIVE = "STORAGE.REPOSITORY_OPERATION_NOT_ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -37,6 +50,8 @@ class MaintenanceSettings:
     global_concurrency: int
     per_node_concurrency: int
     execution_timeout_seconds: int
+    heartbeat_interval_seconds: int
+    heartbeat_stale_seconds: int
 
 
 def maintenance_settings() -> MaintenanceSettings:
@@ -72,6 +87,17 @@ def maintenance_settings() -> MaintenanceSettings:
     window_end = clock("STORAGE_MAINTENANCE_FULL_WINDOW_END", "06:00")
     if window_start == window_end:
         raise ImproperlyConfigured("Maintenance full window start and end must differ")
+    heartbeat_interval_seconds = positive_int(
+        "STORAGE_MAINTENANCE_HEARTBEAT_INTERVAL_SECONDS", 10
+    )
+    heartbeat_stale_seconds = positive_int(
+        "STORAGE_MAINTENANCE_HEARTBEAT_STALE_SECONDS", 60
+    )
+    if heartbeat_stale_seconds <= heartbeat_interval_seconds:
+        raise ImproperlyConfigured(
+            "STORAGE_MAINTENANCE_HEARTBEAT_STALE_SECONDS must be greater than "
+            "STORAGE_MAINTENANCE_HEARTBEAT_INTERVAL_SECONDS"
+        )
     return MaintenanceSettings(
         enabled=enabled,
         quick_interval=timedelta(seconds=positive_int("STORAGE_MAINTENANCE_QUICK_INTERVAL_SECONDS", 3600)),
@@ -83,6 +109,8 @@ def maintenance_settings() -> MaintenanceSettings:
         global_concurrency=positive_int("STORAGE_MAINTENANCE_GLOBAL_CONCURRENCY", 4),
         per_node_concurrency=positive_int("STORAGE_MAINTENANCE_PER_NODE_CONCURRENCY", 1),
         execution_timeout_seconds=positive_int("STORAGE_MAINTENANCE_EXECUTION_TIMEOUT_SECONDS", 21600),
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
+        heartbeat_stale_seconds=heartbeat_stale_seconds,
     )
 
 
@@ -266,6 +294,164 @@ def set_task_step(task: Task, step_name: str, *, status: str, progress: int) -> 
     append_task_event(task=task, step=task.steps.filter(step_name=step_name).first(), message=f"Step {step_name} {status}")
 
 
+def repository_operation_cancellation_supported(repository_task: RepositoryTask) -> bool:
+    return (
+        repository_task.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
+        and repository_task.operation_type
+        in {
+            RepositoryTask.OperationType.MAINTENANCE_QUICK,
+            RepositoryTask.OperationType.MAINTENANCE_FULL,
+        }
+    )
+
+
+@transaction.atomic
+def start_controller_repository_operation(*, repository_task_id: int) -> UUID | None:
+    repository_task = RepositoryTask.objects.select_for_update().get(
+        pk=repository_task_id
+    )
+    task = Task.objects.select_for_update().get(pk=repository_task.task_id)
+    if (
+        not repository_operation_cancellation_supported(repository_task)
+        or repository_task.cancel_requested_at is not None
+        or task.status != Task.Status.PENDING
+    ):
+        return None
+    start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
+    token = uuid4()
+    now = timezone.now()
+    repository_task.execution_token = token
+    repository_task.execution_heartbeat_at = now
+    repository_task.save(
+        update_fields=["execution_token", "execution_heartbeat_at", "updated_at"]
+    )
+    return token
+
+
+@transaction.atomic
+def set_controller_repository_operation_step(
+    *,
+    repository_task_id: int,
+    expected_execution_token: UUID,
+    step_name: str,
+    status: str,
+    progress: int,
+) -> str:
+    repository_task = (
+        RepositoryTask.objects.select_for_update()
+        .select_related("task")
+        .get(pk=repository_task_id)
+    )
+    if (
+        repository_task.execution_token != expected_execution_token
+        or repository_task.task.status not in {Task.Status.PENDING, Task.Status.RUNNING}
+    ):
+        return "lost_lease"
+    if repository_task.cancel_requested_at is not None:
+        return "cancel"
+    set_task_step(
+        repository_task.task,
+        step_name,
+        status=status,
+        progress=progress,
+    )
+    repository_task.execution_heartbeat_at = timezone.now()
+    repository_task.save(
+        update_fields=["execution_heartbeat_at", "updated_at"]
+    )
+    return "continue"
+
+
+def fence_controller_repository_operation(
+    *, repository_task_id: int, expected_execution_token: UUID | None
+) -> UUID | None:
+    recovery_token = uuid4()
+    queryset = RepositoryTask.objects.filter(
+        pk=repository_task_id,
+        task__status=Task.Status.RUNNING,
+    )
+    if expected_execution_token is None:
+        queryset = queryset.filter(execution_token__isnull=True)
+    else:
+        queryset = queryset.filter(execution_token=expected_execution_token)
+    updated = queryset.update(
+        execution_token=recovery_token,
+        execution_heartbeat_at=timezone.now(),
+    )
+    return recovery_token if updated == 1 else None
+
+
+@transaction.atomic
+def request_repository_operation_cancel(
+    *,
+    task_uuid: UUID | str,
+    organization_id: int,
+    reason: str = "",
+    requested_by_id: int | None = None,
+) -> tuple[Task, bool]:
+    repository_task = (
+        RepositoryTask.objects.select_for_update()
+        .select_related("task")
+        .filter(task__task_uuid=task_uuid, task__organization_id=organization_id)
+        .first()
+    )
+    if repository_task is None:
+        raise AppError(
+            code="RESOURCE.NOT_FOUND",
+            status=404,
+            title="Repository task not found",
+            diagnostic="Repository maintenance task was not found.",
+        )
+    task = repository_task.task
+    if not repository_operation_cancellation_supported(repository_task):
+        raise AppError(
+            code=REPOSITORY_OPERATION_NOT_CANCELLABLE,
+            status=409,
+            title="Repository task cannot be cancelled",
+            diagnostic=(
+                "Only controller-owned Quick or Full maintenance tasks can be cancelled."
+            ),
+        )
+    if task.status in TERMINAL_STATUSES:
+        if task.status == Task.Status.CANCELLED:
+            return task, False
+        raise AppError(
+            code=REPOSITORY_OPERATION_NOT_ACTIVE,
+            status=409,
+            title="Repository task already finished",
+            diagnostic="This repository maintenance task has already finished.",
+        )
+    if repository_task.cancel_requested_at is not None:
+        return task, task.status == Task.Status.RUNNING
+
+    now = timezone.now()
+    repository_task.cancel_requested_at = now
+    repository_task.cancel_reason = (reason.strip() or "Task cancelled by user")[:500]
+    repository_task.save(
+        update_fields=["cancel_requested_at", "cancel_reason", "updated_at"]
+    )
+    append_task_event(
+        task=task,
+        level=TaskEvent.Level.WARN,
+        message="Repository maintenance cancellation requested",
+        metadata={
+            "reason": repository_task.cancel_reason,
+            "requested_by_id": requested_by_id,
+        },
+    )
+    if task.status == Task.Status.PENDING:
+        return (
+            finalize_repository_operation(
+                repository_task_id=repository_task.id,
+                succeeded=False,
+                cancelled=True,
+                error_message=repository_task.cancel_reason,
+            ),
+            False,
+        )
+    return task, True
+
+
 @transaction.atomic
 def finalize_repository_operation(
     *,
@@ -274,6 +460,8 @@ def finalize_repository_operation(
     result_payload: dict | None = None,
     error_code: str = "",
     error_message: str = "",
+    cancelled: bool = False,
+    expected_execution_token: UUID | None = None,
 ) -> Task:
     # ``execution_target`` is nullable for cleanup operations. Joining it in a
     # ``select_for_update()`` query therefore produces a LEFT OUTER JOIN, which
@@ -288,13 +476,30 @@ def finalize_repository_operation(
     if repository_task.execution_target_id is None:
         raise ValidationError({"execution_target": "Repository maintenance requires an execution target."})
     task = repository_task.task
+    if expected_execution_token is not None and repository_task.execution_token != expected_execution_token:
+        return task
+    if task.status in TERMINAL_STATUSES:
+        return task
     target = RepositoryExecutionTarget.objects.select_for_update().get(
         pk=repository_task.execution_target_id
     )
     state = RepositoryMaintenanceState.objects.select_for_update().get(execution_target=target)
     settings = maintenance_settings()
     now = timezone.now()
-    if succeeded:
+    cancelled = cancelled or bool(
+        expected_execution_token is not None
+        and repository_task.cancel_requested_at is not None
+    )
+    if cancelled:
+        if repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_QUICK:
+            state.next_quick_due_at = now + settings.quick_interval
+        elif repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL:
+            state.next_full_due_at = now + settings.full_interval
+            state.next_quick_due_at = now + settings.quick_interval
+        state.consecutive_failures = 0
+        state.next_retry_at = None
+        status = Task.Status.CANCELLED
+    elif succeeded:
         if repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_QUICK:
             state.last_quick_success_at = now
             state.next_quick_due_at = now + settings.quick_interval
@@ -312,9 +517,20 @@ def finalize_repository_operation(
         state.next_retry_at = now + timedelta(seconds=retry_seconds)
         status = Task.Status.FAILED
     state.save()
+    repository_task.execution_token = None
+    repository_task.execution_heartbeat_at = None
+    repository_task.save(
+        update_fields=["execution_token", "execution_heartbeat_at", "updated_at"]
+    )
     if target.active_task_id == task.id:
         target.active_task = None
         target.save(update_fields=["active_task", "updated_at"])
+    if status == Task.Status.CANCELLED:
+        return cancel_platform_task(
+            task_uuid=task.task_uuid,
+            organization_id=task.organization_id,
+            reason=(error_message or repository_task.cancel_reason or "Task cancelled by user")[:2000],
+        )
     return complete_task(
         task_uuid=task.task_uuid,
         organization_id=task.organization_id,
@@ -329,9 +545,14 @@ def finalize_repository_operation(
 __all__ = [
     "create_repository_operation_task",
     "discover_repository_execution_targets",
+    "fence_controller_repository_operation",
     "finalize_repository_operation",
     "maintenance_settings",
+    "repository_operation_cancellation_supported",
+    "request_repository_operation_cancel",
     "schedule_due_maintenance",
+    "set_controller_repository_operation_step",
     "set_task_step",
+    "start_controller_repository_operation",
     "start_task",
 ]

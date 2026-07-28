@@ -1,17 +1,23 @@
+import signal
+import subprocess
 from subprocess import CompletedProcess
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from django.test import SimpleTestCase
 
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.kopia_cli import (
+    KopiaCliCancelled,
     KopiaCliError,
+    KopiaControlDecision,
     KopiaRepositoryAlreadyExistsError,
     _connection_fingerprint_file,
     _invalidate_changed_s3_connection,
+    _run_repository_command_unlocked,
     _s3_flags,
+    _terminate_process_group,
     create_s3_repository,
     run_maintenance,
 )
@@ -20,22 +26,44 @@ from apps.storage.services.internal.kopia_cli import (
 class KopiaS3URLStyleCommandTests(SimpleTestCase):
     @patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value="/usr/local/bin/kopia")
     @patch("apps.storage.services.internal.kopia_cli._kopia_supports_s3_url_style", return_value=True)
-    def test_huawei_virtual_hosted_style_uses_patched_flag(self, _supports, _path):
+    def test_huaweicloud_virtual_hosted_style_uses_patched_flag(self, _supports, _path):
         repository = Repository(
             repo_type=Repository.Type.S3,
-            s3_platform=Repository.S3Platform.HUAWEI,
+            s3_platform=Repository.S3Platform.HUAWEICLOUD,
             s3_bucket="bucket",
             config={"endpoint": "obs.cn-north-5.myhuaweicloud.com"},
         )
 
         self.assertIn("--url-style=virtual-hosted", _s3_flags(repository))
 
+    @patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value="/usr/local/bin/kopia")
+    @patch("apps.storage.services.internal.kopia_cli._kopia_supports_s3_url_style", return_value=True)
+    def test_controller_kopia_uses_snapshotted_external_endpoint(
+        self, _supports, _path
+    ):
+        repository = Repository(
+            repo_type=Repository.Type.S3,
+            s3_platform=Repository.S3Platform.ALIYUN,
+            s3_bucket="bucket",
+            config={
+                "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                "external_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                "internal_endpoint": "oss-cn-hangzhou-internal.aliyuncs.com",
+                "s3_url_style": "virtual_hosted",
+            },
+        )
+
+        flags = _s3_flags(repository)
+
+        self.assertIn("--endpoint=oss-cn-hangzhou.aliyuncs.com", flags)
+        self.assertNotIn("--endpoint=oss-cn-hangzhou-internal.aliyuncs.com", flags)
+
     @patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value="/usr/bin/kopia")
     @patch("apps.storage.services.internal.kopia_cli._kopia_supports_s3_url_style", return_value=False)
     def test_official_binary_rejects_virtual_hosted_requirement(self, _supports, _path):
         repository = Repository(
             repo_type=Repository.Type.S3,
-            s3_platform=Repository.S3Platform.HUAWEI,
+            s3_platform=Repository.S3Platform.HUAWEICLOUD,
             s3_bucket="bucket",
             config={"s3_url_style": "virtual_hosted"},
         )
@@ -161,3 +189,55 @@ class KopiaMaintenanceCommandTests(SimpleTestCase):
         self.assertEqual(commands[1], ["repository", "status"])
         self.assertEqual(commands[2][:3], ["repository", "connect", "s3"])
         sleep.assert_called_once_with(1)
+
+    @patch("apps.storage.services.internal.kopia_cli._environment", return_value={})
+    @patch("apps.storage.services.internal.kopia_cli._invalidate_changed_s3_connection")
+    @patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value="/usr/bin/kopia")
+    @patch("apps.storage.services.internal.kopia_cli.os.killpg")
+    @patch("apps.storage.services.internal.kopia_cli.subprocess.Popen")
+    def test_cancellation_terminates_the_kopia_process_group(
+        self,
+        popen,
+        killpg,
+        _kopia_path,
+        _invalidate,
+        _environment,
+    ):
+        process = popen.return_value
+        process.pid = 4321
+        process.poll.side_effect = [None, -signal.SIGTERM]
+        process.communicate.side_effect = subprocess.TimeoutExpired("kopia", 0.5)
+        process.wait.return_value = 0
+        decisions = iter(
+            [KopiaControlDecision.CONTINUE, KopiaControlDecision.CANCEL]
+        )
+
+        with self.assertRaises(KopiaCliCancelled):
+            _run_repository_command_unlocked(
+                Repository(id=52, repo_type=Repository.Type.S3),
+                ["maintenance", "run"],
+                timeout_seconds=300,
+                config_file=Path("/tmp/kopia-cancel-test.config"),
+                control=lambda: next(decisions),
+            )
+
+        popen.assert_called_once()
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        killpg.assert_called_once_with(4321, signal.SIGTERM)
+
+    @patch("apps.storage.services.internal.kopia_cli.os.killpg")
+    def test_process_group_escalates_to_sigkill(self, killpg):
+        process = MagicMock()
+        process.pid = 9876
+        process.poll.return_value = None
+        process.wait.side_effect = [subprocess.TimeoutExpired("kopia", 5), 0]
+
+        _terminate_process_group(process)
+
+        self.assertEqual(
+            killpg.call_args_list,
+            [
+                call(9876, signal.SIGTERM),
+                call(9876, signal.SIGKILL),
+            ],
+        )

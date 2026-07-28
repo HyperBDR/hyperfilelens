@@ -97,11 +97,19 @@ func NewConnector(provider config.Provider) *Connector {
 			HandshakeTimeout: handshakeTimeout,
 			Proxy:            http.ProxyFromEnvironment,
 			TLSClientConfig:  tlsclient.Config(),
+			Subprotocols:     []string{wire.TaskResultAckSubprotocol},
 		},
 		backoff:           BackoffDelay,
 		heartbeatInterval: wire.HeartbeatInterval,
 		keepaliveInterval: wsKeepaliveInterval,
 	}
+}
+
+// TaskResultAckEnabled reports whether the current peer negotiated durable result ACKs.
+func (c *Connector) TaskResultAckEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.conn != nil && c.conn.Subprotocol() == wire.TaskResultAckSubprotocol
 }
 
 func (c *Connector) endpoint() (baseURL, agentID, token string) {
@@ -252,6 +260,8 @@ func (c *Connector) connectOnce(
 		return nil
 	})
 	c.setConn(conn)
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
 	nodeID := ""
 	if c.provider != nil {
 		nodeID = c.provider.Current().NodeID
@@ -262,7 +272,7 @@ func (c *Connector) connectOnce(
 	}
 
 	if onConnected != nil {
-		if hookErr := onConnected(ctx); hookErr != nil {
+		if hookErr := onConnected(sessionCtx); hookErr != nil {
 			slog.Warn("websocket onConnected hook failed", "err", hookErr)
 		}
 	}
@@ -270,8 +280,8 @@ func (c *Connector) connectOnce(
 	done := make(chan struct{})
 	sessionErr := make(chan error, 1)
 
-	go c.heartbeatLoop(ctx, done, sessionErr)
-	go c.keepaliveLoop(ctx, done, sessionErr)
+	go c.heartbeatLoop(sessionCtx, done, sessionErr)
+	go c.keepaliveLoop(sessionCtx, done, sessionErr)
 
 	go func() {
 		for {
@@ -285,12 +295,14 @@ func (c *Connector) connectOnce(
 				return
 			}
 			c.touchActivity()
-			if err := onMessage(ctx, msg); err != nil {
-				select {
-				case sessionErr <- err:
-				default:
+			if onMessage != nil {
+				if err := onMessage(sessionCtx, msg); err != nil {
+					select {
+					case sessionErr <- err:
+					default:
+					}
+					return
 				}
-				return
 			}
 		}
 	}()
@@ -304,6 +316,7 @@ func (c *Connector) connectOnce(
 	}
 
 	close(done)
+	sessionCancel()
 	c.setConn(nil)
 	_ = conn.Close()
 

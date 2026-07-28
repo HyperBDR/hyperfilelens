@@ -13,7 +13,9 @@ from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.node.models import Node, NodeTask
 from apps.node.services.internal.node_registry import effective_agent_node_status
@@ -33,6 +35,7 @@ from apps.protection.services.backup_source_snapshot import (
     refresh_source_snapshot_summary,
     set_source_snapshot_started,
 )
+from apps.protection.services.kopia_snapshot_delete import normalize_kopia_snapshot_id
 from apps.protection.services.backup_runtime_policy import backup_runtime_policy_payload
 from apps.protection.services.progress.orchestrated_progress import (
     BACKUP_LOGIC_END,
@@ -44,8 +47,13 @@ from apps.storage.services.internal.repository_access import resolve_repository_
 from apps.storage.services.internal.repository_usage import enqueue_repository_usage_refresh
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import append_task_step_event, complete_task, start_task
+from apps.task.signals import task_updated
 
 logger = logging.getLogger(__name__)
+
+_BACKUP_PROTOCOL_LEGACY = "legacy_parallel"
+_BACKUP_PROTOCOL_PREPARED = "prepared_snapshot_v1"
+_BACKUP_PREPARED_CAPABILITY = "backup_prepared_snapshot_v1"
 
 _NODE_TASK_TERMINAL = frozenset(
     {
@@ -124,6 +132,9 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         return "KOPIA_SIGNAL_KILLED", last_error or "Kopia process was killed."
     if node_task.status == NodeTask.Status.FAILED:
         result = node_task.result if isinstance(node_task.result, dict) else {}
+        if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND":
+            message = bt.extract_kopia_failure_message(result, last_error=last_error)
+            return "KOPIA_POLICY_NOT_FOUND", (message or "Kopia policy not found.")[:2000]
         if str(result.get("error_code") or "") == "POLICY_APPLY_FAILED":
             phase = str(result.get("policy_phase") or "apply")
             message = bt.extract_kopia_failure_message(result, last_error=last_error)
@@ -132,6 +143,8 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         if not message:
             message = last_error or "Agent backup command failed."
         lower = message.lower()
+        if "unable to get policy tree" in lower or "policy not found" in lower:
+            return "KOPIA_POLICY_NOT_FOUND", message[:2000]
         if "fatal error" in lower or "error when processing" in lower:
             return "KOPIA_SNAPSHOT_FATAL", message[:2000]
         if "exit" in lower or bt._is_generic_exit_message(last_error):
@@ -195,6 +208,118 @@ def _task_result_payload(task: Task) -> dict[str, Any]:
 def _save_task_result_payload(task: Task, payload: dict[str, Any]) -> None:
     task.result_payload = payload
     task.save(update_fields=["result_payload", "updated_at"])
+
+
+def _node_capabilities(node: Node) -> set[str]:
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory") if isinstance(metadata.get("inventory"), dict) else {}
+    values = inventory.get("capabilities", metadata.get("capabilities", []))
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {str(value or "").strip() for value in values if str(value or "").strip()}
+
+
+def _backup_protocol(*, task: Task, node: Node) -> str:
+    payload = _task_result_payload(task)
+    selected = str(payload.get("backup_protocol") or "").strip()
+    if selected in {_BACKUP_PROTOCOL_LEGACY, _BACKUP_PROTOCOL_PREPARED}:
+        return selected
+    has_legacy_work = NodeTask.objects.filter(
+        organization_id=task.organization_id,
+        kind="backup.run",
+        correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+        correlation_id=str(task.task_uuid),
+    ).exists()
+    selected = _BACKUP_PROTOCOL_LEGACY
+    if (
+        not has_legacy_work
+        and protection_conf.PROTECTION_BACKUP_PREPARED_SNAPSHOT_ENABLED
+        and _BACKUP_PREPARED_CAPABILITY in _node_capabilities(node)
+    ):
+        selected = _BACKUP_PROTOCOL_PREPARED
+    payload["backup_protocol"] = selected
+    _save_task_result_payload(task, payload)
+    return selected
+
+
+def _policy_prepare_attempts(
+    *,
+    task: Task,
+    node_id: int,
+    backup_config_dir_id: int,
+) -> list[NodeTask]:
+    return list(
+        NodeTask.objects.filter(
+            organization_id=task.organization_id,
+            node_id=node_id,
+            kind="repository.policy.apply",
+            correlation_type=protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE,
+            correlation_id=str(task.task_uuid),
+            payload__backup_config_dir_id=int(backup_config_dir_id),
+        ).order_by("created_at", "id")
+    )
+
+
+def _clear_policy_retry_schedule(*, task: Task, backup_config_dir_id: int) -> None:
+    payload = _task_result_payload(task)
+    schedules = payload.get("policy_prepare_retries")
+    if not isinstance(schedules, dict) or str(backup_config_dir_id) not in schedules:
+        return
+    schedules = dict(schedules)
+    schedules.pop(str(backup_config_dir_id), None)
+    if schedules:
+        payload["policy_prepare_retries"] = schedules
+    else:
+        payload.pop("policy_prepare_retries", None)
+    _save_task_result_payload(task, payload)
+
+
+def _schedule_policy_retry(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot,
+    backup_config_dir_id: int,
+    attempt_count: int,
+    delay_seconds: int,
+) -> None:
+    payload = _task_result_payload(task)
+    schedules = payload.get("policy_prepare_retries")
+    schedules = dict(schedules) if isinstance(schedules, dict) else {}
+    key = str(backup_config_dir_id)
+    existing = schedules.get(key)
+    if isinstance(existing, dict) and int(existing.get("attempt_count") or 0) == attempt_count:
+        return
+    retry_at = timezone.now() + timedelta(seconds=max(0, int(delay_seconds)))
+    schedules[key] = {
+        "attempt_count": attempt_count,
+        "retry_at": retry_at.isoformat(),
+    }
+    payload["policy_prepare_retries"] = schedules
+    _save_task_result_payload(task, payload)
+
+    def _enqueue() -> None:
+        from apps.protection.tasks.backup import advance_backup_task
+
+        advance_backup_task.apply_async(
+            kwargs={
+                "organization_id": task.organization_id,
+                "task_uuid": str(task.task_uuid),
+                "source_snapshot_id": source_snapshot.id,
+            },
+            countdown=max(0, int(delay_seconds)),
+        )
+
+    transaction.on_commit(_enqueue)
+
+
+def _policy_retry_due(*, task: Task, backup_config_dir_id: int, attempt_count: int) -> bool:
+    payload = _task_result_payload(task)
+    schedules = payload.get("policy_prepare_retries")
+    entry = schedules.get(str(backup_config_dir_id)) if isinstance(schedules, dict) else None
+    if not isinstance(entry, dict) or int(entry.get("attempt_count") or 0) != attempt_count:
+        return False
+    retry_at = parse_datetime(str(entry.get("retry_at") or ""))
+    return retry_at is None or retry_at <= timezone.now()
 
 
 def _repository_server_state(task: Task) -> dict[str, Any] | None:
@@ -291,8 +416,10 @@ def _repository_server_start_result_payload(
 def _repository_payload_for_backup(
     *,
     task: Task,
+    source_snapshot: BackupSourceSnapshot,
     repository: Repository,
     execution_target,
+    repository_endpoint_type: str,
 ) -> dict[str, Any] | None:
     bt = _bt()
     repository_access = resolve_repository_reader(
@@ -300,11 +427,13 @@ def _repository_payload_for_backup(
         fallback_node=execution_target.node,
         source_type=execution_target.source_type,
         source_ref_id=execution_target.source_ref_id,
+        repository_endpoint_type=repository_endpoint_type,
     )
     if int(repository_access.node.id) == int(execution_target.node.id):
         return bt._repository_runtime_payload(
             repository=repository,
             execution_target=execution_target,
+            repository_endpoint_type=repository_endpoint_type,
         )
     if not protection_conf.PROTECTION_PROXY_REPOSITORY_SERVER_ENABLED:
         raise ValidationError(
@@ -525,6 +654,218 @@ def _ensure_source_repository_probe(
     return False
 
 
+def _mark_policy_prepare_failed(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot,
+    directory_row: BackupSourceSnapshotDirectory,
+    node_task: NodeTask,
+) -> None:
+    error_code, error_message = _node_task_error_code(node_task)
+    if error_code != "POLICY_APPLY_FAILED":
+        error_code = "POLICY_APPLY_FAILED"
+    record_source_snapshot_directory_result(
+        source_snapshot=source_snapshot,
+        backup_config_dir_id=directory_row.backup_config_dir_id,
+        source_path=directory_row.source_path,
+        path_type=directory_row.path_type,
+        display_name=directory_row.display_name,
+        repository_id=directory_row.repository_id,
+        status=BackupSourceSnapshotDirectory.Status.FAILED,
+        error_code=error_code,
+        error_message=error_message or "Kopia policy preparation failed.",
+    )
+    append_task_step_event(
+        task=task,
+        step_name="kopia_snapshot",
+        level=TaskEvent.Level.ERROR,
+        message="Directory policy preparation failed",
+        metadata={
+            "backup_config_dir_id": directory_row.backup_config_dir_id,
+            "node_task_id": str(node_task.id),
+            "attempt_count": len(
+                _policy_prepare_attempts(
+                    task=task,
+                    node_id=node_task.node_id,
+                    backup_config_dir_id=directory_row.backup_config_dir_id,
+                )
+            ),
+            "error_code": error_code,
+            "error_message": error_message,
+        },
+    )
+
+
+def _ensure_directory_policy_prepared(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot,
+    directory_row: BackupSourceSnapshotDirectory,
+    execution_target,
+    repository_payload: dict[str, Any],
+    file_filter_payload: dict[str, Any] | None,
+    backup_policy_payload: dict[str, Any] | None,
+    compression_payload: dict[str, Any],
+    agent_source_path: str,
+) -> str:
+    attempts = _policy_prepare_attempts(
+        task=task,
+        node_id=execution_target.node.id,
+        backup_config_dir_id=directory_row.backup_config_dir_id,
+    )
+    latest = attempts[-1] if attempts else None
+    if latest is not None and latest.status == NodeTask.Status.SUCCESS:
+        _clear_policy_retry_schedule(
+            task=task,
+            backup_config_dir_id=directory_row.backup_config_dir_id,
+        )
+        return "prepared"
+    if latest is not None and latest.status not in _NODE_TASK_TERMINAL:
+        if latest.status == NodeTask.Status.PENDING:
+            deliver_agent_task(task=latest)
+        return "waiting"
+
+    max_attempts = 1 + max(0, protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES)
+    if latest is not None:
+        if len(attempts) >= max_attempts:
+            _clear_policy_retry_schedule(
+                task=task,
+                backup_config_dir_id=directory_row.backup_config_dir_id,
+            )
+            _mark_policy_prepare_failed(
+                task=task,
+                source_snapshot=source_snapshot,
+                directory_row=directory_row,
+                node_task=latest,
+            )
+            return "failed"
+        delays = protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_RETRY_DELAYS
+        delay = int(delays[min(len(attempts) - 1, len(delays) - 1)]) if delays else 0
+        if not _policy_retry_due(
+            task=task,
+            backup_config_dir_id=directory_row.backup_config_dir_id,
+            attempt_count=len(attempts),
+        ):
+            _schedule_policy_retry(
+                task=task,
+                source_snapshot=source_snapshot,
+                backup_config_dir_id=directory_row.backup_config_dir_id,
+                attempt_count=len(attempts),
+                delay_seconds=delay,
+            )
+            return "waiting"
+        _clear_policy_retry_schedule(
+            task=task,
+            backup_config_dir_id=directory_row.backup_config_dir_id,
+        )
+
+    bt = _bt()
+    payload = bt._agent_backup_payload(
+        source_path=agent_source_path,
+        backup_config_dir_id=directory_row.backup_config_dir_id,
+        repository_payload=repository_payload,
+        nas_payload=execution_target.nas_payload,
+        file_filter_payload=file_filter_payload,
+        backup_policy_payload=backup_policy_payload,
+        compression_payload=compression_payload,
+    )
+    payload["policy_attempt"] = len(attempts) + 1
+    handle = run_agent_task_async(
+        organization_id=task.organization_id,
+        node_id=execution_target.node.id,
+        kind="repository.policy.apply",
+        payload=payload,
+        correlation_type=protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE,
+        correlation_id=str(task.task_uuid),
+    )
+    append_task_step_event(
+        task=task,
+        step_name="kopia_snapshot",
+        message="Preparing directory policy",
+        metadata={
+            "backup_config_dir_id": directory_row.backup_config_dir_id,
+            "node_task_id": str(handle.task.id),
+            "attempt": len(attempts) + 1,
+        },
+    )
+    return "waiting"
+
+
+def _prepare_directory_policies(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot,
+    directories,
+    execution_target,
+    repository: Repository,
+    repository_payload: dict[str, Any],
+    file_filter_payload: dict[str, Any] | None,
+    backup_policy_payload: dict[str, Any] | None,
+    compression_payload: dict[str, Any],
+) -> bool:
+    bt = _bt()
+    for directory in directories:
+        source_path = bt._clean_path(directory.path)
+        path_type = str(getattr(directory, "path_type", "") or "unknown")
+        agent_source_path = source_path
+        if execution_target.root_path:
+            from apps.source.services.internal.nas_share_path import to_mount_path
+
+            agent_source_path = to_mount_path(execution_target.root_path, source_path)
+        directory_row = BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot=source_snapshot,
+            backup_config_dir_id=directory.id,
+        ).first()
+        if directory_row is None:
+            directory_row = record_source_snapshot_directory_result(
+                source_snapshot=source_snapshot,
+                backup_config_dir_id=directory.id,
+                source_path=source_path,
+                path_type=path_type,
+                display_name=directory.display_name,
+                repository_id=repository.id,
+                status=BackupSourceSnapshotDirectory.Status.PENDING,
+            )
+            append_task_step_event(
+                task=task,
+                step_name="kopia_snapshot",
+                message="Starting directory snapshot",
+                metadata={
+                    "backup_config_dir_id": directory.id,
+                    "source_path": source_path,
+                },
+            )
+        if directory_row.status in _DIRECTORY_TERMINAL:
+            continue
+        if execution_target.root_path and not bt._is_subpath(execution_target.root_path, agent_source_path):
+            record_source_snapshot_directory_result(
+                source_snapshot=source_snapshot,
+                backup_config_dir_id=directory.id,
+                source_path=source_path,
+                path_type=path_type,
+                display_name=directory.display_name,
+                repository_id=repository.id,
+                status=BackupSourceSnapshotDirectory.Status.FAILED,
+                error_code="SOURCE_PATH_FORBIDDEN",
+                error_message="Backup config source path is outside the mounted NAS path.",
+            )
+            continue
+        state = _ensure_directory_policy_prepared(
+            task=task,
+            source_snapshot=source_snapshot,
+            directory_row=directory_row,
+            execution_target=execution_target,
+            repository_payload=repository_payload,
+            file_filter_payload=file_filter_payload,
+            backup_policy_payload=backup_policy_payload,
+            compression_payload=compression_payload,
+            agent_source_path=agent_source_path,
+        )
+        if state == "waiting":
+            return False
+    return True
+
+
 def _dispatch_directory_backup(
     *,
     task: Task,
@@ -539,6 +880,7 @@ def _dispatch_directory_backup(
     compression_payload: dict[str, Any],
     agent_source_path: str,
     source_path: str,
+    task_kind: str = "backup.run",
 ) -> None:
     bt = _bt()
     existing = _get_node_task_for_directory(
@@ -603,15 +945,15 @@ def _dispatch_directory_backup(
     handle = run_agent_task_async(
         organization_id=task.organization_id,
         node_id=execution_target.node.id,
-        kind="backup.run",
+        kind=task_kind,
         payload=bt._agent_backup_payload(
             source_path=agent_source_path,
             backup_config_dir_id=config_directory.id,
             repository_payload=repository_payload,
             nas_payload=execution_target.nas_payload,
-            file_filter_payload=file_filter_payload,
-            backup_policy_payload=backup_policy_payload,
-            compression_payload=compression_payload,
+            file_filter_payload=file_filter_payload if task_kind == "backup.run" else None,
+            backup_policy_payload=backup_policy_payload if task_kind == "backup.run" else None,
+            compression_payload=compression_payload if task_kind == "backup.run" else None,
         ),
         correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
         correlation_id=str(task.task_uuid),
@@ -633,7 +975,11 @@ def _dispatch_directory_backup(
     append_task_step_event(
         task=task,
         step_name="kopia_snapshot",
-        message="Dispatching directory backup to agent",
+        message=(
+            "Dispatching prepared directory snapshot to agent"
+            if task_kind == "backup.snapshot.create"
+            else "Dispatching directory backup to agent"
+        ),
         metadata={
             "backup_config_dir_id": config_directory.id,
             "source_path": source_path,
@@ -642,6 +988,7 @@ def _dispatch_directory_backup(
             "repository_id": repository.id,
             "repository_type": repository.repo_type,
             "orchestrator": True,
+            "task_kind": task_kind,
         },
     )
 
@@ -1099,6 +1446,40 @@ def _observe_running_directory(
                 error_message = str(node_task.last_error or "Agent went offline during backup.")
             else:
                 error_code, error_message = _node_task_error_code(node_task)
+            if (
+                error_code == "KOPIA_POLICY_NOT_FOUND"
+                and node_task.status != NodeTask.Status.CANCELED
+                and int(directory_row.retry_count or 0) < 1
+            ):
+                directory_row.status = BackupSourceSnapshotDirectory.Status.PENDING
+                directory_row.node_task_id = None
+                directory_row.retry_count = int(directory_row.retry_count or 0) + 1
+                directory_row.error_code = "KOPIA_POLICY_REPAIR_PENDING"
+                directory_row.error_message = error_message
+                directory_row.dispatched_at = None
+                directory_row.save(
+                    update_fields=[
+                        "status",
+                        "node_task_id",
+                        "retry_count",
+                        "error_code",
+                        "error_message",
+                        "dispatched_at",
+                        "updated_at",
+                    ]
+                )
+                append_task_step_event(
+                    task=task,
+                    step_name="kopia_snapshot",
+                    level=TaskEvent.Level.WARN,
+                    message="Directory policy repair queued after parallel upload batch",
+                    metadata={
+                        "backup_config_dir_id": directory_row.backup_config_dir_id,
+                        "node_task_id": str(node_task.id),
+                        "error_code": error_code,
+                    },
+                )
+                return
             record_source_snapshot_directory_result(
                 source_snapshot=source_snapshot,
                 backup_config_dir_id=directory_row.backup_config_dir_id,
@@ -1387,6 +1768,7 @@ def advance_backup(
     source_snapshot = snapshot_qs.exclude(
         status__in=[
             BackupSourceSnapshot.Status.DELETING,
+            BackupSourceSnapshot.Status.DELETE_FAILED,
             BackupSourceSnapshot.Status.DELETED,
         ]
     ).first()
@@ -1518,8 +1900,10 @@ def advance_backup(
     try:
         repository_payload = _repository_payload_for_backup(
             task=task,
+            source_snapshot=source_snapshot,
             repository=repository,
             execution_target=execution_target,
+            repository_endpoint_type=config.repository_endpoint_type,
         )
     except Exception as exc:
         error_code = "BACKUP_REPOSITORY_ACCESS_UNAVAILABLE"
@@ -1610,10 +1994,47 @@ def advance_backup(
 
     total_dirs = len(directories)
     node_online = effective_agent_node_status(execution_target.node) == Node.Status.ONLINE
-    serial = protection_conf.PROTECTION_BACKUP_DIRECTORY_CONCURRENCY.strip().lower() == "serial"
+    backup_protocol = _backup_protocol(task=task, node=execution_target.node)
+    if backup_protocol == _BACKUP_PROTOCOL_PREPARED:
+        policies_ready = _prepare_directory_policies(
+            task=task,
+            source_snapshot=source_snapshot,
+            directories=directories,
+            execution_target=execution_target,
+            repository=repository,
+            repository_payload=repository_payload,
+            file_filter_payload=file_filter_payload,
+            backup_policy_payload=backup_policy_payload,
+            compression_payload=compression_payload,
+        )
+        if not policies_ready:
+            bt._set_step_status(
+                task=task,
+                step_name="kopia_snapshot",
+                status=TaskStep.Status.RUNNING,
+                progress=0,
+                task_progress=BACKUP_PREPARE_END,
+                current_step="kopia_snapshot",
+            )
+            return {
+                "task_uuid": str(task.task_uuid),
+                "source_snapshot_id": source_snapshot.id,
+                "status": Task.Status.RUNNING,
+                "orchestrator": "policy_prepare",
+                "backup_protocol": backup_protocol,
+            }
+    serial = (
+        backup_protocol == _BACKUP_PROTOCOL_LEGACY
+        and protection_conf.PROTECTION_BACKUP_DIRECTORY_CONCURRENCY.strip().lower() == "serial"
+    )
     prior_failed = False
 
     prepared: list[tuple[int, Any, BackupSourceSnapshotDirectory, str, str]] = []
+    policy_repair_pending = BackupSourceSnapshotDirectory.objects.filter(
+        source_snapshot=source_snapshot,
+        status=BackupSourceSnapshotDirectory.Status.PENDING,
+        error_code="KOPIA_POLICY_REPAIR_PENDING",
+    ).exists()
 
     for index, directory in enumerate(directories, start=1):
         source_path = bt._clean_path(directory.path)
@@ -1686,6 +2107,30 @@ def advance_backup(
             BackupSourceSnapshotDirectory.Status.PENDING,
             BackupSourceSnapshotDirectory.Status.CREATING,
         }:
+            dispatch_kind = (
+                "backup.snapshot.create"
+                if backup_protocol == _BACKUP_PROTOCOL_PREPARED
+                else "backup.run"
+            )
+            if policy_repair_pending:
+                if directory_row.error_code != "KOPIA_POLICY_REPAIR_PENDING":
+                    continue
+                sibling_active = BackupSourceSnapshotDirectory.objects.filter(
+                    source_snapshot=source_snapshot,
+                    status__in={
+                        BackupSourceSnapshotDirectory.Status.DISPATCHING,
+                        BackupSourceSnapshotDirectory.Status.RUNNING,
+                        BackupSourceSnapshotDirectory.Status.CREATING,
+                    },
+                ).exclude(pk=directory_row.pk).exists()
+                if sibling_active:
+                    continue
+                dispatch_kind = "backup.run"
+                directory_row.error_code = ""
+                directory_row.error_message = ""
+                directory_row.save(
+                    update_fields=["error_code", "error_message", "updated_at"]
+                )
             _dispatch_directory_backup(
                 task=task,
                 source_snapshot=source_snapshot,
@@ -1699,6 +2144,7 @@ def advance_backup(
                 compression_payload=compression_payload,
                 agent_source_path=agent_source_path,
                 source_path=source_path,
+                task_kind=dispatch_kind,
             )
             directory_row.refresh_from_db()
 
@@ -1815,6 +2261,7 @@ def reconcile_backup_tasks(*, limit: int = 100) -> dict[str, int]:
         ).exclude(
             status__in=[
                 BackupSourceSnapshot.Status.DELETING,
+                BackupSourceSnapshot.Status.DELETE_FAILED,
                 BackupSourceSnapshot.Status.DELETED,
             ]
         ).first()
@@ -1833,7 +2280,313 @@ def reconcile_backup_tasks(*, limit: int = 100) -> dict[str, int]:
                 task.task_uuid,
                 snapshot.id,
             )
-    return {"candidates": len(tasks), "advanced": advanced}
+    projected = reconcile_backup_result_projections(limit=limit)
+    return {
+        "candidates": len(tasks),
+        "advanced": advanced,
+        "projection_candidates": projected["candidates"],
+        "projected": projected["projected"],
+    }
+
+
+_LATE_RESULT_DIRECTORY_ACTIVE = frozenset(
+    {
+        BackupSourceSnapshotDirectory.Status.PENDING,
+        BackupSourceSnapshotDirectory.Status.DISPATCHING,
+        BackupSourceSnapshotDirectory.Status.RUNNING,
+        BackupSourceSnapshotDirectory.Status.CREATING,
+    }
+)
+_SNAPSHOT_DELETE_INTENT = frozenset(
+    {
+        BackupSourceSnapshot.Status.DELETING,
+        BackupSourceSnapshot.Status.DELETE_FAILED,
+        BackupSourceSnapshot.Status.DELETED,
+    }
+)
+
+
+def _late_directory_failure_is_transient(directory: BackupSourceSnapshotDirectory) -> bool:
+    code = str(directory.error_code or "").strip().upper()
+    if code in protection_conf.LATE_SUCCESS_ADOPT_ERROR_CODES:
+        return True
+    message = str(directory.error_message or "").strip().lower()
+    return code == "AGENT_BACKUP_FAILED" and "agent went offline" in message
+
+
+def _backup_projection_payload(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot,
+) -> dict[str, Any]:
+    payload = dict(task.result_payload) if isinstance(task.result_payload, dict) else {}
+    payload.update(
+        {
+            "source_snapshot_id": source_snapshot.id,
+            "source_snapshot_status": source_snapshot.status,
+            "successful_directory_count": source_snapshot.successful_directory_count,
+            "failed_directory_count": source_snapshot.failed_directory_count,
+            "directory_count": source_snapshot.directory_count,
+            "total_size_bytes": source_snapshot.total_size_bytes,
+            "file_count": source_snapshot.file_count,
+            "dir_count": source_snapshot.dir_count,
+        }
+    )
+    return payload
+
+
+def _correct_terminal_backup_task_success(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot,
+    node_task: NodeTask,
+) -> None:
+    previous_status = task.status
+    payload = _backup_projection_payload(task=task, source_snapshot=source_snapshot)
+    task.status = Task.Status.SUCCESS
+    task.progress = 100
+    task.result_payload = payload
+    task.error_code = None
+    task.error_message = None
+    task.current_step = "finalize_snapshot"
+    task.finished_at = task.finished_at or timezone.now()
+    task.save(
+        update_fields=[
+            "status",
+            "progress",
+            "result_payload",
+            "error_code",
+            "error_message",
+            "current_step",
+            "finished_at",
+            "updated_at",
+        ]
+    )
+    TaskStep.objects.filter(
+        task=task,
+        step_name__in=["kopia_snapshot", "finalize_snapshot"],
+    ).update(status=TaskStep.Status.SUCCESS, progress=100)
+    append_task_step_event(
+        task=task,
+        step_name="finalize_snapshot",
+        message="Backup terminal state corrected after durable late Agent result",
+        metadata={
+            "previous_status": previous_status,
+            "source_snapshot_id": source_snapshot.id,
+            "node_task_id": str(node_task.id),
+        },
+    )
+    task_updated.send(
+        sender=Task,
+        task_uuid=str(task.task_uuid),
+        organization_id=task.organization_id,
+        status=task.status,
+        progress=float(task.progress),
+    )
+
+
+@transaction.atomic
+def project_backup_node_task_result(*, node_task_id) -> dict[str, Any]:
+    """Idempotently project one durable backup NodeTask into snapshot/task state."""
+    node_task = NodeTask.objects.select_for_update().filter(pk=node_task_id).first()
+    if (
+        node_task is None
+        or node_task.correlation_type != protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE
+        or not node_task.correlation_id
+    ):
+        return {"status": "ignored", "reason": "not_backup_result"}
+
+    task = (
+        Task.objects.select_for_update()
+        .filter(
+            organization_id=node_task.organization_id,
+            task_type=Task.Type.BACKUP,
+            task_uuid=node_task.correlation_id,
+        )
+        .first()
+    )
+    if task is None:
+        return {"status": "ignored", "reason": "task_missing"}
+    source_snapshot = (
+        BackupSourceSnapshot.objects.select_for_update()
+        .filter(organization_id=node_task.organization_id, task_id=task.id)
+        .first()
+    )
+    if source_snapshot is None:
+        return {"status": "ignored", "reason": "snapshot_missing"}
+    if source_snapshot.status in _SNAPSHOT_DELETE_INTENT:
+        return {"status": "ignored", "reason": "snapshot_delete_intent"}
+
+    if task.status not in _TASK_TERMINAL:
+        result = advance_backup(
+            organization_id=task.organization_id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=source_snapshot.id,
+        )
+        return {"status": "advanced", "result": result}
+
+    if task.status not in {Task.Status.FAILED, Task.Status.TIMEOUT}:
+        return {"status": "ignored", "reason": "terminal_task_not_recoverable"}
+    if node_task.status != NodeTask.Status.SUCCESS:
+        return {"status": "ignored", "reason": "node_task_not_success"}
+
+    node_payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+    directory_id = int(node_payload.get("backup_config_dir_id") or 0)
+    directory = BackupSourceSnapshotDirectory.objects.select_for_update().filter(
+        source_snapshot=source_snapshot,
+        node_task_id=node_task.id,
+    ).first()
+    if directory is None and directory_id > 0:
+        directory = BackupSourceSnapshotDirectory.objects.select_for_update().filter(
+            source_snapshot=source_snapshot,
+            backup_config_dir_id=directory_id,
+            node_task_id__isnull=True,
+        ).first()
+    if directory is None:
+        return {"status": "ignored", "reason": "directory_missing_or_superseded"}
+    if directory.status == BackupSourceSnapshotDirectory.Status.AVAILABLE:
+        return {"status": "unchanged", "reason": "already_projected"}
+    if directory.status == BackupSourceSnapshotDirectory.Status.DELETED:
+        return {"status": "ignored", "reason": "directory_deleted"}
+    if (
+        directory.status == BackupSourceSnapshotDirectory.Status.FAILED
+        and not _late_directory_failure_is_transient(directory)
+    ):
+        return {"status": "ignored", "reason": "non_transient_directory_failure"}
+    if directory.status not in _LATE_RESULT_DIRECTORY_ACTIVE | {
+        BackupSourceSnapshotDirectory.Status.FAILED
+    }:
+        return {"status": "ignored", "reason": "directory_not_recoverable"}
+
+    bt = _bt()
+    snapshot_id, size_bytes, file_count, dir_count, stats = bt._extract_snapshot_metrics(
+        node_task.result if isinstance(node_task.result, dict) else {}
+    )
+    snapshot_id = normalize_kopia_snapshot_id(snapshot_id)
+    if not snapshot_id:
+        return {"status": "ignored", "reason": "kopia_snapshot_id_missing"}
+
+    previous_error_code = directory.error_code
+    projected_directory = record_source_snapshot_directory_result(
+        source_snapshot=source_snapshot,
+        backup_config_dir_id=directory.backup_config_dir_id,
+        source_path=directory.source_path,
+        path_type=directory.path_type,
+        display_name=directory.display_name,
+        repository_id=directory.repository_id,
+        status=BackupSourceSnapshotDirectory.Status.AVAILABLE,
+        kopia_snapshot_id=snapshot_id,
+        size_bytes=size_bytes,
+        file_count=file_count,
+        dir_count=dir_count,
+        stats=stats,
+    )
+    projected_directory.node_task_id = node_task.id
+    projected_directory.adopted_late_result = True
+    projected_directory.save(
+        update_fields=["node_task_id", "adopted_late_result", "updated_at"]
+    )
+    append_task_step_event(
+        task=task,
+        step_name="kopia_snapshot",
+        message="Late backup result adopted",
+        metadata={
+            "backup_config_dir_id": projected_directory.backup_config_dir_id,
+            "node_task_id": str(node_task.id),
+            "kopia_snapshot_id": snapshot_id,
+            "previous_error_code": previous_error_code,
+        },
+    )
+
+    source_snapshot.refresh_from_db()
+    if (
+        source_snapshot.status == BackupSourceSnapshot.Status.AVAILABLE
+        and source_snapshot.successful_directory_count == source_snapshot.directory_count
+    ):
+        _correct_terminal_backup_task_success(
+            task=task,
+            source_snapshot=source_snapshot,
+            node_task=node_task,
+        )
+        corrected = True
+    else:
+        task.result_payload = _backup_projection_payload(
+            task=task,
+            source_snapshot=source_snapshot,
+        )
+        task.save(update_fields=["result_payload", "updated_at"])
+        corrected = False
+    return {
+        "status": "projected",
+        "source_snapshot_id": source_snapshot.id,
+        "source_snapshot_status": source_snapshot.status,
+        "task_corrected": corrected,
+    }
+
+
+def queue_backup_result_projection(*, node_task: NodeTask) -> bool:
+    if node_task.correlation_type != protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE:
+        return False
+    from apps.protection.tasks.backup import project_backup_node_task_result_task
+
+    project_backup_node_task_result_task.delay(node_task_id=str(node_task.id))
+    return True
+
+
+def reconcile_backup_result_projections(*, limit: int = 100) -> dict[str, int]:
+    rows = list(
+        BackupSourceSnapshotDirectory.objects.exclude(
+            source_snapshot__status__in=_SNAPSHOT_DELETE_INTENT,
+        )
+        .filter(
+            Q(status__in=_LATE_RESULT_DIRECTORY_ACTIVE)
+            | Q(
+                status=BackupSourceSnapshotDirectory.Status.FAILED,
+                error_code__in=protection_conf.LATE_SUCCESS_ADOPT_ERROR_CODES,
+            )
+            | Q(
+                status=BackupSourceSnapshotDirectory.Status.FAILED,
+                error_code="AGENT_BACKUP_FAILED",
+                error_message__icontains="Agent went offline",
+            )
+        )
+        .select_related("source_snapshot")
+        .order_by("-updated_at", "-id")[: max(1, int(limit))]
+    )
+    projected = 0
+    for directory in rows:
+        node_task = None
+        if directory.node_task_id:
+            node_task = NodeTask.objects.filter(
+                pk=directory.node_task_id,
+                status=NodeTask.Status.SUCCESS,
+            ).first()
+        if node_task is None:
+            node_task = (
+                NodeTask.objects.filter(
+                    organization_id=directory.organization_id,
+                    correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+                    correlation_id=str(directory.source_snapshot.task_uuid),
+                    payload__backup_config_dir_id=directory.backup_config_dir_id,
+                    status=NodeTask.Status.SUCCESS,
+                )
+                .order_by("-updated_at", "-created_at")
+                .first()
+            )
+        if node_task is None:
+            continue
+        try:
+            outcome = project_backup_node_task_result(node_task_id=node_task.id)
+        except Exception:
+            logger.exception(
+                "backup result projection reconcile failed node_task_id=%s directory_id=%s",
+                node_task.id,
+                directory.id,
+            )
+            continue
+        if outcome.get("status") == "projected":
+            projected += 1
+    return {"candidates": len(rows), "projected": projected}
 
 
 def _finalize_cancelled_backup_snapshot(
@@ -1854,6 +2607,21 @@ def _finalize_cancelled_backup_snapshot(
         row.backup_config_dir_id: row
         for row in BackupSourceSnapshotDirectory.objects.filter(source_snapshot=source_snapshot)
     }
+    policy_tasks = NodeTask.objects.filter(
+        organization_id=task.organization_id,
+        correlation_type=protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE,
+        correlation_id=str(task.task_uuid),
+        status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
+    )
+    for policy_task in policy_tasks:
+        try:
+            cancel_agent_task(task_id=policy_task.id, reason="user canceled backup")
+        except Exception:
+            logger.exception(
+                "failed to dispatch backup policy cancel node_task_id=%s task_uuid=%s",
+                policy_task.id,
+                task.task_uuid,
+            )
     for config_directory in config_directories:
         if config_directory.id in directories_by_config_id:
             continue
@@ -2045,7 +2813,10 @@ def maybe_trigger_backup_advance(
     node_task: NodeTask,
 ) -> None:
     """Called from WS handlers after backup NodeTask progress/result."""
-    if node_task.correlation_type != protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE:
+    if node_task.correlation_type not in {
+        protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+        protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE,
+    }:
         return
     if not node_task.correlation_id:
         return
@@ -2062,6 +2833,11 @@ def maybe_trigger_backup_advance(
                 task_uuid=str(node_task.correlation_id),
                 source_snapshot_id=snapshot.id,
             )
+            return
+        if (
+            node_task.correlation_type
+            == protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE
+        ):
             return
         from apps.protection.services.progress.backup_runtime import (
             sync_backup_directory_progress_from_node_task,
@@ -2085,7 +2861,7 @@ def reattach_backup_node_task(
         return None
     if node_task.status != NodeTask.Status.TIMEOUT:
         return None
-    if node_task.kind != "backup.run":
+    if node_task.kind not in protection_conf.PROTECTION_BACKUP_NODE_TASK_KINDS:
         return None
     grace = protection_conf.PROTECTION_BACKUP_REATTACH_GRACE_SECONDS
     if grace <= 0:

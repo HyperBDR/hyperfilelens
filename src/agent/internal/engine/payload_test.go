@@ -14,6 +14,9 @@ func TestNormalizeKind(t *testing.T) {
 	if got := NormalizeKind("backup.run"); got != "backup" {
 		t.Fatalf("got %q", got)
 	}
+	if got := NormalizeKind("backup.snapshot.create"); got != "backup.snapshot.create" {
+		t.Fatalf("got %q", got)
+	}
 	if got := NormalizeKind("nas.mount"); got != "nas.mount" {
 		t.Fatalf("got %q", got)
 	}

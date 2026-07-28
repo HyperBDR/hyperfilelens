@@ -13,6 +13,11 @@ from apps.storage.repositories.models import (
     RepositoryTask,
     RepositoryUsageShard,
 )
+from apps.storage.provider_catalog.models import (
+    StorageProviderOverride,
+    StorageProviderRegionValidation,
+    StorageProviderValidationRun,
+)
 
 __all__ = [
     "Credential",
@@ -21,4 +26,7 @@ __all__ = [
     "RepositoryMaintenanceState",
     "RepositoryTask",
     "RepositoryUsageShard",
+    "StorageProviderOverride",
+    "StorageProviderRegionValidation",
+    "StorageProviderValidationRun",
 ]

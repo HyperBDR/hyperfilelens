@@ -10,6 +10,8 @@ from django.core.exceptions import ValidationError
 
 from apps.node.models.base import NodeRole
 from apps.storage.repositories.models import Credential, Repository
+from apps.storage.services.internal.repository_endpoints import repository_data_endpoint
+from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
 
 SECRET_CONFIG_FIELDS = frozenset({"secret_access_key", "smb_password", "kopia_password"})
@@ -146,6 +148,8 @@ def build_repository_runtime_payload(
     *,
     repository: Repository,
     execution_target: Any | None = None,
+    repository_endpoint_type: object = "external",
+    repository_endpoint: object = None,
 ) -> dict[str, Any]:
     from apps.storage.services.internal.nas_repository import (
         nas_agent_repository_subdir,
@@ -159,14 +163,16 @@ def build_repository_runtime_payload(
     if repository.repo_type == Repository.Type.S3:
         if repository.status != Repository.Status.CREATED:
             raise ValidationError({"repository_id": "S3 repository has not been initialized."})
-        from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
-
         return {
             "id": repository.id,
             "type": Repository.Type.S3,
             "bucket": str(repository.s3_bucket or "").strip(),
             "region": str(config.get("region") or "").strip(),
-            "endpoint": str(config.get("endpoint") or "").strip(),
+            "endpoint": repository_data_endpoint(
+                config,
+                endpoint_type=repository_endpoint_type,
+                endpoint=repository_endpoint,
+            ),
             "prefix": str(config.get("prefix") or "").strip(),
             "access_key_id": str(config.get("access_key_id") or "").strip(),
             "secret_access_key": str(secrets_payload.get("secret_access_key") or "").strip(),

@@ -1,16 +1,18 @@
 import { ref } from 'vue'
 import type { ProtectionStopConfirmItem } from '../lib/protectionStopConfirm'
 
+export type ProtectionStopConfirmKind = 'backup' | 'restore' | 'maintenance'
+
 export function useProtectionStopConfirmDialog() {
   const open = ref(false)
-  const kind = ref<'backup' | 'restore'>('backup')
+  const kind = ref<ProtectionStopConfirmKind>('backup')
   const items = ref<ProtectionStopConfirmItem[]>([])
   const loading = ref(false)
 
   let settled = false
   let resolver: ((confirmed: boolean) => void) | null = null
 
-  function waitForConfirm(nextKind: 'backup' | 'restore', nextItems: ProtectionStopConfirmItem[]) {
+  function waitForConfirm(nextKind: ProtectionStopConfirmKind, nextItems: ProtectionStopConfirmItem[]) {
     return new Promise<boolean>((resolve) => {
       settled = false
       kind.value = nextKind
@@ -48,6 +50,11 @@ export function useProtectionStopConfirmDialog() {
     return waitForConfirm('restore', nextItems)
   }
 
+  async function confirmCancelMaintenance(nextItems: ProtectionStopConfirmItem[]) {
+    if (!nextItems.length) return false
+    return waitForConfirm('maintenance', nextItems)
+  }
+
   return {
     open,
     kind,
@@ -55,6 +62,7 @@ export function useProtectionStopConfirmDialog() {
     loading,
     confirmStopBackup,
     confirmStopRestore,
+    confirmCancelMaintenance,
     settleConfirm,
     settleCancel,
   }

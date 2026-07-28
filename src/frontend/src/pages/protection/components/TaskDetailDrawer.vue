@@ -18,7 +18,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-vue-next'
-import { apiErrorMessage } from '../../../lib/api'
+import { apiErrorMessage, apiErrorMessageI18n } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { formatTaskProgressBarPercent, formatTaskProgressPercent } from '../../../lib/kopiaProgress'
@@ -31,9 +31,16 @@ import {
 } from '../../../lib/protectionStopConfirm'
 import { useProtectionStopConfirmDialog } from '../../../composables/useProtectionStopConfirmDialog'
 import { useDrawerScrollReset } from '../../../composables/useDrawerScrollReset'
+import { useRepositoryTaskCancellation } from '../../../composables/useRepositoryTaskCancellation'
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
 import { getSourceResource } from '../../../lib/sourceApi'
-import { getStorageRepository } from '../../../lib/storageRepositoryApi'
+import {
+  cancelStorageRepositoryTask,
+  getStorageRepository,
+} from '../../../lib/storageRepositoryApi'
+import {
+  canCancelRepositoryTask,
+} from '../../../lib/repositoryTaskCancellation'
 import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
 import { resolveTaskBackupSourceResource } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey } from '../../../lib/taskEventDisplay'
@@ -58,6 +65,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   'open-task': [taskUuid: string]
+  'task-updated': [task: TaskRow]
 }>()
 
 const { t, te } = useI18n()
@@ -168,8 +176,31 @@ const usesTargetRepositoryResources = computed(() => props.resourceListMode === 
 
 const canCancel = computed(() => {
   if (props.readOnly) return false
+  if (activeTask.value?.task_type === 'repository_operation') {
+    return canCancelRepositoryTask(activeTask.value)
+  }
   const status = activeTask.value?.status
   return status === 'pending' || status === 'running'
+})
+const {
+  pending: repositoryCancellationPending,
+  stop: stopRepositoryCancellation,
+  sync: syncRepositoryCancellation,
+} = useRepositoryTaskCancellation(activeTask, {
+  onUpdate: async (task) => {
+    activeTask.value = task
+    emit('task-updated', task)
+  },
+  onTerminal: async (task) => {
+    const events = await listTaskEvents(task.task_uuid, { page: 1, page_size: 300 })
+    if (activeTask.value?.task_uuid !== task.task_uuid) return
+    detailEvents.value = events.results
+    initExpandedSteps(task)
+    if (task.status === 'cancelled') {
+      ElMessage.success(t('ops.task.repositoryCancelComplete'))
+    }
+  },
+  onError: () => ElMessage.warning(t('ops.task.repositoryCancelPollFailed')),
 })
 
 function labelFor(scope: 'status' | 'taskType' | 'triggerType' | 'resourceType', value?: string | null) {
@@ -517,6 +548,7 @@ async function copyPayload(value: unknown) {
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
+  stopRepositoryCancellation()
   detailRefreshing.value = true
   try {
     const task = await getTask(uuid)
@@ -532,6 +564,7 @@ async function loadTaskDetail(taskUuid: string) {
     void loadTaskOwner(task)
     const events = await listTaskEvents(uuid, { page: 1, page_size: 300 })
     detailEvents.value = events.results
+    syncRepositoryCancellation(task)
   } catch (err) {
     ElMessage.error(apiErrorMessage(err))
   } finally {
@@ -548,6 +581,11 @@ async function cancelActiveTask() {
   } else if (task.task_type === 'restore') {
     const confirmed = await stopConfirmDialog.confirmStopRestore([buildStopConfirmItemFromTask(task)])
     if (!confirmed) return
+  } else if (task.task_type === 'repository_operation') {
+    const confirmed = await stopConfirmDialog.confirmCancelMaintenance([
+      buildStopConfirmItemFromTask(task),
+    ])
+    if (!confirmed) return
   }
   actionBusy.value = true
   try {
@@ -561,8 +599,11 @@ async function cancelActiveTask() {
             const result = await cancelProtectionRestoreTask(task.task_uuid)
             return getTask(result.task_uuid)
           })()
-        : await cancelTask(task.task_uuid, t('ops.task.cancelReason'))
+        : task.task_type === 'repository_operation'
+          ? await cancelStorageRepositoryTask(task.task_uuid, t('ops.task.cancelReason'))
+          : await cancelTask(task.task_uuid, t('ops.task.cancelReason'))
     activeTask.value = updated
+    emit('task-updated', updated)
     const events = await listTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
     detailEvents.value = events.results
     initExpandedSteps(updated)
@@ -570,8 +611,11 @@ async function cancelActiveTask() {
     if (activeDetailTab.value === 'resources' && usesTargetRepositoryResources.value) {
       void loadTargetRepositoryResources()
     }
+    if (syncRepositoryCancellation(updated)) {
+      ElMessage.success(t('ops.task.repositoryCancelQueued'))
+    }
   } catch (err) {
-    ElMessage.error(apiErrorMessage(err))
+    ElMessage.error(apiErrorMessageI18n(err, t))
   } finally {
     actionBusy.value = false
   }
@@ -583,6 +627,7 @@ function refreshActiveTask() {
 }
 
 function closeDetail() {
+  stopRepositoryCancellation()
   activeTask.value = null
   taskOwner.value = ''
   detailEvents.value = []
@@ -593,7 +638,9 @@ function closeDetail() {
   initExpandedSteps(null)
 }
 
-onBeforeUnmount(() => repositoryResourceController?.abort())
+onBeforeUnmount(() => {
+  repositoryResourceController?.abort()
+})
 
 watch(
   () => [props.modelValue, props.taskUuid] as const,
@@ -637,12 +684,12 @@ watch(
             v-if="canCancel"
             class="hfl-task-drawer__cancel-button"
             :loading="actionBusy"
-            :disabled="actionBusy || detailRefreshing"
+            :disabled="actionBusy || detailRefreshing || repositoryCancellationPending"
             @click="cancelActiveTask"
           >
             <span class="hfl-task-drawer__cancel-label">
               <CircleStop :size="15" />
-              <span>{{ t('ops.task.btnCancel') }}</span>
+              <span>{{ repositoryCancellationPending ? t('ops.task.btnCancelling') : t('ops.task.btnCancel') }}</span>
             </span>
           </ElButton>
           <button

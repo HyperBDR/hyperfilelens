@@ -72,6 +72,15 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			def = append(def, p.Path)
 		}
 		status, result, errMsg = e.runKopia(ctx, rep, cmd.ID, p, def)
+	case "backup.snapshot.create":
+		if _, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
+			status, result, errMsg = "failed", nil, parseErr.Error()
+			break
+		} else if ok {
+			status, result, errMsg = e.runManagedPreparedSnapshot(ctx, rep, cmd.ID, p)
+			break
+		}
+		status, result, errMsg = "failed", nil, "repository payload is required"
 	case "snapshot.list":
 		status, result, errMsg = e.runKopia(ctx, rep, cmd.ID, p, []string{"snapshot", "list"})
 	case "snapshot.browse":

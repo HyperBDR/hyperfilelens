@@ -4,17 +4,21 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
 import shutil
 import subprocess
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
 from apps.storage.repositories.models import Repository
 from apps.storage.services.internal.s3_client import endpoint_for_kopia
 from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
+from apps.storage.services.internal.repository_endpoints import repository_control_endpoint
 from apps.storage.services.internal.s3_url_style import (
     S3_URL_STYLE_AUTO,
     S3_URL_STYLE_VIRTUAL_HOSTED,
@@ -29,6 +33,23 @@ class KopiaCliError(Exception):
 
 class KopiaRepositoryAlreadyExistsError(KopiaCliError):
     pass
+
+
+class KopiaCliCancelled(KopiaCliError):
+    pass
+
+
+class KopiaExecutionLeaseLost(KopiaCliError):
+    pass
+
+
+class KopiaControlDecision(StrEnum):
+    CONTINUE = "continue"
+    CANCEL = "cancel"
+    LOST_LEASE = "lost_lease"
+
+
+KopiaControlCallback = Callable[[], KopiaControlDecision]
 
 
 @dataclass(frozen=True)
@@ -99,12 +120,14 @@ def run_maintenance(
     full: bool,
     owner_identity: str,
     timeout_seconds: int | None = None,
+    control: KopiaControlCallback | None = None,
 ) -> KopiaResult:
     config_file = _maintenance_config_file(repository)
     _connect_maintenance_repository(
         repository,
         timeout_seconds=timeout_seconds,
         config_file=config_file,
+        control=control,
     )
     username, hostname = _owner_parts(owner_identity)
     client = _run_repository_command(
@@ -112,6 +135,7 @@ def run_maintenance(
         ["repository", "set-client", f"--username={username}", f"--hostname={hostname}"],
         timeout_seconds=timeout_seconds,
         config_file=config_file,
+        control=control,
     )
     if client.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia maintenance client configuration failed", client))
@@ -120,6 +144,7 @@ def run_maintenance(
         ["maintenance", "set", f"--owner={owner_identity}", "--enable-quick=false", "--enable-full=false"],
         timeout_seconds=timeout_seconds,
         config_file=config_file,
+        control=control,
     )
     if configured.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia maintenance owner configuration failed", configured))
@@ -131,6 +156,7 @@ def run_maintenance(
         args,
         timeout_seconds=timeout_seconds,
         config_file=config_file,
+        control=control,
     )
     if result.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia repository maintenance failed", result))
@@ -142,6 +168,7 @@ def _connect_maintenance_repository(
     *,
     timeout_seconds: int | None,
     config_file: Path,
+    control: KopiaControlCallback | None = None,
 ) -> None:
     last_result: subprocess.CompletedProcess[str] | None = None
     for attempt in range(3):
@@ -150,6 +177,7 @@ def _connect_maintenance_repository(
             ["repository", "connect", "s3", *_s3_flags(repository)],
             timeout_seconds=timeout_seconds,
             config_file=config_file,
+            control=control,
         )
         if last_result.returncode == 0:
             return
@@ -160,6 +188,7 @@ def _connect_maintenance_repository(
             ["repository", "status"],
             timeout_seconds=timeout_seconds,
             config_file=config_file,
+            control=control,
         )
         if status_result.returncode == 0:
             return
@@ -182,6 +211,7 @@ def _run_repository_command(
     *,
     timeout_seconds: int | None,
     config_file: Path | None = None,
+    control: KopiaControlCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
     resolved_config_file = config_file or _config_file(repository)
     with _repository_config_lock(resolved_config_file):
@@ -190,6 +220,7 @@ def _run_repository_command(
             args,
             timeout_seconds=timeout_seconds,
             config_file=resolved_config_file,
+            control=control,
         )
 
 
@@ -199,6 +230,7 @@ def _run_repository_command_unlocked(
     *,
     timeout_seconds: int | None,
     config_file: Path | None = None,
+    control: KopiaControlCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
     kopia_path = _kopia_path()
     config_file = config_file or _config_file(repository)
@@ -212,14 +244,41 @@ def _run_repository_command_unlocked(
         "--no-progress",
         *args,
     ]
+    process: subprocess.Popen[str] | None = None
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
-            check=False,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + timeout
+        while True:
+            if control is not None:
+                decision = control()
+                if decision != KopiaControlDecision.CONTINUE:
+                    _terminate_process_group(process)
+                    if decision == KopiaControlDecision.CANCEL:
+                        raise KopiaCliCancelled("Kopia repository maintenance was cancelled")
+                    raise KopiaExecutionLeaseLost(
+                        "Kopia repository maintenance execution lease was lost"
+                    )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _terminate_process_group(process)
+                raise KopiaCliError(f"Kopia CLI timed out after {timeout} seconds")
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.5, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        result = subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout,
+            stderr,
         )
         if result.returncode == 0 and args[:3] in (
             ["repository", "create", "s3"],
@@ -227,20 +286,40 @@ def _run_repository_command_unlocked(
         ):
             _write_s3_connection_fingerprint(repository, config_file)
         return result
-    except subprocess.TimeoutExpired as exc:
-        raise KopiaCliError(f"Kopia CLI timed out after {timeout} seconds") from exc
     except OSError as exc:
         raise KopiaCliError(f"Kopia CLI failed to start: {exc}") from exc
+    except Exception:
+        if process is not None and process.poll() is None:
+            _terminate_process_group(process)
+        raise
+
+
+def _terminate_process_group(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        process.wait(timeout=5)
 
 
 def _s3_flags(repository: Repository) -> list[str]:
     config = repository.config or {}
     flags = [f"--bucket={repository.s3_bucket}"]
-    endpoint = endpoint_for_kopia(str(config.get("endpoint") or ""))
+    control_endpoint = repository_control_endpoint(config)
+    endpoint = endpoint_for_kopia(control_endpoint)
     if endpoint:
         flags.append(f"--endpoint={endpoint}")
     region = str(config.get("region") or "").strip()
-    if not region and str(config.get("endpoint") or "").strip():
+    if not region and control_endpoint:
         # Match the boto3 path used by repository health checks. Supplying a
         # region also prevents Kopia from issuing a GetBucketLocation request,
         # which is unreliable on some S3-compatible gateways such as MinIO.
@@ -302,7 +381,7 @@ def _s3_connection_fingerprint(repository: Repository) -> str:
     payload = {
         "bucket": str(repository.s3_bucket or ""),
         "region": str(config.get("region") or ""),
-        "endpoint": str(config.get("endpoint") or ""),
+        "endpoint": repository_control_endpoint(config),
         "prefix": str(config.get("prefix") or ""),
         "access_key_id": str(config.get("access_key_id") or ""),
         "secret_access_key": str(secrets_payload.get("secret_access_key") or ""),

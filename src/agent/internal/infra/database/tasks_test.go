@@ -245,7 +245,7 @@ func TestTaskRepoRepairSkipsBackupRun(t *testing.T) {
 	defer db.Close()
 
 	repo := NewTaskRepo(db)
-	for _, kind := range []string{"backup.run", "backup", "restore.run"} {
+	for _, kind := range []string{"backup.run", "backup", "backup.snapshot.create", "restore.run"} {
 		taskID := "task-" + kind
 		if err := repo.RecordCommand(ctx, RecordInput{
 			TaskID: taskID,

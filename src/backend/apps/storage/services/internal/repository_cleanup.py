@@ -34,6 +34,7 @@ from apps.storage.services.internal.repository_secrets import (
     scrub_secrets,
     secret_values_for_scrub,
 )
+from apps.storage.services.internal.repository_endpoints import repository_control_endpoint
 from apps.storage.services.internal.repository_task_naming import (
     repository_operation_display_name,
 )
@@ -838,7 +839,7 @@ def _execute_physical_cleanup(
         config = sanitize_repository_config(repository.config)
         secrets_payload = resolve_repository_secrets(repository)
         result = delete_s3_prefix(
-            endpoint=str(config.get("endpoint") or ""),
+            endpoint=repository_control_endpoint(config),
             region=str(config.get("region") or ""),
             bucket=str(repository.s3_bucket or ""),
             prefix=str(config.get("prefix") or ""),

@@ -158,9 +158,9 @@ UPDATE tasks SET result_reported=1, updated_at=? WHERE id=?
 
 // RepairOptions supplies agent paths for lifecycle task repair heuristics.
 type RepairOptions struct {
-	DataDir        string
-	LogDir         string
-	ActiveTaskIDs  map[string]struct{}
+	DataDir       string
+	LogDir        string
+	ActiveTaskIDs map[string]struct{}
 }
 
 // RepairInterrupted marks orphaned running tasks failed after agent restart.
@@ -197,8 +197,7 @@ FROM tasks WHERE status=?
 				continue
 			}
 		}
-		kind := strings.ToLower(strings.TrimSpace(repaired[i].Kind))
-		if kind == "backup.run" || kind == "backup" || kind == "restore.run" {
+		if model.IsResumableTaskKind(repaired[i].Kind) {
 			continue
 		}
 		if install.InterruptedLifecycleStillRunning(repaired[i].Kind, opts.DataDir) {

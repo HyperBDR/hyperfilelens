@@ -125,7 +125,7 @@ def append_task_step_event(
 @transaction.atomic
 def create_task(
     *,
-    organization_id: int,
+    organization_id: int | None,
     task_type: str,
     display_name: str,
     trigger_type: str = Task.TriggerType.MANUAL,

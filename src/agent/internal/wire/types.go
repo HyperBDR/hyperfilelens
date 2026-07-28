@@ -6,13 +6,17 @@ import "time"
 type Type string
 
 const (
-	TypeHeartbeat    Type = "heartbeat"
-	TypeTaskCommand  Type = "task.command"
-	TypeTaskCancel   Type = "task.cancel"
-	TypeTaskProgress Type = "task.progress"
-	TypeTaskAlive    Type = "task.alive"
-	TypeTaskResult   Type = "task.result"
+	TypeHeartbeat     Type = "heartbeat"
+	TypeTaskCommand   Type = "task.command"
+	TypeTaskCancel    Type = "task.cancel"
+	TypeTaskProgress  Type = "task.progress"
+	TypeTaskAlive     Type = "task.alive"
+	TypeTaskResult    Type = "task.result"
+	TypeTaskResultAck Type = "task.result.ack"
 )
+
+// TaskResultAckSubprotocol enables durable task.result acknowledgement.
+const TaskResultAckSubprotocol = "hfl.task-result-ack.v1"
 
 // Task lifecycle uplink intervals (Agent → control plane).
 const (
@@ -25,7 +29,7 @@ func (t Type) String() string { return string(t) }
 
 func parseType(raw string) (Type, bool) {
 	switch Type(raw) {
-	case TypeHeartbeat, TypeTaskCommand, TypeTaskCancel, TypeTaskProgress, TypeTaskAlive, TypeTaskResult:
+	case TypeHeartbeat, TypeTaskCommand, TypeTaskCancel, TypeTaskProgress, TypeTaskAlive, TypeTaskResult, TypeTaskResultAck:
 		return Type(raw), true
 	default:
 		return "", false

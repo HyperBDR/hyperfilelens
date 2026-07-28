@@ -7,7 +7,11 @@ from django.conf import settings
 
 from common.observability.celery_context import celery_trace
 
-from apps.protection.services.backup_orchestrator import reconcile_backup_tasks
+from apps.protection.services.backup_orchestrator import (
+    advance_backup,
+    project_backup_node_task_result,
+    reconcile_backup_tasks,
+)
 from apps.protection.services.backup_task import (
     reconcile_interrupted_backup_tasks,
     run_backup_task,
@@ -21,6 +25,35 @@ _BACKUP_ORCHESTRATION_SOFT_LIMIT = int(
 _BACKUP_ORCHESTRATION_TIME_LIMIT = int(
     getattr(settings, "CELERY_BACKUP_TASK_TIME_LIMIT", 60)
 )
+
+
+@shared_task(
+    name="apps.protection.tasks.backup.project_backup_node_task_result",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
+def project_backup_node_task_result_task(self, *, node_task_id: str) -> dict:
+    return project_backup_node_task_result(node_task_id=node_task_id)
+
+
+@shared_task(
+    name="apps.protection.tasks.backup.advance_backup",
+    soft_time_limit=_BACKUP_ORCHESTRATION_SOFT_LIMIT,
+    time_limit=_BACKUP_ORCHESTRATION_TIME_LIMIT,
+)
+def advance_backup_task(
+    *,
+    organization_id: int,
+    task_uuid: str,
+    source_snapshot_id: int,
+) -> dict:
+    return advance_backup(
+        organization_id=int(organization_id),
+        task_uuid=str(task_uuid),
+        source_snapshot_id=int(source_snapshot_id),
+    )
 
 
 @shared_task(

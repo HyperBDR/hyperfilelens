@@ -10,8 +10,14 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.iam.permissions_org import IsOrgStaffReader, IsOrgWriter, get_membership
+from apps.iam.permissions_org import (
+    IsOrgOperator,
+    IsOrgStaffReader,
+    IsOrgWriter,
+    get_membership,
+)
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_registry import agent_connection_status
@@ -28,7 +34,10 @@ from apps.storage.repositories.serializers import (
     RepositorySerializer,
     RepositoryWriteSerializer,
 )
-from apps.storage.selectors.interface import list_repositories
+from apps.storage.selectors.interface import (
+    get_effective_storage_provider,
+    list_repositories,
+)
 from apps.storage.services.interface import check_repository
 from apps.storage.services.internal.nas_repair import (
     NASRepositoryBusyError,
@@ -38,6 +47,10 @@ from apps.storage.services.internal.nas_repair import _UNSET as _UNSET_SENTINEL
 from apps.storage.services.internal.nas_repository import nas_agent_repository_subdir, nas_mount_point
 from apps.storage.services.internal.repository_usage import enqueue_repository_usage_refresh
 from apps.storage.services.internal.repository_secrets import resolve_repository_secrets
+from apps.storage.services.internal.repository_endpoints import (
+    normalize_s3_endpoint_host,
+    repository_control_endpoint,
+)
 from apps.storage.services.internal.repository_cleanup import (
     RepositoryCleanupBlocked,
     create_repository_cleanup_task,
@@ -48,9 +61,38 @@ from apps.storage.services.internal.repository_initializer import (
     validate_s3_connection,
     verify_s3_bucket_access,
 )
+from apps.storage.services.internal.repository_operations import (
+    request_repository_operation_cancel,
+)
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 from apps.task.api.serializers.task import TaskSerializer
 from apps.task.models import Task
+
+
+class RepositoryTaskCancelView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOperator]
+
+    def post(self, request, task_uuid: UUID):
+        membership = get_membership(request)
+        if membership is None:
+            raise PermissionDenied("organization membership required")
+        data = request.data if isinstance(request.data, dict) else {}
+        task, cancellation_pending = request_repository_operation_cancel(
+            task_uuid=task_uuid,
+            organization_id=membership.organization_id,
+            reason=str(data.get("reason") or ""),
+            requested_by_id=getattr(request.user, "id", None),
+        )
+        if cancellation_pending:
+            from apps.storage.tasks import execute_repository_operation
+
+            execute_repository_operation.apply_async(
+                kwargs={"repository_task_id": task.repository_operation.id}
+            )
+        return Response(
+            TaskSerializer(task).data,
+            status=(status.HTTP_202_ACCEPTED if cancellation_pending else status.HTTP_200_OK),
+        )
 
 
 def health(_request):
@@ -435,15 +477,39 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             raise ValidationError({"access_key_id": "Access key ID is required."})
         if not secret_access_key:
             raise ValidationError({"secret_access_key": "Secret access key is required."})
+        platform = str(data.get("platform") or "custom").strip().lower()
+        if platform == "other":
+            platform = Repository.S3Platform.CUSTOM
+        region_id = str(data.get("region") or "").strip()
+        endpoint = normalize_s3_endpoint_host(data.get("endpoint"))
         s3_url_style = str(data.get("s3_url_style") or "").strip() or None
+        use_tls = data.get("use_tls") is not False
+        if platform != Repository.S3Platform.CUSTOM:
+            provider_record = get_effective_storage_provider(platform)
+            provider = provider_record.get("config") if provider_record else None
+            region = next(
+                (
+                    item
+                    for item in (provider or {}).get("regions", [])
+                    if item.get("id") == region_id
+                ),
+                None,
+            )
+            if not provider or not provider.get("enabled") or region is None:
+                raise ValidationError(
+                    {"region": "Region is not in the current Provider Catalog."}
+                )
+            endpoint = str(region["external_endpoint"])
+            s3_url_style = str(region["s3_url_style"])
+            use_tls = bool(region["use_tls"])
         try:
             buckets = validate_s3_connection(
-                endpoint=str(data.get("endpoint") or ""),
-                region=str(data.get("region") or ""),
+                endpoint=endpoint,
+                region=region_id,
                 access_key_id=access_key_id,
                 secret_access_key=secret_access_key,
                 s3_url_style=s3_url_style,
-                use_tls=data.get("use_tls") is not False,
+                use_tls=use_tls,
             )
         except RepositoryInitializationError as exc:
             raise ValidationError({"detail": str(exc), "buckets": []}) from exc
@@ -474,7 +540,15 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         # Accept optional draft overrides from the client. We still strip any
         # forbidden fields (bucket / endpoint / prefix) just in case.
         data = request.data if isinstance(request.data, dict) else {}
-        forbidden = {"endpoint", "prefix", "bucket", "s3_bucket"}
+        forbidden = {
+            "endpoint",
+            "endpoint_type",
+            "external_endpoint",
+            "internal_endpoint",
+            "prefix",
+            "bucket",
+            "s3_bucket",
+        }
         if any(k in data for k in forbidden):
             raise ValidationError(
                 {"detail": "Endpoint, prefix and bucket are locked and cannot be verified."}
@@ -491,7 +565,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
 
         try:
             result = verify_s3_bucket_access(
-                endpoint=str(saved_config.get("endpoint") or ""),
+                endpoint=repository_control_endpoint(saved_config),
                 region=region,
                 bucket=str(repository.s3_bucket or ""),
                 access_key_id=access_key_id,

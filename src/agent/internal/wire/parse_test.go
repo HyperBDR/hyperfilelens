@@ -46,6 +46,16 @@ func TestParseDownlinkTaskCancel(t *testing.T) {
 	}
 }
 
+func TestParseDownlinkTaskResultAck(t *testing.T) {
+	dl, err := ParseDownlink([]byte(`{"type":"task.result.ack","task_id":"task-ack-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.Type != TypeTaskResultAck || dl.TaskResultAck == nil || dl.TaskResultAck.TaskID != "task-ack-1" {
+		t.Fatalf("dl = %+v", dl)
+	}
+}
+
 func TestUplinkFrames(t *testing.T) {
 	hb := NewHeartbeat()
 	if hb.Type != TypeHeartbeat {

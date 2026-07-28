@@ -24,6 +24,7 @@ dependencies = [
   "gunicorn>=22.0.0",
   "requests>=2.32.0",
   "boto3>=1.34.0",
+  "jsonschema>=4.23.0",
   "uvicorn>=0.30.0",
   "celery==5.3.6",
   "django-celery-beat==2.7.0",
@@ -49,6 +50,9 @@ package-dir = {"" = "src/backend"}
 [tool.setuptools.packages.find]
 where = ["src/backend"]
 include = ["project*", "common*", "apps*"]
+
+[tool.setuptools.package-data]
+"apps.storage.provider_catalog" = ["data/*.json"]
 
 [tool.ruff]
 target-version = "py312"

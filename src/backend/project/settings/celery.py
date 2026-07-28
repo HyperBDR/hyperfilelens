@@ -20,11 +20,15 @@ CELERY_TASK_QUEUES = (
     Queue(CELERY_TASK_DEFAULT_QUEUE),
     Queue("node.lifecycle"),
     Queue("node.ingest"),
+    Queue("storage.provider-validation"),
 )
 
 CELERY_TASK_ROUTES = {
     "apps.node.tasks.lifecycle.*": {"queue": "node.lifecycle"},
     "apps.node.tasks.uplink_ingest.*": {"queue": "node.ingest"},
+    "apps.storage.tasks.*storage_provider*": {
+        "queue": "storage.provider-validation"
+    },
 }
 
 CELERY_BROKER_TRANSPORT_OPTIONS = {

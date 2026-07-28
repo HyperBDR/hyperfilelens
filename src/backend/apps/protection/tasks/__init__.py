@@ -1,4 +1,5 @@
 from .backup import (
+    advance_backup_task,
     execute_backup_source_task,
     reconcile_backup_tasks_task,
     reconcile_interrupted_backup_tasks_task,
@@ -13,6 +14,7 @@ from .snapshot_delete import execute_snapshot_delete_task, reconcile_snapshot_de
 from .snapshot_download import execute_snapshot_download_task
 
 __all__ = [
+    "advance_backup_task",
     "execute_backup_source_task",
     "execute_backup_config_reset_task",
     "reconcile_stuck_backup_config_reset_tasks_task",

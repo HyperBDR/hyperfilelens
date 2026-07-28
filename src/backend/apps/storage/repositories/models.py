@@ -90,7 +90,7 @@ class Repository(models.Model):
 
     class S3Platform(models.TextChoices):
         AWS = "aws", "AWS"
-        HUAWEI = "huawei", "Huawei"
+        HUAWEICLOUD = "huaweicloud", "Huawei Cloud"
         ALIYUN = "aliyun", "Aliyun"
         CUSTOM = "custom", "Custom"
 
@@ -135,7 +135,6 @@ class Repository(models.Model):
     bind_node_id = models.BigIntegerField(blank=True, null=True)
     s3_platform = models.CharField(
         max_length=50,
-        choices=S3Platform.choices,
         blank=True,
         null=True,
     )
@@ -328,6 +327,10 @@ class RepositoryTask(models.Model):
     owner_identity = models.CharField(max_length=255)
     due_at = models.DateTimeField(blank=True, null=True, db_index=True)
     remote_task_id = models.UUIDField(blank=True, null=True, db_index=True)
+    cancel_requested_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    cancel_reason = models.CharField(max_length=500, blank=True, default="")
+    execution_token = models.UUIDField(blank=True, null=True, db_index=True)
+    execution_heartbeat_at = models.DateTimeField(blank=True, null=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

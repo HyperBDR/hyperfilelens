@@ -13,6 +13,3 @@ class NodeConfig(AppConfig):
 
     def ready(self) -> None:
         from apps.node import signals  # noqa: F401
-        from apps.node.ws.lifecycle import ensure_ws_instance_keepalive_started
-
-        ensure_ws_instance_keepalive_started()

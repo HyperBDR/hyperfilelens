@@ -3,7 +3,7 @@ package wire
 import (
 	"context"
 	"log/slog"
-	"strings"
+	"sync/atomic"
 	"time"
 
 	"hyperfilelens/agent/internal/controller"
@@ -16,9 +16,22 @@ import (
 
 // Handler routes downlink task frames to the engine and sends uplink progress/result.
 type Handler struct {
-	provider config.Provider
-	tracker  *controller.Tracker
-	tasks    *database.TaskRepo
+	provider         config.Provider
+	tracker          *controller.Tracker
+	tasks            *database.TaskRepo
+	resultAckEnabled atomic.Bool
+}
+
+// SetTaskResultAckEnabled selects ACK mode for the current WebSocket session.
+func (h *Handler) SetTaskResultAckEnabled(enabled bool) {
+	if h != nil {
+		h.resultAckEnabled.Store(enabled)
+	}
+}
+
+// TaskResultAckEnabled reports whether task.result requires a control-plane ACK.
+func (h *Handler) TaskResultAckEnabled() bool {
+	return h != nil && h.resultAckEnabled.Load()
 }
 
 // NewHandler returns a protocol handler bound to config, tracker, and local task storage.
@@ -58,6 +71,16 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 			_ = h.tasks.MarkCancelled(ctx, dl.TaskCancel.TaskID)
 		}
 		return nil
+	case TypeTaskResultAck:
+		if dl.TaskResultAck == nil || dl.TaskResultAck.TaskID == "" || h.tasks == nil {
+			return nil
+		}
+		if err := h.tasks.MarkResultReported(ctx, dl.TaskResultAck.TaskID); err != nil {
+			slog.Warn("persist task.result ack failed", "task_id", dl.TaskResultAck.TaskID, "err", err)
+			return nil
+		}
+		slog.Info("task.result acknowledged", "task_id", dl.TaskResultAck.TaskID)
+		return nil
 	default:
 		if dl.Type != "" {
 			slog.Debug("wire downlink ignored", "type", dl.Type)
@@ -66,13 +89,8 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 	}
 }
 
-// FlushUnreportedResults sends task.result for finished tasks not yet acknowledged upstream.
+// FlushUnreportedResults sends terminal task.result frames pending upstream acknowledgement.
 func (h *Handler) FlushUnreportedResults(ctx context.Context, sink Sender) error {
-	if h.tasks != nil && sink != nil {
-		if err := h.ReattachRunningTasks(ctx, sink); err != nil {
-			slog.Warn("reattach running tasks failed", "err", err)
-		}
-	}
 	if h.tasks == nil || sink == nil {
 		return nil
 	}
@@ -88,6 +106,10 @@ func (h *Handler) FlushUnreportedResults(ctx context.Context, sink Sender) error
 		}
 		if err := SendTaskResult(ctx, sink, task.ID, wireStatus, task.Result, errMsg); err != nil {
 			slog.Warn("flush task.result failed", "task_id", task.ID, "err", err)
+			continue
+		}
+		if h.TaskResultAckEnabled() {
+			slog.Info("sent task.result awaiting ack", "task_id", task.ID, "status", wireStatus)
 			continue
 		}
 		if err := h.tasks.MarkResultReported(ctx, task.ID); err != nil {
@@ -112,8 +134,7 @@ func (h *Handler) ReattachRunningTasks(ctx context.Context, sink Sender) error {
 		if task.Status != model.TaskStatusRunning {
 			continue
 		}
-		kind := strings.ToLower(strings.TrimSpace(task.Kind))
-		if kind != "backup.run" && kind != "backup" && kind != "restore.run" {
+		if !model.IsResumableTaskKind(task.Kind) {
 			continue
 		}
 		progress := map[string]any{
@@ -217,7 +238,7 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 		}
 		if err := SendTaskResult(taskCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
 			slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
-		} else if h.tasks != nil {
+		} else if h.tasks != nil && !h.TaskResultAckEnabled() {
 			_ = h.tasks.MarkResultReported(taskCtx, cmd.TaskID)
 		}
 		return
@@ -239,7 +260,7 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 
 	if err := SendTaskResult(taskCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
 		slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
-	} else if h.tasks != nil {
+	} else if h.tasks != nil && !h.TaskResultAckEnabled() {
 		_ = h.tasks.MarkResultReported(taskCtx, cmd.TaskID)
 	}
 }

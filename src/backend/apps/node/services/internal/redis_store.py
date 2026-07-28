@@ -190,6 +190,38 @@ def ws_alive_key(ws_instance_id: str) -> str:
     return f"node_alive:{ws_instance_id}"
 
 
+def ws_recovery_hold_key() -> str:
+    return "node_ws_recovery_hold"
+
+
+def begin_ws_recovery_hold(*, seconds: int | None = None) -> bool:
+    r = get_redis()
+    if r is None:
+        return False
+    duration = max(1, int(seconds or node_conf.WS_RECOVERY_HOLD_SECONDS))
+    r.set(ws_recovery_hold_key(), "1", ex=duration)
+    return True
+
+
+def ws_recovery_hold_active() -> bool:
+    r = get_redis()
+    if r is None:
+        return True
+    return bool(r.exists(ws_recovery_hold_key()))
+
+
+def has_live_ws_instance() -> bool:
+    r = get_redis()
+    if r is None:
+        return False
+    return next(r.scan_iter(match="node_alive:*", count=20), None) is not None
+
+
+def offline_task_finalization_ready() -> bool:
+    """Fail closed until a real WS process is alive and its restart hold elapsed."""
+    return has_live_ws_instance() and not ws_recovery_hold_active()
+
+
 def touch_ws_instance_alive() -> None:
     r = get_redis()
     if r is None:

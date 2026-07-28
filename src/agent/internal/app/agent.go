@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -129,13 +130,20 @@ func (a *Agent) Run(ctx context.Context) error {
 				return a.wire.Handle(ctx, msg, a.connector)
 			},
 			func(ctx context.Context) error {
+				a.wire.SetTaskResultAckEnabled(a.connector.TaskResultAckEnabled())
 				if a.taskFixer != nil {
 					if _, err := a.taskFixer.RepairRunning(ctx); err != nil {
 						slog.Warn("connect lifecycle repair failed", "err", err)
 					}
 				}
+				if err := a.wire.ReattachRunningTasks(ctx, a.connector); err != nil {
+					slog.Warn("reattach running tasks failed", "err", err)
+				}
 				if err := a.wire.FlushUnreportedResults(ctx, a.connector); err != nil {
 					return err
+				}
+				if a.wire.TaskResultAckEnabled() {
+					go a.taskResultOutboxLoop(ctx)
 				}
 				if err := remote.SendInventory(ctx, a.connector, a.store); err != nil {
 					return err
@@ -153,6 +161,37 @@ func (a *Agent) Run(ctx context.Context) error {
 
 		if strings.TrimSpace(a.store.Current().WSSURL) == "" {
 			a.connector = nil
+		}
+	}
+}
+
+func taskResultOutboxRetryDelay(attempt int) time.Duration {
+	bases := []time.Duration{time.Second, 4 * time.Second, 16 * time.Second, 30 * time.Second}
+	base := 60 * time.Second
+	if attempt >= 0 && attempt < len(bases) {
+		base = bases[attempt]
+	}
+	jitter := time.Duration(rand.Int63n(int64(base/5 + 1)))
+	if rand.Intn(2) == 0 {
+		return base - jitter
+	}
+	return base + jitter
+}
+
+func (a *Agent) taskResultOutboxLoop(ctx context.Context) {
+	for attempt := 0; ; attempt++ {
+		timer := time.NewTimer(taskResultOutboxRetryDelay(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if a.wire == nil || a.connector == nil || !a.wire.TaskResultAckEnabled() {
+			return
+		}
+		if err := a.wire.FlushUnreportedResults(ctx, a.connector); err != nil {
+			slog.Warn("task.result outbox retry failed", "attempt", attempt+1, "err", err)
 		}
 	}
 }

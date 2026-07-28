@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -9,6 +9,7 @@ import {
   storageRepositoryCreateErrorMessage,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
+import { fetchStorageProviderCatalog, type StorageProviderConfig } from '../../lib/storageProviderCatalogApi'
 import {
   DEFAULT_S3_OBJECT_PREFIX,
   normalizeS3EndpointInput,
@@ -19,9 +20,9 @@ import { buildS3RepositoryName } from '../../lib/s3RepositoryName'
 import {
   S3_PROVIDER_OPTIONS,
   defaultS3UrlStyle,
+  groupS3RegionPresets,
   isS3ProviderEnabled,
   normalizeS3StoragePlatform,
-  s3ProviderRegions,
   type S3PlatformCapability as StoragePlatformCapability,
   type S3PlatformSelection as StoragePlatform,
   type S3RegionPreset as RegionPreset,
@@ -54,7 +55,18 @@ const busy = ref(false)
 const platformSearch = ref('')
 const regionSearch = ref('')
 
-const STORAGE_PLATFORMS = S3_PROVIDER_OPTIONS
+const catalogProviders = ref<StorageProviderConfig[]>([])
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const STORAGE_PLATFORMS = computed(() => [
+  ...catalogProviders.value
+    .map((provider) => ({
+      value: provider.id as StoragePlatform,
+      label: provider.display_name,
+      enabled: provider.enabled,
+    })),
+  ...S3_PROVIDER_OPTIONS,
+])
 
 const storagePlatform = ref<StoragePlatform | undefined>('other')
 const platformRegionKey = ref<string | undefined>(undefined)
@@ -82,14 +94,31 @@ let bucketSelectLoadAttemptAt = 0
 
 /* ---------- computed ---------- */
 const currentRegions = computed<RegionPreset[]>(() => {
-  return s3ProviderRegions(storagePlatform.value)
+  const provider = catalogProviders.value.find((item) => item.id === storagePlatform.value)
+  return (provider?.regions || []).map((item) => ({
+    key: item.id,
+    label: item.display_name,
+    endpoint: item.external_endpoint,
+    externalEndpoint: item.external_endpoint,
+    internalEndpoint: item.internal_endpoint,
+    endpointType: 'external' as const,
+    region: item.id,
+    regionGroup: item.region_group,
+    regionGroupLabel: item.region_group_en,
+    s3UrlStyle: item.s3_url_style,
+    useTls: item.use_tls,
+  }))
 })
+
+function optionLabel(platform: { label?: string; labelKey?: string }) {
+  return platform.label || (platform.labelKey ? t(platform.labelKey) : '')
+}
 
 const filteredPlatforms = computed(() => {
   const keyword = platformSearch.value.trim().toLowerCase()
-  if (!keyword) return STORAGE_PLATFORMS
-  return STORAGE_PLATFORMS.filter((platform) =>
-    t(platform.labelKey).toLowerCase().includes(keyword) || platform.value.toLowerCase().includes(keyword),
+  if (!keyword) return STORAGE_PLATFORMS.value
+  return STORAGE_PLATFORMS.value.filter((platform) =>
+    optionLabel(platform).toLowerCase().includes(keyword) || platform.value.toLowerCase().includes(keyword),
   )
 })
 
@@ -97,17 +126,24 @@ const filteredRegions = computed(() => {
   const keyword = regionSearch.value.trim().toLowerCase()
   if (!keyword) return currentRegions.value
   return currentRegions.value.filter((preset) =>
-    t(preset.labelKey).toLowerCase().includes(keyword) || preset.region.toLowerCase().includes(keyword),
+    preset.label.toLowerCase().includes(keyword)
+    || preset.region.toLowerCase().includes(keyword)
+    || preset.regionGroup.toLowerCase().includes(keyword)
+    || preset.regionGroupLabel.toLowerCase().includes(keyword),
   )
 })
 
+const groupedRegions = computed(() => {
+  return groupS3RegionPresets(filteredRegions.value)
+})
+
 const platformLabel = computed(() => {
-  const platform = STORAGE_PLATFORMS.find((item) => item.value === storagePlatform.value)
-  return platform ? t(platform.labelKey) : ''
+  const platform = STORAGE_PLATFORMS.value.find((item) => item.value === storagePlatform.value)
+  return platform ? optionLabel(platform) : ''
 })
 
 function buildAutoRepoName(): string {
-  return buildS3RepositoryName(storagePlatform.value, bucket.value)
+  return buildS3RepositoryName(platformLabel.value, bucket.value)
 }
 
 function syncAutoRepoName() {
@@ -211,13 +247,16 @@ function applyRegionPreset(key: string) {
   platformRegionKey.value = key
   const preset = currentRegions.value.find((r) => r.key === key)
   if (preset) {
-    endpoint.value = normalizeS3EndpointInput(preset.endpoint)
+    endpoint.value = normalizeS3EndpointInput(preset.externalEndpoint)
     region.value = preset.region
+    s3UrlStyle.value = preset.s3UrlStyle
+    useTls.value = preset.useTls
   }
 }
 
 function isPlatformEnabled(platform: StoragePlatformCapability): platform is StoragePlatform {
-  return isS3ProviderEnabled(platform)
+  const managed = catalogProviders.value.find((provider) => provider.id === platform)
+  return managed ? managed.enabled : isS3ProviderEnabled(platform)
 }
 
 function onPlatformChange(p: StoragePlatformCapability) {
@@ -230,10 +269,11 @@ function onPlatformChange(p: StoragePlatformCapability) {
   }
   storagePlatform.value = p
   s3UrlStyle.value = defaultS3UrlStyle(p)
+  useTls.value = true
   regionSearch.value = ''
   bucket.value = ''
   bucketOptions.value = []
-  const presets = s3ProviderRegions(p)
+  const presets = currentRegions.value
   if (presets.length > 0) {
     applyRegionPreset(presets[0].key)
   } else {
@@ -242,6 +282,21 @@ function onPlatformChange(p: StoragePlatformCapability) {
     region.value = ''
   }
 }
+
+async function loadProviderCatalog() {
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const catalog = await fetchStorageProviderCatalog()
+    catalogProviders.value = catalog.providers.filter((provider) => provider.enabled)
+  } catch (error) {
+    catalogError.value = apiErrorMessage(error, t('addS3Repo.providerCatalogLoadFailed'))
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+onMounted(loadProviderCatalog)
 
 function resetAuthValidation() {
   authStatus.value = 'idle'
@@ -353,7 +408,7 @@ watch(
   resetAuthValidation,
 )
 
-watch([storagePlatform, bucket], syncAutoRepoName, { immediate: true })
+watch([storagePlatform, platformLabel, bucket], syncAutoRepoName, { immediate: true })
 
 function validateForm(): boolean {
   if (!validateAuthFields()) return false
@@ -398,7 +453,7 @@ async function onSubmit() {
   }
 }
 
-function normalizeS3Platform(platform: StoragePlatform | undefined): 'aliyun' | 'huawei' | 'aws' | 'custom' {
+function normalizeS3Platform(platform: StoragePlatform | undefined): string {
   return normalizeS3StoragePlatform(platform)
 }
 
@@ -481,7 +536,11 @@ function handleBack() {
                       </ElInput>
                     </div>
                   </div>
-                  <div class="add-s3-platform-grid add-s3-platform-grid--331">
+                  <div v-if="catalogError" class="add-s3-empty-state">
+                    {{ catalogError }}
+                    <ElButton link type="primary" @click="loadProviderCatalog">{{ t('common.retry') }}</ElButton>
+                  </div>
+                  <div v-loading="catalogLoading" class="add-s3-platform-grid add-s3-platform-grid--331">
                     <button
                       v-for="p in filteredPlatforms"
                       :key="p.value"
@@ -499,12 +558,12 @@ function handleBack() {
                         <S3PlatformBrandIcon
                           :platform="p.value"
                           :size="18"
-                          :alt="t(p.labelKey)"
+                          :alt="optionLabel(p)"
                           icon-class="add-s3-platform-btn__icon-img"
                           lucide-class="add-s3-platform-btn__icon-lucide"
                         />
                       </span>
-                      <span class="add-s3-platform-btn__label">{{ t(p.labelKey) }}</span>
+                      <span class="add-s3-platform-btn__label">{{ optionLabel(p) }}</span>
                     </button>
                     <div v-if="filteredPlatforms.length === 0" class="add-s3-empty-state">
                       {{ t('addS3Repo.emptyPlatforms') }}
@@ -530,17 +589,22 @@ function handleBack() {
                         </ElInput>
                       </div>
                     </div>
-                    <div class="add-s3-region-grid add-s3-region-grid--scroll">
-                      <button
-                        v-for="r in filteredRegions"
-                        :key="r.key"
-                        class="add-s3-region-btn"
-                        :class="{ 'add-s3-region-btn--active': platformRegionKey === r.key }"
-                        @click="applyRegionPreset(r.key)"
-                      >
-                        <span class="add-s3-region-btn__label">{{ t(r.labelKey) }}</span>
-                        <span class="add-s3-region-btn__code">{{ r.region }}</span>
-                      </button>
+                    <div class="add-s3-region-groups add-s3-region-grid--scroll">
+                      <section v-for="group in groupedRegions" :key="group.key" class="add-s3-region-group">
+                        <h5 class="add-s3-region-group__title">{{ group.label }}</h5>
+                        <div class="add-s3-region-grid">
+                          <button
+                            v-for="r in group.regions"
+                            :key="r.key"
+                            class="add-s3-region-btn"
+                            :class="{ 'add-s3-region-btn--active': platformRegionKey === r.key }"
+                            @click="applyRegionPreset(r.key)"
+                          >
+                            <span class="add-s3-region-btn__label">{{ r.label }}</span>
+                            <span class="add-s3-region-btn__code">{{ r.region }}</span>
+                          </button>
+                        </div>
+                      </section>
                       <div v-if="filteredRegions.length === 0" class="add-s3-empty-state">
                         {{ t('addS3Repo.emptyRegions') }}
                       </div>
@@ -999,22 +1063,53 @@ function handleBack() {
    Region Selection
    ============================================ */
 .add-s3-region-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.add-s3-region-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.add-s3-region-group {
+  display: grid;
+  gap: 6px;
+}
+
+.add-s3-region-group__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text-secondary, #b7bdc7);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.add-s3-region-group__title::after {
+  height: 1px;
+  flex: 1;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  content: '';
 }
 
 .add-s3-region-btn {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 10px 14px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 5px 10px;
   background: #1b202a;
   border: 1px solid #3b4658;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
-  min-width: 140px;
 }
 
 .add-s3-region-btn:hover {
@@ -1029,9 +1124,14 @@ function handleBack() {
 }
 
 .add-s3-region-btn__label {
-  font-size: 13px;
+  width: 100%;
+  overflow: hidden;
+  font-size: 12px;
   font-weight: 500;
   color: var(--color-text-title, #E2E2E2);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .add-s3-region-btn--active .add-s3-region-btn__label {
@@ -1039,10 +1139,15 @@ function handleBack() {
 }
 
 .add-s3-region-btn__code {
-  font-size: 11px;
+  width: 100%;
+  overflow: hidden;
+  font-size: 10px;
   color: var(--el-text-color-secondary, #B7BDC7);
-  margin-top: 2px;
+  margin-top: 0;
   font-family: var(--font-mono, monospace);
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 640px) {

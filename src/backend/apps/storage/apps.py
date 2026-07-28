@@ -19,3 +19,7 @@ class StorageConfig(AppConfig):
 
         maintenance_settings()
         repository_health_interval_seconds()
+
+        # The release baseline must be valid before this process serves requests.
+        from apps.storage.provider_catalog.catalog import load_default_catalog
+        load_default_catalog()

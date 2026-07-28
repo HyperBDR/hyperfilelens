@@ -7,6 +7,7 @@ import {
   Bot,
   BookOpen,
   Building2,
+  CloudCog,
   Cpu,
   FileText,
   History,
@@ -151,6 +152,17 @@ export function usePlatformOpsSideNav() {
           label: t('platformOps.nav.engineMcp'),
           to: '/platform-ops/engine/mcp-servers',
           icon: Server,
+        },
+      ],
+    },
+    {
+      label: t('platformOps.nav.groupStorage'),
+      children: [
+        {
+          label: t('platformOps.nav.storageProviders'),
+          to: '/platform-ops/storage-providers',
+          icon: CloudCog,
+          pageTitle: t('platformOps.storageProviders.title'),
         },
       ],
     },

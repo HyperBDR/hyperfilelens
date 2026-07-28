@@ -44,7 +44,11 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 		"kopia_path":    cfg.KopiaPath,
 		"root_path":     dataDir,
 		"install_path":  install.DefaultInstallDir(),
-		"capabilities":  []string{"repository_operation_v1", "repository_cleanup_v1"},
+		"capabilities": []string{
+			"repository_operation_v1",
+			"repository_cleanup_v1",
+			"backup_prepared_snapshot_v1",
+		},
 	} {
 		payload[key] = value
 	}

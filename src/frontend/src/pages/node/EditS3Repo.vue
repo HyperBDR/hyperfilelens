@@ -216,7 +216,7 @@ function hydrate(data: StorageRepository) {
   name.value = data.name || ''
   const plat = String(data.s3_platform || 'custom').toLowerCase()
   platform.value = (
-    ['aliyun', 'huawei', 'aws', 'custom'].includes(plat)
+    ['aliyun', 'huaweicloud', 'aws', 'custom'].includes(plat)
       ? (plat as StoragePlatform)
       : 'custom'
   )

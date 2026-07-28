@@ -13,7 +13,10 @@ class S3URLStyleTests(SimpleTestCase):
     def test_provider_defaults(self):
         self.assertEqual(default_s3_url_style(Repository.S3Platform.AWS), "auto")
         self.assertEqual(default_s3_url_style(Repository.S3Platform.ALIYUN), "auto")
-        self.assertEqual(default_s3_url_style(Repository.S3Platform.HUAWEI), "virtual_hosted")
+        self.assertEqual(
+            default_s3_url_style(Repository.S3Platform.HUAWEICLOUD),
+            "virtual_hosted",
+        )
         self.assertEqual(default_s3_url_style(Repository.S3Platform.CUSTOM), "auto")
 
     def test_backend_and_kopia_mappings(self):

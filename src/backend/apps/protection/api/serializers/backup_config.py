@@ -30,6 +30,7 @@ class BackupConfigListSerializer(serializers.ModelSerializer):
             "source_type",
             "source_ref_id",
             "repository_id",
+            "repository_endpoint_type",
             "backup_policy_id",
             "file_filter_rule_id",
             "directory_count",
@@ -59,6 +60,7 @@ class BackupConfigDetailSerializer(serializers.ModelSerializer):
             "source_type",
             "source_ref_id",
             "repository_id",
+            "repository_endpoint_type",
             "backup_policy_id",
             "file_filter_rule_id",
             "directory_count",
@@ -106,6 +108,10 @@ class BackupConfigWriteSerializer(serializers.Serializer):
     source_type = serializers.CharField(max_length=16, required=False)
     source_ref_id = serializers.IntegerField(required=False)
     repository_id = serializers.IntegerField(required=False)
+    repository_endpoint_type = serializers.ChoiceField(
+        choices=BackupConfig.RepositoryEndpointType.choices,
+        required=False,
+    )
     backup_policy_id = serializers.IntegerField(required=False, allow_null=True)
     file_filter_rule_id = serializers.IntegerField(required=False, allow_null=True)
     compression_level = serializers.ChoiceField(

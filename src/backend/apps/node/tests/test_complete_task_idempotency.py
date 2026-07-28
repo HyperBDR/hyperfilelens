@@ -63,3 +63,36 @@ class CompleteTaskIdempotencyTests(TestCase):
         self.assertEqual(updated.status, NodeTask.Status.RUNNING)
         self.assertEqual(updated.result.get("mode"), "local_detached")
         self.assertEqual(updated.result.get("target_version"), "1.2.0")
+
+    def test_late_success_upgrades_failed_task_and_clears_error(self):
+        self.task.status = NodeTask.Status.FAILED
+        self.task.last_error = "Agent went offline during task execution."
+        self.task.result = {"last_progress": {"phase": "repository_ready"}}
+        self.task.save(update_fields=["status", "last_error", "result", "updated_at"])
+
+        updated = complete_task(
+            task_id=self.task.id,
+            node_id=self.node.id,
+            status="success",
+            result={"kopia_snapshot_id": "late-kopia-id"},
+        )
+
+        self.assertEqual(updated.status, NodeTask.Status.SUCCESS)
+        self.assertEqual(updated.last_error, "")
+        self.assertEqual(updated.result["kopia_snapshot_id"], "late-kopia-id")
+
+    def test_late_success_does_not_revive_cancelled_task(self):
+        self.task.status = NodeTask.Status.CANCELED
+        self.task.last_error = "canceled by user"
+        self.task.save(update_fields=["status", "last_error", "updated_at"])
+
+        updated = complete_task(
+            task_id=self.task.id,
+            node_id=self.node.id,
+            status="success",
+            result={"kopia_snapshot_id": "must-not-apply"},
+        )
+
+        self.assertEqual(updated.status, NodeTask.Status.CANCELED)
+        self.assertEqual(updated.last_error, "canceled by user")
+        self.assertNotIn("kopia_snapshot_id", updated.result)

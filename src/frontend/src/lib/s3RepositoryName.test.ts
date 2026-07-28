@@ -3,24 +3,21 @@ import { buildS3RepositoryName } from './s3RepositoryName'
 
 describe('buildS3RepositoryName', () => {
   it.each([
-    ['other', 'backup-prod', 'S3(backup-prod)'],
-    ['aliyun', 'backup-prod', 'OSS(backup-prod)'],
-    ['huawei', 'backup-prod', 'OBS(backup-prod)'],
-    ['tencent', 'backup-prod', 'COS(backup-prod)'],
-    ['aws', 'backup-prod', 'AWS(backup-prod)'],
-    ['azure', 'backup-prod', 'AZURE(backup-prod)'],
-    ['gcp', 'backup-prod', 'GCS(backup-prod)'],
-  ])('uses the platform prefix for %s', (platform, bucket, expected) => {
-    expect(buildS3RepositoryName(platform, bucket)).toBe(expected)
+    ['S3-Compatible Storage', 'backup-prod', 'S3-Compatible Storage(backup-prod)'],
+    ['Alibaba Cloud', 'backup-prod', 'Alibaba Cloud(backup-prod)'],
+    ['Huawei Cloud', 'backup-prod', 'Huawei Cloud(backup-prod)'],
+    ['Tencent Cloud', 'backup-prod', 'Tencent Cloud(backup-prod)'],
+  ])('uses the platform name prefix for %s', (platformName, bucket, expected) => {
+    expect(buildS3RepositoryName(platformName, bucket)).toBe(expected)
   })
 
-  it('returns the platform abbreviation until a bucket is available', () => {
-    expect(buildS3RepositoryName('other', '  ')).toBe('S3')
-    expect(buildS3RepositoryName('aliyun', '')).toBe('OSS')
+  it('returns the platform name until a bucket is available', () => {
+    expect(buildS3RepositoryName('S3-Compatible Storage', '  ')).toBe('S3-Compatible Storage')
+    expect(buildS3RepositoryName('Alibaba Cloud', '')).toBe('Alibaba Cloud')
   })
 
-  it('returns an empty name when the platform is unavailable', () => {
+  it('returns an empty name when the platform name is unavailable', () => {
     expect(buildS3RepositoryName(undefined, 'backup-prod')).toBe('')
-    expect(buildS3RepositoryName('unknown', 'backup-prod')).toBe('')
+    expect(buildS3RepositoryName('  ', 'backup-prod')).toBe('')
   })
 })

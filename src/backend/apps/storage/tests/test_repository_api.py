@@ -1,3 +1,5 @@
+import copy
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
@@ -22,6 +24,9 @@ from apps.storage.services.internal.nas_repository import (
     nas_repository_payload,
 )
 from apps.storage.services.internal.repository_access import repository_payload_for_node
+from apps.storage.services.internal.repository_secrets import (
+    build_repository_runtime_payload,
+)
 from apps.storage.repositories.models import (
     Credential,
     Repository,
@@ -29,6 +34,9 @@ from apps.storage.repositories.models import (
     RepositoryTask,
     RepositoryUsageShard,
 )
+from apps.storage.provider_catalog.catalog import load_default_catalog
+from apps.storage.provider_catalog.models import StorageProviderOverride
+from apps.storage.provider_catalog.schema import provider_checksum
 from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
     discover_repository_execution_targets,
@@ -51,6 +59,51 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             role=Membership.Role.ADMIN,
         )
+        for provider in (
+            {
+                "id": "aws",
+                "display_name": "Amazon S3 Test Provider",
+                "enabled": True,
+                "regions": [
+                    {
+                        "id": "us-east-1",
+                        "display_name": "US East Test",
+                        "region_group": "north_america",
+                        "region_group_en": "North America",
+                        "external_endpoint": "s3.amazonaws.com",
+                        "internal_endpoint": "s3.amazonaws.com",
+                        "driver": "s3",
+                        "s3_url_style": "virtual_hosted",
+                        "use_tls": True,
+                    }
+                ],
+            },
+            {
+                "id": "aliyun",
+                "display_name": "Alibaba Cloud Test Provider",
+                "enabled": True,
+                "regions": [
+                    {
+                        "id": "cn-hangzhou",
+                        "display_name": "Hangzhou Test",
+                        "region_group": "asia_pacific",
+                        "region_group_en": "Asia Pacific",
+                        "external_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                        "internal_endpoint": "oss-cn-hangzhou-internal.aliyuncs.com",
+                        "driver": "s3",
+                        "s3_url_style": "virtual_hosted",
+                        "use_tls": True,
+                    }
+                ],
+            },
+        ):
+            StorageProviderOverride.objects.create(
+                provider_id=provider["id"],
+                schema_version=1,
+                config=provider,
+                checksum=provider_checksum(provider),
+                updated_by_id=self.user.pk,
+            )
         self.client.force_authenticate(user=self.user)
 
     def _headers(self, org: Organization | None = None):
@@ -92,6 +145,144 @@ class StorageRepositoryApiTests(TestCase):
                 "message": "S3 object prefix is required.",
             },
             response.data["data"]["errors"],
+        )
+
+    def test_create_managed_s3_repository_rejects_unknown_catalog_region(self):
+        payload = self._s3_payload()
+        payload["config"]["region"] = "unknown-region"
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(
+            {
+                "field": "config.region",
+                "code": "VALIDATION.FIELD_INVALID",
+                "message": "Region is not in the current Provider Catalog.",
+            },
+            response.data["data"]["errors"],
+        )
+
+    def test_create_managed_s3_repository_rejects_catalog_endpoint_mismatch(self):
+        payload = self._s3_payload()
+        payload["config"]["endpoint"] = "https://attacker.example.com"
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(
+            {
+                "field": "config.endpoint",
+                "code": "VALIDATION.FIELD_INVALID",
+                "message": "Endpoint does not match the current Provider Catalog region.",
+            },
+            response.data["data"]["errors"],
+        )
+
+    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
+    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
+    def test_create_custom_s3_repository_is_not_catalog_managed(self, _initialize, _sync):
+        payload = self._s3_payload()
+        payload["s3_platform"] = Repository.S3Platform.CUSTOM
+        payload["config"]["region"] = "private-region"
+        payload["config"]["endpoint"] = "https://s3.internal.example.com"
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.data["s3_platform"], Repository.S3Platform.CUSTOM)
+        self.assertEqual(
+            response.data["config"]["endpoint"], "s3.internal.example.com"
+        )
+        self.assertNotIn("endpoint_type", response.data["config"])
+        self.assertNotIn("external_endpoint", response.data["config"])
+        self.assertNotIn("internal_endpoint", response.data["config"])
+
+    def test_create_s3_repository_rejects_derived_endpoint_fields(self):
+        payload = self._s3_payload()
+        payload["config"].update(
+            {
+                "endpoint_type": "external",
+                "external_endpoint": "s3.amazonaws.com",
+                "internal_endpoint": "s3.amazonaws.com",
+            }
+        )
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(
+            "config",
+            {item["field"] for item in response.data["data"]["errors"]},
+        )
+
+    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
+    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
+    def test_create_s3_repository_with_dynamic_catalog_provider(self, _initialize, _sync):
+        provider = copy.deepcopy(load_default_catalog()["providers"][0])
+        provider.update({"id": "tencent", "display_name": "Tencent Cloud COS"})
+        region = provider["regions"][0]
+        region.update(
+            {
+                "id": "ap-shanghai",
+                "external_endpoint": "cos.ap-shanghai.myqcloud.com",
+                "internal_endpoint": "cos-internal.ap-shanghai.myqcloud.com",
+            }
+        )
+        provider["regions"] = [region]
+        StorageProviderOverride.objects.create(
+            provider_id=provider["id"],
+            schema_version=1,
+            config=provider,
+            checksum=provider_checksum(provider),
+            updated_by_id=self.user.pk,
+        )
+        payload = self._s3_payload()
+        payload.update({"s3_platform": "tencent", "s3_bucket": "dynamic-provider"})
+        payload["config"].update(
+            {
+                "region": "ap-shanghai",
+                "endpoint": "cos.ap-shanghai.myqcloud.com",
+            }
+        )
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.data["s3_platform"], "tencent")
+        self.assertNotIn("endpoint_type", response.data["config"])
+        self.assertEqual(
+            response.data["config"]["endpoint"],
+            "cos.ap-shanghai.myqcloud.com",
+        )
+        self.assertEqual(
+            response.data["config"]["external_endpoint"],
+            "cos.ap-shanghai.myqcloud.com",
         )
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
@@ -138,18 +329,38 @@ class StorageRepositoryApiTests(TestCase):
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
     @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_applies_provider_url_style_defaults(self, _initialize, _sync):
+    def test_create_s3_applies_region_connection_settings(self, _initialize, _sync):
         expected = {
-            Repository.S3Platform.AWS: "auto",
-            Repository.S3Platform.ALIYUN: "auto",
-            Repository.S3Platform.HUAWEI: "virtual_hosted",
-            Repository.S3Platform.CUSTOM: "auto",
+            Repository.S3Platform.AWS: (
+                "virtual_hosted",
+                "us-east-1",
+                "s3.amazonaws.com",
+            ),
+            Repository.S3Platform.ALIYUN: (
+                "virtual_hosted",
+                "cn-hangzhou",
+                "oss-cn-hangzhou.aliyuncs.com",
+            ),
+            Repository.S3Platform.HUAWEICLOUD: (
+                "virtual_hosted",
+                "cn-north-1",
+                "obs.cn-north-1.myhuaweicloud.com",
+            ),
+            Repository.S3Platform.CUSTOM: (
+                "auto",
+                "private-region",
+                "https://s3.internal.example.com",
+            ),
         }
-        for index, (platform, url_style) in enumerate(expected.items(), start=1):
+        for index, (platform, (url_style, region, endpoint)) in enumerate(
+            expected.items(), start=1
+        ):
             payload = self._s3_payload()
             payload["name"] = f"provider-{platform}"
             payload["s3_platform"] = platform
             payload["s3_bucket"] = f"provider-bucket-{index}"
+            payload["config"]["region"] = region
+            payload["config"]["endpoint"] = endpoint
             payload["config"].pop("s3_url_style")
 
             response = self.client.post(
@@ -161,6 +372,64 @@ class StorageRepositoryApiTests(TestCase):
 
             self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
             self.assertEqual(response.data["config"]["s3_url_style"], url_style)
+
+    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
+    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
+    def test_repository_creation_always_snapshots_and_uses_external_endpoint(
+        self, initialize, _sync
+    ):
+        payload = self._s3_payload()
+        payload["s3_platform"] = Repository.S3Platform.ALIYUN
+        payload["config"].update(
+            {
+                "region": "cn-hangzhou",
+                "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+            }
+        )
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        config = response.data["config"]
+        self.assertNotIn("endpoint_type", config)
+        self.assertEqual(config["endpoint"], "oss-cn-hangzhou.aliyuncs.com")
+        self.assertEqual(config["external_endpoint"], "oss-cn-hangzhou.aliyuncs.com")
+        self.assertEqual(
+            config["internal_endpoint"],
+            "oss-cn-hangzhou-internal.aliyuncs.com",
+        )
+        repository = Repository.objects.get(pk=response.data["id"])
+        runtime = build_repository_runtime_payload(repository=repository)
+        self.assertEqual(runtime["endpoint"], config["endpoint"])
+        initialized_repository = initialize.call_args.args[0]
+        self.assertEqual(
+            initialized_repository.config["endpoint"],
+            "oss-cn-hangzhou.aliyuncs.com",
+        )
+
+    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
+    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
+    def test_equal_catalog_endpoints_force_external_selection(self, _initialize, _sync):
+        payload = self._s3_payload()
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        config = response.data["config"]
+        self.assertEqual(config["endpoint"], "s3.amazonaws.com")
+        self.assertNotIn("endpoint_type", config)
+        self.assertNotIn("external_endpoint", config)
+        self.assertNotIn("internal_endpoint", config)
 
     @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
     @mock.patch("apps.storage.services.interface.initialize_s3_repository")
@@ -716,7 +985,7 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(response.data["count"], 3)
         self.assertEqual(response.data["total_count"], 4)
         validate_s3_connection.assert_called_once_with(
-            endpoint="https://s3.amazonaws.com",
+            endpoint="s3.amazonaws.com",
             region="us-east-1",
             access_key_id="AKIA_TEST",
             secret_access_key="super-secret",
@@ -734,6 +1003,35 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(
             no_slash_response.data["buckets"],
             ["bucket-a", "bucket-b", "bucket-c"],
+        )
+
+    @mock.patch("apps.storage.repositories.views.validate_s3_connection")
+    def test_managed_connection_validation_always_uses_external_endpoint(
+        self, validate_s3_connection
+    ):
+        validate_s3_connection.return_value = []
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/validate/s3/",
+            {
+                "platform": "aliyun",
+                "region": "cn-hangzhou",
+                "endpoint": "oss-cn-hangzhou-internal.aliyuncs.com",
+                "access_key_id": "AKIA_TEST",
+                "secret_access_key": "super-secret",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        validate_s3_connection.assert_called_once_with(
+            endpoint="oss-cn-hangzhou.aliyuncs.com",
+            region="cn-hangzhou",
+            access_key_id="AKIA_TEST",
+            secret_access_key="super-secret",
+            s3_url_style="virtual_hosted",
+            use_tls=True,
         )
 
     def test_nas_repository_payload_converts_normalized_smb_share_for_mount(self):

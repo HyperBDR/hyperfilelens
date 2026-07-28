@@ -15,7 +15,9 @@ from apps.protection.services.backup_task import (
     _resolve_execution_target,
     _set_step_status,
 )
-from apps.protection.services.kopia_snapshot_delete import classify_kopia_snapshot_delete_results
+from apps.protection.services.kopia_snapshot_delete import (
+    classify_kopia_snapshot_delete_results,
+)
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
 from apps.storage.services.internal.repository_access import (
     repository_uses_bound_proxy,
@@ -46,13 +48,19 @@ def _delete_lock_key(*, organization_id: int, source_snapshot_id: int) -> str:
     return f"protection:snapshot-delete:{organization_id}:{source_snapshot_id}"
 
 
+def _snapshot_delete_tasks(*, organization_id: int, source_snapshot_id: int):
+    return Task.objects.filter(
+        organization_id=organization_id,
+        task_type=Task.Type.SNAPSHOT_DELETE,
+        request_payload__source_snapshot_id=int(source_snapshot_id),
+    )
+
+
 def _active_delete_task(*, organization_id: int, source_snapshot_id: int) -> Task | None:
     return (
-        Task.objects.filter(
+        _snapshot_delete_tasks(
             organization_id=organization_id,
-            task_type=Task.Type.SNAPSHOT_DELETE,
-            resources__resource_type=TaskResource.Type.SNAPSHOT,
-            resources__resource_id=source_snapshot_id,
+            source_snapshot_id=source_snapshot_id,
         )
         .exclude(status__in=_DELETE_TERMINAL)
         .order_by("-created_at", "-id")
@@ -62,11 +70,9 @@ def _active_delete_task(*, organization_id: int, source_snapshot_id: int) -> Tas
 
 def _latest_delete_task(*, organization_id: int, source_snapshot_id: int) -> Task | None:
     return (
-        Task.objects.filter(
+        _snapshot_delete_tasks(
             organization_id=organization_id,
-            task_type=Task.Type.SNAPSHOT_DELETE,
-            resources__resource_type=TaskResource.Type.SNAPSHOT,
-            resources__resource_id=source_snapshot_id,
+            source_snapshot_id=source_snapshot_id,
         )
         .order_by("-created_at", "-id")
         .first()
@@ -268,6 +274,98 @@ def _complete_empty_delete(task: Task, source_snapshot: BackupSourceSnapshot) ->
     return result
 
 
+def _snapshot_delete_exception_message(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        messages = [str(message).strip() for message in exc.messages if str(message).strip()]
+        if messages:
+            return "; ".join(messages)[:2000]
+    return str(exc).strip()[:2000] or exc.__class__.__name__
+
+
+def fail_snapshot_delete_task(
+    *,
+    task: Task,
+    source_snapshot: BackupSourceSnapshot | None,
+    error_code: str,
+    error_message: str,
+    result_payload: dict[str, Any] | None = None,
+    event_message: str = "Snapshot delete failed",
+) -> dict[str, Any]:
+    """Atomically close a business delete task after a handled execution failure."""
+    clean_message = str(error_message or "Snapshot delete failed.").strip()[:2000]
+    with transaction.atomic():
+        locked_task = Task.objects.select_for_update().get(id=task.id)
+        if locked_task.status in _DELETE_TERMINAL:
+            return locked_task.result_payload if isinstance(locked_task.result_payload, dict) else {}
+
+        locked_snapshot = None
+        if source_snapshot is not None:
+            locked_snapshot = BackupSourceSnapshot.objects.select_for_update().filter(
+                organization_id=source_snapshot.organization_id,
+                id=source_snapshot.id,
+            ).first()
+
+        task_result = dict(result_payload or {})
+        task_result.setdefault(
+            "source_snapshot_id",
+            locked_snapshot.id if locked_snapshot is not None else None,
+        )
+        task_result.setdefault("results", [])
+        if locked_snapshot is not None:
+            remaining_count = BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=locked_snapshot,
+            ).exclude(status=BackupSourceSnapshotDirectory.Status.DELETED).count()
+            deleted_count = BackupSourceSnapshotDirectory.objects.filter(
+                source_snapshot=locked_snapshot,
+                status=BackupSourceSnapshotDirectory.Status.DELETED,
+            ).count()
+            task_result.setdefault("deleted_count", deleted_count)
+            task_result.setdefault("failed_count", remaining_count)
+            locked_snapshot.status = BackupSourceSnapshot.Status.DELETE_FAILED
+            locked_snapshot.error_code = error_code
+            locked_snapshot.error_message = clean_message
+            locked_snapshot.save(
+                update_fields=["status", "error_code", "error_message", "updated_at"]
+            )
+
+        append_task_step_event(
+            task=locked_task,
+            step_name="delete_kopia_snapshots",
+            level=TaskEvent.Level.ERROR,
+            message=event_message,
+            metadata={
+                "error_code": error_code,
+                "error_message": clean_message,
+                "results": task_result.get("results", []),
+            },
+        )
+        _set_step_status(
+            task=locked_task,
+            step_name="delete_kopia_snapshots",
+            status=TaskStep.Status.FAILED,
+            progress=0,
+            task_progress=float(locked_task.progress or 0),
+        )
+        _set_step_status(
+            task=locked_task,
+            step_name="finalize_snapshot_delete",
+            status=TaskStep.Status.FAILED,
+            progress=0,
+            task_progress=float(locked_task.progress or 0),
+            current_step="finalize_snapshot_delete",
+        )
+        complete_task(
+            task_uuid=locked_task.task_uuid,
+            organization_id=locked_task.organization_id,
+            status=Task.Status.FAILED,
+            progress=float(locked_task.progress or 0),
+            result_payload=task_result,
+            error_code=error_code,
+            error_message=clean_message,
+        )
+        return task_result
+
+
 def run_snapshot_delete_task(
     *,
     organization_id: int,
@@ -285,6 +383,33 @@ def run_snapshot_delete_task(
             organization_id=organization_id,
             task_uuid=task_uuid,
             source_snapshot_id=source_snapshot_id,
+        )
+    except Exception as exc:
+        task = Task.objects.filter(organization_id=organization_id, task_uuid=task_uuid).first()
+        if task is None:
+            raise
+        source_snapshot = BackupSourceSnapshot.objects.filter(
+            organization_id=organization_id,
+            id=source_snapshot_id,
+        ).first()
+        error_code = (
+            "SNAPSHOT_DELETE_PRECONDITION_FAILED"
+            if isinstance(exc, ValidationError)
+            else "SNAPSHOT_DELETE_INTERNAL_ERROR"
+        )
+        error_message = _snapshot_delete_exception_message(exc)
+        logger.exception(
+            "snapshot delete execution failed task_uuid=%s source_snapshot_id=%s error_code=%s",
+            task_uuid,
+            source_snapshot_id,
+            error_code,
+        )
+        return fail_snapshot_delete_task(
+            task=task,
+            source_snapshot=source_snapshot,
+            error_code=error_code,
+            error_message=error_message,
+            event_message="Snapshot delete execution failed",
         )
     finally:
         cache.delete(lock_key)
@@ -313,6 +438,9 @@ def _run_snapshot_delete_task_locked(
     rows = _snapshot_delete_rows(source_snapshot)
     kopia_ids = _kopia_snapshot_ids(rows)
     kopia_directories_by_id = _kopia_snapshot_directories_by_id(rows)
+    rows_without_physical_snapshot = [
+        row.id for row in rows if not str(row.kopia_snapshot_id or "").strip()
+    ]
 
     _set_step_status(
         task=task,
@@ -403,14 +531,7 @@ def _run_snapshot_delete_task_locked(
     if not hard_failed:
         BackupSourceSnapshotDirectory.objects.filter(
             source_snapshot=source_snapshot,
-            kopia_snapshot_id__isnull=True,
-        ).exclude(status=BackupSourceSnapshotDirectory.Status.DELETED).update(
-            status=BackupSourceSnapshotDirectory.Status.DELETED,
-            updated_at=now,
-        )
-        BackupSourceSnapshotDirectory.objects.filter(
-            source_snapshot=source_snapshot,
-            kopia_snapshot_id="",
+            id__in=rows_without_physical_snapshot,
         ).exclude(status=BackupSourceSnapshotDirectory.Status.DELETED).update(
             status=BackupSourceSnapshotDirectory.Status.DELETED,
             updated_at=now,
@@ -462,43 +583,18 @@ def _run_snapshot_delete_task_locked(
         )
         return task_result
 
-    error_message = str(outcome.task.last_error or "One or more physical snapshots failed to delete.")[:2000]
-    source_snapshot.status = BackupSourceSnapshot.Status.DELETE_FAILED
-    source_snapshot.error_code = "SNAPSHOT_DELETE_FAILED"
-    source_snapshot.error_message = error_message
-    source_snapshot.save(update_fields=["status", "error_code", "error_message", "updated_at"])
-    append_task_step_event(
+    error_message = str(
+        getattr(outcome.task, "last_error", "")
+        or "One or more physical snapshots failed to delete."
+    )[:2000]
+    return fail_snapshot_delete_task(
         task=task,
-        step_name="delete_kopia_snapshots",
-        level=TaskEvent.Level.ERROR,
-        message="Physical snapshot delete failed",
-        metadata={"error_message": error_message, "results": item_results},
-    )
-    _set_step_status(
-        task=task,
-        step_name="delete_kopia_snapshots",
-        status=TaskStep.Status.FAILED,
-        progress=0,
-        task_progress=10,
-    )
-    _set_step_status(
-        task=task,
-        step_name="finalize_snapshot_delete",
-        status=TaskStep.Status.FAILED,
-        progress=0,
-        task_progress=10,
-        current_step="finalize_snapshot_delete",
-    )
-    complete_task(
-        task_uuid=task.task_uuid,
-        organization_id=organization_id,
-        status=Task.Status.FAILED,
-        progress=10,
-        result_payload=task_result,
+        source_snapshot=source_snapshot,
         error_code="SNAPSHOT_DELETE_FAILED",
         error_message=error_message,
+        result_payload=task_result,
+        event_message="Physical snapshot delete failed",
     )
-    return task_result
 
 
 def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, int]:
@@ -545,26 +641,18 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
         ) if snapshot_id else None
         if latest is None or latest.id != task.id:
             continue
-        complete_task(
-            task_uuid=task.task_uuid,
+        snapshot = BackupSourceSnapshot.objects.filter(
             organization_id=task.organization_id,
-            status=Task.Status.FAILED,
-            progress=float(task.progress),
-            result_payload=task.result_payload if isinstance(task.result_payload, dict) else {},
+            id=snapshot_id,
+        ).first()
+        fail_snapshot_delete_task(
+            task=task,
+            source_snapshot=snapshot,
             error_code="SNAPSHOT_DELETE_INTERRUPTED",
             error_message="Snapshot delete worker was interrupted before finalization.",
+            result_payload=task.result_payload if isinstance(task.result_payload, dict) else {},
+            event_message="Snapshot delete worker interrupted",
         )
-        if snapshot_id:
-            BackupSourceSnapshot.objects.filter(
-                organization_id=task.organization_id,
-                id=snapshot_id,
-                status=BackupSourceSnapshot.Status.DELETING,
-            ).update(
-                status=BackupSourceSnapshot.Status.DELETE_FAILED,
-                error_code="SNAPSHOT_DELETE_INTERRUPTED",
-                error_message="Snapshot delete worker was interrupted before finalization.",
-                updated_at=current,
-            )
         recovered_running += 1
 
     failed_snapshots = list(

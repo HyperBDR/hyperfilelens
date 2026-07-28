@@ -47,6 +47,7 @@ export type BackupConfigCreatePayload = {
   source_type: 'agent' | 'nas'
   source_ref_id: number
   repository_id: number
+  repository_endpoint_type?: 'external' | 'internal'
   backup_policy_id?: number | null
   file_filter_rule_id?: number | null
   compression_level?: CompressionLevel
@@ -89,6 +90,7 @@ export type BackupConfig = {
   source_type: string
   source_ref_id: number
   repository_id: number
+  repository_endpoint_type: 'external' | 'internal'
   backup_policy_id: number | null
   file_filter_rule_id: number | null
   directory_count: number
@@ -150,6 +152,8 @@ export type BackupSourceSnapshot = {
   backup_config_name: string
   repository_id: number
   repository_display_name: string
+  repository_endpoint_type: 'external' | 'internal'
+  repository_endpoint: string
   task_id: number
   task_uuid: string
   trigger_type: string

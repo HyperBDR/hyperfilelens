@@ -70,7 +70,7 @@ def _is_protection_backup_task(task: NodeTask) -> bool:
 
     return (
         task.correlation_type == protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE
-        and task.kind == "backup.run"
+        and task.kind in protection_conf.PROTECTION_BACKUP_NODE_TASK_KINDS
     )
 
 
@@ -106,7 +106,13 @@ def _initial_watchdog_deadline(
 
     if (
         correlation_type == protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE
-        and kind == "backup.run"
+        and kind in protection_conf.PROTECTION_BACKUP_NODE_TASK_KINDS
+    ):
+        return _protection_backup_watchdog_deadline(from_time=from_time)
+    if (
+        correlation_type
+        == protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE
+        and kind == "repository.policy.apply"
     ):
         return _protection_backup_watchdog_deadline(from_time=from_time)
     return _watchdog_deadline(from_time=from_time)
@@ -521,6 +527,11 @@ def complete_task(
             "ok",
         ):
             return task
+        if task.status == NodeTask.Status.CANCELED and incoming not in (
+            "canceled",
+            "cancelled",
+        ):
+            return task
 
     ctx = task_log_context(
         node_id=node_id,
@@ -563,6 +574,7 @@ def complete_task(
         return task
     if terminal in ("success", "succeeded", "ok"):
         task.status = NodeTask.Status.SUCCESS
+        task.last_error = ""
     elif terminal in ("canceled", "cancelled"):
         task.status = NodeTask.Status.CANCELED
     else:

@@ -1,0 +1,1 @@
+"""Packaged Provider Catalog resources."""

@@ -25,6 +25,34 @@ REPOSITORY_HEALTH_INTERVAL_ENV = "STORAGE_REPOSITORY_HEALTH_INTERVAL_SECONDS"
 DEFAULT_REPOSITORY_HEALTH_INTERVAL_SECONDS = 300
 MIN_REPOSITORY_HEALTH_INTERVAL_SECONDS = 60
 
+PROVIDER_CATALOG_MAX_BYTES_ENV = "STORAGE_PROVIDER_CATALOG_MAX_BYTES"
+PROVIDER_CATALOG_MAX_DEPTH_ENV = "STORAGE_PROVIDER_CATALOG_MAX_DEPTH"
+PROVIDER_CATALOG_MAX_PROVIDERS_ENV = "STORAGE_PROVIDER_CATALOG_MAX_PROVIDERS"
+PROVIDER_CATALOG_MAX_REGIONS_ENV = "STORAGE_PROVIDER_CATALOG_MAX_REGIONS"
+PROVIDER_CATALOG_REVIEW_TOKEN_TTL_ENV = (
+    "STORAGE_PROVIDER_CATALOG_REVIEW_TOKEN_TTL_SECONDS"
+)
+PROVIDER_VALIDATION_CREDENTIAL_TTL_ENV = (
+    "STORAGE_PROVIDER_VALIDATION_CREDENTIAL_TTL_SECONDS"
+)
+PROVIDER_VALIDATION_RUN_TTL_ENV = "STORAGE_PROVIDER_VALIDATION_RUN_TTL_SECONDS"
+PROVIDER_VALIDATION_RETENTION_ENV = (
+    "STORAGE_PROVIDER_VALIDATION_RETENTION_SECONDS"
+)
+PROVIDER_VALIDATION_REGION_TIMEOUT_ENV = (
+    "STORAGE_PROVIDER_VALIDATION_REGION_TIMEOUT_SECONDS"
+)
+
+DEFAULT_PROVIDER_CATALOG_MAX_BYTES = 2 * 1024 * 1024
+DEFAULT_PROVIDER_CATALOG_MAX_DEPTH = 16
+DEFAULT_PROVIDER_CATALOG_MAX_PROVIDERS = 32
+DEFAULT_PROVIDER_CATALOG_MAX_REGIONS = 256
+DEFAULT_PROVIDER_CATALOG_REVIEW_TOKEN_TTL_SECONDS = 15 * 60
+DEFAULT_PROVIDER_VALIDATION_CREDENTIAL_TTL_SECONDS = 6 * 60 * 60
+DEFAULT_PROVIDER_VALIDATION_RUN_TTL_SECONDS = 4 * 60 * 60
+DEFAULT_PROVIDER_VALIDATION_RETENTION_SECONDS = 24 * 60 * 60
+DEFAULT_PROVIDER_VALIDATION_REGION_TIMEOUT_SECONDS = 3 * 60
+
 
 def repository_health_interval_seconds() -> int:
     raw = os.getenv(
@@ -43,3 +71,73 @@ def repository_health_interval_seconds() -> int:
             f"{MIN_REPOSITORY_HEALTH_INTERVAL_SECONDS} seconds."
         )
     return value
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer.") from exc
+    if value < 1:
+        raise ImproperlyConfigured(f"{name} must be at least 1.")
+    return value
+
+
+def provider_catalog_limits() -> dict[str, int]:
+    return {
+        "max_bytes": _positive_int_setting(
+            PROVIDER_CATALOG_MAX_BYTES_ENV,
+            DEFAULT_PROVIDER_CATALOG_MAX_BYTES,
+        ),
+        "max_depth": _positive_int_setting(
+            PROVIDER_CATALOG_MAX_DEPTH_ENV,
+            DEFAULT_PROVIDER_CATALOG_MAX_DEPTH,
+        ),
+        "max_providers": _positive_int_setting(
+            PROVIDER_CATALOG_MAX_PROVIDERS_ENV,
+            DEFAULT_PROVIDER_CATALOG_MAX_PROVIDERS,
+        ),
+        "max_regions": _positive_int_setting(
+            PROVIDER_CATALOG_MAX_REGIONS_ENV,
+            DEFAULT_PROVIDER_CATALOG_MAX_REGIONS,
+        ),
+    }
+
+
+def provider_catalog_review_token_ttl_seconds() -> int:
+    return _positive_int_setting(
+        PROVIDER_CATALOG_REVIEW_TOKEN_TTL_ENV,
+        DEFAULT_PROVIDER_CATALOG_REVIEW_TOKEN_TTL_SECONDS,
+    )
+
+
+def provider_validation_credential_ttl_seconds() -> int:
+    return _positive_int_setting(
+        PROVIDER_VALIDATION_CREDENTIAL_TTL_ENV,
+        DEFAULT_PROVIDER_VALIDATION_CREDENTIAL_TTL_SECONDS,
+    )
+
+
+def provider_validation_run_ttl_seconds() -> int:
+    return min(
+        _positive_int_setting(
+            PROVIDER_VALIDATION_RUN_TTL_ENV,
+            DEFAULT_PROVIDER_VALIDATION_RUN_TTL_SECONDS,
+        ),
+        provider_validation_credential_ttl_seconds(),
+    )
+
+
+def provider_validation_retention_seconds() -> int:
+    return _positive_int_setting(
+        PROVIDER_VALIDATION_RETENTION_ENV,
+        DEFAULT_PROVIDER_VALIDATION_RETENTION_SECONDS,
+    )
+
+
+def provider_validation_region_timeout_seconds() -> int:
+    return _positive_int_setting(
+        PROVIDER_VALIDATION_REGION_TIMEOUT_ENV,
+        DEFAULT_PROVIDER_VALIDATION_REGION_TIMEOUT_SECONDS,
+    )

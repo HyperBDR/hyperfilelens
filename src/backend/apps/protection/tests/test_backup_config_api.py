@@ -103,6 +103,33 @@ class ProtectionBackupConfigApiTests(TestCase):
             },
         )
 
+    def _distinct_endpoint_repository(
+        self,
+        *,
+        name: str = "distinct-endpoint-repo",
+    ) -> Repository:
+        return Repository.objects.create(
+            organization_id=self.org.id,
+            name=name,
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.ALIYUN,
+            s3_bucket=f"{name}-bucket",
+            config={
+                "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                "external_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                "internal_endpoint": "oss-cn-hangzhou-internal.aliyuncs.com",
+                "region": "cn-hangzhou",
+                "prefix": "kopia/config",
+                "access_key_id": "ak-test",
+                "secret_access_key": "sk-test",
+                "kopia_password": "123456",
+                "s3_url_style": "virtual_hosted",
+                "use_tls": True,
+            },
+        )
+
     def _successful_agent_task(self):
         return SimpleNamespace(
             task=SimpleNamespace(status="success", last_error=""),
@@ -212,6 +239,164 @@ class ProtectionBackupConfigApiTests(TestCase):
         )
         self.assertEqual(step2_after.status_code, status.HTTP_200_OK)
         self.assertNotIn(source_key, {row["id"] for row in step2_after.data["results"]})
+
+    def test_distinct_s3_endpoints_require_explicit_selection(self):
+        repository = self._distinct_endpoint_repository()
+        payload = self._payload(name="Missing Endpoint selection")
+        payload["repository_id"] = repository.id
+
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("repository_endpoint_type", self._error_fields(response))
+        self.assertFalse(
+            BackupConfig.objects.filter(name="Missing Endpoint selection").exists()
+        )
+
+    def test_distinct_s3_endpoint_selection_persists_and_serializes(self):
+        repository = self._distinct_endpoint_repository()
+        payload = self._payload(name="Internal Endpoint config")
+        payload.update({
+            "repository_id": repository.id,
+            "repository_endpoint_type": "internal",
+        })
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        self.assertEqual(create.data["repository_endpoint_type"], "internal")
+        config = BackupConfig.objects.get(id=create.data["id"])
+        self.assertEqual(config.repository_endpoint_type, "internal")
+
+        preserve = self.client.patch(
+            f"/api/v1/protection/backup-configs/{config.id}/",
+            {"remark": "keep internal"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(preserve.status_code, status.HTTP_200_OK, preserve.content)
+        self.assertEqual(preserve.data["repository_endpoint_type"], "internal")
+
+        update = self.client.patch(
+            f"/api/v1/protection/backup-configs/{config.id}/",
+            {"repository_endpoint_type": "external"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(update.status_code, status.HTTP_200_OK, update.content)
+        self.assertEqual(update.data["repository_endpoint_type"], "external")
+        config.refresh_from_db()
+        self.assertEqual(config.repository_endpoint_type, "external")
+
+    def test_equal_s3_endpoints_default_to_external(self):
+        response = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Equal Endpoint config"),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.data["repository_endpoint_type"], "external")
+
+    def test_internal_selection_is_rejected_for_equal_or_non_s3_endpoints(self):
+        for repository in (self.repository, self._direct_nas_repository()):
+            with self.subTest(repository_type=repository.repo_type):
+                payload = self._payload(name=f"Invalid internal {repository.repo_type}")
+                payload.update({
+                    "repository_id": repository.id,
+                    "repository_endpoint_type": "internal",
+                })
+                response = self.client.post(
+                    "/api/v1/protection/backup-configs/",
+                    payload,
+                    format="json",
+                    **self._headers(),
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("repository_endpoint_type", self._error_fields(response))
+
+    def test_repository_target_cannot_be_changed(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Repository change Endpoint config"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        repository = self._distinct_endpoint_repository()
+
+        response = self.client.patch(
+            f"/api/v1/protection/backup-configs/{create.data['id']}/",
+            {"repository_id": repository.id},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("repository_id", self._error_fields(response))
+
+    def test_endpoint_type_cannot_change_while_backup_is_active(self):
+        repository = self._distinct_endpoint_repository()
+        payload = self._payload(name="Active backup Endpoint config")
+        payload.update(
+            {
+                "repository_id": repository.id,
+                "repository_endpoint_type": "internal",
+            }
+        )
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        config_id = create.data["id"]
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            status=Task.Status.PENDING,
+            display_name="Active endpoint backup",
+            request_payload={
+                "source_type": "agent",
+                "source_ref_id": self.agent.id,
+                "backup_config_id": config_id,
+            },
+        )
+
+        blocked = self.client.patch(
+            f"/api/v1/protection/backup-configs/{config_id}/",
+            {"repository_endpoint_type": "external"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("repository_endpoint_type", self._error_fields(blocked))
+        task.status = Task.Status.SUCCESS
+        task.save(update_fields=["status", "updated_at"])
+
+        allowed = self.client.patch(
+            f"/api/v1/protection/backup-configs/{config_id}/",
+            {"repository_endpoint_type": "external"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(allowed.status_code, status.HTTP_200_OK, allowed.content)
+        self.assertEqual(allowed.data["repository_endpoint_type"], "external")
 
     def test_backup_config_compression_defaults_and_updates_strictly(self):
         payload = self._payload(name="Default compression config")
@@ -674,7 +859,7 @@ class ProtectionBackupConfigApiTests(TestCase):
 
     @mock.patch("apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh")
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
-    def test_update_backup_config_initializes_when_switching_to_direct_nas(
+    def test_update_backup_config_rejects_switching_to_direct_nas(
         self, run_agent_task_sync, enqueue_usage,
     ):
         run_agent_task_sync.return_value = self._successful_agent_task()
@@ -694,16 +879,10 @@ class ProtectionBackupConfigApiTests(TestCase):
             **self._headers(),
         )
 
-        self.assertEqual(update.status_code, status.HTTP_200_OK, update.content)
-        run_agent_task_sync.assert_called_once()
-        repository_payload = run_agent_task_sync.call_args.kwargs["payload"]["repository"]
-        self.assertEqual(repository_payload["subdir"], f"hp-repos/agent-{self.agent.id}")
-        enqueue_usage.assert_called_once_with(
-            organization_id=self.org.id,
-            repository_ids=[nas_repo.id],
-            force=True,
-            trigger="protection.backup_config.update",
-        )
+        self.assertEqual(update.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("repository_id", self._error_fields(update))
+        run_agent_task_sync.assert_not_called()
+        enqueue_usage.assert_not_called()
 
     def test_delete_backup_config_is_not_supported(self):
         create = self.client.post(

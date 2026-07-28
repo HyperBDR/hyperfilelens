@@ -16,7 +16,7 @@ export type StorageRepositoryStatus =
 export type StorageRepositoryHealth = 'online' | 'offline' | 'unverified'
 export type StorageRepositoryNasProtocol = 'smb' | 'nfs'
 export type StorageRepositoryBindNodeType = 'proxy'
-export type StorageRepositoryS3Platform = 'aws' | 'huawei' | 'aliyun' | 'custom'
+export type StorageRepositoryS3Platform = string
 export type StorageRepositoryCrossProxyAccess = {
   enabled: boolean
   ready: boolean
@@ -297,6 +297,16 @@ export async function listStorageRepositoryTasks(
   const qs = query(params)
   const path = `${repositoryBase}/${id}/tasks/${qs ? `?${qs}` : ''}`
   return paged<TaskRow>(await api<unknown>(path, { ...init, headers: orgHeaders() }))
+}
+
+export async function cancelStorageRepositoryTask(taskUuid: string, reason?: string) {
+  return unwrapApiPayload<TaskRow>(
+    await api<unknown>(`/api/v1/storage/repository-tasks/${taskUuid}/cancel/`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || '' }),
+      headers: orgHeaders(),
+    }),
+  )
 }
 
 export async function preflightStorageRepositoryCleanup(id: number, force = false) {
