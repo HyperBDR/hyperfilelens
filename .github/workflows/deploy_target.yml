@@ -461,6 +461,34 @@ jobs:
           fi
           exit 0
 
+      - name: Check Google OAuth Readiness
+        shell: bash
+        run: |
+          set +e
+          output="$(ssh -i ~/.ssh/hyperfilelens_deploy \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            'cd /opt/hyperfilelens && docker compose exec -T api python manage.py check_google_oauth_readiness' \
+            2>&1)"
+          command_status=$?
+          set -e
+          printf '%s\n' "$output"
+          if (( command_status != 0 )); then
+            echo '::warning title=Google OAuth readiness::The local Google OAuth route or callback is not ready; core deployment remains healthy.'
+            printf '### Google OAuth readiness\n\nWarning: the local OAuth route or generated callback is not ready. Google Cloud callback authorization was not tested.\n' >> "$GITHUB_STEP_SUMMARY"
+          elif grep -F 'HFL_GOOGLE_OAUTH_STATUS=disabled' <<<"$output" >/dev/null; then
+            printf '### Google OAuth readiness\n\nSkipped: Google OAuth is disabled.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '### Google OAuth readiness\n\nPassed: the local OAuth route redirects to Google with the configured callback. Google Cloud callback authorization was not tested.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
+
       - name: Configure Default AI Model
         env:
           AI_MODEL_PROVIDER: ${{ inputs.ai_model_provider }}

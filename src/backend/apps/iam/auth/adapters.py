@@ -9,7 +9,7 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import MultipleObjectsReturned, ObjectDoesNotExist, PermissionDenied
 from django.shortcuts import redirect
 
 from allauth.core.exceptions import ImmediateHttpResponse
@@ -17,7 +17,7 @@ from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 
 from apps.iam.services.oauth_error_events import build_oauth_error_redirect
 from apps.iam.services.registration_service import complete_social_user_registration
-from apps.platform_ops.services.internal.runtime_settings import google_oauth_enabled
+from apps.platform_ops.services.internal.runtime_settings import google_oauth_ready
 from common.deploy.site import tenant_public_url
 
 User = get_user_model()
@@ -26,12 +26,21 @@ logger = logging.getLogger(__name__)
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     def is_open_for_signup(self, request, sociallogin):
-        return google_oauth_enabled()
+        return google_oauth_ready()
 
     def get_provider(self, request, provider, client_id=None):
-        if provider == "google" and not google_oauth_enabled():
-            raise PermissionDenied("Google OAuth is disabled")
-        return super().get_provider(request, provider, client_id=client_id)
+        if provider != "google":
+            return super().get_provider(request, provider, client_id=client_id)
+        if not google_oauth_ready():
+            raise PermissionDenied("Google OAuth is unavailable")
+        try:
+            return super().get_provider(request, provider, client_id=client_id)
+        except (MultipleObjectsReturned, ObjectDoesNotExist) as exc:
+            logger.error(
+                "Google OAuth provider configuration is not ready (%s)",
+                type(exc).__name__,
+            )
+            raise PermissionDenied("Google OAuth is not configured") from exc
 
     def get_login_redirect_url(self, request):
         return settings.LOGIN_REDIRECT_URL

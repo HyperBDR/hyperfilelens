@@ -25,9 +25,9 @@ def google_login_url() -> str:
 
 
 def is_google_oauth_enabled() -> bool:
-    from apps.platform_ops.services.internal.runtime_settings import google_oauth_enabled
+    from apps.platform_ops.services.internal.runtime_settings import google_oauth_ready
 
-    return google_oauth_enabled()
+    return google_oauth_ready()
 
 
 def absolute_google_login_url() -> str:

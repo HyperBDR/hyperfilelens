@@ -209,17 +209,21 @@ if python3 "${helper}" --env-file "${invalid_env}" \
 fi
 
 install_body="$(sed -n '/^cmd_install()/,/^cmd_start()/p' "${installer}")"
+start_body="$(sed -n '/^cmd_start()/,/^cmd_stop()/p' "${installer}")"
 upgrade_body="$(sed -n '/^cmd_upgrade()/,/^main()/p' "${installer}")"
-python3 - "${install_body}" "${upgrade_body}" <<'PY'
+python3 - "${install_body}" "${start_body}" "${upgrade_body}" <<'PY'
 import sys
 
-install, upgrade = sys.argv[1:]
+install, start, upgrade = sys.argv[1:]
 assert install.index("ensure_env_file") < install.index("apply_runtime_configuration")
 assert install.index("apply_runtime_configuration") < install.index("load_images_from_manifest")
 assert install.index("apply_runtime_configuration") < install.index("install_bundled_sourcelens")
+assert install.index("wait_for_hfl_health") < install.index("sync_optional_identity_settings")
+assert start.index("wait_for_hfl_health") < start.index("sync_optional_identity_settings")
 assert upgrade.index("apply_upgrade_files") < upgrade.index("apply_runtime_configuration")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index("install_bundled_sourcelens")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index("compose_in_root up -d postgres redis")
+assert upgrade.index("wait_for_hfl_health") < upgrade.index("sync_optional_identity_settings")
 PY
 
 grep -F 'bash "${package_root}/install.sh" "${install_args[@]}"' \

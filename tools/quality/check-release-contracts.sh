@@ -265,6 +265,12 @@ grep -F 'No SMTP settings were staged' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'python manage.py ensure_deployment_identity_settings' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'python manage.py check_google_oauth_readiness' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'python manage.py check_google_oauth_readiness' \
+	"${ROOT}/deploy/installer/install.sh" "${ROOT}/dev/stack.sh" >/dev/null
+grep -F '::warning title=Google OAuth readiness::' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'HFL_IDENTITY_STATUS=warning' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'umask 077 && cat > /var/tmp/hyperfilelens-runtime-' \
@@ -380,11 +386,12 @@ grep -F 'DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"' \
 	"${ROOT}/dev/stack.sh" >/dev/null
 [[ -x "${ROOT}/dev/bootstrap-macos.sh" && -f "${ROOT}/dev/Brewfile" ]]
 deploy_workflow="${ROOT}/.github/workflows/deploy_target.yml"
-[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq 6 ]] || {
+deploy_ssh_calls="$(grep -c 'ssh -i ~/.ssh/hyperfilelens_deploy' "${deploy_workflow}")"
+[[ "$(grep -c -- '-o ServerAliveInterval=30' "${deploy_workflow}")" -eq "${deploy_ssh_calls}" ]] || {
 	printf 'ERROR: every deployment SSH call must enable ServerAliveInterval\n' >&2
 	exit 1
 }
-[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq 6 ]] || {
+[[ "$(grep -c -- '-o ServerAliveCountMax=20' "${deploy_workflow}")" -eq "${deploy_ssh_calls}" ]] || {
 	printf 'ERROR: every deployment SSH call must set ServerAliveCountMax\n' >&2
 	exit 1
 }

@@ -1,10 +1,16 @@
 """Tests for Google OAuth login and social registration."""
 
 from datetime import timedelta
+from io import StringIO
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
+from allauth.socialaccount.models import SocialApp
+from django.conf import settings
 from django.contrib.auth.models import User
+from django.contrib.sites.models import Site
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -18,6 +24,7 @@ from apps.iam.services.oauth_error_events import (
     create_oauth_error_event,
 )
 from apps.iam.services.registration_service import complete_social_user_registration
+from apps.platform_ops.services.internal.runtime_settings import sync_google_social_app
 
 
 @override_settings(
@@ -25,9 +32,18 @@ from apps.iam.services.registration_service import complete_social_user_registra
     GOOGLE_CLIENT_SECRET="test-client-secret",
     HFL_GOOGLE_OAUTH_ENABLED=True,
     FRONTEND_URL="https://app.example.com",
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        }
+    },
 )
 @patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "true"})
 class GoogleOAuthConfigTests(APITestCase):
+    def setUp(self):
+        super().setUp()
+        sync_google_social_app()
+
     def test_google_config_enabled(self):
         response = self.client.get(reverse("google_oauth_config"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -38,12 +54,118 @@ class GoogleOAuthConfigTests(APITestCase):
             "https://app.example.com/accounts/google/login/",
         )
 
+    def test_google_provider_has_no_second_settings_application(self):
+        self.assertNotIn("APP", settings.SOCIALACCOUNT_PROVIDERS["google"])
+        self.assertEqual(SocialApp.objects.filter(provider="google").count(), 1)
+
+    def test_google_login_redirects_with_the_canonical_callback(self):
+        response = self.client.get(
+            reverse("google_login"),
+            secure=True,
+            HTTP_HOST="app.example.com",
+            HTTP_X_FORWARDED_PROTO="https",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        location = urlparse(response["Location"])
+        self.assertEqual(location.hostname, "accounts.google.com")
+        self.assertEqual(
+            parse_qs(location.query)["redirect_uri"],
+            ["https://app.example.com/accounts/google/login/callback/"],
+        )
+
+    def test_legacy_duplicate_is_reported_as_unavailable_instead_of_500(self):
+        duplicate = SocialApp.objects.create(
+            provider="google",
+            name="Duplicate Google",
+            client_id="duplicate-client",
+            secret="duplicate-secret",
+        )
+        duplicate.sites.add(Site.objects.get_current())
+
+        config = self.client.get(reverse("google_oauth_config"))
+        login = self.client.get(reverse("google_login"))
+
+        self.assertEqual(config.status_code, status.HTTP_200_OK)
+        self.assertFalse(config.data["data"]["enabled"])
+        self.assertEqual(login.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_stale_database_credentials_are_reported_as_unavailable(self):
+        app = SocialApp.objects.get(provider="google")
+        app.client_id = "stale-client-id"
+        app.secret = "stale-client-secret"
+        app.save(update_fields=["client_id", "secret"])
+
+        config = self.client.get(reverse("google_oauth_config"))
+        login = self.client.get(reverse("google_login"))
+
+        self.assertEqual(config.status_code, status.HTTP_200_OK)
+        self.assertFalse(config.data["data"]["enabled"])
+        self.assertEqual(login.status_code, status.HTTP_403_FORBIDDEN)
+
     @override_settings(GOOGLE_CLIENT_ID="", GOOGLE_CLIENT_SECRET="")
     @patch.dict("os.environ", {"GOOGLE_CLIENT_ID": "", "GOOGLE_CLIENT_SECRET": ""})
     def test_google_config_requires_credentials(self):
         response = self.client.get(reverse("google_oauth_config"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(response.data["data"]["enabled"])
+
+
+@override_settings(
+    GOOGLE_CLIENT_ID="test-client-id",
+    GOOGLE_CLIENT_SECRET="test-client-secret",
+    HFL_GOOGLE_OAUTH_ENABLED=True,
+    FRONTEND_URL="https://127.0.0.1:11443",
+)
+@patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "true"})
+class GoogleOAuthReadinessCommandTests(APITestCase):
+    def setUp(self):
+        super().setUp()
+        sync_google_social_app()
+
+    def test_local_callback_is_ready(self):
+        stdout = StringIO()
+
+        call_command("check_google_oauth_readiness", stdout=stdout)
+
+        self.assertIn(
+            "Google OAuth callback: "
+            "https://127.0.0.1:11443/accounts/google/login/callback/",
+            stdout.getvalue(),
+        )
+        self.assertIn("HFL_GOOGLE_OAUTH_STATUS=ready", stdout.getvalue())
+
+    @override_settings(FRONTEND_URL="https://app.hyperfilelens.com")
+    def test_production_callback_is_ready(self):
+        sync_google_social_app()
+        stdout = StringIO()
+
+        call_command("check_google_oauth_readiness", stdout=stdout)
+
+        self.assertIn(
+            "Google OAuth callback: "
+            "https://app.hyperfilelens.com/accounts/google/login/callback/",
+            stdout.getvalue(),
+        )
+
+    def test_duplicate_application_fails_readiness_without_exposing_secret(self):
+        duplicate = SocialApp.objects.create(
+            provider="google",
+            name="Duplicate Google",
+            client_id="duplicate-client",
+            secret="must-not-be-printed",
+        )
+        duplicate.sites.add(Site.objects.get_current())
+        stderr = StringIO()
+
+        with self.assertRaises(CommandError):
+            call_command(
+                "check_google_oauth_readiness",
+                stdout=StringIO(),
+                stderr=stderr,
+            )
+
+        self.assertNotIn("must-not-be-printed", stderr.getvalue())
 
 
 @override_settings(
@@ -65,7 +187,11 @@ class GoogleOAuthDisabledTests(APITestCase):
 
 
 class SocialRegistrationServiceTests(APITestCase):
-    def test_complete_social_user_registration_provisions_org(self):
+    @patch(
+        "apps.lens_bridge.services.chat_user_provisioning."
+        "enqueue_sl_chat_user_provision"
+    )
+    def test_complete_social_user_registration_provisions_org(self, _enqueue):
         user = User.objects.create_user(
             username="google-user",
             email="google-user@example.com",
@@ -162,9 +288,18 @@ class OAuthErrorEventTests(APITestCase):
     GOOGLE_CLIENT_SECRET="test-client-secret",
     HFL_GOOGLE_OAUTH_ENABLED=True,
     FRONTEND_URL="https://app.example.com",
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        }
+    },
 )
 @patch.dict("os.environ", {"HFL_GOOGLE_OAUTH_ENABLED": "true"})
 class GoogleOAuthCallbackTests(APITestCase):
+    def setUp(self):
+        super().setUp()
+        sync_google_social_app()
+
     def test_incomplete_oauth_redirects_with_a_consumable_event(self):
         response = self.client.get(reverse("oauth_callback"))
         parsed = urlparse(response["Location"])
@@ -178,7 +313,11 @@ class GoogleOAuthCallbackTests(APITestCase):
             "not_authenticated",
         )
 
-    def test_oauth_callback_issues_cookies_and_redirects(self):
+    @patch(
+        "apps.lens_bridge.services.chat_user_provisioning."
+        "enqueue_sl_chat_user_provision"
+    )
+    def test_oauth_callback_issues_cookies_and_redirects(self, _enqueue):
         user = User.objects.create_user(
             username="oauth-callback",
             email="oauth-callback@example.com",

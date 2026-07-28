@@ -6,8 +6,9 @@ import os
 import re
 from typing import Any
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import DatabaseError, transaction
 
 from apps.platform_ops.services.internal.runtime_settings import (
     KEY_EMAIL_BACKEND,
@@ -60,6 +61,7 @@ class Command(BaseCommand):
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
         turnstile_enabled = _parse_bool("TURNSTILE_ENABLED")
         warnings: list[str] = []
+        removed_google_duplicates = 0
 
         with transaction.atomic():
             if signup_enabled is None:
@@ -86,10 +88,27 @@ class Command(BaseCommand):
                     "Invalid Google OAuth client secret; preserved the installed Google settings."
                 )
             else:
-                set_value(key=KEY_IDENTITY_GOOGLE_CLIENT_ID, value=google_client_id)
-                set_value(key=SECRET_KEY_GOOGLE, secret=google_client_secret)
-                set_bool(KEY_IDENTITY_GOOGLE_OAUTH, True)
-                sync_google_social_app()
+                try:
+                    with transaction.atomic():
+                        set_value(
+                            key=KEY_IDENTITY_GOOGLE_CLIENT_ID,
+                            value=google_client_id,
+                        )
+                        set_value(key=SECRET_KEY_GOOGLE, secret=google_client_secret)
+                        set_bool(KEY_IDENTITY_GOOGLE_OAUTH, True)
+                        sync_result = sync_google_social_app()
+                        removed_google_duplicates = sync_result.removed_duplicates
+                except (DatabaseError, ImproperlyConfigured, ValueError) as exc:
+                    warnings.append(
+                        "Google OAuth settings could not be synchronized; preserved "
+                        "the installed Google settings."
+                    )
+                    self.stderr.write(
+                        self.style.WARNING(
+                            "Google OAuth synchronization failed "
+                            f"({type(exc).__name__})."
+                        )
+                    )
 
             self._sync_turnstile(turnstile_enabled, warnings)
             self._sync_email(warnings)
@@ -110,6 +129,11 @@ class Command(BaseCommand):
             )
             else "Google OAuth: preserved"
         )
+        if removed_google_duplicates:
+            self.stdout.write(
+                "Google OAuth duplicate applications removed: "
+                f"{removed_google_duplicates}"
+            )
         self.stdout.write(
             "HFL_IDENTITY_STATUS=" + ("warning" if warnings else "applied")
         )
