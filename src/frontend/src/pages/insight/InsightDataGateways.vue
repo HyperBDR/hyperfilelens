@@ -51,6 +51,7 @@ import {
 } from '../../lib/nodeInventoryDisplay'
 import InsightGatewayDetailDrawer from './InsightGatewayDetailDrawer.vue'
 import GatewayCompositeStatusCell from './GatewayCompositeStatusCell.vue'
+import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 import type { ApiNode } from '../../types/node'
 
 export type InsightGatewayRow = ApiNode & LensGatewayInsight
@@ -113,7 +114,12 @@ const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
 const { tableMaxHeight, layoutTable, handleTableScroll } = useListTableLayout(tableRef, tableBlockRef)
 
-const pagination = reactive({ page: 1, pageSize: 30, count: 0 })
+const pagination = reactive({ page: 1, pageSize: isPlatformEngine.value ? 20 : 30, count: 0 })
+const visibleRows = computed(() => {
+  if (!isPlatformEngine.value) return rows.value
+  const start = (pagination.page - 1) * pagination.pageSize
+  return rows.value.slice(start, start + pagination.pageSize)
+})
 const { appliedSearch, clearSearch } = useListSearch(search, () => {
   pagination.page = 1
   void load()
@@ -513,12 +519,12 @@ onUnmounted(() => {
       <div class="hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility">
         <div class="hfl-list-toolbar__primary">
           <RouterLink
-            :to="isPlatformEngine ? '/node/nodes/deploy?role=gateway&gatewayScope=platform&returnTo=/platform-ops/engine/gateways' : '/node/nodes/deploy?role=gateway'"
+            :to="isPlatformEngine ? '/platform-ops/engine/gateways/add' : '/node/nodes/deploy?role=gateway'"
             class="inline-flex"
           >
             <ElButton type="primary">
               <Plus :size="16" />
-              {{ t('insight.dataGateway.btnAdd') }}
+              {{ isPlatformEngine ? t('platformOps.engineGateway.addAction') : t('insight.dataGateway.btnAdd') }}
             </ElButton>
           </RouterLink>
 
@@ -529,7 +535,7 @@ onUnmounted(() => {
             @command="handleMoreAction"
           >
             <ElButton>
-              {{ t('insight.dataGateway.btnMoreActions') }}
+              {{ isPlatformEngine ? t('platformOps.engineGateway.actions') : t('insight.dataGateway.btnMoreActions') }}
               <ChevronDown
                 :size="16"
                 class="hfl-list-more__chev"
@@ -597,7 +603,7 @@ onUnmounted(() => {
           v-table-column-resize="'insight.dataGateways.list'"
           v-loading="tableLoading"
           row-key="id"
-          :data="rows"
+          :data="visibleRows"
           stripe
           class="hfl-list-table"
           :max-height="tableMaxHeight"
@@ -629,36 +635,15 @@ onUnmounted(() => {
               <span>{{ originLabel(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="isPlatformEngine" :label="t('insight.dataGateway.colOwner')" min-width="150">
-            <template #default="{ row }">
-              <span>{{ row.owner_username || '—' }}</span>
-            </template>
-          </el-table-column>
           <el-table-column v-if="isPlatformEngine" label="HFL Readiness" min-width="190">
             <template #default="{ row }">
               <span>{{ readinessLabel(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="isPlatformEngine" :label="t('insight.dataGateway.colDefault')" min-width="128">
-            <template #default="{ row }">
-              <ElTag v-if="row.is_platform_default" type="success" effect="plain">
-                {{ t('insight.dataGateway.defaultActive') }}
-              </ElTag>
-              <ElButton
-                v-else-if="row.origin === 'platform' && canManageGateway(row) && row.hfl_usable"
-                link
-                type="primary"
-                @click="setPlatformDefault(row)"
-              >
-                {{ t('insight.dataGateway.defaultSet') }}
-              </ElButton>
-              <span v-else>—</span>
-            </template>
-          </el-table-column>
           <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="140">
             <template #default="{ row }">{{ ipLine(row) }}</template>
           </el-table-column>
-          <el-table-column label="OS" min-width="120">
+          <el-table-column v-if="!isPlatformEngine" label="OS" min-width="120">
             <template #default="{ row }">
               <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
                 <span class="source-os-cell__icon-wrap">
@@ -668,20 +653,20 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="88">
+          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colCpu')" min-width="88">
             <template #default="{ row }">
               <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="100">
+          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colMemory')" min-width="100">
             <template #default="{ row }">
               <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="96">
+          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colDiskCount')" min-width="96">
             <template #default="{ row }">{{ nodeDiskCount(row) ?? '—' }}</template>
           </el-table-column>
-          <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="200">
+          <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colCapacity')" min-width="200">
             <template #default="{ row }">
               <HflCapacityCell
                 :used-bytes="nodeDiskUsageParts(row).used"
@@ -692,6 +677,7 @@ onUnmounted(() => {
             </template>
           </el-table-column>
           <el-table-column
+            v-if="!isPlatformEngine"
             :label="t('insight.dataGateway.colKnowledgeSources')"
             min-width="168"
             align="center"
@@ -731,6 +717,28 @@ onUnmounted(() => {
               <span class="hfl-table-cell-time">{{ formatNodeDate(row.created_at) }}</span>
             </template>
           </el-table-column>
+          <el-table-column
+            v-if="isPlatformEngine"
+            :label="t('platformOps.engineGateway.columnActions')"
+            width="150"
+            fixed="right"
+            align="right"
+          >
+            <template #default="{ row }">
+              <ElButton v-if="canManageGateway(row)" link type="primary" @click="openDetail(row)">
+                {{ t('platformOps.engineGateway.viewDetails') }}
+              </ElButton>
+              <ElButton
+                v-if="row.origin === 'platform' && canManageGateway(row) && row.hfl_usable && !row.is_platform_default"
+                link
+                type="primary"
+                @click="setPlatformDefault(row)"
+              >
+                {{ t('insight.dataGateway.defaultSet') }}
+              </ElButton>
+              <span v-else-if="!canManageGateway(row)">—</span>
+            </template>
+          </el-table-column>
           <template #empty>
             <el-empty :description="t('nodesPage.emptyGateway')" :image-size="80" />
           </template>
@@ -741,7 +749,16 @@ onUnmounted(() => {
         <span v-if="selectedRows.length > 0" class="hfl-list-footer__selected">
           {{ t('nodesPage.selectedCount', { n: selectedRows.length }) }}
         </span>
+        <PlatformOpsPagination
+          v-if="isPlatformEngine"
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.count"
+          @current-change="onPaginationPageChange"
+          @size-change="onPaginationSizeChange"
+        />
         <HflPagination
+          v-else
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.pageSize"
           class="hfl-list-footer__pagination"

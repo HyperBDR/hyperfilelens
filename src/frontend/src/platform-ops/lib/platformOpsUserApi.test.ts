@@ -37,6 +37,24 @@ describe('Admin Account Management API', () => {
     )
   })
 
+  it('passes a page-scoped abort signal when listing users', async () => {
+    vi.mocked(api).mockResolvedValue({
+      count: 0,
+      page: 1,
+      page_size: 20,
+      results: [],
+      stats: { total: 0, active: 0, inactive: 0, never_signed_in: 0 },
+    })
+    const controller = new AbortController()
+
+    await listPlatformOpsUsers({ page: 1, page_size: 20 }, { signal: controller.signal })
+
+    expect(api).toHaveBeenCalledWith(
+      '/api/v1/platform-ops/users?page=1&page_size=20',
+      { signal: controller.signal },
+    )
+  })
+
   it('creates the customer and organization in one request', async () => {
     vi.mocked(api).mockResolvedValue({ id: 17, email: 'owner@example.com' })
 
@@ -76,5 +94,20 @@ describe('Admin Account Management API', () => {
     expect(api).toHaveBeenCalledWith(
       '/api/v1/platform-ops/orgs?search=owner%40example.com&status=active&health=attention',
     )
+  })
+
+  it('passes a page-scoped abort signal when listing organizations', async () => {
+    vi.mocked(api).mockResolvedValue({
+      count: 0,
+      page: 1,
+      page_size: 20,
+      results: [],
+      stats: { total: 0, active: 0, inactive: 0, with_incidents: 0 },
+    })
+    const controller = new AbortController()
+
+    await listPlatformOpsOrganizations({}, { signal: controller.signal })
+
+    expect(api).toHaveBeenCalledWith('/api/v1/platform-ops/orgs', { signal: controller.signal })
   })
 })

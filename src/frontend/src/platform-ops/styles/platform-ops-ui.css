@@ -31,6 +31,35 @@
   white-space: nowrap;
 }
 
+/* Keep Admin Console action columns visually separate from horizontally
+   scrolling data. This is scoped to the platform shell so tenant tables keep
+   their current presentation. */
+.platform-ops-shell .hfl-list-table th.el-table-fixed-column--right,
+.platform-ops-shell .hfl-list-table td.el-table-fixed-column--right {
+  background: var(--el-bg-color, #fff);
+  z-index: 2;
+}
+
+.platform-ops-shell .hfl-list-table .el-table__header th.el-table-fixed-column--right {
+  background: #eef2f7;
+  z-index: 3;
+}
+
+.platform-ops-shell .hfl-list-table tr.el-table__row--striped td.el-table-fixed-column--right {
+  background: var(--el-fill-color-lighter, #fafafa);
+}
+
+.platform-ops-shell .hfl-list-table tr:hover > td.el-table-fixed-column--right {
+  background: rgba(248, 250, 252, 0.98);
+}
+
+.platform-ops-shell .hfl-list-table.el-table--scrollable-x
+  .el-table-fixed-column--right.is-first-column::before,
+.platform-ops-shell .hfl-list-table.el-table--scrollable-x
+  .el-table-fixed-column--right.is-first-column.el-table__cell::before {
+  box-shadow: inset -10px 0 10px -10px rgba(15, 23, 42, 0.22);
+}
+
 .platform-ops-shell .platform-ops-muted {
   color: var(--page-text-secondary, var(--color-text-secondary));
   font-size: 13px;

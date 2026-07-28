@@ -141,7 +141,7 @@ const activityChartOption = computed(() => {
       right: 0,
       itemWidth: 18,
       itemHeight: 3,
-      textStyle: { color: '#86909c', fontSize: 11 },
+      textStyle: { color: '#475569', fontSize: 12 },
     },
     grid: { left: 36, right: 16, top: 38, bottom: 28 },
     xAxis: {
@@ -150,14 +150,14 @@ const activityChartOption = computed(() => {
       data: rows.map((row) => formatter.format(new Date(row.started_at))),
       axisLine: { lineStyle: { color: '#e5e7eb' } },
       axisTick: { show: false },
-      axisLabel: { color: '#86909c', fontSize: 10, hideOverlap: true },
+      axisLabel: { color: '#475569', fontSize: 11, hideOverlap: true },
     },
     yAxis: {
       type: 'value',
       minInterval: 1,
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: '#86909c', fontSize: 10 },
+      axisLabel: { color: '#475569', fontSize: 11 },
       splitLine: { lineStyle: { color: '#eef0f4' } },
     },
     series: [
@@ -684,8 +684,8 @@ onMounted(load)
 
 .platform-overview__updated {
   margin-top: 2px;
-  font-size: 11px;
-  color: var(--page-text-secondary, var(--color-text-secondary, #64748b));
+  font-size: 12px;
+  color: #475569;
 }
 
 .platform-overview__controls {
@@ -731,7 +731,7 @@ onMounted(load)
   border: 1px solid var(--color-success-border, #bbf7d0);
   border-radius: 10px;
   background: var(--color-success-light, #f0fdf4);
-  color: var(--color-success, #15803d);
+  color: #166534;
 }
 
 .overview-health-banner--degraded {
@@ -766,14 +766,14 @@ onMounted(load)
 
 .overview-health-banner__body span {
   font-size: 12px;
-  color: var(--color-text-secondary, #64748b);
+  color: #475569;
 }
 
 .overview-text-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-primary, #6d5ef6);
+  color: #4338ca;
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
@@ -870,8 +870,8 @@ onMounted(load)
 .overview-kpi-card__detail {
   overflow: hidden;
   margin-top: 6px;
-  color: var(--page-text-secondary, var(--color-text-secondary, #64748b));
-  font-size: 11px;
+  color: #475569;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -917,8 +917,8 @@ onMounted(load)
 
 .overview-panel__header p {
   margin: 1px 0 0;
-  color: var(--page-text-secondary, var(--color-text-secondary, #64748b));
-  font-size: 11px;
+  color: #475569;
+  font-size: 12px;
 }
 
 .overview-activity-chart {
@@ -952,8 +952,8 @@ onMounted(load)
 
 .overview-service-list__detail {
   overflow: hidden;
-  color: var(--color-text-tertiary, #94a3b8);
-  font-size: 10px;
+  color: #475569;
+  font-size: 11px;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -963,8 +963,8 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--color-text-secondary, #64748b);
-  font-size: 10px;
+  color: #475569;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -976,7 +976,7 @@ onMounted(load)
 }
 
 .overview-status--healthy {
-  color: var(--color-success, #16a34a);
+  color: #166534;
 }
 
 .overview-status--degraded {
@@ -999,7 +999,7 @@ onMounted(load)
 .overview-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .overview-table th,
@@ -1011,8 +1011,8 @@ onMounted(load)
 }
 
 .overview-table th {
-  color: var(--color-text-tertiary, #94a3b8);
-  font-size: 10px;
+  color: #475569;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1043,8 +1043,8 @@ onMounted(load)
 
 .overview-table__secondary {
   margin-top: 2px;
-  color: var(--color-text-tertiary, #94a3b8);
-  font-size: 10px;
+  color: #475569;
+  font-size: 11px;
 }
 
 .overview-table__task-link {
@@ -1063,7 +1063,7 @@ onMounted(load)
 .overview-table__empty {
   height: 88px;
   text-align: center !important;
-  color: var(--color-text-tertiary, #94a3b8) !important;
+  color: #475569 !important;
 }
 
 .overview-pill {
@@ -1072,7 +1072,7 @@ onMounted(load)
   border-radius: 6px;
   background: var(--color-grey-2, #f5f5f7);
   color: var(--color-text-secondary, #64748b);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
   text-transform: capitalize;
 }

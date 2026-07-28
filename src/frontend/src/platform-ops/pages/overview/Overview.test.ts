@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { defineComponent } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createI18n } from 'vue-i18n'
@@ -95,5 +97,16 @@ describe('Admin Overview', () => {
     await flushPromises()
     expect(fetchPlatformOverview).toHaveBeenCalledTimes(2)
     wrapper.unmount()
+  })
+
+  it('keeps Admin-only secondary text and links above accessible contrast and size floors', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/platform-ops/pages/overview/Overview.vue'), 'utf8')
+    expect(source).toContain("textStyle: { color: '#475569', fontSize: 12 }")
+    expect(source).toContain("axisLabel: { color: '#475569', fontSize: 11")
+    expect(source).toContain('.overview-text-link')
+    expect(source).toContain('color: #4338ca')
+    expect(source).toContain('.overview-status--healthy')
+    expect(source).toContain('color: #166534')
+    expect(source).not.toContain('font-size: 9px')
   })
 })

@@ -36,6 +36,9 @@ const props = withDefaults(
     initialTab?: NodeLifecycleTab
     /** Hide upgrade/uninstall/service tabs (install-only embed). */
     installOnly?: boolean
+    /** Require an explicit operator action before issuing an enrollment token. */
+    generateOnDemand?: boolean
+    enrollmentTtlSeconds?: 900 | 3600 | 14400 | 86400
   }>(),
   {
     roleLocked: false,
@@ -43,6 +46,8 @@ const props = withDefaults(
     gatewayScope: 'user',
     initialTab: 'install',
     installOnly: false,
+    generateOnDemand: false,
+    enrollmentTtlSeconds: 900,
   },
 )
 
@@ -50,6 +55,7 @@ const emit = defineEmits<{
   'update:os': [EnrollmentOs]
   'update:role': [NodeRole]
   copy: [string]
+  enrollmentIssued: [{ tokenId: number; expiresAt: string | null }]
 }>()
 
 const { t } = useI18n()
@@ -62,6 +68,7 @@ const serviceCommand = ref('')
 const loading = ref(false)
 const releaseVersion = ref('')
 const copied = ref(false)
+const installGenerated = ref(false)
 const purgeAll = ref(true)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>('status')
 const supportOpen = ref(false)
@@ -150,7 +157,10 @@ const displayCommand = computed(() => {
     case 'service':
       return serviceCommand.value
     default:
-      return installCommand.value || t('nodesDeploy.scriptLoading')
+      if (installCommand.value) return installCommand.value
+      return props.generateOnDemand
+        ? t('nodeLifecycle.generateInstallCommandHint')
+        : t('nodesDeploy.scriptLoading')
   }
 })
 
@@ -218,10 +228,13 @@ async function refreshInstallCommand(gen: number) {
   loading.value = true
   installCommand.value = ''
   try {
-    const { command } =
+    const issued =
       props.role === 'gateway' && props.os === 'linux'
         ? props.gatewayScope === 'platform'
-          ? await issuePlatformGatewayEnrollmentInstall({ note: 'deploy:platform-gateway' })
+          ? await issuePlatformGatewayEnrollmentInstall({
+              note: 'deploy:platform-gateway',
+              ttlSeconds: props.enrollmentTtlSeconds,
+            })
           : await issueGatewayEnrollmentInstall({ note: `deploy:${props.role}`, orgKey: props.orgKey })
         : await issueEnrollmentInstall({
             role: props.role,
@@ -229,10 +242,16 @@ async function refreshInstallCommand(gen: number) {
             note: `deploy:${props.role}`,
           })
     if (gen !== generation) return
-    installCommand.value = command
+    installCommand.value = issued.command
+    installGenerated.value = true
+    emit('enrollmentIssued', {
+      tokenId: issued.tokenId,
+      expiresAt: 'expiresAt' in issued ? issued.expiresAt : null,
+    })
   } catch (e) {
     if (gen === generation) {
       installCommand.value = apiErrorMessage(e, t('nodesDeploy.scriptLoadFailed'))
+      installGenerated.value = false
     }
   } finally {
     if (gen === generation) loading.value = false
@@ -288,7 +307,7 @@ function refreshStaticCommands() {
 function refreshAll() {
   const gen = ++generation
   refreshStaticCommands()
-  if (activeTab.value === 'install') {
+  if (activeTab.value === 'install' && !props.generateOnDemand) {
     void refreshInstallCommand(gen)
   } else if (activeTab.value === 'upgrade') {
     void refreshUpgradeCommand(gen)
@@ -301,6 +320,8 @@ watch(
     if (isLinuxOnlyRole(props.role) && props.os !== 'linux') {
       emit('update:os', 'linux')
     }
+    installGenerated.value = false
+    installCommand.value = ''
     refreshAll()
   },
   { immediate: true },
@@ -315,7 +336,7 @@ watch(
 
 watch(activeTab, (tab) => {
   const gen = ++generation
-  if (tab === 'install') void refreshInstallCommand(gen)
+  if (tab === 'install' && !props.generateOnDemand) void refreshInstallCommand(gen)
   else if (tab === 'upgrade') void refreshUpgradeCommand(gen)
 })
 
@@ -345,6 +366,20 @@ function onCopy() {
     copied.value = false
   }, 2000)
 }
+
+function generateInstallCommand() {
+  if (loading.value || installGenerated.value) return
+  void refreshInstallCommand(++generation)
+}
+
+function clearInstallCommand() {
+  generation += 1
+  installGenerated.value = false
+  installCommand.value = ''
+  copied.value = false
+}
+
+defineExpose({ clearInstallCommand })
 </script>
 
 <template>
@@ -582,6 +617,17 @@ function onCopy() {
               </div>
               <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
                 <button
+                  v-if="generateOnDemand && !installGenerated"
+                  type="button"
+                  class="btn btn-primary agent-install-wizard__copy-btn"
+                  :disabled="loading"
+                  @click="generateInstallCommand"
+                >
+                  <RefreshCw :size="12" :class="{ 'is-spinning': loading }" aria-hidden="true" />
+                  <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
+                </button>
+                <button
+                  v-else
                   type="button"
                   class="btn btn-primary agent-install-wizard__copy-btn"
                   :class="{ 'agent-install-wizard__copy-btn--done': copied }"

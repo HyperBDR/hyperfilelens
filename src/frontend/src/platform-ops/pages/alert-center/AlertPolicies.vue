@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { BellRing, CircleCheck, CircleOff, RefreshCw, Search, ShieldAlert } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
@@ -12,10 +13,12 @@ import { apiErrorMessage } from '../../../lib/api'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import PlatformOpsOrgLink from '../../components/PlatformOpsOrgLink.vue'
 import PlatformOpsStatusPill from '../../components/PlatformOpsStatusPill.vue'
+import PlatformSupportActions from '../../components/PlatformSupportActions.vue'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
 import { fetchPlatformAlertPolicies, type AlertPolicyStats, type PlatformAlertPolicy } from '../../lib/platformOpsApi'
 
 const sideNav = usePlatformOpsSideNav()
+const route = useRoute()
 const { drawerSize } = useResponsiveDrawerWidth(3)
 const rows = ref<PlatformAlertPolicy[]>([])
 const stats = ref<AlertPolicyStats>({ total: 0, enabled: 0, disabled: 0, critical: 0 })
@@ -23,7 +26,7 @@ const loading = ref(false)
 const selected = ref<PlatformAlertPolicy | null>(null)
 const drawerOpen = ref(false)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
-const filters = reactive({ search: '', type: '', severity: '', enabled: '', org: '' })
+const filters = reactive({ search: '', type: '', severity: '', enabled: '', org: String(route.query.org || '') })
 const { schedule: scheduleSearch, runNow: runSearchNow } = useDebouncedAction(applyFilters)
 
 async function load() {
@@ -65,7 +68,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
   <ModulePage :menus="sideNav" body-fill>
     <div class="platform-monitoring-page">
       <div class="platform-monitoring-page__lead">
-        <p class="platform-monitoring-page__subtitle">Review alert conditions configured across customer accounts.</p>
+        <p class="platform-monitoring-page__subtitle">Review alert conditions across customer accounts. Policies are managed inside each customer account.</p>
         <span class="platform-monitoring-page__updated">Read-only inventory</span>
       </div>
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
@@ -109,6 +112,16 @@ watch(() => [pagination.page, pagination.pageSize], load)
     <el-drawer v-model="drawerOpen" :size="drawerSize" destroy-on-close>
       <template #header><div class="platform-monitoring-drawer__header"><h2>{{ selected?.name }}</h2><p>{{ selected?.organization_name }} · {{ selected?.type }}</p></div></template>
       <template v-if="selected">
+        <PlatformSupportActions
+          :org-id="selected.organization"
+          :org-key="selected.organization_key"
+          :tenant-path="`/ops/alerts/rules?search=${encodeURIComponent(selected.name)}`"
+          :related-links="[
+            { label: 'Incidents', to: `/platform-ops/alert-center/incidents?org=${encodeURIComponent(selected.organization_key)}` },
+            { label: 'Notification Channels', to: `/platform-ops/alert-center/notification-channels?org=${encodeURIComponent(selected.organization_key)}` },
+            { label: 'Delivery History', to: `/platform-ops/alert-center/notification-history?org=${encodeURIComponent(selected.organization_key)}` },
+          ]"
+        />
         <section class="platform-monitoring-drawer__section"><h3>Policy Details</h3><div class="platform-monitoring-drawer__grid">
           <div class="platform-monitoring-drawer__field"><span>Status</span><strong>{{ selected.enabled ? 'Enabled' : 'Disabled' }}</strong></div>
           <div class="platform-monitoring-drawer__field"><span>Severity</span><strong>{{ selected.severity }}</strong></div>

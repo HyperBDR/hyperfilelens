@@ -432,10 +432,20 @@ export async function issueGatewayEnrollmentInstall(params: {
 
 export async function issuePlatformGatewayEnrollmentInstall(params?: {
   note?: string
-}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean }> {
+  ttlSeconds?: 900 | 3600 | 14400 | 86400
+}): Promise<{
+  token: string
+  tokenId: number
+  command: string
+  tlsVerify: boolean
+  expiresAt: string | null
+}> {
   const raw = await api<unknown>('/api/v1/platform-ops/lens/gateways/enrollment', {
     method: 'POST',
-    body: JSON.stringify({ note: params?.note ?? 'deploy:platform-gateway' }),
+    body: JSON.stringify({
+      note: params?.note ?? 'deploy:platform-gateway',
+      ttl_seconds: params?.ttlSeconds ?? 900,
+    }),
   })
   const payload = unwrapApiPayload<{
     token: string
@@ -443,6 +453,7 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
     org_key: string
     api_base: string
     tls_verify: boolean
+    expires_at?: string | null
   }>(raw)
   if (
     !payload.token ||
@@ -462,7 +473,20 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
       tlsVerify: payload.tls_verify,
     }),
     tlsVerify: payload.tls_verify,
+    expiresAt: payload.expires_at ?? null,
   }
+}
+
+export async function revokePlatformGatewayEnrollment(tokenId: number): Promise<void> {
+  await api(`/api/v1/platform-ops/lens/gateways/enrollment/${tokenId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function auditPlatformGatewayEnrollmentCopy(tokenId: number): Promise<void> {
+  await api(`/api/v1/platform-ops/lens/gateways/enrollment/${tokenId}/copied`, {
+    method: 'POST',
+  })
 }
 
 /** Create token + build copy-paste install command (does not download script body). */

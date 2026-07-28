@@ -18,6 +18,7 @@ import ModulePage from '../../../components/ModulePage.vue'
 import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
+import { usePageRequestScope } from '../../../composables/usePageRequestScope'
 import { apiErrorMessage } from '../../../lib/api'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import PlatformOpsActiveTag from '../../components/PlatformOpsActiveTag.vue'
@@ -35,6 +36,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const sideNav = usePlatformOpsSideNav()
+const pageRequests = usePageRequestScope()
 
 const rows = ref<PlatformOpsOrganization[]>([])
 const stats = ref<PlatformOpsOrganizationStats>({ total: 0, active: 0, inactive: 0, with_incidents: 0 })
@@ -58,22 +60,24 @@ async function syncQuery() {
 }
 
 async function load() {
+  const signal = pageRequests.nextSignal('platform-organizations')
   busy.value = true
   try {
     const data = await listPlatformOpsOrganizations({
       page: pagination.page,
       page_size: pagination.pageSize,
       ...filters,
-    })
+    }, { signal })
+    if (!pageRequests.isCurrentSignal('platform-organizations', signal)) return
     rows.value = data.results
     stats.value = data.stats || stats.value
     pagination.count = data.count
   } catch (error) {
-    rows.value = []
-    pagination.count = 0
+    if (pageRequests.isAbortError(error)) return
     ElMessage.error({ message: apiErrorMessage(error, t('platformOps.orgs.loadFailed')), grouping: true })
   } finally {
-    busy.value = false
+    pageRequests.releaseSignal('platform-organizations', signal)
+    if (!signal.aborted) busy.value = false
   }
 }
 
@@ -144,8 +148,12 @@ watch(() => [pagination.page, pagination.pageSize], load)
     <div class="platform-account-page">
       <div class="platform-account-page__lead">
         <p>{{ t('platformOps.orgs.subtitle') }}</p>
-        <el-button type="primary" @click="router.push('/platform-ops/users?create=1')">
-          {{ t('platformOps.users.create') }}
+        <el-button
+          type="primary"
+          :title="t('platformOps.orgs.createCustomerAccountHint')"
+          @click="router.push('/platform-ops/users?create=1')"
+        >
+          {{ t('platformOps.orgs.createCustomerAccount') }}
         </el-button>
       </div>
 
@@ -222,13 +230,13 @@ watch(() => [pagination.page, pagination.pageSize], load)
             class="hfl-list-table"
             :max-height="tableMaxHeight"
           >
-            <el-table-column :label="t('platformOps.orgs.organization')" min-width="220">
+            <el-table-column :label="t('platformOps.orgs.organization')" min-width="195">
               <template #default="{ row }">
                 <PlatformOpsOrgLink :org-id="row.id" :org-key="row.key" :label="row.name" />
                 <span class="platform-account-page__cell-meta platform-account-page__cell-meta--mono">{{ row.key }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.orgs.colOwner')" min-width="210">
+            <el-table-column :label="t('platformOps.orgs.colOwner')" min-width="185">
               <template #default="{ row }">
                 <PlatformOpsUserLink
                   v-if="row.owner_user_id"
@@ -241,20 +249,20 @@ watch(() => [pagination.page, pagination.pageSize], load)
                 </span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.orgs.colActive')" width="110">
+            <el-table-column :label="t('platformOps.orgs.colActive')" width="96">
               <template #default="{ row }"><PlatformOpsActiveTag :active="row.is_active" /></template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.orgs.colNodes')" width="92" align="center">
+            <el-table-column :label="t('platformOps.orgs.colNodes')" width="72" align="center">
               <template #default="{ row }">{{ row.node_count || 0 }}</template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.orgs.colFailedTasks')" width="118" align="center">
+            <el-table-column :label="t('platformOps.orgs.colFailedTasks')" width="100" align="center">
               <template #default="{ row }">
                 <span :class="{ 'platform-account-page__attention': (row.failed_task_count || 0) > 0 }">
                   {{ row.failed_task_count || 0 }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.orgs.colIncidents')" width="110" align="center">
+            <el-table-column :label="t('platformOps.orgs.colIncidents')" width="90" align="center">
               <template #default="{ row }">
                 <span :class="{ 'platform-account-page__attention': (row.incident_count || 0) > 0 }">
                   {{ row.incident_count || 0 }}
@@ -262,7 +270,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
                 </span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.orgs.colCreated')" width="176">
+            <el-table-column :label="t('platformOps.orgs.colCreated')" width="164">
               <template #default="{ row }">{{ formatLocalDateTime(row.created_at, '—') }}</template>
             </el-table-column>
             <el-table-column width="64" fixed="right" align="center">

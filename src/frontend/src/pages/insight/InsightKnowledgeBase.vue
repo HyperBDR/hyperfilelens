@@ -24,6 +24,7 @@ import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -263,7 +264,7 @@ watch(hasSyncingRows, (syncing) => {
       <div class="hfl-list-toolbar">
         <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
           <Plus :size="16" />
-          {{ t('insight.kb.btnAdd') }}
+          {{ isPlatformEngine ? t('platformOps.engineActions.addKnowledgeSource') : t('insight.kb.btnAdd') }}
         </ElButton>
 
         <ElDropdown
@@ -272,7 +273,7 @@ watch(hasSyncingRows, (syncing) => {
           @visible-change="moreActionsOpen = $event"
         >
           <ElButton :disabled="!bridgeReady">
-            {{ t('insight.kb.btnMoreActions') }}
+            {{ isPlatformEngine ? t('platformOps.engineActions.knowledgeSourceActions') : t('insight.kb.btnMoreActions') }}
             <ChevronDown
               :size="16"
               class="hfl-list-more__chev"

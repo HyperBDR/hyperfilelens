@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, CirclePlay, CircleStop, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-vue-next'
@@ -23,7 +23,9 @@ import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
+const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -216,7 +218,7 @@ onMounted(() => {
       <div class="hfl-list-toolbar">
         <ElButton type="primary" :disabled="!bridgeReady" @click="openCreate">
           <Plus :size="16" />
-          {{ t('insight.aiSettings.btnAdd') }}
+          {{ isPlatformEngine ? t('platformOps.engineActions.addModel') : t('insight.aiSettings.btnAdd') }}
         </ElButton>
 
         <ElDropdown
@@ -225,7 +227,7 @@ onMounted(() => {
           @visible-change="moreActionsOpen = $event"
         >
           <ElButton :disabled="!bridgeReady">
-            {{ t('insight.aiSettings.btnMoreActions') }}
+            {{ isPlatformEngine ? t('platformOps.engineActions.modelActions') : t('insight.aiSettings.btnMoreActions') }}
             <ChevronDown
               :size="16"
               class="hfl-list-more__chev"

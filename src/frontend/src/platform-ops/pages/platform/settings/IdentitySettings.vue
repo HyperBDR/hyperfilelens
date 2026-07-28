@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
 import PlatformOpsRefreshButton from '../../../components/PlatformOpsRefreshButton.vue'
+import DangerConfirmDialog from '../../../../components/DangerConfirmDialog.vue'
 import { usePlatformOpsSideNav } from '../../../composables/usePlatformOpsSideNav'
 import {
   fetchPlatformIdentitySettings,
@@ -18,6 +19,9 @@ const sideNav = usePlatformOpsSideNav()
 const busy = ref(false)
 const saving = ref(false)
 const meta = ref<PlatformIdentitySettings | null>(null)
+const disableConfirmOpen = ref(false)
+const platformOpsManaged = computed(() => meta.value?.platform_ops_source === 'deployment')
+const disablesPlatformOps = computed(() => Boolean(meta.value?.platform_ops_enabled && !form.platform_ops_enabled))
 const form = reactive({
   email_signup_enabled: false,
   platform_ops_enabled: true,
@@ -47,7 +51,7 @@ async function load() {
   }
 }
 
-async function save() {
+async function performSave(confirmDisable = false) {
   saving.value = true
   try {
     const body: Record<string, unknown> = {
@@ -61,6 +65,7 @@ async function save() {
         password_reset_timeout_seconds: form.password_reset_timeout_seconds,
       },
     }
+    if (confirmDisable) body.confirm_disable = 'DISABLE'
     meta.value = await patchPlatformIdentitySettings(body)
     ElMessage.success({ message: t('platformOps.settings.saveSuccess'), grouping: true })
   } catch (err) {
@@ -68,6 +73,19 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+function save() {
+  if (disablesPlatformOps.value) {
+    disableConfirmOpen.value = true
+    return
+  }
+  void performSave()
+}
+
+async function confirmDisable() {
+  await performSave(true)
+  disableConfirmOpen.value = false
 }
 
 onMounted(load)
@@ -81,11 +99,17 @@ onMounted(load)
           <el-switch v-model="form.email_signup_enabled" />
         </el-form-item>
         <el-form-item :label="t('platformOps.settings.identity.platformOps')">
-          <el-switch v-model="form.platform_ops_enabled" />
+          <el-switch v-model="form.platform_ops_enabled" :disabled="platformOpsManaged" />
+          <p v-if="platformOpsManaged" class="platform-settings__hint">Admin Console availability is managed by deployment configuration and is read-only here.</p>
         </el-form-item>
         <el-form-item :label="t('platformOps.settings.identity.opsCidrs')">
           <el-input v-model="form.platform_ops_allowed_cidrs" :placeholder="t('platformOps.settings.identity.opsCidrsHint')" />
+          <p class="platform-settings__hint">Restrict access to trusted operator networks. Recovery requires deployment or database access if all operators are locked out.</p>
         </el-form-item>
+
+        <el-alert v-if="disablesPlatformOps" type="error" :closable="false" show-icon title="Admin Console access will be disabled">
+          Saving this change ends normal operator access after the current request. Confirm that deployment or database recovery access is available before continuing.
+        </el-alert>
 
         <h3 class="platform-settings__section">{{ t('platformOps.settings.identity.iamTitle') }}</h3>
         <el-form-item :label="t('platformOps.settings.identity.regCodeMinutes')">
@@ -107,5 +131,16 @@ onMounted(load)
         <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
       </div>
     </div>
+    <DangerConfirmDialog
+      v-model="disableConfirmOpen"
+      title="Disable Admin Console"
+      message="Disable Admin Console access for all operators? Recovery may require changing deployment configuration or the platform database outside this console."
+      confirm-mode="keyword"
+      confirm-keyword="DISABLE"
+      confirm-text="Disable Admin Console"
+      :cancel-text="t('common.cancel')"
+      :loading="saving"
+      @confirm="confirmDisable"
+    />
   </ModulePage>
 </template>
