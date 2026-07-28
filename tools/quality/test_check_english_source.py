@@ -12,6 +12,27 @@ from pathlib import Path
 
 
 CHECKER_SOURCE = Path(__file__).with_name("check-english-source.py")
+CJK_SAMPLE_CODE_POINT = 0x4F60
+
+
+def cjk_sample() -> str:
+    """Return a CJK character without storing it literally in source."""
+    return chr(CJK_SAMPLE_CODE_POINT)
+
+
+def cjk_unicode_escapes() -> tuple[str, ...]:
+    """Return supported escaped CJK forms using ASCII source."""
+    slash = chr(92)
+    supplementary_code_point = 0x20000
+    adjusted = supplementary_code_point - 0x10000
+    high_surrogate = 0xD800 + (adjusted >> 10)
+    low_surrogate = 0xDC00 + (adjusted & 0x3FF)
+    return (
+        f"{slash}u{CJK_SAMPLE_CODE_POINT:04x}",
+        f"{slash}U{supplementary_code_point:08x}",
+        f"{slash}u{{{supplementary_code_point:x}}}",
+        f"{slash}u{high_surrogate:04x}{slash}u{low_surrogate:04x}",
+    )
 
 
 class EnglishSourceCheckerTests(unittest.TestCase):
@@ -56,8 +77,9 @@ class EnglishSourceCheckerTests(unittest.TestCase):
         """Ignore local files even when their paths and contents contain CJK."""
         ignored_directory = self.repository_root / ".tmp"
         ignored_directory.mkdir()
-        (ignored_directory / "\u4f60\u597d.txt").write_text(
-            "\u4f60\u597d\n",
+        sample = cjk_sample()
+        (ignored_directory / f"{sample}{sample}.txt").write_text(
+            f"{sample}{sample}\n",
             encoding="utf-8",
         )
 
@@ -69,7 +91,7 @@ class EnglishSourceCheckerTests(unittest.TestCase):
     def test_untracked_nonignored_file_is_checked(self) -> None:
         """Check new source files before they are added to Git."""
         (self.repository_root / "notes.txt").write_text(
-            "\u4f60\n",
+            f"{cjk_sample()}\n",
             encoding="utf-8",
         )
 
@@ -82,7 +104,7 @@ class EnglishSourceCheckerTests(unittest.TestCase):
     def test_tracked_file_is_checked_even_when_ignored(self) -> None:
         """Keep checking tracked files after an ignore rule is introduced."""
         tracked_file = self.repository_root / "tracked.txt"
-        tracked_file.write_text("\u4f60\n", encoding="utf-8")
+        tracked_file.write_text(f"{cjk_sample()}\n", encoding="utf-8")
         self.run_git("add", "tracked.txt")
         with (self.repository_root / ".gitignore").open(
             "a",
@@ -94,6 +116,21 @@ class EnglishSourceCheckerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("tracked.txt:1:1", result.stdout)
+
+    def test_cjk_unicode_escape_is_checked(self) -> None:
+        """Reject an ASCII source representation of an escaped CJK character."""
+        for escaped_cjk in cjk_unicode_escapes():
+            with self.subTest(escaped_cjk=escaped_cjk):
+                (self.repository_root / "notes.txt").write_text(
+                    f"{escaped_cjk}\n",
+                    encoding="utf-8",
+                )
+
+                result = self.run_checker()
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("notes.txt:1:1", result.stdout)
+                self.assertIn("CJK Unicode escape", result.stdout)
 
 
 if __name__ == "__main__":

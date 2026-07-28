@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject CJK characters from the public English-only repository."""
+"""Reject literal and escaped CJK from the public English-only repository."""
 
 from __future__ import annotations
 
@@ -12,19 +12,55 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-CJK_PATTERN = re.compile(
-    "["
-    "\u1100-\u11ff"
-    "\u3040-\u30ff"
-    "\u3130-\u318f"
-    "\u31f0-\u31ff"
-    "\u3400-\u4dbf"
-    "\u4e00-\u9fff"
-    "\uac00-\ud7af"
-    "\uf900-\ufaff"
-    "\U00020000-\U0002fa1f"
-    "]",
+CJK_CODE_POINT_RANGES = (
+    (0x1100, 0x11FF),
+    (0x3040, 0x30FF),
+    (0x3130, 0x318F),
+    (0x31F0, 0x31FF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xAC00, 0xD7AF),
+    (0xF900, 0xFAFF),
+    (0x20000, 0x2FA1F),
 )
+UNICODE_ESCAPE_PATTERN = re.compile(
+    r"\\u\{(?P<braced>[0-9a-fA-F]{1,6})\}"
+    r"|\\u(?P<short>[0-9a-fA-F]{4})"
+    r"|\\U(?P<long>[0-9a-fA-F]{8})",
+)
+SURROGATE_PAIR_PATTERN = re.compile(
+    r"\\u(?P<high>d[89abAB][0-9a-fA-F]{2})"
+    r"\\u(?P<low>d[c-fC-F][0-9a-fA-F]{2})",
+)
+
+
+def is_cjk_code_point(code_point: int) -> bool:
+    """Return whether a Unicode code point belongs to a CJK range."""
+    return any(start <= code_point <= end for start, end in CJK_CODE_POINT_RANGES)
+
+
+def iter_cjk_references(text: str) -> Iterator[tuple[int, int, str]]:
+    """Yield offsets, code points, and kinds for literal or escaped CJK."""
+    references: list[tuple[int, int, str]] = []
+    for offset, character in enumerate(text):
+        code_point = ord(character)
+        if is_cjk_code_point(code_point):
+            references.append((offset, code_point, "character"))
+
+    for match in UNICODE_ESCAPE_PATTERN.finditer(text):
+        hexadecimal = next(group for group in match.groups() if group is not None)
+        code_point = int(hexadecimal, 16)
+        if is_cjk_code_point(code_point):
+            references.append((match.start(), code_point, "Unicode escape"))
+
+    for match in SURROGATE_PAIR_PATTERN.finditer(text):
+        high = int(match.group("high"), 16)
+        low = int(match.group("low"), 16)
+        code_point = 0x10000 + ((high - 0xD800) << 10) + low - 0xDC00
+        if is_cjk_code_point(code_point):
+            references.append((match.start(), code_point, "Unicode escape"))
+
+    yield from sorted(references)
 
 
 def iter_public_files() -> Iterator[Path]:
@@ -51,7 +87,7 @@ def iter_public_files() -> Iterator[Path]:
 
 
 def find_violations(path: Path) -> list[str]:
-    """Return formatted CJK violations for a UTF-8 text file."""
+    """Return formatted literal or escaped CJK violations for a text file."""
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -60,11 +96,10 @@ def find_violations(path: Path) -> list[str]:
     violations: list[str] = []
     relative_path = path.relative_to(REPOSITORY_ROOT)
     for line_number, line in enumerate(content.splitlines(), start=1):
-        for match in CJK_PATTERN.finditer(line):
-            character = match.group(0)
+        for offset, code_point, kind in iter_cjk_references(line):
             violations.append(
-                f"{relative_path}:{line_number}:{match.start() + 1}: "
-                f"{character!r} (U+{ord(character):04X})",
+                f"{relative_path}:{line_number}:{offset + 1}: "
+                f"CJK {kind} (U+{code_point:04X})",
             )
     return violations
 
@@ -74,15 +109,14 @@ def main() -> int:
     violations: list[str] = []
     for path in iter_public_files():
         relative_path = path.relative_to(REPOSITORY_ROOT)
-        for match in CJK_PATTERN.finditer(str(relative_path)):
-            character = match.group(0)
+        for _offset, code_point, kind in iter_cjk_references(str(relative_path)):
             violations.append(
-                f"{relative_path}: path contains {character!r} "
-                f"(U+{ord(character):04X})",
+                f"{relative_path}: path contains CJK {kind} "
+                f"(U+{code_point:04X})",
             )
         violations.extend(find_violations(path))
     if violations:
-        print("CJK characters are not allowed in the English-only source release:")
+        print("Literal and escaped CJK are not allowed in the English-only source release:")
         print("\n".join(violations))
         return 1
 

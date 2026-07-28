@@ -14,8 +14,6 @@ from apps.iam.auth.serializers import get_registered_at
 
 
 class LoginAuditServiceTests(TestCase):
-    legacy_local_network_label = "\u5c40\u57df\u7f51"
-
     def setUp(self):
         self.user = User.objects.create_user(
             username="audit-user",
@@ -42,13 +40,13 @@ class LoginAuditServiceTests(TestCase):
             action=AuditAction.LOGIN,
             result=AuditResult.SUCCESS,
             ip_address="192.168.1.105",
-            metadata={"location": self.legacy_local_network_label},
+            metadata={"location": LOGIN_LOCATION_LOCAL_NETWORK},
             created_at=logged_at,
         )
 
         audit = get_security_audit(self.user)
         self.assertEqual(audit["last_login_ip"], "192.168.1.105")
-        self.assertEqual(audit["last_login_location"], self.legacy_local_network_label)
+        self.assertEqual(audit["last_login_location"], LOGIN_LOCATION_LOCAL_NETWORK)
         self.assertEqual(
             serialize_security_audit(audit)["last_login_location"],
             LOGIN_LOCATION_LOCAL_NETWORK,
@@ -64,9 +62,9 @@ class LoginAuditServiceTests(TestCase):
         value = get_registered_at(self.user)
         self.assertEqual(value, registered)
 
-    def test_serialize_security_audit_normalizes_legacy_local_network_label(self):
+    def test_serialize_security_audit_preserves_location_code(self):
         audit = serialize_security_audit(
-            {"last_login_location": self.legacy_local_network_label},
+            {"last_login_location": LOGIN_LOCATION_LOCAL_NETWORK},
         )
         self.assertEqual(audit["last_login_location"], LOGIN_LOCATION_LOCAL_NETWORK)
 
@@ -77,7 +75,7 @@ class LoginAuditServiceTests(TestCase):
 
         profile = self.user.profile
         profile.last_login_ip = "10.0.0.8"
-        profile.last_login_location = self.legacy_local_network_label
+        profile.last_login_location = LOGIN_LOCATION_LOCAL_NETWORK
         profile.save(update_fields=["last_login_ip", "last_login_location"])
 
         request = self.factory.get("/", REMOTE_ADDR="203.0.113.10")
