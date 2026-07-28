@@ -7,6 +7,8 @@ import { Mail, Lock, Key, Globe, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-ne
 import { api } from '../../lib/api'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
+import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
+import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
 import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import { appConfig } from '../../lib/appConfig'
 
@@ -418,24 +420,14 @@ onUnmounted(() => {
 
 <template>
   <div class="register-container">
-    <div class="bg-image"></div>
+    <AuthBackdrop />
 
     <div class="left-logo">
       <div class="flex flex-col items-start w-full">
-        <div class="auth-brand-panel">
-          <span class="auth-logo-mark" aria-hidden="true">
-            <span class="auth-logo-mark__beam auth-logo-mark__beam--a"></span>
-            <span class="auth-logo-mark__beam auth-logo-mark__beam--b"></span>
-            <span class="auth-logo-mark__core"></span>
-          </span>
-          <div class="auth-brand-copy">
-            <span class="auth-logo-text"><span>Hyper</span><strong>FileLens</strong></span>
-            <p class="!text-lg !font-medium !tracking-wide !text-white !mb-2">{{ t('login.brandDesc') }}</p>
-            <p class="auth-brand-slogan">
-              {{ t('login.brandSlogan') }}
-            </p>
-          </div>
-        </div>
+        <AuthBrandPanel
+          :description="t('login.brandDesc')"
+          :slogan="t('login.brandSlogan')"
+        />
       </div>
     </div>
 
@@ -640,94 +632,13 @@ onUnmounted(() => {
   position: relative;
 }
 
-.bg-image {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background-image: url('/assets/bg.png');
-  background-size: cover;
-  background-position: center;
-  opacity: 0.6;
-}
-
 .left-logo {
-  width: 600px;
-  margin-right: 200px;
-  min-width: 600px;
+  width: 560px;
+  margin-right: clamp(64px, 7vw, 112px);
+  min-width: 560px;
   z-index: 10;
   display: flex;
   align-items: center;
-}
-
-.auth-brand-panel {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  margin-bottom: 32px;
-}
-
-.auth-brand-copy {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.auth-brand-slogan {
-  margin: 0;
-  color: var(--color-primary);
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: normal;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.auth-logo-mark {
-  position: relative;
-  width: 72px;
-  height: 72px;
-  flex: 0 0 72px;
-  border: 2px solid #8b5cf6;
-  border-radius: 10px;
-  background: #12111a;
-  box-shadow: 0 0 34px rgba(139, 92, 246, 0.5);
-  filter: drop-shadow(0 0 22px rgba(139, 92, 246, 0.52));
-  transform: rotate(45deg);
-}
-
-.auth-logo-mark::before {
-  content: '';
-  position: absolute;
-  inset: 16px;
-  background: #a78bfa;
-  border-radius: 2px;
-}
-
-.auth-logo-mark__beam,
-.auth-logo-mark__core {
-  display: none;
-}
-
-.auth-logo-text {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0;
-  font-size: 48px;
-  font-weight: 850;
-  color: #fff;
-  letter-spacing: 0;
-  line-height: 1;
-}
-
-.auth-logo-text > span {
-  color: #ffcc4d;
-  font-weight: 850;
-}
-
-.auth-logo-text strong {
-  color: #f8fafc;
-  font-weight: 850;
 }
 
 .register-form-box {
@@ -1185,29 +1096,6 @@ onUnmounted(() => {
     width: auto;
     min-width: 0;
     margin: 0;
-  }
-
-  .auth-brand-panel {
-    gap: 14px;
-    margin: 0;
-  }
-
-  .auth-logo-mark {
-    width: 38px;
-    height: 38px;
-    flex-basis: 38px;
-  }
-
-  .auth-logo-mark::before {
-    inset: 9px;
-  }
-
-  .auth-logo-text {
-    font-size: 26px;
-  }
-
-  .auth-brand-copy p {
-    display: none;
   }
 
   .register-form-box {
