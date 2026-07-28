@@ -140,10 +140,7 @@ export const platformOpsRoutes = [
         path: 'gateways/add',
         component: lazyRoute(() => import('./pages/engine/PlatformGatewayAdd.vue')),
       },
-      {
-        path: 'data-connections',
-        component: lazyRoute(() => import('./pages/engine/DataConnections.vue')),
-      },
+      { path: 'data-connections', redirect: '/platform-ops/platform/integrations' },
       {
         path: 'knowledge-base',
         component: lazyRoute(() => import('../pages/insight/InsightKnowledgeBase.vue')),

@@ -5,6 +5,7 @@ import { CheckCircle2, CircleX, ExternalLink, Link2, RefreshCw, ServerCog } from
 import ModulePage from '../../../components/ModulePage.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
 import { apiErrorMessage } from '../../../lib/api'
+import { formatLocalDateTime } from '../../../lib/dateTime'
 import PlatformOpsStatusPill from '../../components/PlatformOpsStatusPill.vue'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
 import { fetchPlatformIntegrations, type PlatformIntegration } from '../../lib/platformOpsApi'
@@ -22,8 +23,8 @@ function integrationStatus(row: PlatformIntegration) {
   return row.authenticated ? 'Healthy' : 'Degraded'
 }
 
-function publicServiceUrl(row: PlatformIntegration) {
-  return row.gateway_base_url || row.base_url
+function consoleUrl(row: PlatformIntegration) {
+  return row.console_url
 }
 
 async function load() {
@@ -50,13 +51,16 @@ onMounted(load)
           <div class="platform-integration-card__head"><div class="platform-integration-card__icon"><Link2 :size="20" /></div><div><h2>{{ row.name }}</h2><p>{{ row.category }}</p></div><PlatformOpsStatusPill :status="integrationStatus(row)" /></div>
           <dl class="platform-integration-card__details">
             <div><dt>Deployment Mode</dt><dd>{{ row.mode }}</dd></div>
+            <div><dt>Version</dt><dd>{{ row.version || 'Unknown' }}</dd></div>
             <div><dt>Managed By</dt><dd>{{ row.managed_by }}</dd></div>
-            <div><dt>Service URL</dt><dd>{{ row.base_url || 'Not configured' }}</dd></div>
-            <div><dt>Gateway URL</dt><dd>{{ row.gateway_base_url || 'Not configured' }}</dd></div>
+            <div><dt>Console URL</dt><dd>{{ row.console_url || 'Not configured' }}</dd></div>
+            <div><dt>Service Endpoint</dt><dd>{{ row.base_url || 'Not configured' }}</dd></div>
+            <div><dt>Gateway Endpoint</dt><dd>{{ row.gateway_base_url || 'Not configured' }}</dd></div>
             <div><dt>Connectivity</dt><dd>{{ row.reachable ? 'Reachable' : 'Unavailable' }}</dd></div>
             <div><dt>Authentication</dt><dd>{{ row.authenticated ? 'Authenticated' : 'Unavailable' }}</dd></div>
+            <div><dt>Last Checked</dt><dd>{{ formatLocalDateTime(row.checked_at) }}</dd></div>
           </dl>
-          <div class="platform-integration-card__footer"><span>Connection values are managed by deployment environment variables.</span><a v-if="publicServiceUrl(row)" :href="publicServiceUrl(row)" target="_blank" rel="noopener noreferrer">Open service <ExternalLink :size="14" /></a></div>
+          <div class="platform-integration-card__footer"><span>Service configuration is managed by deployment environment variables.</span><a v-if="consoleUrl(row)" :href="consoleUrl(row)" target="_blank" rel="noopener noreferrer">Open SourceLens Console <ExternalLink :size="14" /></a></div>
         </article>
         <el-empty v-if="!loading && integrations.length === 0" description="No platform integrations found" :image-size="72" />
       </div>

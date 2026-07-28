@@ -253,12 +253,15 @@ export interface PlatformIntegration {
   name: string
   category: string
   mode: string
+  version: string
   base_url: string
   gateway_base_url: string
+  console_url: string
   configured: boolean
   reachable: boolean
   authenticated: boolean
   managed_by: string
+  checked_at: string
 }
 
 export interface PlatformAiUsageSummary {
