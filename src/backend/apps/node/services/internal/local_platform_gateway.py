@@ -110,3 +110,77 @@ def registration_metadata(
     if installer_managed:
         metadata.update(LOCAL_PLATFORM_GATEWAY_METADATA)
     return metadata
+
+
+@transaction.atomic
+def reconcile_local_platform_gateway_links() -> int:
+    """Repair installer-managed Gateway links without changing user Gateways."""
+    from apps.node.models import Node
+
+    org = platform_lens.get_or_create_platform_org()
+    managed_gateway_ids = list(
+        Node.objects.filter(
+            organization=org,
+            role=NodeRole.GATEWAY,
+            is_deleted=False,
+            metadata__managed_by=LOCAL_PLATFORM_GATEWAY_METADATA["managed_by"],
+            metadata__deployment_mode=LOCAL_PLATFORM_GATEWAY_METADATA[
+                "deployment_mode"
+            ],
+            metadata__install_key=LOCAL_PLATFORM_GATEWAY_METADATA["install_key"],
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    if not managed_gateway_ids:
+        return 0
+
+    links = list(
+        LensGatewayLink.objects.select_for_update()
+        .filter(
+            organization=org,
+            gateway_id__in=managed_gateway_ids,
+            is_deleted=False,
+        )
+        .order_by("id")
+    )
+    if not links:
+        return 0
+
+    changed = 0
+    for link in links:
+        update_fields = []
+        if link.scope != LensGatewayLink.GatewayScope.PLATFORM:
+            link.scope = LensGatewayLink.GatewayScope.PLATFORM
+            update_fields.append("scope")
+        if link.origin != LensGatewayLink.Origin.PLATFORM:
+            link.origin = LensGatewayLink.Origin.PLATFORM
+            update_fields.append("origin")
+        if link.owner_user_id is not None:
+            link.owner_user = None
+            update_fields.append("owner_user")
+        if update_fields:
+            link.save(update_fields=[*update_fields, "updated_at"])
+            changed += 1
+
+    other_default_exists = LensGatewayLink.objects.filter(
+        organization=org,
+        scope=LensGatewayLink.GatewayScope.PLATFORM,
+        is_platform_default=True,
+        is_deleted=False,
+    ).exclude(gateway_id__in=managed_gateway_ids).exists()
+    preferred_id = None
+    if not other_default_exists:
+        preferred_id = next(
+            (link.id for link in links if link.is_platform_default),
+            links[0].id,
+        )
+
+    for link in links:
+        should_be_default = link.id == preferred_id
+        if link.is_platform_default != should_be_default:
+            link.is_platform_default = should_be_default
+            link.save(update_fields=["is_platform_default", "updated_at"])
+            changed += 1
+
+    return changed

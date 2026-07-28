@@ -16,7 +16,11 @@ import {
 } from '../composables/useLensRunStream'
 
 export type CopilotSyncHandlers = {
-  onMessages: (sessionId: number, messages: LensCopilotSyncResponse['messages']) => void
+  onMessages: (
+    sessionId: number,
+    messages: LensCopilotSyncResponse['messages'],
+    runOutcomes: LensCopilotSyncResponse['run_outcomes'],
+  ) => void
   onSessionMeta?: (sessionId: number, activeRun: LensCopilotActiveRun | null) => void
   onSessionSync?: (sessionId: number, payload: LensCopilotSyncResponse) => void
 }
@@ -49,7 +53,7 @@ export function useCopilotRunStore() {
     opts?: { attachStream?: boolean },
   ) {
     const payload = await syncCopilotSession(sessionId)
-    handlers.onMessages(sessionId, payload.messages)
+    handlers.onMessages(sessionId, payload.messages, payload.run_outcomes || [])
     handlers.onSessionMeta?.(sessionId, payload.active_run)
     handlers.onSessionSync?.(sessionId, payload)
     if (payload.active_run && isActiveRunStatus(payload.active_run.status)) {

@@ -7,6 +7,7 @@ TAG=""
 CHANNEL="release"
 INSTALL_DIR="/opt/hyperfilelens"
 PUBLIC_URL=""
+ADMIN_PUBLIC_URL=""
 DIRECT_HOST=""
 RUNTIME_ENV_FILE=""
 DOWNLOAD_PROXY_URL=""
@@ -20,6 +21,7 @@ Usage: remote-deploy.sh --tag vX.Y.Z|main-SHA7 --channel release|main --direct-h
   --install-dir DIR        HFL install directory (default: /opt/hyperfilelens)
   --direct-host HOST       SSH-reachable host used for direct listener URLs
   --public-url URL         Optional canonical browser URL; external checks are non-blocking
+  --admin-public-url URL   Optional Admin Console browser URL; invalid values only warn
   --runtime-env-file PATH  Root-only staged runtime configuration under /var/tmp
   --download-proxy-url URL Optional HTTP(S) proxy used only for GitHub Release downloads
 USAGE
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
 	--tag) TAG=${2:-}; shift 2 ;;
 	--channel) CHANNEL=${2:-}; shift 2 ;;
 	--public-url) PUBLIC_URL=${2:-}; shift 2 ;;
+	--admin-public-url) ADMIN_PUBLIC_URL=${2:-}; shift 2 ;;
 	--direct-host) DIRECT_HOST=${2:-}; shift 2 ;;
 	--repository) REPOSITORY=${2:-}; shift 2 ;;
 	--install-dir) INSTALL_DIR=${2:-}; shift 2 ;;
@@ -464,6 +467,7 @@ if [[ -f "${INSTALL_DIR}/.env" && -f "${INSTALL_DIR}/VERSION" ]]; then
 		--yes
 		--direct-host "${DIRECT_HOST}"
 		--public-url "${PUBLIC_URL}"
+		--admin-public-url "${ADMIN_PUBLIC_URL}"
 	)
 	[[ "${CHANNEL}" == "main" ]] && install_args+=(--allow-main-build)
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
@@ -477,6 +481,7 @@ else
 		install
 		--direct-host "${DIRECT_HOST}"
 		--public-url "${PUBLIC_URL}"
+		--admin-public-url "${ADMIN_PUBLIC_URL}"
 	)
 	[[ "${CHANNEL}" == "main" ]] && install_args+=(--allow-main-build)
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then

@@ -333,8 +333,17 @@ export type LensCopilotSyncResponse = {
   session_id: number
   messages: LensChatMessage[]
   active_run: LensCopilotActiveRun | null
+  run_outcomes: LensCopilotRunOutcome[]
   last_assistant_message_at?: string | null
   has_unread?: boolean
+}
+
+export type LensCopilotRunOutcome = {
+  run_uuid: string
+  status: 'failed' | 'cancelled' | string
+  error_code: string
+  message: string
+  finished_at?: string | null
 }
 
 export type LensRun = {

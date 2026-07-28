@@ -822,6 +822,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                     "session_id": link.id,
                     "messages": [],
                     "active_run": None,
+                    "run_outcomes": [],
                     "lifecycle_status": link.lifecycle_status,
                     "lifecycle_error": link.lifecycle_error,
                 }

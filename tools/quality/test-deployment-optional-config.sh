@@ -52,6 +52,7 @@ runtime_output="$(python3 "${helper}" \
 	--env-file "${env_file}" \
 	--runtime-env-file "${runtime_file}" \
 	--public-url "https://hyperfilelens.com" \
+	--admin-public-url "https://admin.hyperfilelens.com" \
 	--direct-host "47.237.161.194")"
 if grep -E "pa\$\$ word|new-google-secret" <<<"${runtime_output}" >/dev/null; then
 	printf 'ERROR: runtime configuration output exposed the SMTP password\n' >&2
@@ -59,12 +60,12 @@ if grep -E "pa\$\$ word|new-google-secret" <<<"${runtime_output}" >/dev/null; th
 fi
 grep -Fx 'FRONTEND_URL=https://hyperfilelens.com' "${env_file}" >/dev/null
 grep -Fx 'LENS_GATEWAY_BASE_URL=https://hyperfilelens.com/sourcelens' "${env_file}" >/dev/null
-grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://47.237.161.194:11444' "${env_file}" >/dev/null
+grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://admin.hyperfilelens.com' "${env_file}" >/dev/null
 grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_INSECURE_TLS=0' "${env_file}" >/dev/null
-grep -E '^DJANGO_ALLOWED_HOSTS=.*47\.237\.161\.194.*hyperfilelens\.com' "${env_file}" >/dev/null
-grep -E '^CSRF_TRUSTED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperfilelens\.com' "${env_file}" >/dev/null
-grep -E '^CORS_ALLOWED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperfilelens\.com' "${env_file}" >/dev/null
+grep -E '^DJANGO_ALLOWED_HOSTS=.*47\.237\.161\.194.*hyperfilelens\.com.*admin\.hyperfilelens\.com' "${env_file}" >/dev/null
+grep -E '^CSRF_TRUSTED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperfilelens\.com.*https://admin\.hyperfilelens\.com' "${env_file}" >/dev/null
+grep -E '^CORS_ALLOWED_ORIGINS=.*https://47\.237\.161\.194:11443.*https://hyperfilelens\.com.*https://admin\.hyperfilelens\.com' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${env_file}" >/dev/null
@@ -106,8 +107,10 @@ python3 "${helper}" \
 	--env-file "${invalid_env}" \
 	--runtime-env-file "${invalid_runtime}" \
 	--public-url "not a public URL" \
+	--admin-public-url "not an admin URL" \
 	--direct-host "47.237.161.194"
 grep -Fx 'FRONTEND_URL=https://hyperfilelens.com' "${invalid_env}" >/dev/null
+grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://admin.hyperfilelens.com' "${invalid_env}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${invalid_env}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${invalid_env}" >/dev/null
 grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${invalid_env}" >/dev/null

@@ -80,6 +80,14 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
             role=NodeRole.GATEWAY,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
         )
+        stale_link = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=managed,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.USER,
+            sl_lensnode_uuid="0d16cf33-5c21-471e-9cbd-b5e9819ff19c",
+            is_platform_default=True,
+        )
         Node.objects.create(
             organization=org,
             name="partial-metadata-gateway",
@@ -102,12 +110,16 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         )
         self.assertTrue(payload["token"])
         self.assertEqual(payload["managed_node_ids"], [managed.id])
+        stale_link.refresh_from_db()
+        self.assertEqual(stale_link.scope, LensGatewayLink.GatewayScope.PLATFORM)
+        self.assertEqual(stale_link.origin, LensGatewayLink.Origin.PLATFORM)
+        self.assertTrue(stale_link.is_platform_default)
 
     @mock.patch(
         "apps.lens_bridge.services.provisioning.provision_gateway_lens_on_register",
         return_value=None,
     )
-    def test_installer_metadata_survives_followup_heartbeat(self, _mock_provision):
+    def test_installer_metadata_survives_followup_heartbeat(self, mock_provision):
         token = ensure_local_platform_gateway_token()
         first_request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
@@ -146,6 +158,64 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         node.refresh_from_db()
         self.assertEqual(node.metadata["install_key"], LOCAL_PLATFORM_GATEWAY_INSTALL_KEY)
         self.assertEqual(node.metadata["agent_version"], "1.0.0")
+        self.assertEqual(
+            mock_provision.call_args_list[0].kwargs["scope"],
+            LensGatewayLink.GatewayScope.PLATFORM,
+        )
+        self.assertIsNone(mock_provision.call_args_list[1].kwargs["scope"])
+
+    def test_managed_gateway_repairs_stale_scope_without_explicit_token_scope(self):
+        org = platform_lens.get_or_create_platform_org()
+        gateway = Node.objects.create(
+            organization=org,
+            name="managed-gateway",
+            role=NodeRole.GATEWAY,
+            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
+        )
+        link = LensGatewayLink.objects.create(
+            organization=org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.USER,
+            sl_lensnode_uuid="5ed4b4d1-b9b0-456d-8d73-cc88d948877b",
+        )
+
+        result = provisioning.ensure_lensnode_for_gateway(
+            org=org,
+            gateway=gateway,
+            scope=None,
+        )
+
+        result.refresh_from_db()
+        self.assertEqual(result.pk, link.pk)
+        self.assertEqual(result.scope, LensGatewayLink.GatewayScope.PLATFORM)
+        self.assertEqual(result.origin, LensGatewayLink.Origin.PLATFORM)
+        self.assertTrue(result.is_platform_default)
+
+    def test_unknown_scope_preserves_existing_non_platform_identity(self):
+        org = platform_lens.get_or_create_platform_org()
+        gateway = Node.objects.create(
+            organization=org,
+            name="external-gateway",
+            role=NodeRole.GATEWAY,
+        )
+        LensGatewayLink.objects.create(
+            organization=org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.USER,
+            origin=LensGatewayLink.Origin.EXTERNAL,
+            sl_lensnode_uuid="a3b9975f-cded-4c0a-a754-ec6f954d2b2c",
+        )
+
+        result = provisioning.ensure_lensnode_for_gateway(
+            org=org,
+            gateway=gateway,
+            scope=None,
+        )
+
+        result.refresh_from_db()
+        self.assertEqual(result.scope, LensGatewayLink.GatewayScope.USER)
+        self.assertEqual(result.origin, LensGatewayLink.Origin.EXTERNAL)
 
     @mock.patch(
         "apps.lens_bridge.services.provisioning.sl_client.request_json",

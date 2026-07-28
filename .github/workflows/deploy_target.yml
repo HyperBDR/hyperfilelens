@@ -21,6 +21,11 @@ on:
         required: false
         default: ''
         type: string
+      admin_public_url:
+        description: Optional canonical Admin Console browser URL
+        required: false
+        default: ''
+        type: string
       release_download_proxy_url:
         description: Optional target-side HTTP(S) proxy; empty or UNCONFIGURED means direct download
         required: false
@@ -148,6 +153,7 @@ jobs:
       cancel-in-progress: false
     env:
       APP_PUBLIC_URL: ${{ inputs.public_url }}
+      ADMIN_PUBLIC_URL: ${{ inputs.admin_public_url }}
       DEPLOY_SSH_HOST: ${{ inputs.ssh_host }}
       DEPLOY_SSH_PORT: ${{ inputs.ssh_port }}
       DEPLOY_SSH_USER: ${{ inputs.ssh_user }}
@@ -387,6 +393,7 @@ jobs:
               --tag "${{ inputs.tag }}" \
               --channel "${{ inputs.channel }}" \
               --public-url "$APP_PUBLIC_URL" \
+              --admin-public-url "$ADMIN_PUBLIC_URL" \
               --direct-host "$DEPLOY_SSH_HOST" \
               --install-dir /opt/hyperfilelens \
               "${download_proxy_args[@]}" \

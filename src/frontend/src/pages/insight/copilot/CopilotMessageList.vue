@@ -223,7 +223,7 @@ const showLiveRow = computed(() => props.streaming)
               msg.starterChips ? 'message-card--welcome' : '',
             ]"
           >
-            <div v-if="msg.starterChips" class="message-text">{{ msg.text }}</div>
+            <div v-if="msg.starterChips || msg.isError" class="message-text">{{ msg.text }}</div>
             <div v-else-if="msg.role === 'assistant' && msg.text" class="message-markdown">
               <CopilotMarkdown :content="msg.text" />
             </div>
