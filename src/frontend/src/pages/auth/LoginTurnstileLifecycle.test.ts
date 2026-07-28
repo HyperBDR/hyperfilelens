@@ -220,13 +220,22 @@ describe('Login Turnstile lifecycle', () => {
   })
 
   it.each([
-    ['short legacy password', 'legacy'],
-    ['password longer than twenty characters', 'This-password-is-longer-than-twenty-characters'],
-    ['password with spaces and symbols', 'Legacy password ! accepted'],
-  ])('submits a %s without applying password-creation rules', async (_name, password) => {
+    ['short credential', 'short'],
+    ['credential longer than the creation limit', 'This-credential-is-longer-than-twenty-characters'],
+    ['credential containing spaces and symbols', 'Credential value ! forwarded'],
+  ])('forwards a %s unchanged for server-side authentication', async (_name, password) => {
     const wrapper = await mountLogin(1440)
     const inputs = wrapper.findAll('input')
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    mocks.api.mockResolvedValue({
+      code: '1001',
+      data: {},
+      error: {
+        error_code: 'INVALID_PASSWORD',
+        fields: { password: ['Incorrect password'] },
+      },
+    })
 
     await inputs[0].setValue('person@example.com')
     await inputs[1].setValue(password)
@@ -243,6 +252,7 @@ describe('Login Turnstile lifecycle', () => {
       password,
       turnstile_token: 'verified-token',
     })
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Incorrect password')
     wrapper.unmount()
   })
 

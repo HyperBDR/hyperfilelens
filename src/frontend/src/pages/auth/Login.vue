@@ -113,7 +113,7 @@ function checkMail(value: string) {
   return ''
 }
 
-function checkPassword(value: string) {
+function checkPasswordRequired(value: string) {
   if (!value) {
     return t('login.passwordErrRequired')
   }
@@ -132,9 +132,9 @@ function validateEmailOnInput() {
   }
 }
 
-// Real-time password validation
-function validatePasswordOnInput() {
-  const error = checkPassword(formItems.password.value)
+// Real-time password presence validation
+function validatePasswordPresenceOnInput() {
+  const error = checkPasswordRequired(formItems.password.value)
   if (error && formItems.password.value) {
     formItems.password.errorMsg = error
     formItems.password.showError = true
@@ -198,7 +198,7 @@ function validateForm() {
     formItems.email.showError = false
   }
 
-  const passwordError = checkPassword(formItems.password.value)
+  const passwordError = checkPasswordRequired(formItems.password.value)
   if (passwordError) {
     formItems.password.errorMsg = passwordError
     formItems.password.showError = true
@@ -458,7 +458,7 @@ const cardTitle = computed(() => {
 
 const credentialsPresent = computed(() => (
   checkMail(formItems.email.value) === '' &&
-  checkPassword(formItems.password.value) === ''
+  checkPasswordRequired(formItems.password.value) === ''
 ))
 
 const canSubmitLogin = computed(() => {
@@ -600,8 +600,8 @@ onMounted(async () => {
               :placeholder="formItems.password.placeholder"
               tabindex="2"
               autocomplete="current-password"
-              @blur="validatePasswordOnInput"
-              @input="validatePasswordOnInput"
+              @blur="validatePasswordPresenceOnInput"
+              @input="validatePasswordPresenceOnInput"
               @keyup.enter="handleSubmit"
             />
             <button

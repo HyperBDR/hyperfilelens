@@ -197,7 +197,7 @@ def create_fixture(root: pathlib.Path) -> None:
     (root / "empty-directory").mkdir()
     (root / "empty.txt").write_bytes(b"")
     (root / "hello.txt").write_text("HyperFileLens\n", encoding="utf-8")
-    (root / "unicode-\u6587\u4ef6.txt").write_text("backup-\u9a8c\u8bc1\n", encoding="utf-8")
+    (root / "international-file.txt").write_text("backup-verification\n", encoding="utf-8")
     (root / "nested" / "deep" / "data.bin").write_bytes(bytes(range(256)) * 4096)
     if os.name != "nt":
         os.link(root / "hello.txt", root / "hello-hardlink.txt")

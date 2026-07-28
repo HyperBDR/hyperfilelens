@@ -21,18 +21,12 @@ from apps.iam.profile_models import Profile
 logger = logging.getLogger(__name__)
 
 LOGIN_LOCATION_LOCAL_NETWORK = "local_network"
-_LEGACY_LOCAL_NETWORK_LABEL = "\u5c40\u57df\u7f51"
-_LEGACY_LOCAL_NETWORK_LABELS = frozenset(
-    {LOGIN_LOCATION_LOCAL_NETWORK, _LEGACY_LOCAL_NETWORK_LABEL},
-)
 
 
 def normalize_login_location(location: str | None) -> str | None:
     """Return a locale-neutral location code for API consumers."""
     if not location:
         return None
-    if location in _LEGACY_LOCAL_NETWORK_LABELS:
-        return LOGIN_LOCATION_LOCAL_NETWORK
     return location
 
 
