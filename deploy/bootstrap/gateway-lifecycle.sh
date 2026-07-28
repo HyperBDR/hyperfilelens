@@ -160,9 +160,18 @@ compose_down_sidecar() {
 }
 
 download_bootstrap_file() {
-	local name=$1 dest=$2
+	local name=$1 dest=$2 partial="${2}.part"
+	rm -f "${partial}"
 	hfl_log "Downloading ${name} from console."
-	curl "${curl_tls[@]}" -fsSL "${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${dest}"
+	if ! curl "${curl_tls[@]}" \
+		--fail --show-error --location --progress-bar \
+		--retry 3 --retry-connrefused --retry-delay 2 \
+		"${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${partial}"; then
+		rm -f "${partial}"
+		hfl_fail "failed to download ${name}" 3
+	fi
+	mv -f "${partial}" "${dest}"
+	hfl_log "Downloaded ${name} ($(wc -c <"${dest}") bytes)."
 	chmod +x "${dest}" 2>/dev/null || true
 }
 

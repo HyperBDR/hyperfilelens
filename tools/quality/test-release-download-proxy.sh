@@ -49,7 +49,9 @@ download_release_file https://example.invalid/release "${tmp}/proxied"
 grep -Fx -- '--proxy' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- "${DOWNLOAD_PROXY_URL}" "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--noproxy' "${HFL_TEST_CURL_LOG}" >/dev/null
+grep -Fx -- '--progress-bar' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx 'downloaded' "${tmp}/proxied" >/dev/null
+[[ ! -e "${tmp}/proxied.part" ]]
 
 : >"${HFL_TEST_CURL_LOG}"
 export HFL_TEST_PROXY_FAIL=1
@@ -57,6 +59,7 @@ download_release_file https://example.invalid/release "${tmp}/fallback"
 [[ "$(grep -c '^---$' "${HFL_TEST_CURL_LOG}")" -eq 2 ]]
 grep -Fx -- "${DOWNLOAD_PROXY_URL}" "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx 'downloaded' "${tmp}/fallback" >/dev/null
+[[ ! -e "${tmp}/fallback.part" ]]
 
 : >"${HFL_TEST_CURL_LOG}"
 unset HFL_TEST_PROXY_FAIL
@@ -68,5 +71,6 @@ if grep -F '192.168.8.182' "${HFL_TEST_CURL_LOG}" >/dev/null; then
 	exit 1
 fi
 grep -Fx 'downloaded' "${tmp}/direct" >/dev/null
+[[ ! -e "${tmp}/direct.part" ]]
 
 printf 'Target-side Release download proxy checks passed.\n'

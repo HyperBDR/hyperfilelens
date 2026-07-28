@@ -203,7 +203,7 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 	url := strings.TrimRight(cfg.APIBase, "/") + "/media/gateway-bootstrap/" + lensnodeImageArchive
 	archivePath := filepath.Join(workDir, lensnodeImageArchive)
 	logStep("Downloading LensNode container image bundle.")
-	if err := install.DownloadURL(ctx, url, archivePath); err != nil {
+	if err := downloadWithProgress(ctx, url, archivePath, "LensNode image bundle"); err != nil {
 		return fmt.Errorf("download lensnode image bundle: %w", err)
 	}
 

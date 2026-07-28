@@ -1,0 +1,217 @@
+package enroll
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"net/url"
+	"os"
+	"path"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/mattn/go-isatty"
+
+	"hyperfilelens/agent/internal/model"
+	platforminstall "hyperfilelens/agent/internal/platform/install"
+)
+
+const nonTerminalProgressInterval = 5 * time.Second
+
+type downloadProgressDisplay struct {
+	label          string
+	terminal       bool
+	mu             sync.Mutex
+	lastLogged     time.Duration
+	latest         platforminstall.DownloadProgress
+	terminalActive bool
+}
+
+func newDownloadProgressDisplay(label string) *downloadProgressDisplay {
+	return &downloadProgressDisplay{
+		label:    label,
+		terminal: isatty.IsTerminal(os.Stdout.Fd()),
+	}
+}
+
+func (display *downloadProgressDisplay) report(progress platforminstall.DownloadProgress) {
+	display.mu.Lock()
+	defer display.mu.Unlock()
+	display.latest = progress
+	if !display.terminal && !progress.Completed {
+		if progress.Elapsed-display.lastLogged < nonTerminalProgressInterval {
+			return
+		}
+		display.lastLogged = progress.Elapsed
+	}
+	line := fmt.Sprintf(
+		"[%s] [PROG ] %s %s",
+		logTimestamp(),
+		display.label,
+		formatDownloadProgress(progress),
+	)
+	if display.terminal {
+		fmt.Fprintf(os.Stdout, "\r%s\033[K", line)
+		display.terminalActive = !progress.Completed
+		if progress.Completed {
+			fmt.Fprintln(os.Stdout)
+		}
+		return
+	}
+	fmt.Fprintln(os.Stdout, line)
+}
+
+func (display *downloadProgressDisplay) abort() {
+	display.mu.Lock()
+	defer display.mu.Unlock()
+	if display.terminal && display.terminalActive {
+		fmt.Fprintln(os.Stdout)
+		display.terminalActive = false
+	}
+}
+
+func (display *downloadProgressDisplay) successMessage() string {
+	display.mu.Lock()
+	defer display.mu.Unlock()
+	progress := display.latest
+	average := float64(0)
+	if progress.Elapsed > 0 {
+		average = float64(progress.DownloadedBytes) / progress.Elapsed.Seconds()
+	}
+	return fmt.Sprintf(
+		"%s downloaded (%s in %s, average %s)",
+		display.label,
+		formatByteCount(progress.DownloadedBytes),
+		formatElapsed(progress.Elapsed),
+		formatRate(average),
+	)
+}
+
+func downloadWithProgress(
+	ctx context.Context,
+	rawURL string,
+	destPath string,
+	label string,
+) error {
+	display := newDownloadProgressDisplay(label)
+	err := platforminstall.DownloadURLWithProgress(
+		ctx,
+		rawURL,
+		destPath,
+		display.report,
+	)
+	if err != nil {
+		display.abort()
+		return err
+	}
+	logOK(display.successMessage())
+	return nil
+}
+
+func formatDownloadProgress(progress platforminstall.DownloadProgress) string {
+	downloaded := formatByteCount(progress.DownloadedBytes)
+	elapsed := formatElapsed(progress.Elapsed)
+	if progress.TotalBytes <= 0 {
+		if progress.BytesPerSecond <= 0 && !progress.Completed {
+			return fmt.Sprintf("%s downloaded | waiting for data | elapsed %s", downloaded, elapsed)
+		}
+		return fmt.Sprintf(
+			"%s downloaded | %s | elapsed %s",
+			downloaded,
+			formatRate(progress.BytesPerSecond),
+			elapsed,
+		)
+	}
+	percent := float64(progress.DownloadedBytes) / float64(progress.TotalBytes) * 100
+	percent = math.Max(0, math.Min(100, percent))
+	filled := int(math.Round(percent / 5))
+	filled = max(0, min(20, filled))
+	bar := "[" + strings.Repeat("#", filled) + strings.Repeat("-", 20-filled) + "]"
+	parts := []string{
+		bar,
+		fmt.Sprintf("%3.0f%%", percent),
+		fmt.Sprintf("%s / %s", downloaded, formatByteCount(progress.TotalBytes)),
+	}
+	if progress.BytesPerSecond <= 0 && !progress.Completed {
+		parts = append(parts, "waiting for data", "elapsed "+elapsed)
+		return strings.Join(parts, " | ")
+	}
+	parts = append(parts, formatRate(progress.BytesPerSecond))
+	remaining := progress.TotalBytes - progress.DownloadedBytes
+	if remaining > 0 && progress.BytesPerSecond > 0 && !progress.Completed {
+		eta := time.Duration(float64(remaining)/progress.BytesPerSecond) * time.Second
+		parts = append(parts, "ETA "+formatElapsed(eta))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func formatByteCount(bytes int64) string {
+	if bytes < 0 {
+		bytes = 0
+	}
+	const unit = int64(1024)
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	value := float64(bytes)
+	index := -1
+	for value >= float64(unit) && index < len(units)-1 {
+		value /= float64(unit)
+		index++
+	}
+	return fmt.Sprintf("%.1f %s", value, units[index])
+}
+
+func formatRate(bytesPerSecond float64) string {
+	if bytesPerSecond < 0 {
+		bytesPerSecond = 0
+	}
+	return formatByteCount(int64(bytesPerSecond)) + "/s"
+}
+
+func formatElapsed(duration time.Duration) string {
+	seconds := int64(math.Ceil(duration.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	minutes := seconds / 60
+	seconds %= 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm %02ds", minutes, seconds)
+	}
+	hours := minutes / 60
+	minutes %= 60
+	return fmt.Sprintf("%dh %02dm %02ds", hours, minutes, seconds)
+}
+
+func roleDisplayName(role model.Role) string {
+	switch role {
+	case model.RoleProxy:
+		return "Proxy Host"
+	case model.RoleGateway:
+		return "Data Gateway"
+	default:
+		return "Source Host"
+	}
+}
+
+func agentPackageLabel(role model.Role) string {
+	return roleDisplayName(role) + " Agent package"
+}
+
+func safeDownloadFilename(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	name := path.Base(parsed.Path)
+	if name == "." || name == "/" || name == "" {
+		return ""
+	}
+	return name
+}

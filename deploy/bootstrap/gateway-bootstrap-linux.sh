@@ -27,6 +27,43 @@ hfl_fail() {
 	exit "${2:-1}"
 }
 
+hfl_format_bytes() {
+	awk -v bytes="$1" 'BEGIN {
+		split("B KiB MiB GiB TiB", units, " ")
+		value = bytes + 0
+		unit = 1
+		while (value >= 1024 && unit < 5) {
+			value /= 1024
+			unit++
+		}
+		if (unit == 1) printf "%.0f %s", value, units[unit]
+		else printf "%.1f %s", value, units[unit]
+	}'
+}
+
+hfl_download() {
+	local label="$1"
+	local url="$2"
+	local destination="$3"
+	local partial="${destination}.part"
+	local started=${SECONDS} elapsed bytes rate
+	rm -f "${partial}"
+	hfl_step "Downloading ${label}."
+	if ! curl "${CURL_TLS[@]}" \
+		--fail --show-error --location --progress-bar \
+		--retry 3 --retry-connrefused --retry-delay 2 \
+		"${url}" -o "${partial}"; then
+		rm -f "${partial}"
+		hfl_fail "Failed to download ${label}." 3
+	fi
+	mv -f "${partial}" "${destination}"
+	bytes="$(wc -c <"${destination}")"
+	elapsed=$((SECONDS - started))
+	((elapsed > 0)) || elapsed=1
+	rate="$(hfl_format_bytes "$((bytes / elapsed))")/s"
+	hfl_ok "${label} downloaded ($(hfl_format_bytes "${bytes}") in ${elapsed}s, average ${rate})."
+}
+
 hfl_build_enroll_args() {
 	HFL_ENROLL_ARGS=()
 	local has_yes=0
@@ -187,11 +224,13 @@ hfl_ok "SourceLens is reachable."
 ensure_docker_for_gateway
 
 BIN="${TMPDIR:-/tmp}/hfl-enroll-$$"
-cleanup() { rm -f "${BIN}"; }
+cleanup() { rm -f "${BIN}" "${BIN}.part"; }
 trap cleanup EXIT
 
-hfl_step "Downloading HyperFileLens enrollment helper."
-curl "${CURL_TLS[@]}" -fsSL "${HFL_API_BASE}/media/enroll-bootstrap/hfl-enroll-linux-${HFL_ARCH}" -o "${BIN}"
+hfl_download \
+	"HyperFileLens enrollment helper" \
+	"${HFL_API_BASE}/media/enroll-bootstrap/hfl-enroll-linux-${HFL_ARCH}" \
+	"${BIN}"
 chmod +x "${BIN}"
 # Do not exec: trap EXIT must run after gateway-install so /tmp/hfl-enroll-* is removed.
 hfl_build_enroll_args "$@"
