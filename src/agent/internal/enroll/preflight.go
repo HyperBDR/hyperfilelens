@@ -55,7 +55,7 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 		report.RoleOK = true
 	}
 
-	printEnrollmentContext(cfg.APIBase, cfg.OrgKey, string(cfg.NodeRole), report.Platform, hostname.Name)
+	printEnrollmentContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, report.Platform, hostname.Name)
 
 	if report.PrivilegesOK {
 		logOKDetail("Running with administrator privileges", adminPrivilegeDetail())

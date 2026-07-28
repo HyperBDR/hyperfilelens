@@ -183,19 +183,31 @@ func installAgentPackage(ctx context.Context, cfg Config, agentVer *string) erro
 		logStep("Downloading the agent package.")
 	}
 
-	archivePath, cleanup, err := downloadReleaseArchive(ctx, dl)
+	if filename := safeDownloadFilename(dl); filename != "" {
+		logInfo("Selected package: " + filename)
+	}
+	archivePath, cleanup, err := downloadReleaseArchive(
+		ctx,
+		dl,
+		agentPackageLabel(cfg.NodeRole),
+	)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
+	label := roleDisplayName(cfg.NodeRole) + " Agent package"
+	logStep("Extracting " + label + ".")
 	bundleRoot, err := extractReleaseBundle(ctx, archivePath)
 	if err != nil {
 		return err
 	}
+	logOK(label + " extracted")
+	logStep("Verifying " + label + ".")
 	if err := validateAgentPackage(bundleRoot, cfg.NodeRole, releaseVersion); err != nil {
 		return fmt.Errorf("Agent package validation failed: %w", err)
 	}
+	logOK(label + " verified")
 
 	logStep("Installing agent binaries and service.")
 	if err := RunBundleInstall(ctx, bundleRoot, cfg); err != nil {
@@ -216,18 +228,30 @@ func upgradeAgentPackage(ctx context.Context, cfg Config, downloadURL, releaseVe
 		logStep("Downloading the agent package.")
 	}
 
-	archivePath, cleanup, err := downloadReleaseArchive(ctx, downloadURL)
+	if filename := safeDownloadFilename(downloadURL); filename != "" {
+		logInfo("Selected package: " + filename)
+	}
+	archivePath, cleanup, err := downloadReleaseArchive(
+		ctx,
+		downloadURL,
+		agentPackageLabel(cfg.NodeRole),
+	)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	label := roleDisplayName(cfg.NodeRole) + " Agent package"
+	logStep("Extracting " + label + ".")
 	bundleRoot, err := extractReleaseBundle(ctx, archivePath)
 	if err != nil {
 		return err
 	}
+	logOK(label + " extracted")
+	logStep("Verifying " + label + ".")
 	if err := validateAgentPackage(bundleRoot, cfg.NodeRole, releaseVersion); err != nil {
 		return fmt.Errorf("Agent package validation failed: %w", err)
 	}
+	logOK(label + " verified")
 
 	logStep("Upgrading agent binaries.")
 	if err := RunBundleUpgrade(ctx, archivePath); err != nil {
@@ -247,7 +271,11 @@ func resolveRelease(ctx context.Context, cfg Config) (downloadURL, version strin
 	return downloadURL, version, nil
 }
 
-func downloadReleaseArchive(ctx context.Context, downloadURL string) (archivePath string, cleanup func(), err error) {
+func downloadReleaseArchive(
+	ctx context.Context,
+	downloadURL string,
+	label string,
+) (archivePath string, cleanup func(), err error) {
 	workDir, err := os.MkdirTemp("", "hfl-enroll-")
 	if err != nil {
 		return "", nil, fmt.Errorf("temp dir: %w", err)
@@ -259,7 +287,7 @@ func downloadReleaseArchive(ctx context.Context, downloadURL string) (archivePat
 		ext = ".zip"
 	}
 	archivePath = filepath.Join(workDir, "package"+ext)
-	if err := install.DownloadURL(ctx, downloadURL, archivePath); err != nil {
+	if err := downloadWithProgress(ctx, downloadURL, archivePath, label); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("Download failed: %w", err)
 	}

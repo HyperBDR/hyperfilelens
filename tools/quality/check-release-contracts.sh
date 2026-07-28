@@ -509,10 +509,31 @@ grep -F 'build/dependencies/docker/ubuntu-${ubuntu_release}/amd64' "${agent_publ
 agent_bootstrap_linux="${ROOT}/deploy/bootstrap/agent-bootstrap-linux.sh"
 agent_bootstrap_macos="${ROOT}/deploy/bootstrap/agent-bootstrap-macos.sh"
 agent_bootstrap_windows="${ROOT}/deploy/bootstrap/agent-bootstrap-windows.ps1"
+gateway_bootstrap_linux="${ROOT}/deploy/bootstrap/gateway-bootstrap-linux.sh"
+gateway_docker_installer="${ROOT}/deploy/bootstrap/gateway-install-docker-ubuntu-amd64.sh"
+gateway_lifecycle="${ROOT}/deploy/bootstrap/gateway-lifecycle.sh"
 grep -F 'requires a systemd-based Linux distribution' "${agent_bootstrap_linux}" >/dev/null
 grep -F 'systemctl show-environment' "${agent_bootstrap_linux}" >/dev/null
 grep -F 'launchd is required to install the agent service on macOS' "${agent_bootstrap_macos}" >/dev/null
 grep -F 'Windows ARM64 is not supported by this release' "${agent_bootstrap_windows}" >/dev/null
+for bootstrap in "${agent_bootstrap_linux}" "${agent_bootstrap_macos}"; do
+	grep -F -- '--fail --show-error --location --progress-bar' "${bootstrap}" >/dev/null
+	grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${bootstrap}" >/dev/null
+	grep -F 'HyperFileLens enrollment helper' "${bootstrap}" >/dev/null
+	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
+done
+for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
+	grep -F -- '--fail --show-error --location --progress-bar' "${bootstrap}" >/dev/null
+	grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${bootstrap}" >/dev/null
+	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
+done
+grep -F -- '--fail --show-error --location --progress-bar' "${gateway_lifecycle}" >/dev/null
+grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${gateway_lifecycle}" >/dev/null
+grep -F 'partial="${2}.part"' "${gateway_lifecycle}" >/dev/null
+grep -F 'Docker CE offline bundle' "${gateway_docker_installer}" >/dev/null
+grep -F -- "'--progress-bar'" "${agent_bootstrap_windows}" >/dev/null
+grep -F 'Write-HflDownloadProgress' "${agent_bootstrap_windows}" >/dev/null
+grep -F 'Download size mismatch' "${agent_bootstrap_windows}" >/dev/null
 if grep -F 'hfl-enroll-windows-$archRel.exe' "${agent_bootstrap_windows}" >/dev/null \
 	&& ! grep -F '"ARM64" {' "${agent_bootstrap_windows}" >/dev/null; then
 	printf 'ERROR: Windows bootstrap may request an unsupported ARM64 enrollment binary\n' >&2
@@ -525,6 +546,8 @@ remote_deploy="${ROOT}/.github/scripts/remote-deploy.sh"
 	exit 1
 }
 grep -F 'browser_download_url' "${remote_deploy}" >/dev/null
+grep -F -- '--progress-bar' "${remote_deploy}" >/dev/null
+grep -F 'partial="${output}.part"' "${remote_deploy}" >/dev/null
 grep -F 'bash "${package_root}/install.sh" "${install_args[@]}"' \
 	"${remote_deploy}" >/dev/null
 if grep -F 'install.sh" platform-gateway ensure' "${remote_deploy}" >/dev/null; then

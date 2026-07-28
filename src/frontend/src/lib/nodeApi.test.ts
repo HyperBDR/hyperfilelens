@@ -100,6 +100,7 @@ describe('Data Gateway enrollment', () => {
 
     expect(result.command).toContain('TLS certificate verification is disabled')
     expect(result.command).toContain('curl -k --fail --show-error --location')
+    expect(result.command).toContain('--location --progress-bar')
     expect(result.tlsVerify).toBe(false)
   })
 

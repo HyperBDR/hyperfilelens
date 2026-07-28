@@ -375,7 +375,7 @@ function buildPosixEnrollmentInstallCommand(
   const warning = tlsVerify
     ? ''
     : "echo 'WARNING: TLS certificate verification is disabled. Use only on a trusted private network.' >&2\n"
-  return `${warning}tmp="$(mktemp /tmp/${bootstrapName}.XXXXXX)" && (\n  trap 'rm -f "$tmp"' EXIT\n  curl ${tlsOptions} --fail --show-error --location '${url}' -o "$tmp"\n  sudo bash "$tmp"\n)`
+  return `${warning}tmp="$(mktemp /tmp/${bootstrapName}.XXXXXX)" && (\n  trap 'rm -f "$tmp"' EXIT\n  curl ${tlsOptions} --fail --show-error --location --progress-bar '${url}' -o "$tmp"\n  sudo bash "$tmp"\n)`
 }
 
 /** One-liner for target host (curl pipe / download + run). Shown on deploy pages only. */

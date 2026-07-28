@@ -332,22 +332,52 @@ check_disk_capacity() {
 
 download_release_file() {
 	local url=$1 output=$2
+	local partial="${output}.part"
+	local started=${SECONDS}
+	local size_bytes size_human rate_human elapsed downloaded=0
 	local -a curl_args=(
 		-fL
+		--show-error
+		--progress-bar
 		--retry 5
 		--retry-connrefused
 		--retry-delay 2
 		--connect-timeout 20
 	)
+	rm -f -- "${partial}"
 	if [[ -n "${DOWNLOAD_PROXY_URL}" ]]; then
 		if curl "${curl_args[@]}" --proxy "${DOWNLOAD_PROXY_URL}" --noproxy '' \
-			"${url}" -o "${output}"; then
-			return 0
+			"${url}" -o "${partial}"; then
+			downloaded=1
+		else
+			printf 'WARNING: release download through the configured proxy failed; retrying directly\n' >&2
+			rm -f -- "${partial}"
 		fi
-		printf 'WARNING: release download through the configured proxy failed; retrying directly\n' >&2
-		rm -f -- "${output}"
 	fi
-	curl "${curl_args[@]}" --proxy '' "${url}" -o "${output}"
+	if [[ "${downloaded}" -eq 0 ]]; then
+		if ! curl "${curl_args[@]}" --proxy '' "${url}" -o "${partial}"; then
+			rm -f -- "${partial}"
+			return 1
+		fi
+	fi
+	mv -f -- "${partial}" "${output}"
+	size_bytes="$(wc -c <"${output}")"
+	size_human="$(awk -v bytes="${size_bytes}" 'BEGIN {
+		split("B KiB MiB GiB TiB", units, " "); value = bytes + 0; unit = 1
+		while (value >= 1024 && unit < 5) { value /= 1024; unit++ }
+		if (unit == 1) printf "%.0f %s", value, units[unit]
+		else printf "%.1f %s", value, units[unit]
+	}')"
+	elapsed=$((SECONDS - started))
+	((elapsed > 0)) || elapsed=1
+	rate_human="$(awk -v bytes="${size_bytes}" -v elapsed="${elapsed}" 'BEGIN {
+		split("B KiB MiB GiB TiB", units, " "); value = (bytes + 0) / elapsed; unit = 1
+		while (value >= 1024 && unit < 5) { value /= 1024; unit++ }
+		if (unit == 1) printf "%.0f %s/s", value, units[unit]
+		else printf "%.1f %s/s", value, units[unit]
+	}')"
+	printf '[deploy] Downloaded %s (%s in %ss, average %s)\n' \
+		"$(basename "${output}")" "${size_human}" "${elapsed}" "${rate_human}"
 }
 
 if [[ -n "${DOWNLOAD_PROXY_URL}" ]]; then

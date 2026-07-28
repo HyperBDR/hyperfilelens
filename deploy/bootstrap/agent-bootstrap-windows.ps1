@@ -17,6 +17,35 @@ function Write-HflBootstrapLog {
   Write-Host "[$ts] [$Level] $Message"
 }
 
+function Format-HflBytes {
+  param([Parameter(Mandatory = $true)][long]$Bytes)
+  $units = @('B', 'KiB', 'MiB', 'GiB', 'TiB')
+  $value = [double][Math]::Max(0, $Bytes)
+  $unit = 0
+  while ($value -ge 1024 -and $unit -lt ($units.Count - 1)) {
+    $value /= 1024
+    $unit++
+  }
+  if ($unit -eq 0) { return ('{0:N0} {1}' -f $value, $units[$unit]) }
+  return ('{0:N1} {1}' -f $value, $units[$unit])
+}
+
+function Write-HflDownloadProgress {
+  param(
+    [Parameter(Mandatory = $true)][long]$Downloaded,
+    [Parameter(Mandatory = $true)][long]$Total
+  )
+  $ts = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+  if ($Total -gt 0) {
+    $percent = [Math]::Min(100, [Math]::Round(($Downloaded * 100.0) / $Total))
+    Write-Host -NoNewline ("`r[{0}] [PROG ] Enrollment helper {1}% - {2} / {3}" -f `
+        $ts, $percent, (Format-HflBytes $Downloaded), (Format-HflBytes $Total))
+    return
+  }
+  Write-Host -NoNewline ("`r[{0}] [PROG ] Enrollment helper - {1} downloaded" -f `
+      $ts, (Format-HflBytes $Downloaded))
+}
+
 if (-not (Test-HflAdmin)) {
   Write-HflBootstrapLog "INFO " "Administrator privileges are required. Approve the UAC prompt to continue."
   $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
@@ -41,12 +70,25 @@ function Get-HflEnrollmentBinary {
     [Parameter(Mandatory = $true)][string]$OutFile
   )
   $skipCert = ($env:HFL_INSECURE_TLS -ne '0')
+  $partial = "$OutFile.part"
+  Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
+  Write-HflBootstrapLog "STEP " "Downloading HyperFileLens enrollment helper."
 
   if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-    $curlArgs = @('-fL', '-o', $OutFile, $Url)
+    $curlArgs = @(
+      '-fL', '--show-error', '--progress-bar',
+      '--retry', '3', '--retry-connrefused', '--retry-delay', '2',
+      '-o', $partial, $Url
+    )
     if ($skipCert) { $curlArgs = @('-k') + $curlArgs }
     & curl.exe @curlArgs
-    if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $OutFile)) { return }
+    if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $partial)) {
+      Move-Item -Force -LiteralPath $partial -Destination $OutFile
+      $size = (Get-Item -LiteralPath $OutFile).Length
+      Write-HflBootstrapLog " OK  " "HyperFileLens enrollment helper downloaded ($(Format-HflBytes $size))."
+      return
+    }
+    Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
     Write-HflBootstrapLog "WARN " "curl download failed (exit $LASTEXITCODE). Trying PowerShell instead."
   }
 
@@ -55,9 +97,44 @@ function Get-HflEnrollmentBinary {
     if ($skipCert) {
       [Net.ServicePointManager]::ServerCertificateValidationCallback = { [bool]1 }
     }
-    (New-Object Net.WebClient).DownloadFile($Url, $OutFile)
+    $response = $null
+    $inputStream = $null
+    $outputStream = $null
+    $total = [long]-1
+    $downloaded = [long]0
+    try {
+      $request = [Net.HttpWebRequest]::Create($Url)
+      $response = $request.GetResponse()
+      $total = $response.ContentLength
+      $inputStream = $response.GetResponseStream()
+      $outputStream = [IO.File]::Open($partial, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+      $buffer = New-Object byte[] (1024 * 1024)
+      $lastUpdate = [DateTime]::UtcNow
+      while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $outputStream.Write($buffer, 0, $read)
+        $downloaded += $read
+        $now = [DateTime]::UtcNow
+        if (($now - $lastUpdate).TotalSeconds -ge 1) {
+          Write-HflDownloadProgress -Downloaded $downloaded -Total $total
+          $lastUpdate = $now
+        }
+      }
+    }
+    finally {
+      if ($null -ne $outputStream) { $outputStream.Dispose() }
+      if ($null -ne $inputStream) { $inputStream.Dispose() }
+      if ($null -ne $response) { $response.Dispose() }
+    }
+    if ($total -ge 0 -and $downloaded -ne $total) {
+      throw "Download size mismatch: received $downloaded bytes, expected $total."
+    }
+    Write-HflDownloadProgress -Downloaded $downloaded -Total $total
+    Write-Host
+    Move-Item -Force -LiteralPath $partial -Destination $OutFile
+    Write-HflBootstrapLog " OK  " "HyperFileLens enrollment helper downloaded ($(Format-HflBytes $downloaded))."
   }
   catch {
+    Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
     Write-HflBootstrapLog "FAIL " "Failed to download the enrollment tool: $($_.Exception.Message)"
     throw
   }
@@ -96,6 +173,9 @@ try {
 finally {
   if (Test-Path -LiteralPath $bin) {
     Remove-Item -Force -LiteralPath $bin -ErrorAction SilentlyContinue
+  }
+  if (Test-Path -LiteralPath "$bin.part") {
+    Remove-Item -Force -LiteralPath "$bin.part" -ErrorAction SilentlyContinue
   }
 }
 exit $exitCode

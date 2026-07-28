@@ -3,14 +3,11 @@ package install
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"hyperfilelens/agent/internal/platform/vfs"
 )
@@ -62,36 +59,6 @@ func uninstallCommand(bundleDir string, keepData bool) (string, []string) {
 		args = append(args, "--purge-all")
 	}
 	return filepath.Join(bundleDir, "install.sh"), args
-}
-
-// DownloadURL streams url into destPath (TLS verify skipped unless HFL_INSECURE_TLS=0).
-func DownloadURL(ctx context.Context, url, destPath string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	client := &http.Client{Timeout: 30 * time.Minute}
-	if os.Getenv("HFL_INSECURE_TLS") != "0" {
-		client.Transport = insecureTransport()
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download HTTP %s", resp.Status)
-	}
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-		return err
-	}
-	f, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
 }
 
 // ExtractArchive unpacks tar.gz (Unix) or zip (Windows) into destDir.

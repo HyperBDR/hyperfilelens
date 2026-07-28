@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
+
+	"hyperfilelens/agent/internal/model"
 )
 
 const (
@@ -107,12 +109,19 @@ type SummaryInfo struct {
 	Console     string
 }
 
-func printEnrollmentContext(consoleURL, orgKey, role, platform, hostname string) {
-	logInfo("Starting HyperFileLens agent enrollment.")
+func printEnrollmentContext(
+	consoleURL string,
+	orgKey string,
+	role model.Role,
+	platform string,
+	hostname string,
+) {
+	displayRole := roleDisplayName(role)
+	logInfo("Starting HyperFileLens " + displayRole + " enrollment.")
 	parts := []string{
 		"Console: " + consoleURL,
 		"Organization: " + orgKey,
-		"Role: " + role,
+		"Role: " + displayRole,
 		"Platform: " + platform,
 	}
 	if hostname != "" {
