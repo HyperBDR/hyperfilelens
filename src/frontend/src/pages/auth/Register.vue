@@ -609,7 +609,7 @@ onUnmounted(() => {
             <span>{{ formItems.email.value }}</span>
           </div>
           <p class="register-success-next">{{ t('register.registerSuccessNext') }}</p>
-          <button type="button" class="register-success-btn" @click="goLogin()">
+          <button type="button" class="register-success-btn btn-primary" @click="goLogin()">
             {{ t('register.registerSuccessLogin') }}
           </button>
         </div>
@@ -939,26 +939,9 @@ onUnmounted(() => {
 .submit-btn {
   width: 100%;
   height: 42px !important;
-  background: #4A85C6;
-  border: none;
   border-radius: 21px;
-  color: #fff;
   font-size: 15px;
   font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: #5A95D6;
-}
-
-.submit-btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
 }
 
 .register-success-overlay {
@@ -1046,18 +1029,10 @@ onUnmounted(() => {
 .register-success-btn {
   width: 100%;
   height: 40px;
-  border: none;
   border-radius: 21px;
-  background: #4a85c6;
-  color: #fff;
   font-size: 15px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
-}
-
-.register-success-btn:hover {
-  background: #5a95d6;
 }
 
 .auth-success-fade-enter-active,

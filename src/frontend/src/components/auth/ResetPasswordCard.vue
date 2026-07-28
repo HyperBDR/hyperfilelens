@@ -793,26 +793,9 @@ onUnmounted(() => {
 .submit-btn {
   width: 100%;
   height: 42px !important;
-  background: #4A85C6;
-  border: none;
   border-radius: 21px;
-  color: #fff;
   font-size: 15px;
   font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: #5A95D6;
-}
-
-.submit-btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
 }
 
 .submit-btn--success {
