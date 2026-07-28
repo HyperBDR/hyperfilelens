@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from django.http import FileResponse, Http404
+from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -251,6 +252,7 @@ class PlatformOpsPlatformIntegrationsView(APIView):
 
     def get(self, request):
         health = sl_client.ping(timeout=3)
+        checked_at = timezone.now().isoformat()
         return Response(
             {
                 "integrations": [
@@ -259,12 +261,15 @@ class PlatformOpsPlatformIntegrationsView(APIView):
                         "name": "SourceLens",
                         "category": "AI and data services",
                         "mode": lens_deploy.sourcelens_mode(),
+                        "version": lens_deploy.sourcelens_version(),
                         "base_url": lens_deploy.lens_base_url(),
                         "gateway_base_url": lens_deploy.lens_gateway_base_url(),
+                        "console_url": lens_deploy.sourcelens_console_url(),
                         "configured": bool(health.get("configured")),
                         "reachable": bool(health.get("reachable")),
                         "authenticated": bool(health.get("authenticated")),
                         "managed_by": "deployment",
+                        "checked_at": checked_at,
                     }
                 ]
             }

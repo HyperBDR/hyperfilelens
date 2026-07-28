@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 from project.settings.env import env_int, env_str
 
 # Public HTTPS path used by bundled SourceLens Data Gateways.
@@ -15,6 +17,39 @@ def lens_base_url() -> str:
 def sourcelens_mode() -> str:
     mode = env_str("SOURCELENS_MODE", "bundled").strip().lower()
     return mode if mode in {"bundled", "external"} else "bundled"
+
+
+def sourcelens_console_url() -> str:
+    """Return the browser-facing SourceLens administration console URL."""
+    explicit = env_str("SOURCELENS_CONSOLE_URL", "").rstrip("/")
+    if explicit:
+        return explicit
+
+    if sourcelens_mode() == "external":
+        return lens_base_url()
+
+    frontend = env_str("FRONTEND_URL", "").rstrip("/")
+    parsed = urlsplit(frontend)
+    if not parsed.scheme or not parsed.hostname:
+        return ""
+
+    hostname = parsed.hostname
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    port = env_int("SOURCELENS_CONSOLE_PORT", 11445)
+    if port < 1 or port > 65535:
+        port = 11445
+    return urlunsplit((parsed.scheme, f"{hostname}:{port}", "", "", ""))
+
+
+def sourcelens_version() -> str:
+    """Return the deployment-declared SourceLens release, when available."""
+    explicit = env_str("SOURCELENS_VERSION", "")
+    if explicit:
+        return explicit
+    if sourcelens_mode() == "bundled":
+        return env_str("SOURCELENS_GIT_REF", "")
+    return ""
 
 
 def lens_gateway_base_url() -> str:

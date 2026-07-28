@@ -11,6 +11,18 @@ vi.mock('vue-i18n', () => ({
 }))
 
 describe('usePlatformOpsSideNav', () => {
+  it('keeps SourceLens administration under Platform Integrations only', () => {
+    const menus = usePlatformOpsSideNav().value
+    const items = menus.flatMap((item) => item.children || [item])
+
+    expect(
+      items.some((item) => item.to === '/platform-ops/engine/data-connections'),
+    ).toBe(false)
+    expect(
+      items.filter((item) => item.to === '/platform-ops/platform/integrations'),
+    ).toHaveLength(1)
+  })
+
   it('places Storage Providers under the non-navigable Storage group', () => {
     const menus = usePlatformOpsSideNav().value
     const storageGroup = menus.find(

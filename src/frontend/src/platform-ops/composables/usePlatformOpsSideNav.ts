@@ -129,11 +129,6 @@ export function usePlatformOpsSideNav() {
           icon: Server,
         },
         {
-          label: t('platformOps.nav.engineConnections'),
-          to: '/platform-ops/engine/data-connections',
-          icon: Radio,
-        },
-        {
           label: t('platformOps.nav.engineKnowledge'),
           to: '/platform-ops/engine/knowledge-base',
           icon: BookOpen,

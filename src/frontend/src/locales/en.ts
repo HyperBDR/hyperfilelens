@@ -3635,7 +3635,6 @@ export const en = {
       groupEngine: 'AI Engine',
       engineModels: 'AI Models',
       engineUsage: 'Usage',
-      engineConnections: 'Data Connections',
       engineKnowledge: 'Knowledge Sources',
       engineAssistants: 'Assistants',
       engineSkills: 'Skills',

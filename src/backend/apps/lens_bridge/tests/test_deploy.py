@@ -5,6 +5,64 @@ from apps.lens_bridge import deploy
 
 
 class LensDeployUrlTest(unittest.TestCase):
+    @patch("apps.lens_bridge.deploy.env_int", return_value=11445)
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_bundled_console_url_uses_frontend_host_and_console_port(
+        self, env_str, _env_int
+    ):
+        values = {
+            "SOURCELENS_CONSOLE_URL": "",
+            "SOURCELENS_MODE": "bundled",
+            "FRONTEND_URL": "https://console.example.com:11443",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.sourcelens_console_url(),
+            "https://console.example.com:11445",
+        )
+
+    @patch("apps.lens_bridge.deploy.env_int", return_value=11445)
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_bundled_console_url_supports_ipv6(self, env_str, _env_int):
+        values = {
+            "SOURCELENS_CONSOLE_URL": "",
+            "SOURCELENS_MODE": "bundled",
+            "FRONTEND_URL": "https://[2001:db8::1]:11443",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.sourcelens_console_url(),
+            "https://[2001:db8::1]:11445",
+        )
+
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_external_console_url_uses_explicit_service_url(self, env_str):
+        values = {
+            "SOURCELENS_CONSOLE_URL": "",
+            "SOURCELENS_MODE": "external",
+            "LENS_BASE_URL": "https://sourcelens.example.com/",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.sourcelens_console_url(),
+            "https://sourcelens.example.com",
+        )
+
+    @patch("apps.lens_bridge.deploy.env_str")
+    def test_explicit_console_url_takes_precedence(self, env_str):
+        values = {
+            "SOURCELENS_CONSOLE_URL": "https://lens-console.example.com/admin/",
+        }
+        env_str.side_effect = lambda key, default="": values.get(key, default)
+
+        self.assertEqual(
+            deploy.sourcelens_console_url(),
+            "https://lens-console.example.com/admin",
+        )
+
     @patch("apps.lens_bridge.deploy.env_str")
     def test_lens_gateway_base_url_defaults_to_frontend_sourcelens(self, env_str):
         def side_effect(key, default=""):
