@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { api, apiErrorMessage } from '../../lib/api'
 import {
   createStorageRepository,
+  storageRepositoryS3BucketMode,
   storageRepositoryCreateErrorMessage,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
@@ -91,6 +92,7 @@ const quota = ref(0)
 const enableQuotaAlert = ref(false)
 const quotaAlertThreshold = ref(80)
 let bucketSelectLoadAttemptAt = 0
+let authValidationRevision = 0
 
 /* ---------- computed ---------- */
 const currentRegions = computed<RegionPreset[]>(() => {
@@ -267,7 +269,12 @@ function onPlatformChange(p: StoragePlatformCapability) {
     })
     return
   }
+  const platformChanged = storagePlatform.value !== p
   storagePlatform.value = p
+  if (platformChanged) {
+    accessKeyId.value = ''
+    accessKeySecret.value = ''
+  }
   s3UrlStyle.value = defaultS3UrlStyle(p)
   useTls.value = true
   regionSearch.value = ''
@@ -299,9 +306,18 @@ async function loadProviderCatalog() {
 onMounted(loadProviderCatalog)
 
 function resetAuthValidation() {
+  authValidationRevision += 1
   authStatus.value = 'idle'
   authError.value = ''
+  refreshingBuckets.value = false
   bucketOptions.value = []
+  bucketSelectLoadAttemptAt = 0
+}
+
+function resetBucketSelectionForContext() {
+  bucketOptions.value = []
+  bucketSelectLoadAttemptAt = 0
+  if (bucketMode.value === 'existing') bucket.value = ''
 }
 
 function setBucketMode(mode: 'existing' | 'new') {
@@ -359,6 +375,7 @@ async function validateS3Auth(
     bucketCount = 3,
     updateBuckets = false,
   } = options
+  const validationRevision = authValidationRevision
   refreshingBuckets.value = true
   authStatus.value = 'validating'
   authError.value = ''
@@ -369,18 +386,20 @@ async function validateS3Auth(
       method: 'POST',
       body: JSON.stringify(buildS3ValidationPayload(bucketCount)),
     })
+    if (validationRevision !== authValidationRevision) return false
     if (updateBuckets) bucketOptions.value = extractBucketOptions(raw)
     authStatus.value = 'valid'
     if (showSuccess) ElMessage.success({ message: t('addS3Repo.authValid'), grouping: true })
     return true
   } catch (err) {
+    if (validationRevision !== authValidationRevision) return false
     authStatus.value = 'invalid'
     authError.value = apiErrorMessage(err, t('addS3Repo.authInvalid'))
     if (updateBuckets) bucketOptions.value = []
     ElMessage.error({ message: authError.value, grouping: true })
     return false
   } finally {
-    refreshingBuckets.value = false
+    if (validationRevision === authValidationRevision) refreshingBuckets.value = false
   }
 }
 
@@ -402,6 +421,11 @@ function loadBucketsForSelect() {
     updateBuckets: true,
   })
 }
+
+watch(
+  [storagePlatform, platformRegionKey, endpoint, region],
+  resetBucketSelectionForContext,
+)
 
 watch(
   [storagePlatform, platformRegionKey, endpoint, region, accessKeyId, accessKeySecret, s3UrlStyle, useTls],
@@ -463,6 +487,7 @@ function buildCreatePayload() {
     repo_type: 's3',
     s3_platform: normalizeS3Platform(storagePlatform.value),
     s3_bucket: bucket.value.trim(),
+    s3_bucket_mode: storageRepositoryS3BucketMode(bucketMode.value),
     config: {
       region: region.value.trim() || undefined,
       endpoint: normalizeS3EndpointInput(endpoint.value) || undefined,

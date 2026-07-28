@@ -504,6 +504,7 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             use_tls = bool(region["use_tls"])
         try:
             buckets = validate_s3_connection(
+                platform=platform,
                 endpoint=endpoint,
                 region=region_id,
                 access_key_id=access_key_id,

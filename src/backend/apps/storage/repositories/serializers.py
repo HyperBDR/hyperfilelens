@@ -105,6 +105,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "credential_hint",
             "s3_platform",
             "s3_bucket",
+            "s3_bucket_mode",
             "capacity_bytes",
             "estimated_usage_bytes",
             "physical_usage_bytes",
@@ -173,6 +174,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             "credential_payload",
             "s3_platform",
             "s3_bucket",
+            "s3_bucket_mode",
             "nas_protocol",
             "bind_node_type",
             "bind_node_id",
@@ -181,6 +183,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             "config": {"required": False},
             "s3_platform": {"required": False, "allow_null": True},
             "s3_bucket": {"required": False, "allow_blank": True, "allow_null": True},
+            "s3_bucket_mode": {"required": False},
             "nas_protocol": {"required": False, "allow_null": True},
             "bind_node_type": {"required": False, "allow_null": True},
             "bind_node_id": {"required": False, "allow_null": True},
@@ -219,6 +222,8 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 locked_errors["s3_platform"] = "S3 platform cannot be modified."
             if "s3_bucket" in attrs:
                 locked_errors["s3_bucket"] = "S3 bucket cannot be modified."
+            if "s3_bucket_mode" in attrs:
+                locked_errors["s3_bucket_mode"] = "S3 bucket mode cannot be modified."
             incoming_config = attrs.get("config") or {}
             if isinstance(incoming_config, dict):
                 for field in (
@@ -250,6 +255,10 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"repo_type": "Unsupported repository type."})
 
         if repo_type == Repository.Type.S3:
+            if instance is None and "s3_bucket_mode" not in attrs:
+                raise serializers.ValidationError(
+                    {"s3_bucket_mode": "S3 bucket mode is required."}
+                )
             s3_platform = str(s3_platform or "").strip().lower()
             if "s3_platform" in attrs:
                 attrs["s3_platform"] = s3_platform
@@ -258,6 +267,11 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             self._validate_nas(config, credential_payload, nas_protocol, bind_node_type, bind_node_id)
         elif repo_type == Repository.Type.PROXY_FS:
             self._validate_proxy_fs(config, bind_node_type, bind_node_id)
+
+        if repo_type != Repository.Type.S3 and "s3_bucket_mode" in attrs:
+            raise serializers.ValidationError(
+                {"s3_bucket_mode": "S3 bucket mode is only accepted for S3 repositories."}
+            )
 
         attrs["config"] = config
         return attrs
@@ -449,6 +463,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             config=validated_data.get("config") or {},
             s3_platform=validated_data.get("s3_platform"),
             s3_bucket=validated_data.get("s3_bucket"),
+            s3_bucket_mode=validated_data.get("s3_bucket_mode"),
             nas_protocol=validated_data.get("nas_protocol"),
             bind_node_type=validated_data.get("bind_node_type"),
             bind_node_id=validated_data.get("bind_node_id"),

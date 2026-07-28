@@ -3,7 +3,11 @@ from unittest import mock
 from botocore.exceptions import ClientError
 from django.test import SimpleTestCase
 
-from apps.storage.services.internal.s3_client import S3ClientError, delete_s3_prefix
+from apps.storage.services.internal.s3_client import (
+    S3ClientError,
+    delete_s3_bucket_if_empty,
+    delete_s3_prefix,
+)
 
 
 class _Paginator:
@@ -164,3 +168,79 @@ class S3PrefixCleanupTests(SimpleTestCase):
         self.assertEqual(result["deleted_objects"], 1)
         self.assertEqual(result["deleted_versions"], 0)
         self.assertEqual(result["deleted_markers"], 0)
+
+
+class S3BucketCleanupTests(SimpleTestCase):
+    def _call(self):
+        return delete_s3_bucket_if_empty(
+            endpoint="https://s3.example.test",
+            region="us-east-1",
+            bucket="bucket",
+            access_key_id="key",
+            secret_access_key="secret",
+        )
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_deletes_bucket_when_all_full_bucket_checks_are_empty(self, build_client):
+        client = mock.Mock()
+        client.list_objects_v2.return_value = {}
+        client.list_object_versions.return_value = {}
+        client.list_multipart_uploads.return_value = {}
+        build_client.return_value = client
+
+        result = self._call()
+
+        self.assertEqual(result["status"], "deleted")
+        client.delete_bucket.assert_called_once_with(Bucket="bucket")
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_skips_bucket_with_objects_outside_repository_prefix(self, build_client):
+        client = mock.Mock()
+        client.list_objects_v2.return_value = {"Contents": [{"Key": "other/data"}]}
+        build_client.return_value = client
+
+        result = self._call()
+
+        self.assertEqual(result["status"], "skipped_not_empty")
+        self.assertEqual(result["reason"], "objects_present")
+        client.delete_bucket.assert_not_called()
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_bucket_not_empty_race_is_recorded_as_skip(self, build_client):
+        client = mock.Mock()
+        client.list_objects_v2.return_value = {}
+        client.list_object_versions.return_value = {}
+        client.list_multipart_uploads.return_value = {}
+        client.delete_bucket.side_effect = ClientError(
+            {
+                "Error": {"Code": "BucketNotEmpty", "Message": "not empty"},
+                "ResponseMetadata": {"HTTPStatusCode": 409},
+            },
+            "DeleteBucket",
+        )
+        build_client.return_value = client
+
+        result = self._call()
+
+        self.assertEqual(result["status"], "skipped_not_empty")
+        self.assertEqual(result["reason"], "bucket_became_non_empty")
+
+    @mock.patch("apps.storage.services.internal.s3_client._client")
+    def test_delete_error_is_recorded_without_raising(self, build_client):
+        client = mock.Mock()
+        client.list_objects_v2.return_value = {}
+        client.list_object_versions.return_value = {}
+        client.list_multipart_uploads.return_value = {}
+        client.delete_bucket.side_effect = ClientError(
+            {
+                "Error": {"Code": "AccessDenied", "Message": "denied"},
+                "ResponseMetadata": {"HTTPStatusCode": 403},
+            },
+            "DeleteBucket",
+        )
+        build_client.return_value = client
+
+        result = self._call()
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("AccessDenied", result["reason"])

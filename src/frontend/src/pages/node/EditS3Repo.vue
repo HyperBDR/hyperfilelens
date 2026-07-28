@@ -187,7 +187,6 @@ const quotaThresholdValid = computed(() => {
 })
 
 const urlStyleOptions = computed(() => [
-  { value: 'auto', label: t('addS3Repo.s3UrlStyleAuto') },
   { value: 'virtual_hosted', label: t('addS3Repo.s3UrlStyleVirtualHosted') },
   { value: 'path', label: t('addS3Repo.s3UrlStylePath') },
 ])
@@ -224,7 +223,8 @@ function hydrate(data: StorageRepository) {
   endpoint.value = (cfg.endpoint as string) || ''
   prefix.value = (cfg.prefix as string) || ''
   region.value = (cfg.region as string) || ''
-  s3UrlStyle.value = normalizeS3UrlStyle(cfg.s3_url_style, platform.value)
+  const loadedUrlStyle = normalizeS3UrlStyle(cfg.s3_url_style, platform.value)
+  s3UrlStyle.value = loadedUrlStyle === 'auto' ? 'virtual_hosted' : loadedUrlStyle
   useTls.value = cfg.use_tls !== false
   quotaGb.value = Number(cfg.quota_gb || 0)
   quotaAlertEnabled.value = Boolean(cfg.quota_alert_enabled)

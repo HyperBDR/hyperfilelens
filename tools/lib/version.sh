@@ -19,8 +19,13 @@ normalize_release_version() {
 	printf '%s' "${version}"
 }
 
+lowercase() {
+	printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 normalize_main_artifact_id() {
-	local artifact_id="${1,,}"
+	local artifact_id
+	artifact_id="$(lowercase "$1")"
 	[[ "${artifact_id}" =~ ^main-[0-9a-f]{7}$ ]] \
 		|| version_die "invalid main build identifier: ${1} (expected main-<7 lowercase hex>)" 2
 	printf '%s' "${artifact_id}"
@@ -28,7 +33,7 @@ normalize_main_artifact_id() {
 
 normalize_artifact_id() {
 	local value="${1:-}"
-	if [[ "${value,,}" == main-* ]]; then
+	if [[ "$(lowercase "${value}")" == main-* ]]; then
 		normalize_main_artifact_id "${value}"
 		return
 	fi
@@ -82,7 +87,7 @@ resolve_commit_full() {
 resolve_commit7() {
 	local full commit7
 	full="$(resolve_commit_full "${1:-}")"
-	commit7="${full,,}"
+	commit7="$(lowercase "${full}")"
 	[[ "${commit7}" =~ ^[0-9a-f]{7,40}$ ]] || version_die "invalid git commit: ${full}"
 	printf '%.7s' "${commit7}"
 }
@@ -90,7 +95,7 @@ resolve_commit7() {
 release_package_basename_for_version() {
 	local version commit7
 	version="$(normalize_artifact_id "$1")" || return $?
-	commit7="${2,,}"
+	commit7="$(lowercase "$2")"
 	[[ "${commit7}" =~ ^[0-9a-f]{7}$ ]] \
 		|| version_die "invalid short git commit: ${2} (expected 7 hexadecimal characters)" 2
 	if [[ "${version}" == main-* ]]; then

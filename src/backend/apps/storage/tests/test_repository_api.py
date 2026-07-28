@@ -115,6 +115,7 @@ class StorageRepositoryApiTests(TestCase):
             "repo_type": "s3",
             "s3_platform": "aws",
             "s3_bucket": "hfl-primary",
+            "s3_bucket_mode": "existing",
             "config": {
                 "region": "us-east-1",
                 "endpoint": "https://s3.amazonaws.com",
@@ -125,6 +126,23 @@ class StorageRepositoryApiTests(TestCase):
                 "use_tls": True,
             },
         }
+
+    def test_create_s3_repository_requires_bucket_mode(self):
+        payload = self._s3_payload()
+        payload.pop("s3_bucket_mode")
+
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(
+            "s3_bucket_mode",
+            {item["field"] for item in response.data["data"]["errors"]},
+        )
 
     def test_create_s3_repository_requires_object_prefix(self):
         payload = self._s3_payload()
@@ -985,6 +1003,7 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(response.data["count"], 3)
         self.assertEqual(response.data["total_count"], 4)
         validate_s3_connection.assert_called_once_with(
+            platform="custom",
             endpoint="s3.amazonaws.com",
             region="us-east-1",
             access_key_id="AKIA_TEST",
@@ -1026,6 +1045,7 @@ class StorageRepositoryApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         validate_s3_connection.assert_called_once_with(
+            platform="aliyun",
             endpoint="oss-cn-hangzhou.aliyuncs.com",
             region="cn-hangzhou",
             access_key_id="AKIA_TEST",
