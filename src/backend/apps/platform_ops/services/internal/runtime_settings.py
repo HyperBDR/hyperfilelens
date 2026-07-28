@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.exceptions import ImproperlyConfigured
+from django.db import DatabaseError, transaction
 
 from apps.platform_ops.models.platform_runtime_setting import PlatformRuntimeSetting
 from apps.storage.crypto import decrypt_text, encrypt_text
+
+logger = logging.getLogger(__name__)
 
 KEY_EMAIL_BACKEND = "email.backend"
 KEY_EMAIL_HOST = "email.host"
@@ -73,6 +80,16 @@ EMAIL_RUNTIME_KEYS = (
     SECRET_KEY_EMAIL_PASSWORD,
     KEY_EMAIL_FROM,
 )
+
+
+@dataclass(frozen=True)
+class GoogleSocialAppSyncResult:
+    """Describe one idempotent django-allauth Google application sync."""
+
+    configured: bool
+    app_id: int | None = None
+    site_domain: str = ""
+    removed_duplicates: int = 0
 
 
 def invalidate_runtime_settings_cache() -> None:
@@ -342,6 +359,29 @@ def google_oauth_enabled() -> bool:
     return bool(policy_enabled and google_client_id() and google_client_secret())
 
 
+def google_oauth_ready() -> bool:
+    """Return whether one site-bound Google SocialApp is ready for login."""
+    if not google_oauth_enabled():
+        return False
+    try:
+        from allauth.socialaccount.models import SocialApp
+        from django.contrib.sites.models import Site
+
+        site = Site.objects.get_current()
+        apps = list(
+            SocialApp.objects.filter(provider="google", sites=site)
+            .distinct()
+            .values_list("client_id", "secret")[:2]
+        )
+        return apps == [(google_client_id(), google_client_secret())]
+    except (DatabaseError, ImproperlyConfigured, Site.DoesNotExist) as exc:
+        logger.warning(
+            "Google OAuth readiness check failed (%s)",
+            type(exc).__name__,
+        )
+        return False
+
+
 def _settings_email_connection_kwargs() -> dict[str, Any]:
     """Return process environment-backed Django mail settings without DB overlays."""
     return {
@@ -516,25 +556,72 @@ def langfuse_enabled() -> bool:
     return _parse_bool(_env_str("LANGFUSE_ENABLED"), default=False)
 
 
-def sync_google_social_app() -> None:
-    """Keep django-allauth SocialApp in sync with runtime Google OAuth credentials."""
+def _google_site_domain() -> str:
+    """Return the canonical django.contrib.sites domain for the tenant URL."""
+    from common.deploy.site import tenant_public_url
+
+    public_url = tenant_public_url()
+    parsed = urlsplit(public_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("FRONTEND_URL must be an absolute HTTP(S) URL")
+    return parsed.netloc
+
+
+def sync_google_social_app() -> GoogleSocialAppSyncResult:
+    """Converge runtime Google OAuth credentials into one site-bound SocialApp."""
     client_id = google_client_id()
     secret = google_client_secret()
     if not client_id or not secret:
-        return
-    try:
-        from allauth.socialaccount.models import SocialApp
-        from django.contrib.sites.models import Site
+        return GoogleSocialAppSyncResult(configured=False)
 
-        site = Site.objects.get_current()
-        app, _created = SocialApp.objects.update_or_create(
-            provider="google",
-            defaults={
-                "name": "Google",
-                "client_id": client_id,
-                "secret": secret,
-            },
+    from allauth.socialaccount.models import SocialApp
+    from django.contrib.sites.models import Site
+
+    site_domain = _google_site_domain()
+    site_id = int(getattr(settings, "SITE_ID", 1))
+    with transaction.atomic():
+        site, _created = Site.objects.select_for_update().get_or_create(
+            pk=site_id,
+            defaults={"domain": site_domain, "name": site_domain},
         )
-        app.sites.add(site)
-    except Exception:
-        pass
+        site_updates: list[str] = []
+        if site.domain != site_domain:
+            site.domain = site_domain
+            site_updates.append("domain")
+        if site.name != site_domain:
+            site.name = site_domain
+            site_updates.append("name")
+        if site_updates:
+            site.save(update_fields=site_updates)
+
+        existing = list(
+            SocialApp.objects.select_for_update()
+            .filter(provider="google")
+            .order_by("pk")
+        )
+        app = next(
+            (candidate for candidate in existing if candidate.client_id == client_id),
+            existing[0] if existing else None,
+        )
+        if app is None:
+            app = SocialApp(provider="google")
+        app.name = "Google"
+        app.client_id = client_id
+        app.secret = secret
+        app.save()
+        app.sites.set([site])
+
+        duplicate_ids = [
+            candidate.pk
+            for candidate in existing
+            if candidate.pk is not None and candidate.pk != app.pk
+        ]
+        if duplicate_ids:
+            SocialApp.objects.filter(pk__in=duplicate_ids).delete()
+
+    return GoogleSocialAppSyncResult(
+        configured=True,
+        app_id=app.pk,
+        site_domain=site_domain,
+        removed_duplicates=len(duplicate_ids),
+    )

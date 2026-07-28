@@ -3,8 +3,10 @@ from __future__ import annotations
 import io
 from unittest.mock import patch
 
+from allauth.socialaccount.models import SocialApp
+from django.contrib.sites.models import Site
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.platform_ops.models.platform_runtime_setting import PlatformRuntimeSetting
 from apps.platform_ops.services.internal.runtime_settings import (
@@ -26,6 +28,7 @@ from apps.platform_ops.services.internal.runtime_settings import (
 )
 
 
+@override_settings(FRONTEND_URL="https://127.0.0.1:11443", SITE_ID=1)
 class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
     @staticmethod
     def complete_env(**overrides: str) -> dict[str, str]:
@@ -52,16 +55,13 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
     def run_command(self, env: dict[str, str]):
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with patch.dict("os.environ", env, clear=False), patch(
-            "apps.platform_ops.management.commands."
-            "ensure_deployment_identity_settings.sync_google_social_app"
-        ) as sync_social_app:
+        with patch.dict("os.environ", env, clear=False):
             call_command(
                 "ensure_deployment_identity_settings",
                 stdout=stdout,
                 stderr=stderr,
             )
-        return stdout.getvalue(), stderr.getvalue(), sync_social_app
+        return stdout.getvalue(), stderr.getvalue()
 
     def test_applies_configuration_idempotently_without_echoing_secret(self):
         env = self.complete_env(
@@ -70,8 +70,8 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
             EMAIL_HOST_PASSWORD="never-print-smtp-secret",
         )
 
-        first_stdout, first_stderr, first_sync = self.run_command(env)
-        second_stdout, second_stderr, second_sync = self.run_command(env)
+        first_stdout, first_stderr = self.run_command(env)
+        second_stdout, second_stderr = self.run_command(env)
 
         self.assertEqual(
             PlatformRuntimeSetting.objects.filter(
@@ -102,8 +102,13 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
         ):
             self.assertNotIn(env[secret_name], output)
         self.assertIn("HFL_IDENTITY_STATUS=applied", second_stdout)
-        first_sync.assert_called_once_with()
-        second_sync.assert_called_once_with()
+        self.assertEqual(SocialApp.objects.filter(provider="google").count(), 1)
+        app = SocialApp.objects.get(provider="google")
+        self.assertEqual(app.client_id, env["GOOGLE_CLIENT_ID"])
+        self.assertEqual(list(app.sites.values_list("pk", flat=True)), [1])
+        site = Site.objects.get(pk=1)
+        self.assertEqual(site.domain, "127.0.0.1:11443")
+        self.assertEqual(site.name, "127.0.0.1:11443")
 
     def test_invalid_google_configuration_warns_and_preserves_existing_values(self):
         existing = self.complete_env(
@@ -113,7 +118,7 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
         )
         self.run_command(existing)
 
-        stdout, stderr, sync_social_app = self.run_command(
+        stdout, stderr = self.run_command(
             self.complete_env(
                 GOOGLE_CLIENT_ID="invalid-client",
                 GOOGLE_CLIENT_SECRET="replacement-secret",
@@ -124,10 +129,39 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
         self.assertEqual(google_client_secret(), existing["GOOGLE_CLIENT_SECRET"])
         self.assertIn("HFL_IDENTITY_STATUS=warning", stdout)
         self.assertIn("preserved the installed Google settings", stderr)
-        sync_social_app.assert_not_called()
+        self.assertEqual(SocialApp.objects.get(provider="google").client_id, existing["GOOGLE_CLIENT_ID"])
+
+    def test_google_sync_failure_warns_and_preserves_existing_values(self):
+        existing = self.complete_env(
+            GOOGLE_CLIENT_ID="123-existing.apps.googleusercontent.com",
+            GOOGLE_CLIENT_SECRET="existing-secret",
+        )
+        self.run_command(existing)
+
+        with patch(
+            "apps.platform_ops.management.commands."
+            "ensure_deployment_identity_settings.sync_google_social_app",
+            side_effect=ValueError("invalid public URL"),
+        ):
+            stdout, stderr = self.run_command(
+                self.complete_env(
+                    GOOGLE_CLIENT_ID="123-replacement.apps.googleusercontent.com",
+                    GOOGLE_CLIENT_SECRET="replacement-secret",
+                )
+            )
+
+        self.assertEqual(google_client_id(), existing["GOOGLE_CLIENT_ID"])
+        self.assertEqual(google_client_secret(), existing["GOOGLE_CLIENT_SECRET"])
+        self.assertEqual(
+            SocialApp.objects.get(provider="google").client_id,
+            existing["GOOGLE_CLIENT_ID"],
+        )
+        self.assertIn("HFL_IDENTITY_STATUS=warning", stdout)
+        self.assertIn("Google OAuth synchronization failed (ValueError)", stderr)
+        self.assertNotIn("replacement-secret", stdout + stderr)
 
     def test_production_policy_disables_email_signup_and_enables_google(self):
-        stdout, _stderr, _sync = self.run_command(
+        stdout, _stderr = self.run_command(
             self.complete_env(
                 HFL_EMAIL_SIGNUP_ENABLED="false",
                 GOOGLE_CLIENT_ID="6436338978-prod.apps.googleusercontent.com",
@@ -148,7 +182,7 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
         )
         self.run_command(existing)
 
-        stdout, stderr, _sync = self.run_command(
+        stdout, stderr = self.run_command(
             self.complete_env(
                 TURNSTILE_ENABLED="true",
                 TURNSTILE_SITE_KEY="replacement-site",
@@ -169,7 +203,7 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
         )
         self.run_command(existing)
 
-        stdout, stderr, _sync = self.run_command(
+        stdout, stderr = self.run_command(
             self.complete_env(
                 EMAIL_HOST="smtp.replacement.example.com",
                 EMAIL_PORT="invalid",
@@ -188,3 +222,31 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
         self.assertIn("HFL_IDENTITY_STATUS=warning", stdout)
         self.assertIn("preserved the installed email configuration", stderr)
         self.assertNotIn("replacement-smtp-secret", stdout + stderr)
+
+    def test_converges_legacy_google_duplicates_to_matching_application(self):
+        site = Site.objects.get_current()
+        legacy = SocialApp.objects.create(
+            provider="google",
+            name="Legacy Google",
+            client_id="123-legacy.apps.googleusercontent.com",
+            secret="legacy-secret",
+        )
+        desired = SocialApp.objects.create(
+            provider="google",
+            name="Desired Google",
+            client_id="123-example.apps.googleusercontent.com",
+            secret="stale-secret",
+        )
+        legacy.sites.add(site)
+        desired.sites.add(site)
+
+        stdout, stderr = self.run_command(self.complete_env())
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(SocialApp.objects.filter(provider="google").count(), 1)
+        remaining = SocialApp.objects.get(provider="google")
+        self.assertEqual(remaining.pk, desired.pk)
+        self.assertEqual(remaining.name, "Google")
+        self.assertEqual(remaining.secret, "google-test-secret")
+        self.assertEqual(list(remaining.sites.values_list("pk", flat=True)), [1])
+        self.assertIn("Google OAuth duplicate applications removed: 1", stdout)

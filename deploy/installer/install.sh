@@ -2104,6 +2104,44 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	ok "Installer-managed local platform Gateway is ready"
 }
 
+sync_optional_identity_settings() {
+	step "Synchronizing optional identity and email settings"
+	local output command_status
+	set +e
+	output="$(
+		compose_in_root exec -T api \
+			python manage.py ensure_deployment_identity_settings 2>&1
+	)"
+	command_status=$?
+	set -e
+	if [[ -n "${output}" ]]; then
+		printf '%s\n' "${output}"
+	fi
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Optional identity or email settings could not be synchronized; core services remain available"
+		return 0
+	fi
+	if grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
+		warn "Invalid optional identity or email settings were preserved"
+	else
+		ok "Optional identity and email settings synchronized"
+	fi
+
+	set +e
+	output="$(
+		compose_in_root exec -T api \
+			python manage.py check_google_oauth_readiness 2>&1
+	)"
+	command_status=$?
+	set -e
+	if [[ -n "${output}" ]]; then
+		printf '%s\n' "${output}"
+	fi
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Google OAuth local route or generated callback is not ready; core services remain available"
+	fi
+}
+
 # --- Commands ---
 
 cmd_install() {
@@ -2177,6 +2215,7 @@ cmd_install() {
 	compose_in_root up -d --no-build --remove-orphans
 	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
+	sync_optional_identity_settings
 	ensure_local_platform_gateway
 
 	step "[6/6] Done"
@@ -2211,6 +2250,7 @@ cmd_start() {
 	compose_in_root up -d --no-build --remove-orphans
 	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its startup health gate"
+	sync_optional_identity_settings
 	log "Services started"
 	compose_in_root ps
 }
@@ -2920,6 +2960,7 @@ cmd_upgrade() {
 	compose_in_root up -d --no-build --remove-orphans
 	wait_for_hfl_health || die "HyperFileLens failed its post-upgrade health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-upgrade health gate"
+	sync_optional_identity_settings
 	ensure_local_platform_gateway
 	UPGRADE_RECOVERY_ARMED=0
 	prune_old_managed_image_refs

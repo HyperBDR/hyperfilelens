@@ -790,6 +790,51 @@ Notes
 EOF
 }
 
+sync_optional_identity_settings() {
+	local api_container health attempt output command_status
+	for ((attempt = 1; attempt <= 90; attempt++)); do
+		api_container="$(compose ps -q api 2>/dev/null || true)"
+		health=""
+		if [[ -n "${api_container}" ]]; then
+			health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${api_container}" 2>/dev/null || true)"
+		fi
+		[[ "${health}" == "healthy" ]] && break
+		sleep 1
+	done
+	if [[ "${health}" != "healthy" ]]; then
+		warn "Skipping optional identity settings sync because the API is not healthy yet"
+		return 0
+	fi
+
+	log "Synchronizing optional identity and email settings"
+	set +e
+	output="$(compose exec -T api python manage.py ensure_deployment_identity_settings 2>&1)"
+	command_status=$?
+	set -e
+	if [[ -n "${output}" ]]; then
+		printf '%s\n' "${output}"
+	fi
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Optional identity or email settings could not be synchronized; the dev stack remains available"
+		return 0
+	elif grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
+		warn "Invalid optional identity or email settings were preserved"
+	else
+		log "Optional identity and email settings synchronized"
+	fi
+
+	set +e
+	output="$(compose exec -T api python manage.py check_google_oauth_readiness 2>&1)"
+	command_status=$?
+	set -e
+	if [[ -n "${output}" ]]; then
+		printf '%s\n' "${output}"
+	fi
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Google OAuth local route or generated callback is not ready; the dev stack remains available"
+	fi
+}
+
 cmd_up() {
 	apply_mirror_env_defaults
 	ensure_env_file
@@ -801,6 +846,7 @@ cmd_up() {
 	prepare_dev 0
 	log "Starting hot-reload HFL stack from explicitly prepared images"
 	compose up -d --no-build --pull never --remove-orphans
+	sync_optional_identity_settings
 	print_urls
 }
 
@@ -832,6 +878,7 @@ cmd_restart() {
 		log "Restarting only services whose image or configuration changed"
 		compose up -d --no-build --pull never --remove-orphans
 	fi
+	sync_optional_identity_settings
 	print_urls
 }
 
