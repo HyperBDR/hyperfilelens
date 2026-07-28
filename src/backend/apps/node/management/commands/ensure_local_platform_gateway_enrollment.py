@@ -13,6 +13,7 @@ from apps.node.services.internal.local_platform_gateway import (
     LOCAL_PLATFORM_GATEWAY_METADATA,
     ensure_local_platform_gateway_token,
     platform_gateway_api_base,
+    reconcile_local_platform_gateway_links,
 )
 
 OUTPUT_PREFIX = "HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT="
@@ -29,6 +30,7 @@ class Command(BaseCommand):
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
         token = ensure_local_platform_gateway_token()
+        reconcile_local_platform_gateway_links()
         managed_node_ids = list(
             Node.objects.filter(
                 organization=token.organization,

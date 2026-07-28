@@ -223,6 +223,79 @@ def capture_run_usage(link: LensSessionLink, run: dict[str, Any]) -> LensUsageLe
     return row
 
 
+def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
+    """Return a stable, tenant-safe error code and message for a terminal run."""
+    normalized_status = str(status or "").strip().lower()
+    normalized_error = str(raw_error or "").strip().upper()
+    if normalized_status == "cancelled":
+        return "RUN_CANCELLED", "The AI response was cancelled."
+    if "TIMEOUT" in normalized_error:
+        return (
+            "MODEL_TIMEOUT",
+            "The AI model timed out. Try again or choose another model.",
+        )
+    if any(
+        marker in normalized_error
+        for marker in ("MODEL", "PROVIDER", "QUOTA", "BALANCE", "PAYMENT")
+    ):
+        return (
+            "MODEL_PROVIDER_ERROR",
+            "The AI model provider rejected the request. Check model availability, quota, or account balance, then try again.",
+        )
+    return (
+        "AI_RUN_FAILED",
+        "The AI response failed. Try again or contact your administrator.",
+    )
+
+
+def run_outcomes_for_messages(
+    link: LensSessionLink,
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return durable, sanitized terminal outcomes for runs in this message page."""
+    ordered_run_ids: list[uuid.UUID] = []
+    seen = set()
+    for message in messages:
+        raw_run_id = message.get("run")
+        if not raw_run_id:
+            continue
+        try:
+            run_id = uuid.UUID(str(raw_run_id))
+        except (TypeError, ValueError):
+            continue
+        if run_id in seen:
+            continue
+        seen.add(run_id)
+        ordered_run_ids.append(run_id)
+    if not ordered_run_ids:
+        return []
+
+    rows = {
+        row.sl_run_uuid: row
+        for row in LensUsageLedger.objects.filter(
+            session_link=link,
+            sl_run_uuid__in=ordered_run_ids,
+            run_status__in={"failed", "cancelled"},
+        )
+    }
+    outcomes = []
+    for run_id in ordered_run_ids:
+        row = rows.get(run_id)
+        if row is None:
+            continue
+        error_code, message = _public_run_failure(row.run_status, row.run_error)
+        outcomes.append(
+            {
+                "run_uuid": str(run_id),
+                "status": row.run_status,
+                "error_code": error_code,
+                "message": message,
+                "finished_at": row.finished_at,
+            }
+        )
+    return outcomes
+
+
 def _session_by_assistant_name(org, user) -> dict[str, LensSessionLink]:
     rows = LensSessionLink.objects.filter(
         organization=org,

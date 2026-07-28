@@ -15,6 +15,7 @@ PRINT_CONFIG=0
 SESSION_STARTED=0
 PUBLIC_HOST="${HFL_PUBLIC_HOST:-}"
 PUBLIC_URL="${HFL_PUBLIC_URL:-}"
+ADMIN_PUBLIC_URL="${HFL_ADMIN_PUBLIC_URL:-}"
 RUNTIME_ENV_FILE="${HFL_RUNTIME_ENV_FILE:-}"
 SHOW_GENERATED_CREDENTIALS="${HFL_SHOW_GENERATED_CREDENTIALS:-auto}"
 UPGRADE_RECOVERY_ARMED=0
@@ -50,6 +51,7 @@ Options:
     --hfl-only              Skip bundled SourceLens even when sourcelens/ is present
     --direct-host HOST      Direct listener host or IP used for local access URLs
     --public-url URL        Optional canonical browser origin; invalid values only warn
+    --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
     --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
 
   upgrade:
@@ -65,6 +67,7 @@ Options:
     --yes                   Non-interactive: continue when target version equals installed version
     --direct-host HOST      Direct listener host or IP used for local access URLs
     --public-url URL        Optional canonical browser origin; invalid values only warn
+    --admin-public-url URL  Optional Admin Console browser origin; invalid values only warn
     --runtime-env-file FILE Apply staged Turnstile settings from a root-only regular file
 
   uninstall:
@@ -186,6 +189,7 @@ upgrade_tmp=${UPGRADE_TMP}
 bridge_network=${HFL_BRIDGE_NETWORK}
 public_host=${PUBLIC_HOST:-<auto>}
 public_url=${PUBLIC_URL:-<none>}
+admin_public_url=${ADMIN_PUBLIC_URL:-<none>}
 runtime_env_file=$([[ -n "${RUNTIME_ENV_FILE}" ]] && printf '<provided>' || printf '<none>')
 show_generated_credentials=${SHOW_GENERATED_CREDENTIALS}
 log_file=${LOG_FILE:-<none>}
@@ -816,7 +820,7 @@ PY
 
 apply_runtime_configuration() {
 	local helper="${ROOT}/apply-runtime-config.py"
-	local -a args=(--env-file "${ROOT}/.env" --direct-host "${PUBLIC_HOST}" --public-url "${PUBLIC_URL}")
+	local -a args=(--env-file "${ROOT}/.env" --direct-host "${PUBLIC_HOST}" --public-url "${PUBLIC_URL}" --admin-public-url "${ADMIN_PUBLIC_URL}")
 	[[ -f "${helper}" ]] || die "missing runtime configuration helper: ${helper}"
 	if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
 		args+=(--runtime-env-file "${RUNTIME_ENV_FILE}")
@@ -2110,6 +2114,7 @@ cmd_install() {
 		--hfl-only) sourcelens_mode=0 ;;
 		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
 		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
+		--admin-public-url) [[ $# -ge 2 ]] || die "--admin-public-url requires a value" 2; ADMIN_PUBLIC_URL="$2"; shift ;;
 		--runtime-env-file) [[ $# -ge 2 && -n "${2:-}" ]] || die "--runtime-env-file requires a path" 2; RUNTIME_ENV_FILE="$2"; shift ;;
 		--allow-main-build) allow_main_build=1 ;;
 		*) die "unknown install option: $1" 2 ;;
@@ -2795,6 +2800,7 @@ cmd_upgrade() {
 		--yes) UPGRADE_YES=1 ;;
 		--direct-host) [[ $# -ge 2 && -n "${2:-}" ]] || die "--direct-host requires a value" 2; PUBLIC_HOST="$2"; shift ;;
 		--public-url) [[ $# -ge 2 ]] || die "--public-url requires a value" 2; PUBLIC_URL="$2"; shift ;;
+		--admin-public-url) [[ $# -ge 2 ]] || die "--admin-public-url requires a value" 2; ADMIN_PUBLIC_URL="$2"; shift ;;
 		--runtime-env-file) [[ $# -ge 2 && -n "${2:-}" ]] || die "--runtime-env-file requires a path" 2; RUNTIME_ENV_FILE="$2"; shift ;;
 		--allow-main-build) allow_main_build=1 ;;
 		*) die "unknown upgrade option: $1" 2 ;;

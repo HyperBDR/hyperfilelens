@@ -26,6 +26,7 @@ import {
   retryCopilotSession,
   type LensChatMessage,
   type LensCopilotActiveRun,
+  type LensCopilotRunOutcome,
   type LensCopilotAssistant,
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
@@ -41,6 +42,7 @@ import CopilotMessageList from './copilot/CopilotMessageList.vue'
 import CopilotSessionSidebar, { type SessionGroupKey, type SessionRow } from './copilot/CopilotSessionSidebar.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import type { CopilotDisplayMessage } from './copilot/types'
+import { appendRunOutcomeMessages } from './copilot/runOutcomes'
 import { Menu } from 'lucide-vue-next'
 import { useResponsiveLayout } from '../../composables/useResponsiveLayout'
 
@@ -142,9 +144,16 @@ function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
   }
 }
 
-function applyMessagesFromSync(sessionId: number, rows: LensChatMessage[]) {
+function applyMessagesFromSync(
+  sessionId: number,
+  rows: LensChatMessage[],
+  runOutcomes: LensCopilotRunOutcome[],
+) {
   const list = Array.isArray(rows) ? rows : []
-  const mapped = list.map(mapApiMessage).filter(Boolean) as CopilotDisplayMessage[]
+  const mapped = appendRunOutcomeMessages(
+    list.map(mapApiMessage).filter(Boolean) as CopilotDisplayMessage[],
+    runOutcomes,
+  )
   const session = sessions.value.find((row) => row.id === sessionId)
   messagesBySession.value = {
     ...messagesBySession.value,
@@ -233,11 +242,15 @@ const activeStream = computed(() => {
   return getSessionRunStream(id)
 })
 
-const showLiveStream = computed(() => {
+const runInProgress = computed(() => {
   const stream = activeStream.value
   if (!stream) return false
   return stream.streamAttached || isActiveRunStatus(stream.runStatus)
 })
+
+const showLiveStream = computed(
+  () => runInProgress.value || Boolean(activeStream.value?.streamError),
+)
 
 const composerDisabled = computed(() => {
   if (!bridgeReady.value || activeSessionId.value == null) return true
@@ -245,7 +258,7 @@ const composerDisabled = computed(() => {
   if (session && session.lifecycle_status && session.lifecycle_status !== 'ready') return true
   const stream = activeStream.value
   if (!stream) return false
-  return isActiveRunStatus(stream.runStatus)
+  return runInProgress.value
 })
 
 const bubbleTag = computed(() => activeAssistant.value?.name ?? '')
@@ -667,7 +680,7 @@ onUnmounted(() => {
         <CopilotComposer
           v-if="activeSession?.lifecycle_status === 'ready'"
           v-model="input"
-          :sending="showLiveStream"
+          :sending="runInProgress"
           :disabled="composerDisabled"
           @send="sendMessage"
           @stop="stopStreaming"

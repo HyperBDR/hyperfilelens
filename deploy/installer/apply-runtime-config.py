@@ -252,6 +252,7 @@ def apply_configuration(
     env_path: pathlib.Path,
     direct_host: str,
     public_url: str,
+    admin_public_url: str,
     runtime_path: Optional[pathlib.Path],
 ) -> None:
     require_regular_file(env_path, "environment file")
@@ -315,9 +316,6 @@ def apply_configuration(
         "https://127.0.0.1:11443",
         f"https://{direct_url_host}:11443" if direct_url_host else "",
     )
-    if direct_url_host:
-        updates["HFL_ADMIN_PUBLIC_URL"] = f"https://{direct_url_host}:11444"
-
     public_url = public_url.strip()
     if public_url:
         parsed = parse_public_origin(public_url)
@@ -338,6 +336,21 @@ def apply_configuration(
             )
     else:
         warn("public URL is empty; preserving installed URL configuration")
+
+    admin_public_url = admin_public_url.strip()
+    if admin_public_url:
+        parsed = parse_public_origin(admin_public_url)
+        if parsed:
+            admin_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+            append_unique(allowed_hosts, parsed.hostname or "")
+            append_unique(csrf_origins, admin_origin)
+            append_unique(cors_origins, admin_origin)
+            updates["HFL_ADMIN_PUBLIC_URL"] = admin_origin
+        else:
+            warn(
+                f"invalid Admin Console public URL {admin_public_url!r}; "
+                "preserving installed Admin Console URL"
+            )
 
     updates["DJANGO_ALLOWED_HOSTS"] = ",".join(allowed_hosts)
     updates["CSRF_TRUSTED_ORIGINS"] = ",".join(csrf_origins)
@@ -369,12 +382,14 @@ def main() -> None:
     parser.add_argument("--env-file", required=True, type=pathlib.Path)
     parser.add_argument("--direct-host", default="")
     parser.add_argument("--public-url", default="")
+    parser.add_argument("--admin-public-url", default="")
     parser.add_argument("--runtime-env-file", type=pathlib.Path)
     arguments = parser.parse_args()
     apply_configuration(
         arguments.env_file,
         arguments.direct_host,
         arguments.public_url,
+        arguments.admin_public_url,
         arguments.runtime_env_file,
     )
 

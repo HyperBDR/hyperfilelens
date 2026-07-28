@@ -388,7 +388,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 org=org,
                 gateway=node,
                 owner_user=token_row.created_by if token_row is not None else None,
-                scope=token_row.gateway_scope if token_row is not None else "",
+                scope=token_row.gateway_scope if token_row is not None else None,
             )
             if lens:
                 payload["lens"] = lens

@@ -300,6 +300,8 @@ def get_active_run_payload(link: LensSessionLink) -> dict[str, Any] | None:
 
 
 def sync_copilot_session(link: LensSessionLink) -> dict[str, Any]:
+    from apps.lens_bridge.services import usage
+
     messages = _fetch_session_messages(link)
     _update_last_assistant_message_at(link, messages)
     active_run = None
@@ -310,6 +312,7 @@ def sync_copilot_session(link: LensSessionLink) -> dict[str, Any]:
         "session_id": link.id,
         "messages": messages,
         "active_run": active_run,
+        "run_outcomes": usage.run_outcomes_for_messages(link, messages),
     }
 
 

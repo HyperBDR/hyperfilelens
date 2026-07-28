@@ -185,10 +185,13 @@ grep -F 'existing Docker daemon is not reachable' \
 	"${ROOT}/.github/scripts/remote-deploy.sh" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED' "${workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.PREPROD_PUBLIC_URL }}' "${workflow}" >/dev/null
+grep -F 'admin_public_url: ${{ vars.PREPROD_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED' "${workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.TEST_PUBLIC_URL }}' "${workflow}" >/dev/null
+grep -F 'admin_public_url: ${{ vars.TEST_ADMIN_PUBLIC_URL }}' "${workflow}" >/dev/null
 grep -F 'turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED' "${production_workflow}" >/dev/null
 grep -F 'public_url: ${{ vars.PROD_PUBLIC_URL }}' "${production_workflow}" >/dev/null
+grep -F 'admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}' "${production_workflow}" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.TEST_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}' "${workflow}" >/dev/null
 grep -F 'hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}' "${release_workflow}" >/dev/null
@@ -522,6 +525,7 @@ if grep -F 'install.sh" platform-gateway ensure' "${remote_deploy}" >/dev/null; 
 	exit 1
 fi
 grep -F -- '--public-url) PUBLIC_URL=' "${remote_deploy}" >/dev/null
+grep -F -- '--admin-public-url) ADMIN_PUBLIC_URL=' "${remote_deploy}" >/dev/null
 grep -F -- '--direct-host) DIRECT_HOST=' "${remote_deploy}" >/dev/null
 grep -F -- '--runtime-env-file "${RUNTIME_ENV_FILE}"' "${remote_deploy}" >/dev/null
 grep -F 'Download and Install Release' "${deploy_workflow}" >/dev/null

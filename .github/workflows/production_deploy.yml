@@ -68,6 +68,7 @@ jobs:
       channel: release
       tag: ${{ inputs.tag }}
       public_url: ${{ vars.PROD_PUBLIC_URL }}
+      admin_public_url: ${{ vars.PROD_ADMIN_PUBLIC_URL }}
       release_download_proxy_url: ${{ vars.PROD_RELEASE_DOWNLOAD_PROXY_URL }}
       ssh_host: ${{ vars.PROD_SSH_HOST }}
       ssh_port: ${{ vars.PROD_SSH_PORT }}

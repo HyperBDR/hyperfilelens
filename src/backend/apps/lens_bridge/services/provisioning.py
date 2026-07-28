@@ -441,22 +441,33 @@ def ensure_lensnode_for_gateway(
     gateway: Node,
     name: str | None = None,
     owner_user=None,
-    scope: str = "",
+    scope: str | None = None,
 ) -> LensGatewayLink:
     """Idempotently associate a SourceLens LensNode with an HFL data gateway."""
     if gateway.role != NodeRole.GATEWAY:
         raise ValidationError({"gateway_id": "Node is not a data gateway."})
 
-    normalized_scope = (scope or "").strip().lower()
-    is_platform = normalized_scope == LensGatewayLink.GatewayScope.PLATFORM
-    desired_scope = (
-        LensGatewayLink.GatewayScope.PLATFORM
-        if is_platform
-        else LensGatewayLink.GatewayScope.USER
+    from apps.node.services.internal.local_platform_gateway import (
+        is_local_platform_gateway_metadata,
     )
+
+    normalized_scope = (scope or "").strip().lower() or None
+    if normalized_scope not in {
+        None,
+        LensGatewayLink.GatewayScope.PLATFORM,
+        LensGatewayLink.GatewayScope.USER,
+    }:
+        raise ValidationError({"scope": "Data gateway scope is invalid."})
+    if normalized_scope is None and is_local_platform_gateway_metadata(gateway.metadata):
+        normalized_scope = LensGatewayLink.GatewayScope.PLATFORM
+
+    desired_scope = normalized_scope or LensGatewayLink.GatewayScope.USER
     desired_origin = (
-        LensGatewayLink.Origin.PLATFORM if is_platform else LensGatewayLink.Origin.USER
+        LensGatewayLink.Origin.PLATFORM
+        if desired_scope == LensGatewayLink.GatewayScope.PLATFORM
+        else LensGatewayLink.Origin.USER
     )
+    is_platform = desired_scope == LensGatewayLink.GatewayScope.PLATFORM
     link, created = LensGatewayLink.objects.get_or_create(
         organization=org,
         gateway=gateway,
@@ -468,7 +479,7 @@ def ensure_lensnode_for_gateway(
         },
     )
 
-    if not created:
+    if not created and normalized_scope is not None:
         update_fields = []
         if link.scope != desired_scope:
             link.scope = desired_scope
@@ -476,17 +487,17 @@ def ensure_lensnode_for_gateway(
         if link.origin != desired_origin:
             link.origin = desired_origin
             update_fields.append("origin")
+        if is_platform and link.owner_user_id is not None:
+            link.owner_user = None
+            update_fields.append("owner_user")
         if not is_platform and owner_user is not None and link.owner_user_id is None:
             link.owner_user = owner_user
             update_fields.append("owner_user")
         if update_fields:
             link.save(update_fields=[*update_fields, "updated_at"])
 
+    is_platform = link.scope == LensGatewayLink.GatewayScope.PLATFORM
     if is_platform and not link.is_platform_default:
-        from apps.node.services.internal.local_platform_gateway import (
-            is_local_platform_gateway_metadata,
-        )
-
         has_platform_default = LensGatewayLink.objects.filter(
             organization=org,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
@@ -540,7 +551,7 @@ def enable_ai_on_gateway(
         org=org,
         gateway=gateway,
         name=name,
-        scope=scope or "",
+        scope=scope,
     )
     if scope:
         desired = scope.strip().lower()
@@ -584,7 +595,7 @@ def provision_gateway_lens_on_register(
     org: Organization,
     gateway: Node,
     owner_user=None,
-    scope: str = "",
+    scope: str | None = None,
 ) -> dict[str, Any] | None:
     """Auto-provision LensNode when a gateway registers; returns enroll config or None."""
     from apps.lens_bridge.deploy import lens_bridge_configured
