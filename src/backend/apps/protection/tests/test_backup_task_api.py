@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node, NodeTask
+from apps.protection import conf as protection_conf
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -22,6 +23,7 @@ from apps.node.services.internal.agent_task import AgentTaskHandle
 from apps.protection.services.backup_orchestrator import (
     _repository_public_host,
     cancel_backup,
+    project_backup_node_task_result,
     reconcile_backup_tasks,
 )
 from apps.protection.services.backup_task import (
@@ -585,6 +587,48 @@ class ProtectionBackupTaskApiTests(TestCase):
 
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_backup_uses_configured_internal_endpoint_while_default_is_external(
+        self,
+        mock_run_agent_task_async,
+        mock_sync_repository_usage,
+    ):
+        external = "oss-cn-hangzhou.aliyuncs.com"
+        internal = "oss-cn-hangzhou-internal.aliyuncs.com"
+        self.repository.config = {
+            **self.repository.config,
+            "endpoint": external,
+            "external_endpoint": external,
+            "internal_endpoint": internal,
+            "s3_url_style": "virtual_hosted",
+            "use_tls": True,
+        }
+        self.repository.save(update_fields=["config", "updated_at"])
+        self.config.repository_endpoint_type = "internal"
+        self.config.save(update_fields=["repository_endpoint_type", "updated_at"])
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-configured-internal-endpoint",
+        )
+        mock_sync_repository_usage.return_value = {"queued": True}
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [self._async_outcome(kopia_snapshot_id="kopia-frozen-endpoint")]
+        )
+
+        self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        backup_payload = mock_run_agent_task_async.call_args.kwargs["payload"]
+        self.assertEqual(backup_payload["repository"]["endpoint"], internal)
+        default_runtime = _repository_runtime_payload(
+            repository=self.repository,
+            execution_target=ExecutionTarget(
+                node=self.agent,
+                source_type="agent",
+                source_ref_id=self.agent.id,
+            ),
+        )
+        self.assertEqual(default_runtime["endpoint"], external)
+
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_run_backup_task_passes_frozen_runtime_policy(self, mock_run_agent_task_async, mock_sync_repository_usage):
         mock_sync_repository_usage.return_value = {"queued": True}
         policy = BackupPolicy.objects.create(
@@ -862,8 +906,10 @@ class ProtectionBackupTaskApiTests(TestCase):
         logic_step = TaskStep.objects.get(task=task, step_name="create_logic_snapshot")
         kopia_step = TaskStep.objects.get(task=task, step_name="kopia_snapshot")
         directory = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
-        self.assertEqual(first_summary, {"candidates": 1, "advanced": 1})
-        self.assertEqual(second_summary, {"candidates": 1, "advanced": 1})
+        self.assertEqual(first_summary["candidates"], 1)
+        self.assertEqual(first_summary["advanced"], 1)
+        self.assertEqual(second_summary["candidates"], 1)
+        self.assertEqual(second_summary["advanced"], 1)
         self.assertEqual(task.status, Task.Status.RUNNING)
         self.assertIsNotNone(task.started_at)
         self.assertEqual(logic_step.status, TaskStep.Status.SUCCESS)
@@ -873,6 +919,407 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertIsNotNone(directory.node_task_id)
         self.assertEqual(snapshot.directories.count(), 1)
         self.assertEqual(mock_run_agent_task_async.call_count, 1)
+
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Status.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_prepared_snapshot_protocol_serializes_policy_then_dispatches_uploads_in_parallel(
+        self,
+        mock_run_agent_task_async,
+        _mock_node_online,
+    ):
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["backup_prepared_snapshot_v1"]}
+        }
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data/archive",
+            display_name="archive",
+            sort_order=1,
+        )
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-prepared-snapshot-barrier",
+        )
+        snapshot.directory_count = 2
+        snapshot.save(update_fields=["directory_count", "updated_at"])
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [
+                self._async_outcome(kopia_snapshot_id=""),
+                self._async_outcome(kopia_snapshot_id=""),
+                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+            ]
+        )
+
+        first = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        self.assertEqual(first["orchestrator"], "policy_prepare")
+        self.assertEqual(
+            [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
+            ["repository.policy.apply"],
+        )
+
+        second = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        self.assertEqual(second["orchestrator"], "policy_prepare")
+        self.assertEqual(
+            [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
+            ["repository.policy.apply", "repository.policy.apply"],
+        )
+
+        third = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        task.refresh_from_db()
+        self.assertEqual(third["orchestrator"], "in_progress")
+        self.assertEqual(task.result_payload["backup_protocol"], "prepared_snapshot_v1")
+        self.assertEqual(
+            [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
+            [
+                "repository.policy.apply",
+                "repository.policy.apply",
+                "backup.snapshot.create",
+                "backup.snapshot.create",
+            ],
+        )
+        self.assertEqual(
+            set(
+                BackupSourceSnapshotDirectory.objects.filter(
+                    source_snapshot=snapshot
+                ).values_list("status", flat=True)
+            ),
+            {BackupSourceSnapshotDirectory.Status.RUNNING},
+        )
+
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Status.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_policy_prepare_retries_before_failing_directory(
+        self,
+        mock_run_agent_task_async,
+        _mock_node_online,
+        mock_usage_refresh,
+    ):
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["backup_prepared_snapshot_v1"]}
+        }
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-policy-prepare-retry",
+        )
+        mock_usage_refresh.return_value = {"queued": True, "task_id": "usage-refresh"}
+        failed_policy = self._async_outcome(
+            status=NodeTask.Status.FAILED,
+            kopia_snapshot_id="",
+            result={
+                "error_code": "POLICY_APPLY_FAILED",
+                "policy_phase": "apply",
+                "stderr_tail": "policy apply failed",
+            },
+            last_error="policy apply failed",
+        )
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [failed_policy, failed_policy]
+        )
+
+        with (
+            patch.object(
+                protection_conf,
+                "PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES",
+                1,
+            ),
+            patch.object(
+                protection_conf,
+                "PROTECTION_BACKUP_POLICY_PREPARE_RETRY_DELAYS",
+                (0,),
+            ),
+        ):
+            self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            scheduled = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            final = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        row = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
+        attempts = list(
+            NodeTask.objects.filter(
+                correlation_type=(
+                    protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE
+                ),
+                correlation_id=str(task.task_uuid),
+            ).order_by("created_at", "id")
+        )
+        self.assertEqual(scheduled["orchestrator"], "policy_prepare")
+        self.assertEqual(final["status"], Task.Status.FAILED)
+        self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(row.error_code, "POLICY_APPLY_FAILED")
+        self.assertEqual([attempt.payload["policy_attempt"] for attempt in attempts], [1, 2])
+        self.assertEqual(mock_run_agent_task_async.call_count, 2)
+
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Status.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_policy_prepare_failure_does_not_block_other_parallel_uploads(
+        self,
+        mock_run_agent_task_async,
+        _mock_node_online,
+        mock_usage_refresh,
+    ):
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["backup_prepared_snapshot_v1"]}
+        }
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data/archive",
+            display_name="archive",
+            sort_order=1,
+        )
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-policy-failure-continues",
+        )
+        snapshot.directory_count = 2
+        snapshot.save(update_fields=["directory_count", "updated_at"])
+        mock_usage_refresh.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [
+                self._async_outcome(
+                    status=NodeTask.Status.FAILED,
+                    kopia_snapshot_id="",
+                    result={
+                        "error_code": "POLICY_APPLY_FAILED",
+                        "policy_phase": "apply",
+                        "stderr_tail": "policy apply failed",
+                    },
+                    last_error="policy apply failed",
+                ),
+                self._async_outcome(kopia_snapshot_id=""),
+                self._async_outcome(kopia_snapshot_id="prepared-success"),
+            ]
+        )
+
+        with patch.object(
+            protection_conf,
+            "PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES",
+            0,
+        ):
+            self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        snapshot.refresh_from_db()
+        rows = list(
+            BackupSourceSnapshotDirectory.objects.filter(source_snapshot=snapshot).order_by(
+                "backup_config_dir_id"
+            )
+        )
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.PARTIAL)
+        self.assertEqual(rows[0].status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(rows[0].error_code, "POLICY_APPLY_FAILED")
+        self.assertEqual(rows[1].status, BackupSourceSnapshotDirectory.Status.AVAILABLE)
+        self.assertEqual(
+            [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
+            [
+                "repository.policy.apply",
+                "repository.policy.apply",
+                "backup.snapshot.create",
+            ],
+        )
+
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Status.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_policy_not_found_repairs_after_parallel_siblings_finish(
+        self,
+        mock_run_agent_task_async,
+        _mock_node_online,
+        mock_usage_refresh,
+    ):
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["backup_prepared_snapshot_v1"]}
+        }
+        self.agent.save(update_fields=["metadata", "updated_at"])
+        second_config_directory = BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data/archive",
+            display_name="archive",
+            sort_order=1,
+        )
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-policy-not-found-repair",
+        )
+        snapshot.directory_count = 2
+        snapshot.save(update_fields=["directory_count", "updated_at"])
+        mock_usage_refresh.return_value = {"queued": True, "task_id": "usage-refresh"}
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [
+                self._async_outcome(kopia_snapshot_id=""),
+                self._async_outcome(kopia_snapshot_id=""),
+                self._async_outcome(
+                    status=NodeTask.Status.FAILED,
+                    kopia_snapshot_id="",
+                    result={
+                        "error_code": "KOPIA_POLICY_NOT_FOUND",
+                        "stderr_tail": "unable to get policy tree: policy not found",
+                    },
+                    last_error="kopia policy not found",
+                ),
+                self._async_outcome(status=NodeTask.Status.RUNNING, kopia_snapshot_id=""),
+                self._async_outcome(kopia_snapshot_id="repaired-snapshot"),
+            ]
+        )
+
+        self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        sibling = NodeTask.objects.get(
+            kind="backup.snapshot.create",
+            payload__backup_config_dir_id=second_config_directory.id,
+        )
+        sibling.status = NodeTask.Status.SUCCESS
+        sibling.result = {"kopia_snapshot_id": "parallel-sibling-success"}
+        sibling.last_error = ""
+        sibling.save(update_fields=["status", "result", "last_error", "updated_at"])
+
+        waiting = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        self.assertEqual(waiting["orchestrator"], "in_progress")
+        final = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        snapshot.refresh_from_db()
+        repaired = BackupSourceSnapshotDirectory.objects.get(
+            source_snapshot=snapshot,
+            backup_config_dir_id=self.config.directories.order_by("sort_order").first().id,
+        )
+        self.assertEqual(final["status"], Task.Status.SUCCESS)
+        self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertEqual(repaired.kopia_snapshot_id, "repaired-snapshot")
+        self.assertEqual(repaired.retry_count, 1)
+        self.assertEqual(
+            [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
+            [
+                "repository.policy.apply",
+                "repository.policy.apply",
+                "backup.snapshot.create",
+                "backup.snapshot.create",
+                "backup.run",
+            ],
+        )
+
+    def test_late_success_projects_terminal_failed_backup_to_available(self):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-project-late-terminal-success",
+        )
+        config_directory = self.config.directories.first()
+        task.status = Task.Status.FAILED
+        task.error_code = "AGENT_OFFLINE"
+        task.error_message = "Agent went offline during task execution."
+        task.save(update_fields=["status", "error_code", "error_message", "updated_at"])
+        snapshot.status = BackupSourceSnapshot.Status.FAILED
+        snapshot.failed_directory_count = 1
+        snapshot.error_code = "AGENT_OFFLINE"
+        snapshot.error_message = "Agent went offline during task execution."
+        snapshot.save(
+            update_fields=[
+                "status",
+                "failed_directory_count",
+                "error_code",
+                "error_message",
+                "updated_at",
+            ]
+        )
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id=str(task.task_uuid),
+            payload={"backup_config_dir_id": config_directory.id},
+            result={"kopia_snapshot_id": "late-kopia-success"},
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now(),
+        )
+        BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=config_directory.id,
+            source_path=config_directory.path,
+            path_type=config_directory.path_type,
+            display_name=config_directory.display_name,
+            repository_id=self.repository.id,
+            node_task_id=node_task.id,
+            status=BackupSourceSnapshotDirectory.Status.FAILED,
+            error_code="AGENT_BACKUP_FAILED",
+            error_message="Agent went offline during task execution.",
+        )
+
+        outcome = project_backup_node_task_result(node_task_id=node_task.id)
+
+        task.refresh_from_db()
+        snapshot.refresh_from_db()
+        row = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
+        self.assertEqual(outcome["status"], "projected")
+        self.assertTrue(outcome["task_corrected"])
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertIsNone(task.error_code)
+        self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.AVAILABLE)
+        self.assertEqual(row.kopia_snapshot_id, "late-kopia-success")
+        self.assertTrue(row.adopted_late_result)
+
+    def test_late_success_does_not_resurrect_snapshot_delete_intent(self):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-project-late-delete-intent",
+        )
+        config_directory = self.config.directories.first()
+        task.status = Task.Status.FAILED
+        task.save(update_fields=["status", "updated_at"])
+        snapshot.status = BackupSourceSnapshot.Status.DELETE_FAILED
+        snapshot.save(update_fields=["status", "updated_at"])
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="backup.run",
+            correlation_type="protection.backup",
+            correlation_id=str(task.task_uuid),
+            payload={"backup_config_dir_id": config_directory.id},
+            result={"kopia_snapshot_id": "must-not-resurrect"},
+            status=NodeTask.Status.SUCCESS,
+            watchdog_deadline_at=timezone.now(),
+        )
+        row = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=config_directory.id,
+            source_path=config_directory.path,
+            repository_id=self.repository.id,
+            node_task_id=node_task.id,
+            status=BackupSourceSnapshotDirectory.Status.FAILED,
+            error_code="AGENT_OFFLINE",
+            error_message="Agent went offline during task execution.",
+        )
+
+        outcome = project_backup_node_task_result(node_task_id=node_task.id)
+
+        snapshot.refresh_from_db()
+        row.refresh_from_db()
+        self.assertEqual(outcome["reason"], "snapshot_delete_intent")
+        self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED)
+        self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertIsNone(row.kopia_snapshot_id)
 
     def test_proxy_bound_nas_repository_payload_uses_storage_id_subdir(self):
         proxy = Node.objects.create(

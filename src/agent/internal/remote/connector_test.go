@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/wire"
 )
 
 type staticProvider struct {
@@ -151,6 +152,44 @@ func TestConnectorIdleSessionSurvivesHeartbeats(t *testing.T) {
 	err, _ := connector.connectOnce(ctx, func(context.Context, []byte) error { return nil }, nil, false)
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("connectOnce ended early: %v", err)
+	}
+}
+
+func TestConnectorNegotiatesTaskResultAckSubprotocol(t *testing.T) {
+	upgrader := websocket.Upgrader{Subprotocols: []string{wire.TaskResultAckSubprotocol}}
+	negotiated := make(chan bool, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+		negotiated <- conn.Subprotocol() == wire.TaskResultAckSubprotocol
+		_ = conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(time.Second),
+		)
+	}))
+	defer server.Close()
+
+	connector := NewConnector(staticProvider{cfg: &model.AgentConfig{
+		WSSURL:    "ws" + strings.TrimPrefix(server.URL, "http"),
+		NodeID:    "1",
+		NodeToken: "token",
+	}})
+	connector.heartbeatInterval = time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _ = connector.connectOnce(ctx, nil, func(context.Context) error {
+		if !connector.TaskResultAckEnabled() {
+			t.Error("connector did not expose negotiated ACK mode")
+		}
+		return nil
+	}, false)
+	if !<-negotiated {
+		t.Fatal("server did not negotiate task result ACK subprotocol")
 	}
 }
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import time
+from uuid import UUID
 
 from celery import shared_task
 from celery.signals import worker_ready
 from django.core.cache import cache
+from django.utils import timezone
 
 from common.observability.celery_context import logged_celery_task
 
@@ -18,7 +21,13 @@ from apps.storage.services.internal.repository_usage import (
     sync_all_repositories,
     sync_organization_repositories,
 )
-from apps.storage.services.internal.kopia_cli import KopiaCliError, run_maintenance
+from apps.storage.services.internal.kopia_cli import (
+    KopiaCliCancelled,
+    KopiaCliError,
+    KopiaControlDecision,
+    KopiaExecutionLeaseLost,
+    run_maintenance,
+)
 from apps.storage.services.internal.repository_access import repository_payload_for_node
 from apps.storage.services.internal.repository_agent_operation import (
     RepositoryAgentOperationResult,
@@ -27,10 +36,13 @@ from apps.storage.services.internal.repository_agent_operation import (
     resolve_or_dispatch_repository_agent_operation,
 )
 from apps.storage.services.internal.repository_operations import (
+    fence_controller_repository_operation,
     finalize_repository_operation,
     maintenance_settings,
     schedule_due_maintenance,
+    set_controller_repository_operation_step,
     set_task_step,
+    start_controller_repository_operation,
 )
 from apps.storage.services.internal.repository_secrets import scrub_secrets
 from apps.task.models import Task, TaskStep
@@ -258,10 +270,9 @@ def schedule_repository_maintenance():
     trace_keys=("limit",),
 )
 def reconcile_repository_operations(*, limit: int = 100):
-    """Requeue active Agent-backed repository operations for one idempotent advance."""
+    """Requeue active repository operations for one idempotent advance."""
     repository_task_ids = list(
         RepositoryTask.objects.filter(
-            owner_type=RepositoryExecutionTarget.OwnerType.NODE,
             task__status__in=[Task.Status.PENDING, Task.Status.RUNNING],
         )
         .order_by("task__updated_at", "id")
@@ -284,6 +295,14 @@ def reconcile_repository_operations(*, limit: int = 100):
     trace_keys=("repository_task_id",),
 )
 def execute_repository_operation(*, repository_task_id: int):
+    owner_type = (
+        RepositoryTask.objects.filter(pk=repository_task_id)
+        .values_list("owner_type", flat=True)
+        .first()
+    )
+    if owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
+        return _execute_repository_operation(repository_task_id=repository_task_id)
+
     lock_key = f"storage:repository-operation:advance:{int(repository_task_id)}"
     if not cache.add(lock_key, "1", timeout=_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS):
         return {"status": "already_running", "repository_task_id": repository_task_id}
@@ -310,20 +329,56 @@ def _execute_repository_operation(*, repository_task_id: int):
     if task.status in {Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT}:
         return {"status": task.status, "idempotent": True}
     started_now = task.status == Task.Status.PENDING
+    execution_token: UUID | None = repository_task.execution_token
     if started_now:
-        start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
-        set_task_step(task, "prepare_repository_operation", status=TaskStep.Status.SUCCESS, progress=10)
-        set_task_step(task, "verify_repository_owner", status=TaskStep.Status.SUCCESS, progress=20)
-        set_task_step(task, "run_repository_operation", status=TaskStep.Status.RUNNING, progress=25)
+        if repository_task.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
+            execution_token = start_controller_repository_operation(
+                repository_task_id=repository_task.id
+            )
+            repository_task.refresh_from_db()
+            task.refresh_from_db()
+            if execution_token is None:
+                return {"status": task.status, "idempotent": True}
+        else:
+            start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
     elif task.status == Task.Status.RUNNING:
         if repository_task.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
-            return {"status": task.status, "idempotent": True}
+            return _recover_controller_repository_operation(repository_task)
     else:
         return {"status": task.status, "idempotent": True}
     try:
+        if started_now:
+            _raise_for_control_decision(
+                _set_repository_operation_step(
+                    repository_task,
+                    execution_token,
+                    "prepare_repository_operation",
+                    status=TaskStep.Status.SUCCESS,
+                    progress=10,
+                )
+            )
+            _raise_for_control_decision(
+                _set_repository_operation_step(
+                    repository_task,
+                    execution_token,
+                    "verify_repository_owner",
+                    status=TaskStep.Status.SUCCESS,
+                    progress=20,
+                )
+            )
+            _raise_for_control_decision(
+                _set_repository_operation_step(
+                    repository_task,
+                    execution_token,
+                    "run_repository_operation",
+                    status=TaskStep.Status.RUNNING,
+                    progress=25,
+                )
+            )
         operation = _execute_maintenance(
             repository_task,
             allow_dispatch=started_now,
+            execution_token=execution_token,
         )
         if operation.waiting:
             return {
@@ -332,8 +387,24 @@ def _execute_repository_operation(*, repository_task_id: int):
                 "remote_task_id": str(operation.node_task_id),
             }
         result = operation.result
-        set_task_step(task, "run_repository_operation", status=TaskStep.Status.SUCCESS, progress=80)
-        set_task_step(task, "refresh_repository_usage", status=TaskStep.Status.RUNNING, progress=85)
+        _raise_for_control_decision(
+            _set_repository_operation_step(
+                repository_task,
+                execution_token,
+                "run_repository_operation",
+                status=TaskStep.Status.SUCCESS,
+                progress=80,
+            )
+        )
+        _raise_for_control_decision(
+            _set_repository_operation_step(
+                repository_task,
+                execution_token,
+                "refresh_repository_usage",
+                status=TaskStep.Status.RUNNING,
+                progress=85,
+            )
+        )
         sync_organization_repositories(
             organization_id=repository_task.repository.organization_id,
             repository_ids=[repository_task.repository_id],
@@ -341,14 +412,54 @@ def _execute_repository_operation(*, repository_task_id: int):
             force=True,
             stale_after_seconds=None,
         )
-        set_task_step(task, "refresh_repository_usage", status=TaskStep.Status.SUCCESS, progress=95)
-        set_task_step(task, "finalize_repository_operation", status=TaskStep.Status.SUCCESS, progress=100)
-        finalize_repository_operation(
+        _raise_for_control_decision(
+            _set_repository_operation_step(
+                repository_task,
+                execution_token,
+                "refresh_repository_usage",
+                status=TaskStep.Status.SUCCESS,
+                progress=95,
+            )
+        )
+        _raise_for_control_decision(
+            _set_repository_operation_step(
+                repository_task,
+                execution_token,
+                "finalize_repository_operation",
+                status=TaskStep.Status.SUCCESS,
+                progress=100,
+            )
+        )
+        completed_task = finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=True,
             result_payload=scrub_secrets(result),
+            expected_execution_token=execution_token,
         )
-        return {"status": "success", "repository_task_id": repository_task.id}
+        return {
+            "status": completed_task.status,
+            "repository_task_id": repository_task.id,
+        }
+    except KopiaCliCancelled as exc:
+        repository_task.refresh_from_db(fields=["cancel_reason"])
+        cancelled_task = finalize_repository_operation(
+            repository_task_id=repository_task.id,
+            succeeded=False,
+            cancelled=True,
+            error_message=repository_task.cancel_reason or str(exc),
+            expected_execution_token=execution_token,
+        )
+        return {
+            "status": cancelled_task.status,
+            "repository_task_id": repository_task.id,
+        }
+    except KopiaExecutionLeaseLost:
+        logger.warning(
+            "repository operation execution lease lost repository_task_id=%s task_uuid=%s",
+            repository_task.id,
+            task.task_uuid,
+        )
+        return {"status": "lease_lost", "repository_task_id": repository_task.id}
     except RepositoryAgentOperationStateUnknown as exc:
         record_recovery_decision(
             task=task,
@@ -361,39 +472,201 @@ def _execute_repository_operation(*, repository_task_id: int):
                 },
             ),
         )
-        set_task_step(
-            task,
+        decision = _set_repository_operation_step(
+            repository_task,
+            execution_token,
             task.current_step or "run_repository_operation",
             status=TaskStep.Status.FAILED,
             progress=int(task.progress),
         )
+        interrupted = _finalize_control_interruption(
+            decision=decision,
+            repository_task=repository_task,
+            execution_token=execution_token,
+        )
+        if interrupted is not None:
+            return interrupted
         finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
             error_code=CONTROL_PLANE_RESTART_INTERRUPTED,
             error_message=str(exc),
+            expected_execution_token=execution_token,
         )
         return {"status": "failed", "repository_task_id": repository_task.id}
     except Exception as exc:
-        set_task_step(
-            task,
+        decision = _set_repository_operation_step(
+            repository_task,
+            execution_token,
             task.current_step or "run_repository_operation",
             status=TaskStep.Status.FAILED,
             progress=int(task.progress),
         )
+        interrupted = _finalize_control_interruption(
+            decision=decision,
+            repository_task=repository_task,
+            execution_token=execution_token,
+        )
+        if interrupted is not None:
+            return interrupted
         finalize_repository_operation(
             repository_task_id=repository_task.id,
             succeeded=False,
             error_code=_repository_operation_error_code(exc),
             error_message=str(scrub_secrets(str(exc))),
+            expected_execution_token=execution_token,
         )
         return {"status": "failed", "repository_task_id": repository_task.id}
+
+
+def _recover_controller_repository_operation(repository_task: RepositoryTask) -> dict:
+    task = repository_task.task
+    settings = maintenance_settings()
+    now = timezone.now()
+    token = repository_task.execution_token
+    heartbeat = repository_task.execution_heartbeat_at
+    heartbeat_fresh = bool(
+        token
+        and heartbeat
+        and (now - heartbeat).total_seconds() <= settings.heartbeat_stale_seconds
+    )
+    if repository_task.cancel_requested_at is not None:
+        if heartbeat_fresh:
+            return {"status": "cancelling", "repository_task_id": repository_task.id}
+        cancelled_task = finalize_repository_operation(
+            repository_task_id=repository_task.id,
+            succeeded=False,
+            cancelled=True,
+            error_message=repository_task.cancel_reason,
+            expected_execution_token=token,
+        )
+        return {
+            "status": cancelled_task.status,
+            "repository_task_id": repository_task.id,
+        }
+    if heartbeat_fresh:
+        return {"status": task.status, "idempotent": True}
+
+    if token is None:
+        legacy_started_at = task.started_at or task.updated_at or task.created_at
+        if (now - legacy_started_at).total_seconds() <= settings.execution_timeout_seconds:
+            return {"status": task.status, "idempotent": True}
+
+    recovery_token = fence_controller_repository_operation(
+        repository_task_id=repository_task.id,
+        expected_execution_token=token,
+    )
+    if recovery_token is None:
+        repository_task.refresh_from_db()
+        return {"status": repository_task.task.status, "idempotent": True}
+
+    reason = (
+        "Controller repository maintenance lost its execution heartbeat after a "
+        "control-plane interruption."
+    )
+    record_recovery_decision(
+        task=task,
+        plan=RecoveryPlan(
+            decision=RecoveryDecision.FAIL,
+            reason=reason,
+            evidence={
+                "current_step": task.current_step,
+                "operation_type": repository_task.operation_type,
+                "execution_token": str(token) if token else None,
+                "execution_heartbeat_at": heartbeat.isoformat() if heartbeat else None,
+            },
+        ),
+    )
+    decision = _set_repository_operation_step(
+        repository_task,
+        recovery_token,
+        task.current_step or "run_repository_operation",
+        status=TaskStep.Status.FAILED,
+        progress=int(task.progress),
+    )
+    interrupted = _finalize_control_interruption(
+        decision=decision,
+        repository_task=repository_task,
+        execution_token=recovery_token,
+    )
+    if interrupted is not None:
+        return interrupted
+    failed_task = finalize_repository_operation(
+        repository_task_id=repository_task.id,
+        succeeded=False,
+        error_code=CONTROL_PLANE_RESTART_INTERRUPTED,
+        error_message=reason,
+        expected_execution_token=recovery_token,
+    )
+    return {"status": failed_task.status, "repository_task_id": repository_task.id}
+
+
+def _set_repository_operation_step(
+    repository_task: RepositoryTask,
+    execution_token: UUID | None,
+    step_name: str,
+    *,
+    status: str,
+    progress: int,
+) -> KopiaControlDecision:
+    if repository_task.owner_type != RepositoryExecutionTarget.OwnerType.CONTROLLER:
+        set_task_step(
+            repository_task.task,
+            step_name,
+            status=status,
+            progress=progress,
+        )
+        return KopiaControlDecision.CONTINUE
+    if execution_token is None:
+        return KopiaControlDecision.LOST_LEASE
+    result = set_controller_repository_operation_step(
+        repository_task_id=repository_task.id,
+        expected_execution_token=execution_token,
+        step_name=step_name,
+        status=status,
+        progress=progress,
+    )
+    return KopiaControlDecision(result)
+
+
+def _raise_for_control_decision(decision: KopiaControlDecision) -> None:
+    if decision == KopiaControlDecision.CANCEL:
+        raise KopiaCliCancelled("Kopia repository maintenance was cancelled")
+    if decision == KopiaControlDecision.LOST_LEASE:
+        raise KopiaExecutionLeaseLost(
+            "Kopia repository maintenance execution lease was lost"
+        )
+
+
+def _finalize_control_interruption(
+    *,
+    decision: KopiaControlDecision,
+    repository_task: RepositoryTask,
+    execution_token: UUID | None,
+) -> dict | None:
+    if decision == KopiaControlDecision.CONTINUE:
+        return None
+    if decision == KopiaControlDecision.LOST_LEASE:
+        return {"status": "lease_lost", "repository_task_id": repository_task.id}
+    repository_task.refresh_from_db(fields=["cancel_reason"])
+    cancelled_task = finalize_repository_operation(
+        repository_task_id=repository_task.id,
+        succeeded=False,
+        cancelled=True,
+        error_message=repository_task.cancel_reason,
+        expected_execution_token=execution_token,
+    )
+    return {
+        "status": cancelled_task.status,
+        "repository_task_id": repository_task.id,
+    }
 
 
 def _execute_maintenance(
     repository_task: RepositoryTask,
     *,
     allow_dispatch: bool = True,
+    execution_token: UUID | None = None,
 ) -> RepositoryAgentOperationResult:
     if repository_task.operation_type not in {
         RepositoryTask.OperationType.MAINTENANCE_QUICK,
@@ -403,11 +676,20 @@ def _execute_maintenance(
     full = repository_task.operation_type == RepositoryTask.OperationType.MAINTENANCE_FULL
     settings = maintenance_settings()
     if repository_task.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
+        if execution_token is None:
+            raise KopiaExecutionLeaseLost(
+                "Controller repository maintenance has no execution lease"
+            )
         result = run_maintenance(
             repository_task.repository,
             full=full,
             owner_identity=repository_task.owner_identity,
             timeout_seconds=settings.execution_timeout_seconds,
+            control=_controller_execution_control(
+                repository_task_id=repository_task.id,
+                execution_token=execution_token,
+                heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
+            ),
         )
         return RepositoryAgentOperationResult(
             waiting=False,
@@ -456,9 +738,73 @@ def _execute_maintenance(
     )
 
 
+def _controller_execution_control(
+    *,
+    repository_task_id: int,
+    execution_token: UUID,
+    heartbeat_interval_seconds: int,
+):
+    next_heartbeat = time.monotonic() + heartbeat_interval_seconds
+
+    def control() -> KopiaControlDecision:
+        nonlocal next_heartbeat
+        state = (
+            RepositoryTask.objects.filter(
+                pk=repository_task_id,
+                execution_token=execution_token,
+            )
+            .values("cancel_requested_at")
+            .first()
+        )
+        if state is None:
+            return KopiaControlDecision.LOST_LEASE
+        if state["cancel_requested_at"] is not None:
+            return KopiaControlDecision.CANCEL
+        monotonic_now = time.monotonic()
+        if monotonic_now >= next_heartbeat:
+            updated = RepositoryTask.objects.filter(
+                pk=repository_task_id,
+                execution_token=execution_token,
+            ).update(execution_heartbeat_at=timezone.now())
+            if updated != 1:
+                return KopiaControlDecision.LOST_LEASE
+            next_heartbeat = monotonic_now + heartbeat_interval_seconds
+        return KopiaControlDecision.CONTINUE
+
+    return control
+
+
 def _repository_operation_error_code(exc: Exception) -> str:
     if isinstance(exc, (TimeoutError, RepositoryAgentOperationTimeout)):
         return "REPOSITORY_OPERATION_TIMEOUT"
     if isinstance(exc, KopiaCliError):
         return "KOPIA_MAINTENANCE_FAILED"
     return "REPOSITORY_OPERATION_FAILED"
+
+
+@shared_task(name="apps.storage.tasks.run_storage_provider_validation")
+@logged_celery_task(name="apps.storage.tasks.run_storage_provider_validation")
+def run_storage_provider_validation(run_id: str):
+    from apps.storage.provider_catalog.validation import execute_validation_run
+
+    execute_validation_run(run_id)
+    return {"run_id": run_id}
+
+
+@shared_task(name="apps.storage.tasks.cleanup_storage_provider_validation")
+@logged_celery_task(name="apps.storage.tasks.cleanup_storage_provider_validation")
+def cleanup_storage_provider_validation(run_id: str):
+    from apps.storage.provider_catalog.validation import cleanup_validation_run
+
+    cleanup_validation_run(run_id)
+    return {"run_id": run_id}
+
+
+@shared_task(name="apps.storage.tasks.cleanup_expired_storage_provider_validations")
+@logged_celery_task(
+    name="apps.storage.tasks.cleanup_expired_storage_provider_validations"
+)
+def cleanup_expired_storage_provider_validations():
+    from apps.storage.provider_catalog.validation import cleanup_expired_validation_runs
+
+    return cleanup_expired_validation_runs()

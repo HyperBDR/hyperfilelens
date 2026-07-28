@@ -1,6 +1,6 @@
 export type S3StoragePlatform =
   | 'aliyun'
-  | 'huawei'
+  | 'huaweicloud'
   | 'tencent'
   | 'aws'
   | 'gcp'
@@ -12,7 +12,7 @@ export const DEFAULT_S3_OBJECT_PREFIX = 'hfl/'
 
 const PLATFORM_LABEL_KEYS: Record<S3StoragePlatform, string> = {
   aliyun: 'addS3Repo.platformAliyun',
-  huawei: 'addS3Repo.platformHuawei',
+  huaweicloud: 'addS3Repo.platformHuawei',
   tencent: 'addS3Repo.platformTencent',
   aws: 'addS3Repo.platformAws',
   gcp: 'addS3Repo.platformGcp',
@@ -24,7 +24,7 @@ const PLATFORM_LABEL_KEYS: Record<S3StoragePlatform, string> = {
 /** Cloud brand icons from newmuse; `other` / `custom` use the shared Database lucide icon in UI. */
 export const S3_PLATFORM_ICON_URLS: Record<S3StoragePlatform, string> = {
   aliyun: '/cloud-platforms/aliyun.svg',
-  huawei: '/cloud-platforms/huawei.svg',
+  huaweicloud: '/cloud-platforms/huawei.svg',
   tencent: '/cloud-platforms/tencent.svg',
   aws: '/cloud-platforms/aws.svg',
   gcp: '/cloud-platforms/gcp.svg',
@@ -35,7 +35,7 @@ export const S3_PLATFORM_ICON_URLS: Record<S3StoragePlatform, string> = {
 
 export function normalizeS3StoragePlatform(raw: string | undefined | null): S3StoragePlatform {
   const value = (raw || '').trim().toLowerCase()
-  if (value === 'aliyun' || value === 'huawei' || value === 'tencent' || value === 'aws') return value
+  if (value === 'aliyun' || value === 'huaweicloud' || value === 'tencent' || value === 'aws') return value
   if (value === 'gcp') return 'gcp'
   if (value === 'azure') return 'azure'
   if (value === 'other') return 'other'
@@ -58,6 +58,16 @@ export function s3EndpointDisplay(endpoint?: string | null) {
   const raw = normalizeS3EndpointInput(endpoint)
   if (!raw) return '—'
   return raw
+}
+
+export function distinctS3EndpointPair(
+  externalEndpoint?: string | null,
+  internalEndpoint?: string | null,
+): { external: string; internal: string } | null {
+  const external = normalizeS3EndpointInput(externalEndpoint).replace(/\.$/, '')
+  const internal = normalizeS3EndpointInput(internalEndpoint).replace(/\.$/, '')
+  if (!external || !internal || external.toLowerCase() === internal.toLowerCase()) return null
+  return { external, internal }
 }
 
 /**

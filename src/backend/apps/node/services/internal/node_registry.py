@@ -111,6 +111,7 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
     """
     nodes_marked_offline = 0
     tasks_failed = 0
+    task_failure_held = not redis_store.offline_task_finalization_ready()
 
     node_ids = list(
         Node.objects.filter(status=Node.Status.ONLINE)
@@ -142,10 +143,12 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
             except Exception:
                 logger.debug("agent source-host sync failed node_id=%s", node.id, exc_info=True)
 
-            failed = fail_active_tasks_for_node(
-                node_id=node.id,
-                reason="agent heartbeat expired (registry reconcile)",
-            )
+            failed = 0
+            if not task_failure_held:
+                failed = fail_active_tasks_for_node(
+                    node_id=node.id,
+                    reason="agent heartbeat expired (registry reconcile)",
+                )
             tasks_failed += failed
             logger.info(
                 "node %s marked offline (stale agent_loc); failed_tasks=%s",
@@ -156,5 +159,6 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
     return {
         "nodes_marked_offline": nodes_marked_offline,
         "tasks_failed": tasks_failed,
+        "task_failure_held": task_failure_held,
         "checked_at": timezone.now().isoformat(),
     }

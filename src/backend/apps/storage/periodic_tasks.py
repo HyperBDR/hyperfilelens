@@ -13,6 +13,15 @@ from apps.storage.services.internal.repository_operations import maintenance_set
 def register_periodic_tasks():
     settings = maintenance_settings()
     TASK_REGISTRY.add(
+        name="storage_cleanup_provider_validations",
+        task="apps.storage.tasks.cleanup_expired_storage_provider_validations",
+        schedule=crontab(minute="*/5"),
+        args=(),
+        kwargs={},
+        queue="storage.provider-validation",
+        enabled=True,
+    )
+    TASK_REGISTRY.add(
         name="storage_schedule_repository_maintenance",
         task="apps.storage.tasks.schedule_repository_maintenance",
         schedule=schedule(settings.scan_interval),

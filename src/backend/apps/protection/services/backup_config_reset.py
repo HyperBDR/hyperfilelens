@@ -9,7 +9,9 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.protection.models import BackupConfig, BackupSourceSnapshot, BackupSourceSnapshotDirectory
-from apps.protection.services.kopia_snapshot_delete import classify_kopia_snapshot_delete_results
+from apps.protection.services.kopia_snapshot_delete import (
+    classify_kopia_snapshot_delete_results,
+)
 from apps.protection.services.backup_task import (
     _resolve_execution_target,
     _set_step_status,
@@ -96,7 +98,7 @@ def _kopia_snapshot_ids(rows: list[BackupSourceSnapshotDirectory]) -> list[str]:
     ids: list[str] = []
     for row in rows:
         snapshot_id = str(row.kopia_snapshot_id or "").strip()
-        if not snapshot_id or snapshot_id.lower() in {"none", "null"} or snapshot_id in seen:
+        if not snapshot_id or snapshot_id in seen:
             continue
         seen.add(snapshot_id)
         ids.append(snapshot_id)

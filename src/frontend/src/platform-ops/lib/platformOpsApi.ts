@@ -29,7 +29,7 @@ export interface PlatformOverviewAlert {
 export interface PlatformOverviewTask {
   id: number
   task_uuid: string
-  organization_id: number
+  organization_id: number | null
   organization_key: string
   organization_name: string
   task_type: string

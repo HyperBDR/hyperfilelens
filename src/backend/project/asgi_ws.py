@@ -37,9 +37,21 @@ def _clear_stale_ws_routes() -> None:
         logger.info("cleared stale websocket routes on startup: %s", summary)
 
 
+def _start_ws_recovery_window() -> None:
+    from apps.node.services.internal.redis_store import begin_ws_recovery_hold
+    from apps.node.ws.lifecycle import ensure_ws_instance_keepalive_started
+
+    try:
+        begin_ws_recovery_hold()
+    except Exception:
+        logger.warning("failed to start websocket recovery hold", exc_info=True)
+    ensure_ws_instance_keepalive_started()
+
+
 configure_django()
 # Initialise Django before Channels routing (registers apps and settings).
 _django_asgi = get_asgi_application()
 _clear_stale_ws_routes()
+_start_ws_recovery_window()
 
 application = _build_application()

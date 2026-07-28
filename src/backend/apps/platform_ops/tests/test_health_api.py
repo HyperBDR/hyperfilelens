@@ -79,6 +79,25 @@ class PlatformOpsMonitoringApiTest(TestCase):
         self.assertIn("results", payload)
         self.assertIn("stats", payload)
 
+    def test_monitoring_lists_platform_validation_task_without_fake_organization(self):
+        task = Task.objects.create(
+            organization_id=None,
+            task_type=Task.Type.STORAGE_PROVIDER_VALIDATION,
+            display_name="Validate storage Provider aliyun",
+        )
+
+        response = self.client.get(
+            "/api/v1/platform-ops/monitoring/tasks",
+            {"task_type": Task.Type.STORAGE_PROVIDER_VALIDATION},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = _payload(response)
+        row = next(item for item in payload["results"] if item["id"] == task.id)
+        self.assertIsNone(row["organization_id"])
+        self.assertEqual(row["organization_key"], "")
+        self.assertEqual(row["organization_name"], "")
+
     def test_monitoring_incident_actions(self):
         incident = AlertRecord.objects.create(
             organization=self.org,

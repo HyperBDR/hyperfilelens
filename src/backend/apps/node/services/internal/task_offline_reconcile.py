@@ -15,6 +15,7 @@ from apps.node.services.internal.node_registry import (
     CONNECTION_RECONNECTING,
     agent_connection_status,
 )
+from apps.node.services.internal import redis_store
 from apps.protection import conf as protection_conf
 from apps.task.models import Task
 
@@ -36,6 +37,8 @@ def is_node_reconnecting(node: Node) -> bool:
 
 
 def is_node_offline_stale(node: Node) -> bool:
+    if not redis_store.offline_task_finalization_ready():
+        return False
     if agent_connection_status(node) != CONNECTION_OFFLINE:
         return False
     reference = node.last_seen_at or node.updated_at
@@ -89,6 +92,13 @@ def persist_task_execution_state(*, task: Task, node: Node | None) -> None:
 
 @transaction.atomic
 def fail_node_task_offline(*, node_task: NodeTask, reason: str | None = None) -> bool:
+    if not redis_store.offline_task_finalization_ready():
+        logger.info(
+            "node task offline finalization held node_task_id=%s node_id=%s",
+            node_task.id,
+            node_task.node_id,
+        )
+        return False
     task = (
         NodeTask.objects.select_for_update()
         .filter(pk=node_task.pk, status__in=_ACTIVE_NODE_TASK)
@@ -121,6 +131,14 @@ def fail_node_task_offline(*, node_task: NodeTask, reason: str | None = None) ->
 
 def reconcile_offline_stale_node_tasks(*, limit: int = 100) -> dict[str, int]:
     """Fail active node tasks on offline-stale agent/proxy nodes and advance platform tasks."""
+    if not redis_store.offline_task_finalization_ready():
+        return {
+            "nodes_checked": 0,
+            "nodes_stale": 0,
+            "node_tasks_failed": 0,
+            "offline_stale_threshold_seconds": offline_stale_threshold_seconds(),
+            "recovery_hold": True,
+        }
     node_ids = list(
         Node.objects.filter(
             role__in=(NodeRole.AGENT, NodeRole.PROXY),
@@ -154,6 +172,7 @@ def reconcile_offline_stale_node_tasks(*, limit: int = 100) -> dict[str, int]:
         "nodes_stale": nodes_stale,
         "node_tasks_failed": node_tasks_failed,
         "offline_stale_threshold_seconds": offline_stale_threshold_seconds(),
+        "recovery_hold": False,
     }
     if node_tasks_failed:
         logger.info("reconcile_offline_stale_node_tasks %s", summary)

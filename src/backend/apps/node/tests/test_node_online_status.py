@@ -101,6 +101,16 @@ class AgentNodeOnlineStatusTests(TestCase):
             Node.Status.ONLINE,
         )
 
+    def test_ws_recovery_hold_requires_live_ws_and_expiry(self):
+        self.assertFalse(redis_store.offline_task_finalization_ready())
+        self._mark_ws_alive()
+        self.assertTrue(redis_store.offline_task_finalization_ready())
+        redis_store.begin_ws_recovery_hold(seconds=180)
+        self.assertTrue(redis_store.ws_recovery_hold_active())
+        self.assertFalse(redis_store.offline_task_finalization_ready())
+        self.redis.delete(redis_store.ws_recovery_hold_key())
+        self.assertTrue(redis_store.offline_task_finalization_ready())
+
     def test_ws_disconnect_enters_reconnecting_grace(self):
         self._mark_ws_alive()
         on_agent_connected(node_id=self.node.id, session_id="session-a")

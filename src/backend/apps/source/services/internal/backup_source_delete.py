@@ -1371,9 +1371,9 @@ def _delete_repository_snapshots(
             continue
         rows = BackupSourceSnapshotDirectory.objects.filter(source_snapshot=snapshot)
         kopia_ids = [
-            str(row.kopia_snapshot_id)
+            snapshot_id
             for row in rows
-            if str(row.kopia_snapshot_id or "").strip()
+            if (snapshot_id := str(row.kopia_snapshot_id or "").strip())
         ]
         _enqueue_repository_purge_pending(
             organization_id=organization_id,

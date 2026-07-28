@@ -14,12 +14,21 @@ class BackupConfig(models.Model):
         BALANCED = "balanced", "Balanced"
         HIGH = "high", "High"
 
+    class RepositoryEndpointType(models.TextChoices):
+        EXTERNAL = "external", "External"
+        INTERNAL = "internal", "Internal"
+
     organization_id = models.BigIntegerField(db_index=True)
     name = models.CharField(max_length=200)
     remark = models.TextField(blank=True, default="")
     source_type = models.CharField(max_length=16)
     source_ref_id = models.BigIntegerField()
     repository_id = models.BigIntegerField(db_index=True)
+    repository_endpoint_type = models.CharField(
+        max_length=16,
+        choices=RepositoryEndpointType.choices,
+        default=RepositoryEndpointType.EXTERNAL,
+    )
     backup_policy_id = models.BigIntegerField(blank=True, null=True, db_index=True)
     file_filter_rule_id = models.BigIntegerField(blank=True, null=True, db_index=True)
     compression_level = models.CharField(
@@ -55,6 +64,10 @@ class BackupConfig(models.Model):
             models.CheckConstraint(
                 condition=models.Q(compression_level__in=["none", "balanced", "high"]),
                 name="prot_bcfg_compression_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(repository_endpoint_type__in=["external", "internal"]),
+                name="prot_bcfg_repo_endpoint_valid",
             ),
             models.UniqueConstraint(
                 fields=["organization_id", "source_type", "source_ref_id"],

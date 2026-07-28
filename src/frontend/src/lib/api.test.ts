@@ -86,4 +86,24 @@ describe('repository conflict errors', () => {
 
     expect(message).toBe('A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location.')
   })
+
+  it.each([
+    [
+      'STORAGE.REPOSITORY_OPERATION_NOT_CANCELLABLE',
+      'errors.codes.storageRepositoryOperationNotCancellable',
+      'Only controller-managed S3 maintenance tasks can be cancelled.',
+    ],
+    [
+      'STORAGE.REPOSITORY_OPERATION_NOT_ACTIVE',
+      'errors.codes.storageRepositoryOperationNotActive',
+      'This maintenance task has already finished. Refresh to see its latest status.',
+    ],
+  ])('maps %s to stable cancellation copy', (errorCode, key, copy) => {
+    const message = apiErrorMessageI18n(
+      { status: 409, message: 'internal diagnostic', errorCode },
+      (candidate) => candidate === key ? copy : candidate,
+    )
+
+    expect(message).toBe(copy)
+  })
 })

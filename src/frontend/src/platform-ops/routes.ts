@@ -92,6 +92,11 @@ export const platformOpsRoutes = [
     name: 'PlatformOpsIntegrations',
     component: lazyRoute(() => import('./pages/platform/PlatformIntegrations.vue')),
   },
+  {
+    path: 'storage-providers',
+    name: 'PlatformOpsStorageProviders',
+    component: lazyRoute(() => import('./pages/storage-providers/StorageProviders.vue')),
+  },
   { path: 'platform/settings/email', redirect: '/platform-ops/platform/email' },
   { path: 'platform/settings/turnstile', redirect: '/platform-ops/platform/authentication' },
   { path: 'platform/settings/google-oauth', redirect: '/platform-ops/platform/authentication' },

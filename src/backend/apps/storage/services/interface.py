@@ -52,6 +52,14 @@ from apps.storage.services.internal.repository_secrets import (
 )
 from apps.task.models import Task
 from common.errors import AppError
+from apps.storage.provider_catalog.operations import (
+    export_catalog as export_provider_catalog,
+    import_apply as apply_provider_catalog_import,
+    import_diff as diff_provider_catalog_import,
+    import_review as review_provider_catalog_import,
+    reset_confirm as confirm_provider_catalog_reset,
+    reset_review as review_provider_catalog_reset,
+)
 
 __all__ = [
     "RepositoryCleanupBlocked",
@@ -59,6 +67,12 @@ __all__ = [
     "direct_nas_cleanup_target_ids",
     "repository_cleanup_task_payload",
     "run_repository_cleanup_task",
+    "apply_provider_catalog_import",
+    "confirm_provider_catalog_reset",
+    "diff_provider_catalog_import",
+    "export_provider_catalog",
+    "review_provider_catalog_import",
+    "review_provider_catalog_reset",
 ]
 
 

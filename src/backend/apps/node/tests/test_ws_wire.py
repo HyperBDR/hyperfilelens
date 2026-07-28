@@ -3,12 +3,14 @@
 from django.test import SimpleTestCase
 
 from apps.node.ws.wire import (
+    TASK_RESULT_ACK_SUBPROTOCOL,
     ParsedUplink,
     WireType,
     heartbeat_ack_wire,
     loads_json,
     parse_uplink,
     task_command_wire,
+    task_result_ack_wire,
 )
 
 
@@ -49,3 +51,9 @@ class WireParseTests(SimpleTestCase):
     def test_heartbeat_ack_wire(self):
         body = heartbeat_ack_wire()
         self.assertEqual(body["type"], WireType.HEARTBEAT_ACK)
+
+    def test_task_result_ack_wire(self):
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        body = task_result_ack_wire(task_id=task_id)
+        self.assertEqual(TASK_RESULT_ACK_SUBPROTOCOL, "hfl.task-result-ack.v1")
+        self.assertEqual(body, {"type": WireType.TASK_RESULT_ACK, "task_id": task_id})

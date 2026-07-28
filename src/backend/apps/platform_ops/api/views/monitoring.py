@@ -36,6 +36,10 @@ from apps.platform_ops.selectors.internal.org_lookup import organization_map
 from apps.platform_ops.services.internal.audit import write_platform_audit_log
 from apps.task.models import Task
 from apps.task.services.interface import cancel_task, retry_task
+from apps.storage.provider_catalog.errors import (
+    ProviderCatalogConflictError,
+    ProviderCatalogValidationError,
+)
 
 
 class _PagedMonitoringView(APIView):
@@ -154,7 +158,36 @@ class PlatformOpsMonitoringTaskActionView(APIView):
         task = get_object_or_404(Task, task_uuid=task_uuid)
         reason = str(request.data.get("reason") or "").strip()[:1000]
         try:
-            if action == "cancel":
+            if task.task_type == Task.Type.STORAGE_PROVIDER_VALIDATION:
+                from apps.storage.provider_catalog.models import (
+                    StorageProviderValidationRun,
+                )
+                from apps.storage.provider_catalog.validation import (
+                    cancel_validation_run,
+                )
+
+                run = StorageProviderValidationRun.objects.filter(task_id=task.id).first()
+                if run is None:
+                    return Response(
+                        {"detail": "Provider validation run is no longer active."},
+                        status=400,
+                    )
+                if action != "cancel":
+                    return Response(
+                        {
+                            "detail": (
+                                "Provider validation retries require write-only "
+                                "credentials on the Storage Providers page."
+                            )
+                        },
+                        status=400,
+                    )
+                cancel_validation_run(
+                    run_id=run.id,
+                    requested_by_id=request.user.pk,
+                )
+                task.refresh_from_db()
+            elif action == "cancel":
                 task = cancel_task(
                     task_uuid=task.task_uuid,
                     organization_id=task.organization_id,
@@ -171,6 +204,16 @@ class PlatformOpsMonitoringTaskActionView(APIView):
         except ValidationError as exc:
             message = exc.messages[0] if getattr(exc, "messages", None) else "Task action failed."
             return Response({"detail": message}, status=400)
+        except ProviderCatalogConflictError as exc:
+            return Response(
+                {"detail": exc.message, "error_code": exc.code},
+                status=409,
+            )
+        except ProviderCatalogValidationError as exc:
+            return Response(
+                {"detail": exc.message, "error_code": exc.code},
+                status=400,
+            )
         org = organization_map([task.organization_id]).get(task.organization_id, {})
         write_platform_audit_log(
             request=request,

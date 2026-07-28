@@ -14,9 +14,6 @@ logger = logging.getLogger(__name__)
 @shared_task(
     name="apps.protection.tasks.snapshot_delete.execute_snapshot_delete_task",
     bind=True,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_kwargs={"max_retries": 2},
 )
 def execute_snapshot_delete_task(
     self,

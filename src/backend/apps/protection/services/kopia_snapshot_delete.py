@@ -3,6 +3,17 @@ from __future__ import annotations
 from typing import Any
 
 
+_KOPIA_SNAPSHOT_ID_SENTINELS = {"none", "null"}
+
+
+def normalize_kopia_snapshot_id(value: object) -> str:
+    """Return a usable Kopia snapshot ID, or an empty string for legacy sentinels."""
+    snapshot_id = str(value or "").strip()
+    if snapshot_id.lower() in _KOPIA_SNAPSHOT_ID_SENTINELS:
+        return ""
+    return snapshot_id
+
+
 def _item_delete_text(item: dict[str, Any]) -> str:
     parts: list[str] = [str(item.get("error_message") or "")]
     delete = item.get("delete")

@@ -8,6 +8,8 @@ type Downlink struct {
 	TaskCommand *TaskCommand
 	// TaskCancel is set when Type == TypeTaskCancel.
 	TaskCancel *TaskCancel
+	// TaskResultAck is set when Type == TypeTaskResultAck.
+	TaskResultAck *TaskResultAck
 }
 
 // TaskCommand is the task.command payload from the control plane.
@@ -25,6 +27,11 @@ type TaskCommand struct {
 type TaskCancel struct {
 	TaskID string
 	NodeID int64
+}
+
+// TaskResultAck confirms that the control plane durably handled task.result.
+type TaskResultAck struct {
+	TaskID string
 }
 
 // JobID returns the best-effort job correlation id from a task.command frame.

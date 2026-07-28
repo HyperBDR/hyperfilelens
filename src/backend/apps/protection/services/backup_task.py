@@ -24,6 +24,7 @@ from apps.node.services.interface import (
     run_agent_task_sync,
     wait_for_agent_task,
 )
+from apps.protection import conf as protection_conf
 from apps.protection.models import (
     BackupConfig,
     BackupSourceSnapshot,
@@ -390,7 +391,7 @@ def _load_backup_configs(
     return config_map
 
 
-def _has_active_backup_task(
+def find_active_backup_task(
     *,
     organization_id: int,
     source_type: str,
@@ -429,8 +430,6 @@ def _backup_execution_lock_key(*, organization_id: int, task_uuid: str) -> str:
 
 
 def _acquire_backup_execution_lock(*, organization_id: int, task_uuid: str) -> bool:
-    from apps.protection import conf as protection_conf
-
     # Short lock — orchestrator ticks are idempotent; prevents duplicate concurrent advances.
     ttl = max(120, int(protection_conf.PROTECTION_BACKUP_RECONCILE_INTERVAL_SECONDS) * 4)
     return bool(
@@ -664,7 +663,7 @@ def start_backup_tasks(
                             "message": "A backup task already exists for this idempotency key.",
                         }
                     else:
-                        active_task = _has_active_backup_task(
+                        active_task = find_active_backup_task(
                             organization_id=organization_id,
                             source_type=source.source_type,
                             source_ref_id=source.source_ref_id,
@@ -886,10 +885,14 @@ def _repository_runtime_payload(
     *,
     repository: Repository,
     execution_target: ExecutionTarget,
+    repository_endpoint_type: object = "external",
+    repository_endpoint: object = None,
 ) -> dict[str, Any]:
     return build_repository_runtime_payload(
         repository=repository,
         execution_target=execution_target,
+        repository_endpoint_type=repository_endpoint_type,
+        repository_endpoint=repository_endpoint,
     )
 
 
@@ -1049,6 +1052,8 @@ def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: 
             or "rpc error:" in lower
             or "failed to open repository" in lower
             or lower.startswith("error:")
+            or "unable to get policy tree" in lower
+            or "policy not found" in lower
             or "unable to open" in lower
             or "found " in lower and "fatal error" in lower
         ):
@@ -1107,6 +1112,10 @@ def _directory_error(outcome, *, timed_out: bool = False) -> tuple[str, str]:
     if not message:
         message = "Agent backup command failed."
     lower = message.lower()
+    if str(result.get("error_code") or "") == "KOPIA_POLICY_NOT_FOUND" or (
+        "unable to get policy tree" in lower or "policy not found" in lower
+    ):
+        return "KOPIA_POLICY_NOT_FOUND", message
     if "fatal error" in lower or "error when processing" in lower:
         return "KOPIA_SNAPSHOT_FATAL", message
     if _is_generic_exit_message(last_error) or "exit" in last_error.lower():
@@ -1135,7 +1144,7 @@ def _matching_backup_node_task(
     candidates = NodeTask.objects.filter(
         organization_id=organization_id,
         node_id=node_id,
-        kind="backup.run",
+        kind__in=protection_conf.PROTECTION_BACKUP_NODE_TASK_KINDS,
         correlation_type="protection.backup",
         correlation_id=str(task_uuid),
     ).order_by("-created_at", "-id")

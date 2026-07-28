@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest import mock
 
 from django.core.cache import cache
@@ -17,7 +18,11 @@ from apps.storage.services.internal.repository_cleanup import (
 from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
     discover_repository_execution_targets,
+    fence_controller_repository_operation,
+    finalize_repository_operation,
+    set_controller_repository_operation_step,
     set_task_step,
+    start_controller_repository_operation,
 )
 from apps.storage.tasks import (
     execute_repository_operation,
@@ -78,6 +83,22 @@ class RepositoryOperationRecoveryTests(TestCase):
             "run_repository_operation",
             status=TaskStep.Status.RUNNING,
             progress=25,
+        )
+
+    def _controller_maintenance_task(self) -> RepositoryTask:
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="controller-recovery-s3",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.AWS,
+            s3_bucket="controller-recovery-bucket",
+        )
+        discover_repository_execution_targets()
+        return create_repository_operation_task(
+            target_id=repository.execution_targets.get().id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
         )
 
     @mock.patch("apps.storage.tasks.sync_organization_repositories")
@@ -200,6 +221,111 @@ class RepositoryOperationRecoveryTests(TestCase):
 
         self.assertEqual(result["repository_task_ids"], [active.id])
         apply_async.assert_called_once_with(kwargs={"repository_task_id": active.id})
+
+    def test_fresh_controller_heartbeat_keeps_parent_running(self):
+        repository_task = self._controller_maintenance_task()
+        token = start_controller_repository_operation(
+            repository_task_id=repository_task.id
+        )
+        self.assertIsNotNone(token)
+
+        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+
+        repository_task.task.refresh_from_db()
+        repository_task.execution_target.refresh_from_db()
+        self.assertEqual(result["status"], Task.Status.RUNNING)
+        self.assertEqual(repository_task.task.status, Task.Status.RUNNING)
+        self.assertEqual(
+            repository_task.execution_target.active_task_id,
+            repository_task.task_id,
+        )
+
+    def test_stale_controller_heartbeat_fails_and_releases_target(self):
+        repository_task = self._controller_maintenance_task()
+        token = start_controller_repository_operation(
+            repository_task_id=repository_task.id
+        )
+        self.assertIsNotNone(token)
+        RepositoryTask.objects.filter(pk=repository_task.id).update(
+            execution_heartbeat_at=timezone.now() - timedelta(seconds=61)
+        )
+
+        result = execute_repository_operation.run(repository_task_id=repository_task.id)
+
+        repository_task.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        repository_task.execution_target.refresh_from_db()
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            CONTROL_PLANE_RESTART_INTERRUPTED,
+        )
+        self.assertIsNone(repository_task.execution_target.active_task_id)
+        self.assertIsNone(repository_task.execution_token)
+
+    def test_legacy_tokenless_controller_waits_for_timeout_then_recovers(self):
+        repository_task = self._controller_maintenance_task()
+        start_task(
+            task_uuid=repository_task.task.task_uuid,
+            organization_id=self.org.id,
+        )
+
+        waiting = execute_repository_operation.run(
+            repository_task_id=repository_task.id
+        )
+        self.assertEqual(waiting["status"], Task.Status.RUNNING)
+
+        Task.objects.filter(pk=repository_task.task_id).update(
+            started_at=timezone.now() - timedelta(hours=6, seconds=1)
+        )
+        recovered = execute_repository_operation.run(
+            repository_task_id=repository_task.id
+        )
+
+        repository_task.task.refresh_from_db()
+        repository_task.execution_target.refresh_from_db()
+        self.assertEqual(recovered["status"], Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            CONTROL_PLANE_RESTART_INTERRUPTED,
+        )
+        self.assertIsNone(repository_task.execution_target.active_task_id)
+
+    def test_lost_controller_token_cannot_update_steps_or_finalize(self):
+        repository_task = self._controller_maintenance_task()
+        old_token = start_controller_repository_operation(
+            repository_task_id=repository_task.id
+        )
+        recovery_token = fence_controller_repository_operation(
+            repository_task_id=repository_task.id,
+            expected_execution_token=old_token,
+        )
+        self.assertIsNotNone(recovery_token)
+
+        decision = set_controller_repository_operation_step(
+            repository_task_id=repository_task.id,
+            expected_execution_token=old_token,
+            step_name="run_repository_operation",
+            status=TaskStep.Status.SUCCESS,
+            progress=80,
+        )
+        stale_result = finalize_repository_operation(
+            repository_task_id=repository_task.id,
+            succeeded=True,
+            expected_execution_token=old_token,
+        )
+
+        repository_task.task.refresh_from_db()
+        self.assertEqual(decision, "lost_lease")
+        self.assertEqual(stale_result.status, Task.Status.RUNNING)
+        self.assertEqual(repository_task.task.status, Task.Status.RUNNING)
+        self.assertNotEqual(
+            repository_task.task.steps.get(
+                step_name="run_repository_operation"
+            ).status,
+            TaskStep.Status.SUCCESS,
+        )
 
     def test_uncertain_cleanup_fails_original_and_creates_replacement(self):
         repository_task = create_repository_cleanup_task(

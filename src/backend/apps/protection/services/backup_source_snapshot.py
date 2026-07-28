@@ -14,6 +14,8 @@ from apps.protection.models import (
     BackupSourceSnapshotDirectory,
 )
 from apps.protection.services.backup_runtime_policy import build_backup_runtime_policy
+from apps.protection.services.kopia_snapshot_delete import normalize_kopia_snapshot_id
+from apps.storage.repositories.models import Repository
 
 _TERMINAL_DIRECTORY_STATUSES = {
     BackupSourceSnapshotDirectory.Status.AVAILABLE,
@@ -78,15 +80,21 @@ def create_source_snapshot(
     if snapshot is not None:
         return snapshot
 
+    config = BackupConfig.objects.filter(
+        organization_id=organization_id,
+        id=backup_config_id,
+    ).first()
+    if config is None:
+        raise ValidationError({"backup_config_id": "Backup config not found."})
     if policy_snapshot is None:
-        config = BackupConfig.objects.filter(
-            organization_id=organization_id,
-            id=backup_config_id,
-        ).first()
-        if config is None:
-            raise ValidationError({"backup_config_id": "Backup config not found."})
         policy_snapshot = build_backup_runtime_policy(config=config)
 
+    repository = Repository.objects.filter(
+        organization_id=organization_id,
+        id=repository_id,
+    ).first()
+    if repository is None:
+        raise ValidationError({"repository_id": "Repository not found."})
     return BackupSourceSnapshot.objects.create(
         organization_id=organization_id,
         snapshot_uid=str(snapshot_uid or _snapshot_uid()).strip(),
@@ -143,7 +151,8 @@ def record_source_snapshot_directory_result(
     allowed_path_types = {choice for choice, _label in BackupSourceSnapshotDirectory.PathType.choices}
     if path_type_value not in allowed_path_types:
         path_type_value = BackupSourceSnapshotDirectory.PathType.UNKNOWN
-    if status_value == BackupSourceSnapshotDirectory.Status.AVAILABLE and not str(kopia_snapshot_id or "").strip():
+    normalized_kopia_snapshot_id = normalize_kopia_snapshot_id(kopia_snapshot_id)
+    if status_value == BackupSourceSnapshotDirectory.Status.AVAILABLE and not normalized_kopia_snapshot_id:
         raise ValidationError({"kopia_snapshot_id": "Available directory results require kopia_snapshot_id."})
     if (
         status_value == BackupSourceSnapshotDirectory.Status.FAILED
@@ -162,7 +171,7 @@ def record_source_snapshot_directory_result(
             "path_type": path_type_value,
             "display_name": str(display_name or "").strip(),
             "repository_id": int(repository_id),
-            "kopia_snapshot_id": str(kopia_snapshot_id).strip() or None,
+            "kopia_snapshot_id": normalized_kopia_snapshot_id or None,
             "status": status_value,
             "size_bytes": max(0, int(size_bytes or 0)),
             "file_count": max(0, int(file_count or 0)),
@@ -224,6 +233,7 @@ def refresh_source_snapshot_summary(
     elif source_snapshot.status not in {
         BackupSourceSnapshot.Status.FAILED,
         BackupSourceSnapshot.Status.DELETING,
+        BackupSourceSnapshot.Status.DELETE_FAILED,
         BackupSourceSnapshot.Status.DELETED,
     }:
         source_snapshot.status = BackupSourceSnapshot.Status.CREATING

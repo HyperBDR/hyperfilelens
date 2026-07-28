@@ -9,11 +9,12 @@ import {
   stopConfirmDetailLabel,
 } from '../lib/protectionStopConfirmCopy'
 import type { ProtectionStopConfirmItem } from '../lib/protectionStopConfirm'
+import type { ProtectionStopConfirmKind } from '../composables/useProtectionStopConfirmDialog'
 import './backupSourceFlowActionDialog.css'
 
 const props = defineProps<{
   modelValue: boolean
-  kind: 'backup' | 'restore'
+  kind: ProtectionStopConfirmKind
   items: ProtectionStopConfirmItem[]
   loading?: boolean
 }>()
@@ -31,25 +32,47 @@ const visible = computed({
   set: (v: boolean) => emit('update:modelValue', v),
 })
 
-const title = computed(() => buildStopConfirmTitle(t, props.kind, props.items.length))
+const title = computed(() => (
+  props.kind === 'maintenance'
+    ? t('ops.task.repositoryCancelConfirmTitle')
+    : buildStopConfirmTitle(t, props.kind, props.items.length)
+))
 
-const message = computed(() => buildStopConfirmMessage(t, props.kind, props.items))
+const message = computed(() => (
+  props.kind === 'maintenance'
+    ? t('ops.task.repositoryCancelConfirmMessage')
+    : buildStopConfirmMessage(t, props.kind, props.items)
+))
 
 const itemsHeading = computed(() =>
   props.kind === 'backup'
     ? t('protection.backupsPage.stopBackupConfirmItemsHeading')
-    : t('protection.backupsPage.stopRestoreConfirmItemsHeading'),
+    : props.kind === 'restore'
+      ? t('protection.backupsPage.stopRestoreConfirmItemsHeading')
+      : t('ops.task.repositoryCancelItemsHeading'),
 )
 
-const detailLabel = computed(() => stopConfirmDetailLabel(t, props.kind))
+const detailLabel = computed(() => (
+  props.kind === 'maintenance'
+    ? t('ops.task.repositoryCancelDetailLabel')
+    : stopConfirmDetailLabel(t, props.kind)
+))
+
+const itemNameLabel = computed(() => (
+  props.kind === 'maintenance'
+    ? t('ops.task.colName')
+    : t('protection.backupsPage.colBackupSource')
+))
 
 const confirmLabel = computed(() =>
   props.kind === 'backup'
     ? t('protection.backupsPage.btnConfirmStopBackup')
-    : t('protection.backupsPage.btnConfirmStopRestore'),
+    : props.kind === 'restore'
+      ? t('protection.backupsPage.btnConfirmStopRestore')
+      : t('ops.task.repositoryCancelConfirmAction'),
 )
 
-const confirmButtonType = computed(() => (props.kind === 'backup' ? 'warning' : 'danger'))
+const confirmButtonType = computed(() => (props.kind === 'restore' ? 'danger' : 'warning'))
 
 function detailText(item: ProtectionStopConfirmItem) {
   if (props.kind === 'restore') {
@@ -102,7 +125,7 @@ function confirm() {
             max-height="260"
           >
             <ElTableColumn
-              :label="t('protection.backupsPage.colBackupSource')"
+              :label="itemNameLabel"
               min-width="210"
             >
               <template #default="{ row }">

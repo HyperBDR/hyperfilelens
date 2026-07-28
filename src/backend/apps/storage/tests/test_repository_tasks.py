@@ -19,6 +19,7 @@ from apps.storage.services.internal.repository_operations import (
     discover_repository_execution_targets,
     finalize_repository_operation,
     schedule_due_maintenance,
+    start_controller_repository_operation,
 )
 from apps.task.models import Task
 from apps.task.services.interface import start_task
@@ -391,3 +392,131 @@ class RepositoryTasksApiTests(TestCase):
             HTTP_X_ORG_KEY=self.org.key,
         )
         self.assertEqual(cancel.status_code, 400)
+
+    def test_pending_controller_maintenance_cancels_immediately_and_reschedules(self):
+        state = self.repository_task.execution_target.maintenance_state
+        state.consecutive_failures = 3
+        state.next_retry_at = timezone.now()
+        state.save(update_fields=["consecutive_failures", "next_retry_at", "updated_at"])
+        before_cancel = timezone.now()
+
+        response = self.client.post(
+            f"/api/v1/storage/repository-tasks/{self.repository_task.task.task_uuid}/cancel/",
+            {"reason": "Operator cancelled this run"},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.repository_task.refresh_from_db()
+        self.repository_task.task.refresh_from_db()
+        self.repository_task.execution_target.refresh_from_db()
+        state.refresh_from_db()
+        self.assertEqual(self.repository_task.task.status, Task.Status.CANCELLED)
+        self.assertEqual(self.repository_task.task.error_code, "TASK_CANCELLED")
+        self.assertIsNone(self.repository_task.execution_target.active_task_id)
+        self.assertEqual(state.consecutive_failures, 0)
+        self.assertIsNone(state.next_retry_at)
+        self.assertGreater(state.next_full_due_at, before_cancel)
+        self.assertGreater(state.next_quick_due_at, before_cancel)
+        self.assertTrue(response.data["repository_cancellation"]["supported"])
+        self.assertIsNotNone(
+            response.data["repository_cancellation"]["requested_at"]
+        )
+
+        repeated = self.client.post(
+            f"/api/v1/storage/repository-tasks/{self.repository_task.task.task_uuid}/cancel/",
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(repeated.status_code, 200, repeated.content)
+
+    @patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_running_controller_maintenance_records_idempotent_cancel_request(
+        self,
+        apply_async,
+    ):
+        token = start_controller_repository_operation(
+            repository_task_id=self.repository_task.id
+        )
+        self.assertIsNotNone(token)
+
+        first = self.client.post(
+            f"/api/v1/storage/repository-tasks/{self.repository_task.task.task_uuid}/cancel/",
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.repository_task.refresh_from_db()
+        requested_at = self.repository_task.cancel_requested_at
+        second = self.client.post(
+            f"/api/v1/storage/repository-tasks/{self.repository_task.task.task_uuid}/cancel/",
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.repository_task.refresh_from_db()
+        self.repository_task.task.refresh_from_db()
+        self.assertEqual(first.status_code, 202, first.content)
+        self.assertEqual(second.status_code, 202, second.content)
+        self.assertEqual(self.repository_task.task.status, Task.Status.RUNNING)
+        self.assertEqual(self.repository_task.cancel_requested_at, requested_at)
+        self.assertEqual(apply_async.call_count, 2)
+
+    def test_agent_and_cleanup_repository_operations_are_not_cancellable(self):
+        cancel_url = (
+            f"/api/v1/storage/repository-tasks/"
+            f"{self.repository_task.task.task_uuid}/cancel/"
+        )
+        self.repository_task.owner_type = RepositoryExecutionTarget.OwnerType.NODE
+        self.repository_task.save(update_fields=["owner_type", "updated_at"])
+
+        agent_response = self.client.post(
+            cancel_url,
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(agent_response.status_code, 409, agent_response.content)
+        self.assertEqual(
+            agent_response.data["data"]["code"],
+            "STORAGE.REPOSITORY_OPERATION_NOT_CANCELLABLE",
+        )
+
+        self.repository_task.owner_type = RepositoryExecutionTarget.OwnerType.CONTROLLER
+        self.repository_task.operation_type = RepositoryTask.OperationType.CLEANUP_REPOSITORY
+        self.repository_task.save(
+            update_fields=["owner_type", "operation_type", "updated_at"]
+        )
+        cleanup_response = self.client.post(
+            cancel_url,
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(cleanup_response.status_code, 409, cleanup_response.content)
+        self.assertEqual(
+            cleanup_response.data["data"]["code"],
+            "STORAGE.REPOSITORY_OPERATION_NOT_CANCELLABLE",
+        )
+
+    def test_finished_controller_maintenance_returns_not_active_conflict(self):
+        finalize_repository_operation(
+            repository_task_id=self.repository_task.id,
+            succeeded=True,
+        )
+
+        response = self.client.post(
+            f"/api/v1/storage/repository-tasks/{self.repository_task.task.task_uuid}/cancel/",
+            {},
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(
+            response.data["data"]["code"],
+            "STORAGE.REPOSITORY_OPERATION_NOT_ACTIVE",
+        )

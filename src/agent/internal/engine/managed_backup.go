@@ -967,10 +967,15 @@ func (e *Engine) runManagedPolicyApply(
 	if err != nil {
 		return "failed", nil, err.Error()
 	}
-	configFile, env, result, _, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
+	configFile, env, result, repository, prepErr := e.prepareManagedRepository(ctx, rep, taskID, p, repositoryPrepareConnect)
 	if prepErr != "" {
 		return "failed", result, prepErr
 	}
+	releaseSessionLock, sessionLockErr := repositorySessionLockFor(repository, configFile).acquireWrite(ctx)
+	if sessionLockErr != nil {
+		return "failed", result, sessionLockErr.Error()
+	}
+	defer releaseSessionLock()
 	releasePathLock, lockErr := managedBackupPathLocks.acquire(ctx, configFile, p.Path)
 	if lockErr != nil {
 		return "failed", result, lockErr.Error()
@@ -987,6 +992,45 @@ func (e *Engine) runManagedPolicyApply(
 }
 
 var runManagedSnapshotCommand = process.RunStreaming
+
+func (e *Engine) runManagedPreparedSnapshot(
+	ctx context.Context,
+	rep ReporterSink,
+	taskID string,
+	p Payload,
+) (string, map[string]any, string) {
+	if p.Path == "" {
+		return "failed", nil, "source_path is required"
+	}
+	if err := e.ensureNASMounted(ctx, p); err != nil {
+		return "failed", nil, err.Error()
+	}
+	bin, err := e.kopiaBin(ctx)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	configFile, env, result, repository, prepErr := e.prepareManagedRepository(
+		ctx,
+		rep,
+		taskID,
+		p,
+		repositoryPrepareConnect,
+	)
+	if prepErr != "" {
+		return "failed", result, prepErr
+	}
+	releaseSessionLock, sessionLockErr := repositorySessionLockFor(repository, configFile).acquireRead(ctx)
+	if sessionLockErr != nil {
+		return "failed", result, sessionLockErr.Error()
+	}
+	defer releaseSessionLock()
+	releasePathLock, lockErr := managedBackupPathLocks.acquire(ctx, configFile, p.Path)
+	if lockErr != nil {
+		return "failed", result, lockErr.Error()
+	}
+	defer releasePathLock()
+	return runPreparedManagedSnapshot(ctx, rep, taskID, bin, configFile, env, p.Path, result)
+}
 
 func runPreparedManagedBackup(
 	ctx context.Context,
@@ -1012,6 +1056,19 @@ func runPreparedManagedBackup(
 	if policyErr != nil {
 		return "failed", result, policyErr.Error()
 	}
+	return runPreparedManagedSnapshot(ctx, rep, taskID, bin, configFile, env, sourcePath, result)
+}
+
+func runPreparedManagedSnapshot(
+	ctx context.Context,
+	rep ReporterSink,
+	taskID string,
+	bin string,
+	configFile string,
+	env map[string]string,
+	sourcePath string,
+	result map[string]any,
+) (string, map[string]any, string) {
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"snapshot_start",
 		"Starting snapshot",
@@ -1021,11 +1078,9 @@ func runPreparedManagedBackup(
 	snapshotArgs := managedBackupSnapshotArgs(configFile, sourcePath)
 	progressState := newKopiaProgressReporter()
 	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
 	stallSeconds := kopiaProgressStallSeconds()
 	stallDone := make(chan struct{})
 	go monitorKopiaProgressStall(runCtx, cancelRun, progressState, stallSeconds, stallDone)
-	defer close(stallDone)
 	onProgressLine := func(line string, _ bool) {
 		snapshot, ok := kopia.ParseProgressLine(line)
 		if !ok {
@@ -1034,6 +1089,9 @@ func runPreparedManagedBackup(
 		progressState.maybeSend(runCtx, rep, taskID, snapshot)
 	}
 	res, runErr := runManagedSnapshotCommand(runCtx, bin, snapshotArgs, env, "", onProgressLine)
+	stalled := runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds)
+	close(stallDone)
+	cancelRun()
 	for key, value := range commandResult(res) {
 		result[key] = value
 	}
@@ -1044,8 +1102,13 @@ func runPreparedManagedBackup(
 		}
 	}
 	if runErr != nil {
-		if runCtx.Err() != nil && ctx.Err() == nil && progressState.stallExceeded(stallSeconds) {
+		if stalled {
 			return "failed", result, "kopia progress stall"
+		}
+		if managedSnapshotPolicyNotFound(res) {
+			result["error_code"] = "KOPIA_POLICY_NOT_FOUND"
+			result["policy_phase"] = "snapshot_create"
+			return "failed", result, "kopia policy not found"
 		}
 		return "failed", result, runErr.Error()
 	}
@@ -1061,6 +1124,11 @@ func runPreparedManagedBackup(
 		"kopia_snapshot_id": stringValue(result["kopia_snapshot_id"]),
 	})
 	return "success", result, ""
+}
+
+func managedSnapshotPolicyNotFound(res process.Result) bool {
+	output := strings.ToLower(res.Stderr + "\n" + res.Stdout)
+	return strings.Contains(output, "unable to get policy tree") || strings.Contains(output, "policy not found")
 }
 
 func managedBackupSnapshotArgs(configFile string, sourcePath string) []string {

@@ -6,6 +6,7 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection import conf as protection_conf
 from apps.storage.repositories.models import Repository
+from apps.storage.selectors.interface import get_effective_storage_provider
 from apps.storage.services.interface import create_repository, update_repository
 from apps.storage.services.internal.repository_access import (
     explicit_repository_server_host,
@@ -15,6 +16,12 @@ from apps.storage.services.internal.repository_access import (
 from apps.storage.services.internal.repository_secrets import (
     credential_hint,
     sanitize_repository_config,
+)
+from apps.storage.services.internal.repository_endpoints import (
+    S3_ENDPOINT_EXTERNAL,
+    compact_s3_repository_endpoints,
+    normalize_s3_endpoint_host,
+    s3_endpoint_snapshot,
 )
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
@@ -37,6 +44,9 @@ FORBIDDEN_CONFIG_FIELDS = {
     "nfs_host",
     "nfs_export",
     "nfs_options",
+    "endpoint_type",
+    "external_endpoint",
+    "internal_endpoint",
 }
 
 
@@ -211,8 +221,14 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
                 locked_errors["s3_bucket"] = "S3 bucket cannot be modified."
             incoming_config = attrs.get("config") or {}
             if isinstance(incoming_config, dict):
-                if "endpoint" in incoming_config:
-                    locked_errors["config.endpoint"] = "S3 endpoint cannot be modified."
+                for field in (
+                    "endpoint",
+                    "endpoint_type",
+                    "external_endpoint",
+                    "internal_endpoint",
+                ):
+                    if field in incoming_config:
+                        locked_errors[f"config.{field}"] = "S3 endpoint cannot be modified."
                 if "prefix" in incoming_config:
                     locked_errors["config.prefix"] = "S3 object prefix cannot be modified."
             if locked_errors:
@@ -234,6 +250,9 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"repo_type": "Unsupported repository type."})
 
         if repo_type == Repository.Type.S3:
+            s3_platform = str(s3_platform or "").strip().lower()
+            if "s3_platform" in attrs:
+                attrs["s3_platform"] = s3_platform
             self._validate_s3(config, credential_payload, s3_platform, s3_bucket)
         elif repo_type == Repository.Type.NAS:
             self._validate_nas(config, credential_payload, nas_protocol, bind_node_type, bind_node_id)
@@ -244,10 +263,72 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
         return attrs
 
     def _validate_s3(self, config, credential_payload, s3_platform, s3_bucket) -> None:
-        if s3_platform not in {choice[0] for choice in Repository.S3Platform.choices}:
+        s3_platform = str(s3_platform or "").strip().lower()
+        if not s3_platform:
             raise serializers.ValidationError({"s3_platform": "S3 platform is required."})
         if not str(s3_bucket or "").strip():
             raise serializers.ValidationError({"s3_bucket": "S3 bucket is required."})
+
+        if s3_platform != Repository.S3Platform.CUSTOM:
+            provider_record = get_effective_storage_provider(str(s3_platform or ""))
+            provider = provider_record.get("config") if provider_record else None
+            if not provider or not provider.get("enabled"):
+                raise serializers.ValidationError(
+                    {"s3_platform": "Managed S3 Provider is not enabled in the current Catalog."}
+                )
+            region_id = str(config.get("region") or "").strip()
+            region = next(
+                (
+                    item
+                    for item in provider.get("regions", [])
+                    if item.get("id") == region_id
+                ),
+                None,
+            )
+            if region is None:
+                raise serializers.ValidationError(
+                    {"config.region": "Region is not in the current Provider Catalog."}
+                )
+            try:
+                snapshot = s3_endpoint_snapshot(
+                    external_endpoint=region.get("external_endpoint"),
+                    internal_endpoint=region.get("internal_endpoint"),
+                    endpoint_type=S3_ENDPOINT_EXTERNAL,
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    {"config.endpoint": str(exc)}
+                ) from exc
+            submitted_endpoint = normalize_s3_endpoint_host(config.get("endpoint"))
+            if submitted_endpoint and submitted_endpoint != snapshot["endpoint"]:
+                raise serializers.ValidationError(
+                    {"config.endpoint": "Endpoint does not match the current Provider Catalog region."}
+                )
+            compacted = compact_s3_repository_endpoints(
+                config,
+                s3_platform=s3_platform,
+                external_endpoint=snapshot["external_endpoint"],
+                internal_endpoint=snapshot["internal_endpoint"],
+            )
+            config.clear()
+            config.update(compacted)
+            config["s3_url_style"] = region["s3_url_style"]
+            config["use_tls"] = region["use_tls"]
+        else:
+            endpoint = normalize_s3_endpoint_host(config.get("endpoint"))
+            try:
+                compacted = compact_s3_repository_endpoints(
+                    config,
+                    s3_platform=s3_platform,
+                    external_endpoint=endpoint,
+                    internal_endpoint=endpoint,
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    {"config.endpoint": str(exc)}
+                ) from exc
+            config.clear()
+            config.update(compacted)
 
         instance = self.instance
         if str(credential_payload.get("access_key_id") or "").strip():

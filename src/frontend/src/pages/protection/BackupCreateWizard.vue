@@ -100,13 +100,17 @@ import {
 } from '../../lib/storageRepositoryApi'
 import {
   defaultS3UrlStyle,
-  s3ProviderRegions,
+  S3_PROVIDER_OPTIONS,
   type S3PlatformSelection as AddTargetS3Platform,
   type S3UrlStyle as AddTargetS3UrlStyle,
 } from '../../lib/s3ProviderProfiles'
+import {
+  fetchStorageProviderCatalog,
+  type StorageProviderConfig,
+} from '../../lib/storageProviderCatalogApi'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
 import { booleanStatusTag } from '../../lib/statusTag'
-import { DEFAULT_S3_OBJECT_PREFIX } from '../../lib/s3PlatformDisplay'
+import { DEFAULT_S3_OBJECT_PREFIX, normalizeS3EndpointInput } from '../../lib/s3PlatformDisplay'
 import {
   useProtectionDemoStore,
   type DemoDirTreeItem,
@@ -280,6 +284,8 @@ type WizardTarget = {
   bindNodeName?: string | null
   bindNodeIp?: string | null
   s3Endpoint?: string | null
+  s3ExternalEndpoint?: string | null
+  s3InternalEndpoint?: string | null
   s3Region?: string | null
   s3Bucket?: string | null
   nasServerAddress?: string | null
@@ -292,6 +298,8 @@ type WizardTarget = {
   usedBytes?: number
   capacityBytes?: number
 }
+
+type RepositoryEndpointType = 'external' | 'internal'
 
 type WizardPolicy = {
   id: string
@@ -362,6 +370,13 @@ function mapRepository(repo: StorageRepository): WizardTarget {
     bindNodeName: repo.bind_node_display_name ?? null,
     bindNodeIp: repo.bind_node_ip ?? null,
     s3Endpoint: (repo.config?.endpoint as string | undefined) ?? null,
+    s3ExternalEndpoint: (repo.config?.external_endpoint as string | undefined)
+      ?? (repo.config?.endpoint as string | undefined)
+      ?? null,
+    s3InternalEndpoint: (repo.config?.internal_endpoint as string | undefined)
+      ?? (repo.config?.external_endpoint as string | undefined)
+      ?? (repo.config?.endpoint as string | undefined)
+      ?? null,
     s3Region: (repo.config?.region as string | undefined) ?? null,
     s3Bucket: repo.s3_bucket ?? null,
     nasServerAddress: (repo.config?.server_address as string | undefined) ?? null,
@@ -421,6 +436,53 @@ function policyFormToPayload(form: BackupPolicyForm): BackupPolicyWritePayload {
 
 function getRealTarget(id: string | undefined) {
   return realTargets.value.find((target) => target.id === id)
+}
+
+function normalizedTargetEndpoint(value: string | null | undefined) {
+  return normalizeS3EndpointInput(value).toLowerCase().replace(/\.$/, '')
+}
+
+function targetExternalEndpoint(target: WizardTarget | null | undefined) {
+  return normalizedTargetEndpoint(target?.s3ExternalEndpoint || target?.s3Endpoint)
+}
+
+function targetInternalEndpoint(target: WizardTarget | null | undefined) {
+  return normalizedTargetEndpoint(
+    target?.s3InternalEndpoint || target?.s3ExternalEndpoint || target?.s3Endpoint,
+  )
+}
+
+function targetHasDistinctEndpoints(target: WizardTarget | null | undefined) {
+  if (!target || target.repoType !== 'S3') return false
+  const external = targetExternalEndpoint(target)
+  const internal = targetInternalEndpoint(target)
+  return Boolean(external && internal && external !== internal)
+}
+
+function endpointForTarget(
+  target: WizardTarget | null | undefined,
+  endpointType: RepositoryEndpointType,
+) {
+  return endpointType === 'internal'
+    ? targetInternalEndpoint(target)
+    : targetExternalEndpoint(target)
+}
+
+function endpointTypeForGroup(groupKey: string): RepositoryEndpointType {
+  const target = getRealTarget(sourceTargetMap.value[groupKey])
+  if (!targetHasDistinctEndpoints(target)) return 'external'
+  return sourceEndpointTypeMap.value[groupKey] || 'external'
+}
+
+function endpointSummaryForGroup(group: WizardSourceGroup) {
+  const target = getRealTarget(sourceTargetMap.value[group.key])
+  if (!target || target.repoType !== 'S3') return ''
+  const endpointType = endpointTypeForGroup(group.key)
+  const label = endpointType === 'internal'
+    ? t('addS3Repo.endpointInternal')
+    : t('addS3Repo.endpointExternal')
+  const endpoint = endpointForTarget(target, endpointType)
+  return endpoint ? `${label} · ${endpoint}` : label
 }
 
 function getRealPolicy(id: string | undefined) {
@@ -602,6 +664,7 @@ type CreateRecoveryDirPlanField = 'sourcePath' | 'targetHostId' | 'restoreDir'
 type CreateRecoveryPlanField = CreateRecoveryDirPlanField | 'conflictMode'
 
 const sourceTargetMap = ref<Record<string, string>>({})
+const sourceEndpointTypeMap = ref<Record<string, RepositoryEndpointType>>({})
 const WHOLE_SNAPSHOT_RECOVERY_PATH = '__whole_snapshot__'
 
 const addSourceOpen = ref(false)
@@ -1030,6 +1093,7 @@ const targetValidationAttempted = ref(false)
 const highlightedTargetGroupKey = ref('')
 const batchTargetPicker = reactive<TargetPickerState>({ search: '', repoType: '', targetId: '' })
 const batchNasTargetMode = ref<NasTargetMode>('per_directory_repo')
+const batchRepositoryEndpointType = ref<RepositoryEndpointType | ''>('')
 type TargetAssignDialogMode = 'single' | 'batch'
 const targetAssignDialogOpen = ref(false)
 const targetAssignDialogMode = ref<TargetAssignDialogMode>('batch')
@@ -1071,6 +1135,7 @@ const addTargetS3AccessKey = ref('')
 const addTargetS3SecretKey = ref('')
 const addTargetS3UrlStyle = ref<AddTargetS3UrlStyle>(defaultS3UrlStyle(undefined))
 const addTargetS3UseTls = ref(true)
+const addTargetS3CatalogProviders = ref<StorageProviderConfig[]>([])
 const addTargetNasProtocol = ref<AddTargetNasProtocol>('smb')
 const addTargetNasHost = ref('')
 const addTargetNasShare = ref('')
@@ -1287,16 +1352,28 @@ const addTargetNextButtonLabel = computed(() =>
 )
 
 const addTargetS3Regions = computed(() => {
-  return s3ProviderRegions(addTargetS3Platform.value)
-    .map((region) => ({ ...region, label: t(region.labelKey) }))
+  const provider = addTargetS3CatalogProviders.value.find((item) => item.id === addTargetS3Platform.value)
+  return (provider?.regions || []).map((region) => ({
+    key: region.id,
+    label: region.display_name,
+    endpoint: region.external_endpoint,
+    region: region.id,
+  }))
 })
 
+const addTargetS3PlatformOptions = computed(() => [
+  ...addTargetS3CatalogProviders.value.map((provider) => ({
+    value: provider.id,
+    label: provider.display_name,
+  })),
+  ...S3_PROVIDER_OPTIONS.map((provider) => ({
+    value: provider.value,
+    label: provider.label || (provider.labelKey ? t(provider.labelKey) : provider.value),
+  })),
+])
+
 const addTargetS3PlatformLabel = computed(() => {
-  if (addTargetS3Platform.value === 'aliyun') return t('addS3Repo.platformAliyun')
-  if (addTargetS3Platform.value === 'huawei') return t('addS3Repo.platformHuawei')
-  if (addTargetS3Platform.value === 'aws') return t('addS3Repo.platformAws')
-  if (addTargetS3Platform.value === 'other') return t('addS3Repo.platformOther')
-  return ''
+  return addTargetS3PlatformOptions.value.find((item) => item.value === addTargetS3Platform.value)?.label || ''
 })
 
 const addTargetS3UrlStyleLabel = computed(() =>
@@ -2747,15 +2824,7 @@ async function submitAddTargetDialog() {
     const created = await createStorageRepository(buildAddTargetPayload())
     const target = mapRepository(created)
     realTargets.value = [target, ...realTargets.value.filter((item) => item.id !== target.id)]
-    const id = target.id
-    batchTargetPicker.targetId = id
-    const nextSourceTargetMap = { ...sourceTargetMap.value }
-    for (const group of wizardSourceGroups.value) {
-      if (!nextSourceTargetMap[group.key] && isTargetCompatibleWithGroup(target, group)) {
-        nextSourceTargetMap[group.key] = id
-      }
-    }
-    sourceTargetMap.value = nextSourceTargetMap
+    prepareNewTargetAssignment(target)
     addTargetOpen.value = false
     ElMessage.success({ message: t('protection.backupsPage.msgTargetCreated'), grouping: true })
   } finally {
@@ -2766,16 +2835,22 @@ async function submitAddTargetDialog() {
 function onEmbeddedTargetCreated(repository: StorageRepository) {
   const target = mapRepository(repository)
   realTargets.value = [target, ...realTargets.value.filter((item) => item.id !== target.id)]
-  batchTargetPicker.targetId = target.id
-  const nextSourceTargetMap = { ...sourceTargetMap.value }
-  for (const group of wizardSourceGroups.value) {
-    if (!nextSourceTargetMap[group.key] && isTargetCompatibleWithGroup(target, group)) {
-      nextSourceTargetMap[group.key] = target.id
-    }
-  }
-  sourceTargetMap.value = nextSourceTargetMap
+  prepareNewTargetAssignment(target)
   addTargetOpen.value = false
   ElMessage.success({ message: t('protection.backupsPage.msgTargetCreated'), grouping: true })
+}
+
+function prepareNewTargetAssignment(target: WizardTarget) {
+  const selectedGroups = checkedTargetGroups.value.length > 0
+    ? checkedTargetGroups.value
+    : wizardSourceGroups.value.filter((group) => (
+        !sourceTargetMap.value[group.key] && isTargetCompatibleWithGroup(target, group)
+      ))
+  targetAssignmentCheckedGroupKeys.value = selectedGroups.map((group) => group.key)
+  targetAssignDialogMode.value = 'batch'
+  targetAssignActiveGroupKey.value = ''
+  resetTargetAssignPicker(target.id)
+  targetAssignDialogOpen.value = true
 }
 
 const protectionMenus = useProtectionSideNav()
@@ -2918,6 +2993,7 @@ function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
   Object.keys(createSourceTreeRemountKeyBySource).forEach((key) => delete createSourceTreeRemountKeyBySource[key])
   treeRemountKey.value += 1
   sourceTargetMap.value = {}
+  sourceEndpointTypeMap.value = {}
   sourcePolicyMap.value = {}
   createRecoveryPlanMap.value = {}
   createRecoveryPlanExpandedKeys.value = []
@@ -2933,6 +3009,7 @@ function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
   batchTargetPicker.repoType = ''
   batchTargetPicker.targetId = ''
   batchNasTargetMode.value = 'per_directory_repo'
+  batchRepositoryEndpointType.value = ''
   targetAssignDialogOpen.value = false
   targetAssignDialogMode.value = 'batch'
   targetAssignActiveGroupKey.value = ''
@@ -2965,6 +3042,10 @@ function applyEditConfigToWizard(config: BackupConfigDetail, section: BackupConf
   }))
   wizardDirEntries.value = [...wizardDirEntries.value, ...entries]
   sourceTargetMap.value = { ...sourceTargetMap.value, [groupKey]: String(config.repository_id) }
+  sourceEndpointTypeMap.value = {
+    ...sourceEndpointTypeMap.value,
+    [groupKey]: config.repository_endpoint_type || 'external',
+  }
   sourcePolicyMap.value = { ...sourcePolicyMap.value, [groupKey]: config.backup_policy_id ? String(config.backup_policy_id) : '' }
   sourceFilterMap.value = { ...sourceFilterMap.value, [groupKey]: config.file_filter_rule_id ? [String(config.file_filter_rule_id)] : [] }
   sourceCompressionMap.value = { ...sourceCompressionMap.value, [groupKey]: config.compression_level }
@@ -3034,6 +3115,12 @@ async function openEditConfigs(configIds: number[], section: BackupConfigEditSec
 }
 
 onMounted(async () => {
+  try {
+    const catalog = await fetchStorageProviderCatalog()
+    addTargetS3CatalogProviders.value = catalog.providers.filter((provider) => provider.enabled)
+  } catch (error) {
+    logger.warn('Failed to load Provider Catalog for the legacy embedded target form', error)
+  }
   const rawRouteEditConfigIds = Array.isArray(route.query.edit_config_ids)
     ? route.query.edit_config_ids.join(',')
     : route.query.edit_config_ids || route.query.edit_config_id || ''
@@ -3146,6 +3233,7 @@ function openCreate() {
   Object.keys(createSourceTreeRemountKeyBySource).forEach((key) => delete createSourceTreeRemountKeyBySource[key])
   treeRemountKey.value += 1
   sourceTargetMap.value = {}
+  sourceEndpointTypeMap.value = {}
   sourcePolicyMap.value = {}
   createRecoveryPlanMap.value = {}
   createRecoveryPlanExpandedKeys.value = []
@@ -3161,6 +3249,7 @@ function openCreate() {
   batchTargetPicker.repoType = ''
   batchTargetPicker.targetId = ''
   batchNasTargetMode.value = 'per_directory_repo'
+  batchRepositoryEndpointType.value = ''
   targetAssignDialogOpen.value = false
   targetAssignDialogMode.value = 'batch'
   targetAssignActiveGroupKey.value = ''
@@ -4061,6 +4150,11 @@ watch(
       if (!groupKeys.has(key)) delete nextSourceTargetMap[key]
     })
     sourceTargetMap.value = nextSourceTargetMap
+    const nextSourceEndpointTypeMap = { ...sourceEndpointTypeMap.value }
+    Object.keys(nextSourceEndpointTypeMap).forEach((key) => {
+      if (!groupKeys.has(key)) delete nextSourceEndpointTypeMap[key]
+    })
+    sourceEndpointTypeMap.value = nextSourceEndpointTypeMap
     const nextRecoveryPlanMap = { ...createRecoveryPlanMap.value }
     Object.keys(nextRecoveryPlanMap).forEach((key) => {
       if (!groupKeys.has(key)) delete nextRecoveryPlanMap[key]
@@ -4215,6 +4309,7 @@ function buildCreateBackupPayload() {
         })),
       },
       targetId: sourceTargetMap.value[group.key] || '',
+      repositoryEndpointType: endpointTypeForGroup(group.key),
       policyId: sourcePolicyMap.value[group.key] || selPolicy.value,
       globalFilterId: groupFilterIds(group)[0] || selGlobalFilter.value,
       globalFilterIds: groupFilterIds(group),
@@ -4228,6 +4323,10 @@ function buildCreateBackupPayload() {
 
 const batchSelectedTarget = computed(() =>
   batchTargetPicker.targetId ? getRealTarget(batchTargetPicker.targetId) : null,
+)
+
+const batchSelectedTargetRequiresEndpoint = computed(() =>
+  targetHasDistinctEndpoints(batchSelectedTarget.value),
 )
 
 const batchSelectedTargetIsNas = computed(() => batchSelectedTarget.value?.repoType === 'NAS')
@@ -4256,12 +4355,33 @@ function inferNasModeForTarget(target: WizardTarget | null | undefined): NasTarg
   return 'per_directory_repo'
 }
 
-function resetTargetAssignPicker(targetId = '', nasMode?: NasTargetMode) {
+function resetTargetAssignPicker(
+  targetId = '',
+  nasMode?: NasTargetMode,
+  endpointType: RepositoryEndpointType | '' = '',
+) {
   batchTargetPicker.search = ''
   batchTargetPicker.repoType = ''
   batchTargetPicker.targetId = targetId
   const resolved = nasMode ?? inferNasModeForTarget(getRealTarget(targetId))
   batchNasTargetMode.value = resolved
+  const target = getRealTarget(targetId)
+  batchRepositoryEndpointType.value = targetHasDistinctEndpoints(target)
+    ? endpointType
+    : target
+      ? 'external'
+      : ''
+}
+
+function onTargetPickerTargetChange(value: string) {
+  const targetId = String(value || '')
+  batchTargetPicker.targetId = targetId
+  const target = getRealTarget(targetId)
+  batchRepositoryEndpointType.value = targetHasDistinctEndpoints(target)
+    ? ''
+    : target
+      ? 'external'
+      : ''
 }
 
 async function openBatchTargetDialog() {
@@ -4286,7 +4406,11 @@ async function openSingleTargetDialog(group: WizardSourceGroup) {
   const initialMode: NasTargetMode = currentTarget?.repoType === 'NAS'
     ? targetDerivedMode
     : (storedMode ?? targetDerivedMode)
-  resetTargetAssignPicker(initialTargetId, initialMode)
+  resetTargetAssignPicker(
+    initialTargetId,
+    initialMode,
+    initialTargetId ? sourceEndpointTypeMap.value[group.key] || '' : '',
+  )
   targetAssignDialogOpen.value = true
 }
 
@@ -4319,7 +4443,10 @@ const addTargetRequiresRepositoryServerHost = computed(() => {
 })
 
 function isTargetGroupMissing(group: WizardSourceGroup) {
-  return !sourceTargetMap.value[group.key] || !getRealTarget(sourceTargetMap.value[group.key])
+  const targetId = sourceTargetMap.value[group.key]
+  const target = getRealTarget(targetId)
+  if (!targetId || !target) return true
+  return targetHasDistinctEndpoints(target) && !sourceEndpointTypeMap.value[group.key]
 }
 
 function missingTargetGroups() {
@@ -4797,18 +4924,27 @@ function applyBatchTarget() {
     return
   }
   const target = getRealTarget(batchTargetPicker.targetId)
+  if (targetHasDistinctEndpoints(target) && !batchRepositoryEndpointType.value) {
+    ElMessage.warning({ message: t('addS3Repo.hintEndpointType'), grouping: true })
+    return
+  }
   if (checkedGroups.some((group) => !isTargetCompatibleWithGroup(target, group))) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBatchTarget'), grouping: true })
     return
   }
   const next = { ...sourceTargetMap.value }
+  const nextEndpointTypes = { ...sourceEndpointTypeMap.value }
   checkedGroups.forEach((group) => {
     next[group.key] = batchTargetPicker.targetId
+    nextEndpointTypes[group.key] = targetHasDistinctEndpoints(target)
+      ? batchRepositoryEndpointType.value as RepositoryEndpointType
+      : 'external'
     if (batchSelectedTargetIsNas.value) {
       nasTargetModes[group.key] = batchNasTargetMode.value
     }
   })
   sourceTargetMap.value = next
+  sourceEndpointTypeMap.value = nextEndpointTypes
   targetAssignDialogOpen.value = false
   ElMessage.success({ message: t('protection.backupsPage.msgBatchTargetApplied', { n: checkedGroups.length }), grouping: true })
 }
@@ -4822,12 +4958,22 @@ function applySingleTarget() {
   }
   const group = wizardSourceGroups.value.find((item) => item.key === groupKey)
   const target = getRealTarget(batchTargetPicker.targetId)
+  if (targetHasDistinctEndpoints(target) && !batchRepositoryEndpointType.value) {
+    ElMessage.warning({ message: t('addS3Repo.hintEndpointType'), grouping: true })
+    return
+  }
   if (!group || !isTargetCompatibleWithGroup(target, group)) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBatchTarget'), grouping: true })
     return
   }
   const next = { ...sourceTargetMap.value, [groupKey]: batchTargetPicker.targetId }
   sourceTargetMap.value = next
+  sourceEndpointTypeMap.value = {
+    ...sourceEndpointTypeMap.value,
+    [groupKey]: targetHasDistinctEndpoints(target)
+      ? batchRepositoryEndpointType.value as RepositoryEndpointType
+      : 'external',
+  }
   if (batchSelectedTargetIsNas.value) {
     nasTargetModes[groupKey] = batchNasTargetMode.value
   }
@@ -4957,6 +5103,7 @@ const createConfirmRows = computed(() =>
       name: createBackupNameForGroup(group, index),
       target: groupTargetSummary(group),
       targetLocation: targetDetail.location,
+      targetEndpoint: endpointSummaryForGroup(group),
       targetTone: targetDetail.status || 'unknown',
       targetCapacity: targetDetail.capacity,
       nasPlan: groupHasNasTarget(group) ? nasModeLabel(group.key) : '',
@@ -5107,6 +5254,7 @@ async function runCreateBackup() {
       source_type: backup.source.type === 'nas' ? 'nas' : 'agent',
       source_ref_id: sourceRefId,
       repository_id: repositoryId || 1,
+      repository_endpoint_type: backup.repositoryEndpointType,
       backup_policy_id: policyId,
       file_filter_rule_id: filterId,
       compression_level: (backup.compression as BackupConfigCreatePayload['compression_level']) || 'balanced',
@@ -5311,7 +5459,7 @@ watch([sourcePolicyMap, sourceFilterMap, sourceCompressionMap, selPolicy, selGlo
   resetCreateCompletedFrom(1)
 }, { deep: true })
 
-watch([sourceTargetMap, nasTargetModes], () => {
+watch([sourceTargetMap, sourceEndpointTypeMap, nasTargetModes], () => {
   resetCreateCompletedFrom(2)
   if (validationPopoverKind.value === 'target') syncOpenValidationPopover()
 }, { deep: true })
@@ -6574,7 +6722,7 @@ function preserveShallowestPathOrder(paths: string[]) {
             >
               <ElForm label-position="top" class="target-batch-form">
                 <TargetRepositoryPicker
-                  v-model="batchTargetPicker.targetId"
+                  :model-value="batchTargetPicker.targetId"
                   v-model:repo-type="batchTargetPicker.repoType"
                   v-model:nas-mode="batchNasTargetMode"
                   :targets="targetOptionsForBatch()"
@@ -6586,17 +6734,47 @@ function preserveShallowestPathOrder(paths: string[]) {
                   refreshable
                   :refreshing="targetsRefreshing"
                   :refresh-title="t('common.refresh')"
-                  @update:repo-type="batchTargetPicker.targetId = ''"
+                  @update:model-value="onTargetPickerTargetChange"
+                  @update:repo-type="onTargetPickerTargetChange('')"
                   @search="(query) => setTargetPickerSearch(batchTargetPicker, query)"
                   @visible-change="(visible) => onTargetPickerVisible(batchTargetPicker, visible)"
                   @refresh="refreshWizardTargets"
                 />
+                <ElFormItem
+                  v-if="batchSelectedTargetRequiresEndpoint"
+                  :label="t('addS3Repo.fieldEndpointType')"
+                  required
+                  class="target-endpoint-choice"
+                >
+                  <ElRadioGroup
+                    v-model="batchRepositoryEndpointType"
+                    class="target-endpoint-choice__options"
+                  >
+                    <ElRadio value="external" border>
+                      <span class="target-endpoint-choice__option">
+                        <strong>{{ t('addS3Repo.endpointExternal') }}</strong>
+                        <span>{{ targetExternalEndpoint(batchSelectedTarget) }}</span>
+                      </span>
+                    </ElRadio>
+                    <ElRadio value="internal" border>
+                      <span class="target-endpoint-choice__option">
+                        <strong>{{ t('addS3Repo.endpointInternal') }}</strong>
+                        <span>{{ targetInternalEndpoint(batchSelectedTarget) }}</span>
+                      </span>
+                    </ElRadio>
+                  </ElRadioGroup>
+                  <p class="target-endpoint-choice__hint">{{ t('addS3Repo.hintEndpointType') }}</p>
+                </ElFormItem>
               </ElForm>
               <template #footer>
                 <ElButton @click="targetAssignDialogOpen = false">
                   {{ t('protection.backupsPage.btnCancel') }}
                 </ElButton>
-                <ElButton type="primary" @click="applyTargetAssignment">
+                <ElButton
+                  type="primary"
+                  :disabled="batchSelectedTargetRequiresEndpoint && !batchRepositoryEndpointType"
+                  @click="applyTargetAssignment"
+                >
                   {{ t('protection.backupsPage.btnConfirm') }}
                 </ElButton>
               </template>
@@ -6703,6 +6881,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 class="wizard-summary-cell__detail hfl-table-cell-mono"
                               >
                                 {{ getRealTarget(sourceTargetMap[group.key])?.location }}
+                              </div>
+                              <div
+                                v-if="endpointSummaryForGroup(group)"
+                                class="wizard-summary-cell__detail hfl-table-cell-mono"
+                              >
+                                {{ endpointSummaryForGroup(group) }}
                               </div>
                             </div>
                           </div>
@@ -7557,6 +7741,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                             <div v-if="row.targetLocation" class="wizard-target-repository-cell__location hfl-table-cell-mono">
                               {{ row.targetLocation }}
                             </div>
+                            <div v-if="row.targetEndpoint" class="wizard-target-repository-cell__location hfl-table-cell-mono">
+                              {{ row.targetEndpoint }}
+                            </div>
                           </div>
                         </div>
                       </dd>
@@ -7930,12 +8117,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                     </h4>
                     <div class="repository-platform-grid">
                       <button
-                        v-for="platform in ([
-                          { value: 'aliyun', label: t('addS3Repo.platformAliyun') },
-                          { value: 'huawei', label: t('addS3Repo.platformHuawei') },
-                          { value: 'aws', label: t('addS3Repo.platformAws') },
-                          { value: 'other', label: t('addS3Repo.platformOther') },
-                        ] as const)"
+                        v-for="platform in addTargetS3PlatformOptions"
                         :key="platform.value"
                         type="button"
                         class="repository-platform-btn"
@@ -8822,6 +9004,47 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.target-endpoint-choice {
+  margin-bottom: 0;
+}
+
+.target-endpoint-choice__options {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.target-endpoint-choice__options :deep(.el-radio) {
+  width: 100%;
+  height: auto;
+  min-height: 58px;
+  margin: 0;
+  padding: 10px 14px;
+}
+
+.target-endpoint-choice__option {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.target-endpoint-choice__option span {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-endpoint-choice__hint {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .create-source-config-selection {

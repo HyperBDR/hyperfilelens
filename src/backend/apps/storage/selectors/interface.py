@@ -7,6 +7,33 @@ from __future__ import annotations
 from django.db.models import Q, QuerySet
 
 from apps.storage.repositories.models import Credential, Repository
+from apps.storage.provider_catalog.catalog import (
+    effective_catalog as _effective_provider_catalog,
+    effective_provider as _effective_provider,
+    effective_provider_records as _effective_provider_records,
+)
+
+
+def get_effective_provider_catalog() -> dict:
+    return _effective_provider_catalog()
+
+
+def get_effective_storage_provider(provider_id: str) -> dict | None:
+    return _effective_provider(provider_id)
+
+
+def list_effective_storage_providers() -> list[dict]:
+    records = _effective_provider_records()
+    return [
+        {
+            **record["config"],
+            "source": record["source"],
+            "checksum": record["checksum"],
+            "updated_at": record["updated_at"],
+            "region_count": len(record["config"]["regions"]),
+        }
+        for record in records.values()
+    ]
 
 
 def list_repositories(

@@ -59,6 +59,12 @@ func ParseDownlink(raw []byte) (Downlink, error) {
 		}
 		return Downlink{Type: msgType, TaskCancel: cancel}, nil
 
+	case TypeTaskResultAck:
+		return Downlink{
+			Type:          msgType,
+			TaskResultAck: &TaskResultAck{TaskID: rawString(body["task_id"])},
+		}, nil
+
 	default:
 		return Downlink{Type: msgType}, nil
 	}

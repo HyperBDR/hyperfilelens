@@ -146,6 +146,8 @@ func NormalizeKind(kind string) string {
 		return "browse"
 	case "backup.run", "snapshot.create", "kopia.snapshot":
 		return "backup"
+	case "backup.snapshot.create", "prepared.snapshot.create":
+		return "backup.snapshot.create"
 	case "snapshot.list", "kopia.snapshot.list":
 		return "snapshot.list"
 	case "snapshot.browse", "kopia.snapshot.browse":

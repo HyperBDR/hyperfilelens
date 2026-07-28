@@ -30,7 +30,7 @@ export type TaskEventRow = {
 
 export type TaskRow = {
   id: number
-  organization_id: number
+  organization_id: number | null
   task_uuid: string
   task_type: string
   display_name: string
@@ -52,6 +52,10 @@ export type TaskRow = {
     force: boolean
     triggered_by_task_uuid?: string | null
     triggered_by_task_type?: string | null
+  } | null
+  repository_cancellation?: {
+    supported: boolean
+    requested_at?: string | null
   } | null
   error_code?: string | null
   error_message?: string | null

@@ -23,6 +23,7 @@ from apps.storage.services.internal.repository_secrets import (
     scrub_secrets,
     secret_values_for_scrub,
 )
+from apps.storage.services.internal.repository_endpoints import repository_control_endpoint
 from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
 
@@ -35,7 +36,7 @@ def initialize_s3_repository(repository: Repository) -> None:
     secrets_payload = resolve_repository_secrets(repository)
     try:
         ensure_s3_bucket(
-            endpoint=str(config.get("endpoint") or ""),
+            endpoint=repository_control_endpoint(config),
             region=str(config.get("region") or ""),
             bucket=str(repository.s3_bucket or ""),
             access_key_id=str(config.get("access_key_id") or ""),
@@ -109,7 +110,7 @@ def check_s3_repository(repository: Repository) -> None:
     secrets_payload = resolve_repository_secrets(repository)
     try:
         check_s3_bucket_readable(
-            endpoint=str(config.get("endpoint") or ""),
+            endpoint=repository_control_endpoint(config),
             region=str(config.get("region") or ""),
             bucket=str(repository.s3_bucket or ""),
             access_key_id=str(config.get("access_key_id") or ""),

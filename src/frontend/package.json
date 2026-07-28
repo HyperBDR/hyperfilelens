@@ -12,10 +12,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
     "@sentry/vue": "^9.47.1",
     "@tailwindcss/vite": "^4.2.4",
     "autoprefixer": "^10.5.0",
     "clsx": "^2.1.1",
+    "codemirror": "^6.0.2",
     "echarts": "^6.1.0",
     "element-plus": "^2.13.7",
     "lucide-vue-next": "^0.554.0",

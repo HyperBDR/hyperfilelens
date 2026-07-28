@@ -23,6 +23,10 @@ class WireType(StrEnum):
     TASK_PROGRESS = "task.progress"
     TASK_ALIVE = "task.alive"
     TASK_RESULT = "task.result"
+    TASK_RESULT_ACK = "task.result.ack"
+
+
+TASK_RESULT_ACK_SUBPROTOCOL = "hfl.task-result-ack.v1"
 
 
 @dataclass(frozen=True)
@@ -153,3 +157,10 @@ def task_cancel_wire(*, task_id: UUID | str, node_id: int) -> dict[str, Any]:
 
 def heartbeat_ack_wire() -> dict[str, Any]:
     return {"type": WireType.HEARTBEAT_ACK}
+
+
+def task_result_ack_wire(*, task_id: UUID | str) -> dict[str, Any]:
+    return {
+        "type": WireType.TASK_RESULT_ACK,
+        "task_id": str(task_id),
+    }

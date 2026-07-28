@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Archive, Database, Download, RotateCcw, Settings2, Trash2, Unplug } from 'lucide-vue-next'
+import { Archive, CloudCog, Database, Download, RotateCcw, Settings2, Trash2, Unplug } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import HflTypeLabel from './HflTypeLabel.vue'
 
@@ -24,6 +24,7 @@ const typeIcons = {
   backup_config_reset: Settings2,
   source_unregister: Unplug,
   repository_operation: Database,
+  storage_provider_validation: CloudCog,
 } as const
 
 const icon = computed(() => {

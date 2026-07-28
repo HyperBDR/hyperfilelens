@@ -39,6 +39,7 @@ class TaskSerializer(serializers.ModelSerializer):
     repository_owner = serializers.SerializerMethodField()
     repository_target = serializers.SerializerMethodField()
     repository_cleanup = serializers.SerializerMethodField()
+    repository_cancellation = serializers.SerializerMethodField()
     replaces_task_uuid = serializers.SerializerMethodField()
     replacement_task_uuid = serializers.SerializerMethodField()
 
@@ -65,6 +66,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "repository_owner",
             "repository_target",
             "repository_cleanup",
+            "repository_cancellation",
             "error_code",
             "error_message",
             "started_at",
@@ -154,6 +156,23 @@ class TaskSerializer(serializers.ModelSerializer):
             ),
         }
 
+    def get_repository_cancellation(self, obj: Task) -> dict | None:
+        operation = self._repository_operation(obj)
+        if operation is None:
+            return None
+        supported = operation.owner_type == "controller" and operation.operation_type in {
+            "maintenance.quick",
+            "maintenance.full",
+        }
+        return {
+            "supported": supported,
+            "requested_at": (
+                operation.cancel_requested_at.isoformat()
+                if operation.cancel_requested_at is not None
+                else None
+            ),
+        }
+
 
 class TaskResourceInputSerializer(serializers.Serializer):
     resource_type = serializers.ChoiceField(choices=TaskResource.Type.choices)
@@ -181,7 +200,15 @@ class TaskStepInputSerializer(serializers.Serializer):
 
 class TaskCreateSerializer(serializers.Serializer):
     task_type = serializers.ChoiceField(
-        choices=[choice for choice in Task.Type.choices if choice[0] != Task.Type.REPOSITORY_OPERATION]
+        choices=[
+            choice
+            for choice in Task.Type.choices
+            if choice[0]
+            not in {
+                Task.Type.REPOSITORY_OPERATION,
+                Task.Type.STORAGE_PROVIDER_VALIDATION,
+            }
+        ]
     )
     display_name = serializers.CharField(max_length=255, trim_whitespace=True)
     trigger_type = serializers.ChoiceField(

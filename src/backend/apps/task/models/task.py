@@ -15,6 +15,10 @@ class Task(models.Model):
         BACKUP_CONFIG_RESET = "backup_config_reset", "Backup config reset"
         SOURCE_UNREGISTER = "source_unregister", "Source unregister"
         REPOSITORY_OPERATION = "repository_operation", "Repository operation"
+        STORAGE_PROVIDER_VALIDATION = (
+            "storage_provider_validation",
+            "Storage provider validation",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -32,7 +36,7 @@ class Task(models.Model):
         HOOK = "hook", "Hook"
 
     task_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-    organization_id = models.BigIntegerField(db_index=True)
+    organization_id = models.BigIntegerField(blank=True, null=True, db_index=True)
     task_type = models.CharField(max_length=32, choices=Type.choices, db_index=True)
     display_name = models.CharField(max_length=255, db_index=True)
     status = models.CharField(

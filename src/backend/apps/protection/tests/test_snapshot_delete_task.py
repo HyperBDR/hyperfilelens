@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from datetime import timedelta
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node
@@ -14,10 +18,14 @@ from apps.protection.models import (
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
-from apps.protection.services.backup_source_snapshot import create_source_snapshot
+from apps.protection.services.backup_source_snapshot import (
+    create_source_snapshot,
+    record_source_snapshot_directory_result,
+)
 from apps.protection.services.snapshot_delete import (
     create_and_queue_snapshot_delete_task,
     create_snapshot_delete_task,
+    reconcile_snapshot_delete_tasks,
     run_snapshot_delete_task,
     snapshot_delete_retry_delay,
 )
@@ -237,6 +245,130 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(
             [int(snapshot_delete_retry_delay(i).total_seconds() / 60) for i in range(9)],
             [1, 4, 16, 30, 60, 120, 120, 120, 120],
+        )
+
+    def test_active_delete_lookup_uses_request_payload(self):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        duplicate = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        self.assertEqual(duplicate.id, task.id)
+        self.assertEqual(
+            Task.objects.filter(
+                task_type=Task.Type.SNAPSHOT_DELETE,
+                request_payload__source_snapshot_id=self.snapshot.id,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            list(task.resources.values_list("resource_type", flat=True)),
+            [TaskResource.Type.BACKUP_SOURCE],
+        )
+
+    @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
+    def test_offline_source_is_closed_as_retryable_business_failure(self, mock_run_agent_task_sync):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        self.agent.status = Node.Status.OFFLINE
+        self.agent.save(update_fields=["status", "updated_at"])
+
+        result = run_snapshot_delete_task(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=self.snapshot.id,
+        )
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        mock_run_agent_task_sync.assert_not_called()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(task.error_code, "SNAPSHOT_DELETE_PRECONDITION_FAILED")
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED)
+        self.assertIn("Agent source is offline", self.snapshot.error_message)
+        self.assertEqual(result["source_snapshot_id"], self.snapshot.id)
+
+    def test_reconcile_recovers_stale_running_task_by_request_payload(self):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        Task.objects.filter(id=task.id).update(
+            status=Task.Status.RUNNING,
+            started_at=timezone.now() - timedelta(hours=3),
+            updated_at=timezone.now() - timedelta(hours=3),
+        )
+        current = timezone.now()
+
+        result = reconcile_snapshot_delete_tasks(now=current)
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(result["recovered_running"], 1)
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(task.error_code, "SNAPSHOT_DELETE_INTERRUPTED")
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETE_FAILED)
+
+    def test_directory_result_normalizes_none_instead_of_stringifying_it(self):
+        row = record_source_snapshot_directory_result(
+            source_snapshot=self.snapshot,
+            backup_config_dir_id=self.dir_a.id,
+            source_path=self.dir_a.path,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.FAILED,
+            kopia_snapshot_id=None,
+            error_code="TEST_FAILED",
+            error_message="failed before creating a snapshot",
+        )
+
+        row.refresh_from_db()
+        self.assertIsNone(row.kopia_snapshot_id)
+
+    def test_repair_command_dry_run_does_not_change_state(self):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        stdout = StringIO()
+
+        call_command("repair_snapshot_delete_state", stdout=stdout)
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETING)
+        self.assertEqual(task.status, Task.Status.PENDING)
+        self.assertIn("DRY-RUN:", stdout.getvalue())
+
+    @patch("apps.protection.services.snapshot_delete.queue_snapshot_delete_task")
+    def test_repair_command_apply_retries_unresolved_delete(self, mock_queue_snapshot_delete_task):
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+        stdout = StringIO()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            call_command(
+                "repair_snapshot_delete_state",
+                apply=True,
+                retry=True,
+                stdout=stdout,
+            )
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETING)
+        self.assertEqual(task.status, Task.Status.PENDING)
+        self.assertEqual(task.retry_count, 1)
+        mock_queue_snapshot_delete_task.assert_called_once()
+        self.assertIn("queued=1", stdout.getvalue())
+
+    def test_repair_command_finalizes_rows_without_physical_snapshot_ids(self):
+        BackupSourceSnapshotDirectory.objects.filter(source_snapshot=self.snapshot).update(
+            status=BackupSourceSnapshotDirectory.Status.CANCELLED,
+            kopia_snapshot_id="None",
+        )
+        task = create_snapshot_delete_task(source_snapshot=self.snapshot)
+
+        call_command("repair_snapshot_delete_state", apply=True, stdout=StringIO())
+
+        self.snapshot.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(self.snapshot.status, BackupSourceSnapshot.Status.DELETED)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertFalse(
+            BackupSourceSnapshotDirectory.objects.filter(source_snapshot=self.snapshot).exclude(
+                status=BackupSourceSnapshotDirectory.Status.DELETED
+            ).exists()
         )
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
