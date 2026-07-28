@@ -1,0 +1,6 @@
+interface:
+  display_name: "HyperFileLens Design Review"
+  short_description: "Stress-test risky HyperFileLens changes"
+  default_prompt: "Use $hfl-design-review to challenge this HyperFileLens requirement before implementation."
+policy:
+  allow_implicit_invocation: true
