@@ -149,7 +149,7 @@ defineExpose({ reset })
   height: 16px;
   flex: 0 0 auto;
   border: 2px solid rgba(255, 255, 255, 0.18);
-  border-top-color: #8b5cf6;
+  border-top-color: var(--color-primary);
   border-radius: 999px;
   animation: auth-turnstile-spin 0.8s linear infinite;
 }
@@ -165,8 +165,8 @@ defineExpose({ reset })
   min-height: 32px;
   padding: 0 12px;
   flex: 0 0 auto;
-  color: #a99bff;
-  background: rgba(109, 94, 246, 0.08);
+  color: var(--color-brand-violet-soft);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
   border: 1px solid var(--color-primary);
   border-radius: 6px;
   font-size: 12px;
@@ -175,8 +175,8 @@ defineExpose({ reset })
 
 .auth-turnstile-field__retry:hover {
   color: #fff;
-  background: rgba(109, 94, 246, 0.16);
-  border-color: #a99bff;
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  border-color: var(--color-brand-violet-soft);
 }
 
 .auth-turnstile-field__retry:focus-visible {

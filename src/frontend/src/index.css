@@ -19,12 +19,12 @@ html {
      Brand Colors
      ---------------------------------------- */
   --color-primary: #6D5EF6;
-  --color-primary-gradient-start: #7E6CEF;
-  --color-primary-gradient-end: #6D5EF6;
-  --color-primary-hover-gradient-start: #8876F5;
-  --color-primary-hover-gradient-end: #7664FA;
-  --color-primary-active-gradient-start: #5F50E0;
-  --color-primary-active-gradient-end: #5546D8;
+  --color-primary-gradient-start: #6D5EF6;
+  --color-primary-gradient-end: #5F50E0;
+  --color-primary-hover-gradient-start: #5F50E0;
+  --color-primary-hover-gradient-end: #5546D8;
+  --color-primary-active-gradient-start: #5546D8;
+  --color-primary-active-gradient-end: #4536BD;
   --color-primary-hover: #5546D8;
   --color-primary-active: #4536BD;
   --color-primary-light: #F2F0FE;
@@ -32,6 +32,7 @@ html {
   --color-primary-disabled-bg: #D2CBFA;
   --color-primary-disabled-border: #D2CBFA;
   --color-primary-disabled-text: #6F63B7;
+  --color-brand-violet-soft: #A99BFF;
   --color-brand-gold: #F5A623;
 
   /* ----------------------------------------
@@ -101,6 +102,7 @@ html {
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  --shadow-brand-glow: 0 0 28px rgb(109 94 246 / 0.42);
 
   /* ----------------------------------------
      Transitions
@@ -710,8 +712,8 @@ a:hover {
 .btn-primary {
   background-color: var(--color-primary) !important;
   background-image: linear-gradient(
-    var(--color-primary-gradient-start, #7E6CEF),
-    var(--color-primary-gradient-end, #6D5EF6)
+    var(--color-primary-gradient-start, #6D5EF6),
+    var(--color-primary-gradient-end, #5F50E0)
   ) !important;
   border-color: var(--color-primary) !important;
   color: #fff !important;
@@ -720,23 +722,23 @@ a:hover {
 
 .btn-primary:not(:disabled):not([disabled]):not(.is-disabled):focus,
 .btn-primary:not(:disabled):not([disabled]):not(.is-disabled):hover {
-  background-color: var(--color-primary-hover-gradient-end, #7664FA) !important;
+  background-color: var(--color-primary-hover-gradient-end, #5546D8) !important;
   background-image: linear-gradient(
-    var(--color-primary-hover-gradient-start, #8876F5),
-    var(--color-primary-hover-gradient-end, #7664FA)
+    var(--color-primary-hover-gradient-start, #5F50E0),
+    var(--color-primary-hover-gradient-end, #5546D8)
   ) !important;
-  border-color: var(--color-primary-hover-gradient-end, #7664FA) !important;
+  border-color: var(--color-primary-hover-gradient-end, #5546D8) !important;
   color: #fff !important;
   box-shadow: rgba(109, 94, 246, 0.42) 0 8px 18px -8px;
 }
 
 .btn-primary:not(:disabled):not([disabled]):not(.is-disabled):active {
-  background-color: var(--color-primary-active-gradient-end, #5546D8) !important;
+  background-color: var(--color-primary-active-gradient-end, #4536BD) !important;
   background-image: linear-gradient(
-    var(--color-primary-active-gradient-start, #5F50E0),
-    var(--color-primary-active-gradient-end, #5546D8)
+    var(--color-primary-active-gradient-start, #5546D8),
+    var(--color-primary-active-gradient-end, #4536BD)
   ) !important;
-  border-color: var(--color-primary-active-gradient-end, #5546D8) !important;
+  border-color: var(--color-primary-active-gradient-end, #4536BD) !important;
   color: #fff !important;
   box-shadow: rgba(38, 30, 120, 0.22) 0 2px 6px inset;
 }
@@ -766,8 +768,8 @@ a:hover {
 .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled) {
   background-color: var(--color-primary) !important;
   background-image: linear-gradient(
-    var(--color-primary-gradient-start, #7E6CEF),
-    var(--color-primary-gradient-end, #6D5EF6)
+    var(--color-primary-gradient-start, #6D5EF6),
+    var(--color-primary-gradient-end, #5F50E0)
   ) !important;
   border-color: var(--color-primary) !important;
   color: #fff !important;
@@ -777,23 +779,23 @@ a:hover {
 .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):hover,
 .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):focus,
 .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):focus-visible {
-  background-color: var(--color-primary-hover-gradient-end, #7664FA) !important;
+  background-color: var(--color-primary-hover-gradient-end, #5546D8) !important;
   background-image: linear-gradient(
-    var(--color-primary-hover-gradient-start, #8876F5),
-    var(--color-primary-hover-gradient-end, #7664FA)
+    var(--color-primary-hover-gradient-start, #5F50E0),
+    var(--color-primary-hover-gradient-end, #5546D8)
   ) !important;
-  border-color: var(--color-primary-hover-gradient-end, #7664FA) !important;
+  border-color: var(--color-primary-hover-gradient-end, #5546D8) !important;
   color: #fff !important;
   box-shadow: rgba(109, 94, 246, 0.42) 0 8px 18px -8px;
 }
 
 .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):active {
-  background-color: var(--color-primary-active-gradient-end, #5546D8) !important;
+  background-color: var(--color-primary-active-gradient-end, #4536BD) !important;
   background-image: linear-gradient(
-    var(--color-primary-active-gradient-start, #5F50E0),
-    var(--color-primary-active-gradient-end, #5546D8)
+    var(--color-primary-active-gradient-start, #5546D8),
+    var(--color-primary-active-gradient-end, #4536BD)
   ) !important;
-  border-color: var(--color-primary-active-gradient-end, #5546D8) !important;
+  border-color: var(--color-primary-active-gradient-end, #4536BD) !important;
   color: #fff !important;
   box-shadow: rgba(38, 30, 120, 0.22) 0 2px 6px inset;
 }
@@ -1095,8 +1097,8 @@ a:hover {
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled) {
   background-color: var(--color-primary) !important;
   background-image: linear-gradient(
-    var(--color-primary-gradient-start, #7E6CEF),
-    var(--color-primary-gradient-end, #6D5EF6)
+    var(--color-primary-gradient-start, #6D5EF6),
+    var(--color-primary-gradient-end, #5F50E0)
   ) !important;
   border-color: var(--color-primary) !important;
   color: #ffffff !important;
@@ -1106,23 +1108,23 @@ a:hover {
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):hover,
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):focus,
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):focus-visible {
-  background-color: var(--color-primary-hover-gradient-end, #7664FA) !important;
+  background-color: var(--color-primary-hover-gradient-end, #5546D8) !important;
   background-image: linear-gradient(
-    var(--color-primary-hover-gradient-start, #8876F5),
-    var(--color-primary-hover-gradient-end, #7664FA)
+    var(--color-primary-hover-gradient-start, #5F50E0),
+    var(--color-primary-hover-gradient-end, #5546D8)
   ) !important;
-  border-color: var(--color-primary-hover-gradient-end, #7664FA) !important;
+  border-color: var(--color-primary-hover-gradient-end, #5546D8) !important;
   color: #ffffff !important;
   box-shadow: rgba(109, 94, 246, 0.42) 0 8px 18px -8px;
 }
 
 .el-message-box__btns .el-button--primary:not(.is-link):not(.is-text):not(.is-disabled):not(:disabled):active {
-  background-color: var(--color-primary-active-gradient-end, #5546D8) !important;
+  background-color: var(--color-primary-active-gradient-end, #4536BD) !important;
   background-image: linear-gradient(
-    var(--color-primary-active-gradient-start, #5F50E0),
-    var(--color-primary-active-gradient-end, #5546D8)
+    var(--color-primary-active-gradient-start, #5546D8),
+    var(--color-primary-active-gradient-end, #4536BD)
   ) !important;
-  border-color: var(--color-primary-active-gradient-end, #5546D8) !important;
+  border-color: var(--color-primary-active-gradient-end, #4536BD) !important;
   color: #ffffff !important;
   box-shadow: rgba(38, 30, 120, 0.22) 0 2px 6px inset;
 }

@@ -673,7 +673,10 @@ onMounted(async () => {
         </div>
 
         <!-- Footer: Register + EULA -->
-        <div class="login-footer">
+        <div
+          v-if="emailSignupEnabled || showEula"
+          class="login-footer"
+        >
           <div v-if="emailSignupEnabled" class="footer-row">
             <span class="footer-text">{{ t('login.noAccount') }}</span>
             <a href="#" class="footer-link sign-up-link" @click.prevent="goRegister">{{ t('login.freeRegister') }}</a>
@@ -883,32 +886,15 @@ onMounted(async () => {
 .submit-btn {
   width: 100%;
   height: 42px !important;
-  background: #4A85C6;
-  border: none;
   border-radius: 21px;
-  color: #fff;
   font-size: 15px;
   font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
 }
 
 .btn-content {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: #5A95D6;
-}
-
-.submit-btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
 }
 
 .spin-icon {
@@ -1107,6 +1093,12 @@ onMounted(async () => {
   .lang-toggle {
     min-width: 36px;
     min-height: 36px;
+  }
+}
+
+@media (max-width: 479.98px) and (min-height: 720px) {
+  .login-container {
+    padding-top: calc(clamp(32px, 6dvh, 48px) + var(--app-safe-top));
   }
 }
 </style>

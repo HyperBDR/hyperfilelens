@@ -51,7 +51,6 @@
   background-size: cover;
   filter: saturate(0.6) contrast(1.05) brightness(0.76);
   mix-blend-mode: screen;
-  /* opacity: 0.6; */
   -webkit-mask-image: linear-gradient(
     180deg,
     transparent 0%,
@@ -76,8 +75,8 @@
   aspect-ratio: 1;
   border-radius: 50%;
   background:
-    radial-gradient(circle, rgba(255, 191, 96, 0.09), transparent 24%),
-    radial-gradient(circle, rgba(109, 94, 246, 0.1), transparent 58%);
+    radial-gradient(circle, color-mix(in srgb, var(--color-brand-gold) 9%, transparent), transparent 24%),
+    radial-gradient(circle, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 58%);
   filter: blur(12px);
   transform: translate(-50%, -50%);
 }
@@ -90,7 +89,7 @@
   border-radius: 50%;
   opacity: 0;
   transform: translate(-50%, -50%);
-  animation: auth-optics-enter 900ms cubic-bezier(0.16, 1, 0.3, 1) 120ms forwards;
+  animation: auth-optics-enter 480ms cubic-bezier(0.16, 1, 0.3, 1) 60ms forwards;
 }
 
 .auth-backdrop__optics::before,
@@ -102,7 +101,12 @@
 
 .auth-backdrop__optics::before {
   inset: 28%;
-  background: radial-gradient(circle, rgba(109, 94, 246, 0.08), rgba(255, 187, 92, 0.035) 38%, transparent 70%);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-primary) 8%, transparent),
+    color-mix(in srgb, var(--color-brand-gold) 3.5%, transparent) 38%,
+    transparent 70%
+  );
   filter: blur(18px);
 }
 
@@ -111,11 +115,11 @@
   background: conic-gradient(
     from 2deg,
     transparent 0deg 26deg,
-    rgba(167, 139, 250, 0.14) 26deg 27deg,
+    color-mix(in srgb, var(--color-brand-violet-soft) 14%, transparent) 26deg 27deg,
     transparent 27deg 88deg,
-    rgba(255, 204, 77, 0.14) 88deg 89deg,
+    color-mix(in srgb, var(--color-brand-gold) 14%, transparent) 88deg 89deg,
     transparent 89deg 188deg,
-    rgba(167, 139, 250, 0.12) 188deg 189deg,
+    color-mix(in srgb, var(--color-brand-violet-soft) 12%, transparent) 188deg 189deg,
     transparent 189deg 360deg
   );
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 11px), #000 0);
@@ -131,45 +135,41 @@
 }
 
 .auth-backdrop__ring {
-  border: 1px solid rgba(154, 123, 212, 0.1);
+  border: 1px solid color-mix(in srgb, var(--color-brand-violet-soft) 10%, transparent);
 }
 
 .auth-backdrop__ring--outer {
   inset: 0;
-  border-color: rgba(154, 123, 212, 0.105);
+  border-color: color-mix(in srgb, var(--color-brand-violet-soft) 10.5%, transparent);
 }
 
 .auth-backdrop__ring--telemetry {
   inset: 7%;
   border-style: dashed;
-  border-color: rgba(167, 139, 250, 0.11);
+  border-color: color-mix(in srgb, var(--color-brand-violet-soft) 11%, transparent);
 }
 
 .auth-backdrop__ring--middle {
   inset: 17%;
-  border-color: rgba(126, 108, 239, 0.09);
-  box-shadow: 0 0 42px rgba(109, 94, 246, 0.025);
+  border-color: color-mix(in srgb, var(--color-primary) 9%, transparent);
 }
 
 .auth-backdrop__ring--inner {
   inset: 29%;
   border-style: dashed;
-  border-color: rgba(167, 139, 250, 0.115);
+  border-color: color-mix(in srgb, var(--color-brand-violet-soft) 11.5%, transparent);
 }
 
 .auth-backdrop__ring--core {
   inset: 39%;
-  border-color: rgba(255, 204, 77, 0.095);
-  box-shadow:
-    0 0 50px rgba(109, 94, 246, 0.035),
-    inset 0 0 42px rgba(255, 190, 92, 0.02);
+  border-color: color-mix(in srgb, var(--color-brand-gold) 9.5%, transparent);
 }
 
 .auth-backdrop__ticks {
   inset: 3.5%;
   background: repeating-conic-gradient(
     from 0deg,
-    rgba(167, 139, 250, 0.18) 0deg 0.32deg,
+    color-mix(in srgb, var(--color-brand-violet-soft) 18%, transparent) 0deg 0.32deg,
     transparent 0.32deg 7.5deg
   );
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 12px), #000 0);
@@ -185,23 +185,21 @@
 
 .auth-backdrop__arc--amber {
   inset: 17%;
-  color: rgba(255, 190, 68, 0.22);
+  color: color-mix(in srgb, var(--color-brand-gold) 22%, transparent);
   transform: rotate(76deg);
 }
 
 .auth-backdrop__arc--violet {
   inset: 29%;
-  color: rgba(167, 139, 250, 0.2);
+  color: color-mix(in srgb, var(--color-brand-violet-soft) 20%, transparent);
   transform: rotate(218deg);
 }
 
 .auth-backdrop__node {
   width: 7px;
   height: 7px;
-  background: #8b7dff;
-  box-shadow:
-    0 0 10px rgba(139, 125, 255, 0.78),
-    0 0 28px rgba(109, 94, 246, 0.5);
+  background: var(--color-primary);
+  box-shadow: var(--shadow-brand-glow);
 }
 
 .auth-backdrop__node--one {
@@ -224,7 +222,7 @@
   bottom: 25%;
   width: 4px;
   height: 4px;
-  background: #ffcc4d;
+  background: var(--color-brand-gold);
   opacity: 0.34;
 }
 
@@ -288,6 +286,24 @@
     top: 78px;
     width: 620px;
     opacity: 0.72;
+  }
+}
+
+@media (max-width: 767.98px), (update: slow) {
+  .auth-backdrop__image {
+    filter: none;
+    mix-blend-mode: normal;
+    -webkit-mask-image: none;
+    mask-image: none;
+    transform: none;
+  }
+
+  .auth-backdrop__ambient {
+    display: none;
+  }
+
+  .auth-backdrop__optics::before {
+    filter: none;
   }
 }
 
