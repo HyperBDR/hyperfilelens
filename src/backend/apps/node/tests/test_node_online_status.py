@@ -101,6 +101,20 @@ class AgentNodeOnlineStatusTests(TestCase):
             Node.Status.ONLINE,
         )
 
+    def test_ws_connect_updates_connection_ip_without_overwriting_host_ip(self):
+        self.node.ip_address = "10.20.1.15"
+        self.node.save(update_fields=["ip_address", "updated_at"])
+
+        on_agent_connected(
+            node_id=self.node.id,
+            session_id="session-a",
+            client_ip="203.0.113.20",
+        )
+
+        self.node.refresh_from_db()
+        self.assertEqual(str(self.node.ip_address), "10.20.1.15")
+        self.assertEqual(str(self.node.connection_ip_address), "203.0.113.20")
+
     def test_ws_recovery_hold_requires_live_ws_and_expiry(self):
         self.assertFalse(redis_store.offline_task_finalization_ready())
         self._mark_ws_alive()

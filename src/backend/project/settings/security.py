@@ -15,6 +15,7 @@ CSRF_COOKIE_NAME = "hfl_csrftoken"
 _DEBUG = env_bool("DJANGO_DEBUG")
 _FRONTEND_URL = env_str("FRONTEND_URL", "http://localhost:3000")
 _TRUSTED_PROXY = env_bool("TRUSTED_PROXY", default=_FRONTEND_URL.startswith("https://"))
+TRUSTED_PROXY = _TRUSTED_PROXY
 
 if _TRUSTED_PROXY:
     SECURE_PROXY_SSL_HEADER = (

@@ -42,6 +42,7 @@ class NodeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "ip_address",
             "created_at",
             "updated_at",
             "is_deleted",

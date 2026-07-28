@@ -15,6 +15,7 @@ import (
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/hostinfo"
+	"hyperfilelens/agent/internal/platform/networkinventory"
 	"hyperfilelens/agent/internal/platform/tlsclient"
 	"hyperfilelens/agent/internal/selfupdate"
 )
@@ -74,6 +75,17 @@ func httpRegisterNode(
 	inventory := platform.Inventory()
 	inventory["hostname"] = hostname
 	inventory["agent_version"] = agentVersion
+	networkSnapshot := networkinventory.Collect(ctx, base)
+	if addresses := networkSnapshot.IPAddresses(); len(addresses) > 0 {
+		inventory["primary_ip_address"] = networkSnapshot.PrimaryAddress()
+		inventory["primary_ip_source"] = networkSnapshot.Selection.Source
+		inventory["ip_addresses"] = addresses
+		inventory["network_inventory"] = networkSnapshot
+	}
+	if mac := networkSnapshot.PrimaryMACAddress(); mac != "" {
+		inventory["mac_address"] = mac
+		inventory["primary_mac_address"] = mac
+	}
 	body := map[string]any{
 		"name":    hostname,
 		"role":    string(cfg.Role),
