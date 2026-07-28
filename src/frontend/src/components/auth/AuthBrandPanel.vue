@@ -37,7 +37,7 @@ defineProps<{
   margin-bottom: 32px;
   opacity: 0;
   transform: translateY(10px);
-  animation: auth-brand-enter 700ms cubic-bezier(0.16, 1, 0.3, 1) 220ms forwards;
+  animation: auth-brand-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) 60ms forwards;
 }
 
 .auth-brand-panel::after {
@@ -47,11 +47,16 @@ defineProps<{
   top: -24px;
   width: 52px;
   height: calc(100% + 48px);
-  background: linear-gradient(90deg, transparent, rgba(196, 181, 253, 0.18), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-brand-violet-soft) 18%, transparent),
+    transparent
+  );
   filter: blur(5px);
   opacity: 0;
   transform: skewX(-12deg);
-  animation: auth-brand-scan 920ms ease-out 360ms forwards;
+  animation: auth-brand-scan 480ms ease-out 100ms forwards;
   pointer-events: none;
 }
 
@@ -60,11 +65,10 @@ defineProps<{
   width: 72px;
   height: 72px;
   flex: 0 0 72px;
-  border: 2px solid #8b5cf6;
+  border: 2px solid var(--color-brand-violet-soft);
   border-radius: 10px;
-  background: #12111a;
-  box-shadow: 0 0 34px rgba(139, 92, 246, 0.5);
-  filter: drop-shadow(0 0 22px rgba(139, 92, 246, 0.52));
+  background: var(--color-header-bg);
+  box-shadow: var(--shadow-brand-glow);
   transform: rotate(45deg);
 }
 
@@ -73,7 +77,7 @@ defineProps<{
   position: absolute;
   inset: 16px;
   border-radius: 2px;
-  background: #a78bfa;
+  background: var(--color-primary);
 }
 
 .auth-logo-mark__beam,
@@ -98,12 +102,16 @@ defineProps<{
   font-weight: 850;
   letter-spacing: -1.6px;
   line-height: 1;
-  text-shadow: 0 8px 28px rgba(0, 0, 0, 0.34);
 }
 
 .auth-logo-text > span {
-  color: #ffcc4d;
-  background: linear-gradient(110deg, #ffe6a3 0%, #ffcc4d 48%, #f6a72b 100%);
+  color: var(--color-brand-gold);
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--color-brand-gold) 55%, white) 0%,
+    var(--color-brand-gold) 48%,
+    color-mix(in srgb, var(--color-brand-gold) 82%, black) 100%
+  );
   -webkit-background-clip: text;
   background-clip: text;
   font-weight: 850;
@@ -126,18 +134,11 @@ defineProps<{
 
 .auth-brand-slogan {
   margin: 8px 0 0;
-  padding: 5px 12px;
-  border: 1px solid rgba(139, 92, 246, 0.42);
-  border-radius: 999px;
-  color: rgba(220, 211, 255, 0.92);
-  background: rgba(83, 24, 130, 0.24);
-  box-shadow:
-    inset 0 0 14px rgba(109, 94, 246, 0.08),
-    0 0 18px rgba(109, 94, 246, 0.08);
-  font-size: 11px;
+  color: color-mix(in srgb, var(--color-brand-violet-soft) 92%, white);
+  font-size: 13px;
   font-weight: 650;
-  letter-spacing: 0.055em;
-  line-height: 1.4;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
   white-space: nowrap;
 }
 
@@ -188,6 +189,15 @@ defineProps<{
   .auth-logo-text {
     font-size: 26px;
     letter-spacing: -0.8px;
+  }
+}
+
+@media (max-width: 479.98px) {
+  .auth-brand-description {
+    display: block;
+    color: rgba(248, 250, 252, 0.62);
+    font-size: 12px;
+    line-height: 1.35;
   }
 }
 
