@@ -2,19 +2,27 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { RefreshCw } from 'lucide-vue-next'
+import { Copy, Download, RefreshCw } from 'lucide-vue-next'
 import ModulePage from '../../../components/ModulePage.vue'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
 import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import { fetchAgentReleases } from '../../lib/platformOpsApi'
 import { PLATFORM_OPS_LIST_TABLE_MAX_HEIGHT, PLATFORM_OPS_TABLE_HEADER_STYLE } from '../../lib/tableUi'
 import { apiErrorMessage } from '../../../lib/api'
+import { copyTextToClipboard } from '../../../lib/clipboard'
 
 const { t } = useI18n()
 const sideNav = usePlatformOpsSideNav()
 
 type ArtifactKind = 'binary' | 'bootstrap' | 'enroll' | 'other'
-type ArtifactRow = { version: string; name: string; kind: ArtifactKind; size_bytes: number }
+type ArtifactRow = {
+  version: string
+  name: string
+  kind: ArtifactKind
+  size_bytes: number
+  sha256: string
+  download_url: string
+}
 type BootstrapInfo = {
   active_source: 'published' | 'fallback'
   active_path: string
@@ -25,6 +33,9 @@ type BootstrapInfo = {
 const busy = ref(false)
 const pinnedVersion = ref<string | null>(null)
 const latestVersion = ref<string | null>(null)
+const recommendedVersion = ref<string | null>(null)
+const installedVersion = ref<string | null>(null)
+const managementMode = ref('ci_cd')
 const root = ref('')
 const bootstrap = ref<BootstrapInfo | null>(null)
 const rows = ref<ArtifactRow[]>([])
@@ -50,6 +61,19 @@ function kindLabel(kind: ArtifactKind) {
   return t(`platformOps.platform.kind${kind.charAt(0).toUpperCase()}${kind.slice(1)}`)
 }
 
+async function copyValue(value: string, label: string) {
+  try {
+    await copyTextToClipboard(value)
+    ElMessage.success({ message: `${label} copied`, grouping: true })
+  } catch {
+    ElMessage.error({ message: `Failed to copy ${label.toLowerCase()}`, grouping: true })
+  }
+}
+
+function absoluteDownloadUrl(row: ArtifactRow) {
+  return new URL(row.download_url, window.location.origin).toString()
+}
+
 async function load() {
   busy.value = true
   try {
@@ -59,6 +83,9 @@ async function load() {
     })
     pinnedVersion.value = (data.pinned_version as string | null) ?? null
     latestVersion.value = (data.latest_version as string | null) ?? null
+    recommendedVersion.value = (data.recommended_version as string | null) ?? latestVersion.value
+    installedVersion.value = (data.installed_version as string | null) ?? null
+    managementMode.value = String(data.management_mode || 'ci_cd')
     root.value = String(data.root || '')
     bootstrap.value = (data.bootstrap as BootstrapInfo | undefined) ?? null
     rows.value = (data.results as ArtifactRow[]) || []
@@ -66,6 +93,8 @@ async function load() {
   } catch (err) {
     pinnedVersion.value = null
     latestVersion.value = null
+    recommendedVersion.value = null
+    installedVersion.value = null
     root.value = ''
     bootstrap.value = null
     rows.value = []
@@ -102,13 +131,28 @@ watch([currentPage, pageSize], load)
           v-if="pinnedVersion || latestVersion || root || bootstrap"
           class="platform-ops-release-meta"
         >
+          <div class="platform-ops-release-meta__notice">
+            Release artifacts are published by CI/CD and are read-only in Admin Console.
+          </div>
           <div v-if="pinnedVersion" class="platform-ops-release-meta__item">
             <span class="platform-ops-release-meta__label">{{ t('platformOps.platform.pinnedVersion') }}</span>
             <span class="platform-ops-release-meta__value">{{ pinnedVersion }}</span>
           </div>
           <div v-if="latestVersion" class="platform-ops-release-meta__item">
-            <span class="platform-ops-release-meta__label">{{ t('platformOps.platform.latestVersion') }}</span>
+            <span class="platform-ops-release-meta__label">Latest Stable</span>
             <span class="platform-ops-release-meta__value">{{ latestVersion }}</span>
+          </div>
+          <div v-if="recommendedVersion" class="platform-ops-release-meta__item">
+            <span class="platform-ops-release-meta__label">Recommended</span>
+            <span class="platform-ops-release-meta__value">{{ recommendedVersion }}</span>
+          </div>
+          <div class="platform-ops-release-meta__item">
+            <span class="platform-ops-release-meta__label">Installed</span>
+            <span class="platform-ops-release-meta__value">{{ installedVersion || 'Varies by node' }}</span>
+          </div>
+          <div class="platform-ops-release-meta__item">
+            <span class="platform-ops-release-meta__label">Management</span>
+            <span class="platform-ops-release-meta__value">{{ managementMode === 'ci_cd' ? 'CI/CD managed' : managementMode }}</span>
           </div>
           <div v-if="root" class="platform-ops-release-meta__item">
             <span class="platform-ops-release-meta__label">{{ t('platformOps.platform.releaseRoot') }}</span>
@@ -149,6 +193,19 @@ watch([currentPage, pageSize], load)
           <el-table-column :label="t('platformOps.platform.colSize')" min-width="120">
             <template #default="{ row }">{{ formatBytes(row.size_bytes) }}</template>
           </el-table-column>
+          <el-table-column label="Actions" width="250" fixed="right" align="right">
+            <template #default="{ row }">
+              <a :href="row.download_url" class="platform-agent-release__action" download>
+                <Download :size="14" aria-hidden="true" />Download
+              </a>
+              <el-button link type="primary" @click="copyValue(absoluteDownloadUrl(row), 'Download URL')">
+                <Copy :size="14" aria-hidden="true" />URL
+              </el-button>
+              <el-button link type="primary" @click="copyValue(row.sha256, 'SHA-256 checksum')">
+                <Copy :size="14" aria-hidden="true" />Checksum
+              </el-button>
+            </template>
+          </el-table-column>
           <template #empty>
             <el-empty :description="t('platformOps.platform.emptyAgents')" :image-size="80" />
           </template>
@@ -165,3 +222,24 @@ watch([currentPage, pageSize], load)
     </div>
   </ModulePage>
 </template>
+
+<style scoped>
+.platform-ops-release-meta__notice {
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+}
+
+.platform-agent-release__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+  color: var(--el-color-primary);
+  font-size: 13px;
+}
+</style>

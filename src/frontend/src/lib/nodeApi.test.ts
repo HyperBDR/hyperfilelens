@@ -4,10 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import {
   buildEnrollmentInstallCommand,
+  auditPlatformGatewayEnrollmentCopy,
   fetchLifecycleWatch,
   issueGatewayEnrollmentInstall,
   issuePlatformGatewayEnrollmentInstall,
   previewNodeOperationsBatch,
+  revokePlatformGatewayEnrollment,
   startNodeOperation,
   startNodeOperationsBatch,
 } from './nodeApi'
@@ -61,6 +63,7 @@ describe('Data Gateway enrollment', () => {
       gateway_scope: 'platform',
       api_base: 'https://console.example.com:11443',
       tls_verify: true,
+      expires_at: '2026-07-28T06:00:00Z',
     })
 
     const result = await issuePlatformGatewayEnrollmentInstall()
@@ -72,7 +75,15 @@ describe('Data Gateway enrollment', () => {
     expect(result.command).toContain('api_base=https%3A%2F%2Fconsole.example.com%3A11443')
     expect(result.command).not.toContain('curl -k')
     expect(result.tlsVerify).toBe(true)
+    expect(result.expiresAt).toBe('2026-07-28T06:00:00Z')
     expect(result.command).not.toContain('11444')
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      '/api/v1/platform-ops/lens/gateways/enrollment',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ note: 'deploy:platform-gateway', ttl_seconds: 900 }),
+      }),
+    )
   })
 
   it('keeps the explicit insecure mode for self-hosted deployments', async () => {
@@ -105,6 +116,18 @@ describe('Data Gateway enrollment', () => {
     await expect(issuePlatformGatewayEnrollmentInstall()).rejects.toThrow(
       'Platform gateway enrollment response is incomplete',
     )
+  })
+
+  it('uses dedicated platform endpoints to revoke and audit command copies', async () => {
+    vi.mocked(api).mockResolvedValue({})
+
+    await auditPlatformGatewayEnrollmentCopy(17)
+    await revokePlatformGatewayEnrollment(17)
+
+    expect(vi.mocked(api).mock.calls).toEqual([
+      ['/api/v1/platform-ops/lens/gateways/enrollment/17/copied', { method: 'POST' }],
+      ['/api/v1/platform-ops/lens/gateways/enrollment/17', { method: 'DELETE' }],
+    ])
   })
 
   it('does not disable certificate validation in strict Windows commands', () => {

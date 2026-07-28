@@ -1,9 +1,13 @@
+from datetime import timedelta
+
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.lens_bridge.models import LensGatewayLink
 from apps.node.models import NodeToken
+from apps.platform_ops.models import PlatformAuditLog
 
 
 @override_settings(
@@ -44,6 +48,14 @@ class PlatformOpsLensGatewayEnrollmentTest(TestCase):
         token = NodeToken.objects.get(pk=response.data["token_id"])
         self.assertEqual(token.organization.key, "__platform_lens__")
         self.assertEqual(token.gateway_scope, LensGatewayLink.GatewayScope.PLATFORM)
+        self.assertIsNotNone(token.expires_at)
+        self.assertEqual(response.data["expires_at"], token.expires_at)
+        self.assertTrue(
+            PlatformAuditLog.objects.filter(
+                action="gateway.enrollment.generate",
+                target_id=str(token.id),
+            ).exists()
+        )
 
     @override_settings(HFL_INSECURE_TLS=False)
     def test_requires_tls_verification_for_strict_deployments(self):
@@ -59,3 +71,45 @@ class PlatformOpsLensGatewayEnrollmentTest(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("FRONTEND_URL", response.data["detail"])
         self.assertFalse(NodeToken.objects.exists())
+
+    def test_supports_bounded_expiry_and_revoke(self):
+        response = self.client.post(
+            "/api/v1/platform-ops/lens/gateways/enrollment",
+            {"ttl_seconds": 900},
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+        self.assertEqual(response.status_code, 201)
+        token = NodeToken.objects.get(pk=response.data["token_id"])
+        self.assertGreater(token.expires_at, timezone.now() + timedelta(minutes=14))
+
+        revoked = self.client.delete(
+            f"/api/v1/platform-ops/lens/gateways/enrollment/{token.id}",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+        self.assertEqual(revoked.status_code, 204)
+        token.refresh_from_db()
+        self.assertFalse(token.is_active)
+        self.assertTrue(
+            PlatformAuditLog.objects.filter(
+                action="gateway.enrollment.revoke",
+                target_id=str(token.id),
+            ).exists()
+        )
+
+    def test_audits_copy_without_storing_command(self):
+        response = self._enroll()
+        token_id = response.data["token_id"]
+
+        copied = self.client.post(
+            f"/api/v1/platform-ops/lens/gateways/enrollment/{token_id}/copied",
+            format="json",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+        self.assertEqual(copied.status_code, 204)
+        audit = PlatformAuditLog.objects.get(
+            action="gateway.enrollment.copy",
+            target_id=str(token_id),
+        )
+        self.assertNotIn("token", audit.details)
+        self.assertNotIn("command", audit.details)

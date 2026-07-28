@@ -28,7 +28,9 @@ from apps.platform_ops.api.views.lens import (
     PlatformOpsLensAssistantView,
     PlatformOpsLensGatewayBrowseView,
     PlatformOpsLensGatewayEnableAiView,
+    PlatformOpsLensGatewayEnrollmentCopyView,
     PlatformOpsLensGatewayEnrollmentView,
+    PlatformOpsLensGatewayEnrollmentRevokeView,
     PlatformOpsLensGatewayListView,
     PlatformOpsLensGatewayLifecycleWatchView,
     PlatformOpsLensGatewayOperationBatchView,
@@ -45,6 +47,7 @@ from apps.platform_ops.api.views.lens import (
 from apps.platform_ops.api.views.overview import PlatformOpsOverviewView
 from apps.platform_ops.api.views.platform import (
     PlatformOpsPlatformAgentReleasesView,
+    PlatformOpsPlatformAgentReleaseDownloadView,
     PlatformOpsPlatformAlertPoliciesView,
     PlatformOpsPlatformIntegrationsView,
     PlatformOpsPlatformNotificationChannelsView,
@@ -241,6 +244,11 @@ urlpatterns = [
         name="platform-ops-platform-agent-releases",
     ),
     path(
+        "platform/agent-releases/download",
+        PlatformOpsPlatformAgentReleaseDownloadView.as_view(),
+        name="platform-ops-platform-agent-release-download",
+    ),
+    path(
         "platform/integrations",
         PlatformOpsPlatformIntegrationsView.as_view(),
         name="platform-ops-platform-integrations",
@@ -291,6 +299,16 @@ urlpatterns = [
         "lens/gateways/enrollment",
         PlatformOpsLensGatewayEnrollmentView.as_view(),
         name="platform-ops-lens-gateway-enrollment",
+    ),
+    path(
+        "lens/gateways/enrollment/<int:token_id>",
+        PlatformOpsLensGatewayEnrollmentRevokeView.as_view(),
+        name="platform-ops-lens-gateway-enrollment-revoke",
+    ),
+    path(
+        "lens/gateways/enrollment/<int:token_id>/copied",
+        PlatformOpsLensGatewayEnrollmentCopyView.as_view(),
+        name="platform-ops-lens-gateway-enrollment-copy",
     ),
     path(
         "lens/gateways/<int:gateway_id>/enable-ai",

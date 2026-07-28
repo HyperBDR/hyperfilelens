@@ -21,6 +21,7 @@ import PlatformOpsPagination from '../../components/PlatformOpsPagination.vue'
 import ModulePage from '../../../components/ModulePage.vue'
 import OpsStatCard from '../../../components/ops/OpsStatCard.vue'
 import { useDebouncedAction } from '../../../composables/useDebouncedAction'
+import { usePageRequestScope } from '../../../composables/usePageRequestScope'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
 import { apiErrorMessage, type ApiError } from '../../../lib/api'
 import { formatLocalDateTime } from '../../../lib/dateTime'
@@ -41,6 +42,7 @@ const route = useRoute()
 const router = useRouter()
 const sideNav = usePlatformOpsSideNav()
 const { drawerSize } = useResponsiveDrawerWidth(3)
+const pageRequests = usePageRequestScope()
 
 const rows = ref<PlatformOpsUser[]>([])
 const stats = ref<PlatformOpsUserStats>({ total: 0, active: 0, inactive: 0, never_signed_in: 0 })
@@ -116,22 +118,24 @@ async function syncQuery() {
 }
 
 async function load() {
+  const signal = pageRequests.nextSignal('platform-users')
   busy.value = true
   try {
     const data = await listPlatformOpsUsers({
       page: pagination.page,
       page_size: pagination.pageSize,
       ...filters,
-    })
+    }, { signal })
+    if (!pageRequests.isCurrentSignal('platform-users', signal)) return
     rows.value = data.results
     stats.value = data.stats || stats.value
     pagination.count = data.count
   } catch (error) {
-    rows.value = []
-    pagination.count = 0
+    if (pageRequests.isAbortError(error)) return
     ElMessage.error({ message: apiErrorMessage(error, t('platformOps.users.loadFailed')), grouping: true })
   } finally {
-    busy.value = false
+    pageRequests.releaseSignal('platform-users', signal)
+    if (!signal.aborted) busy.value = false
   }
 }
 
@@ -354,13 +358,13 @@ watch(() => [pagination.page, pagination.pageSize], load)
             class="hfl-list-table"
             :max-height="tableMaxHeight"
           >
-            <el-table-column :label="t('platformOps.users.colName')" min-width="210">
+            <el-table-column :label="t('platformOps.users.colName')" min-width="185">
               <template #default="{ row }">
                 <PlatformOpsUserLink :user-id="row.id" :display-name="row.display_name" />
                 <span class="platform-account-page__cell-meta">{{ row.email }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.users.colOrgName')" min-width="190">
+            <el-table-column :label="t('platformOps.users.colOrgName')" min-width="165">
               <template #default="{ row }">
                 <PlatformOpsOrgLink
                   v-if="row.organization"
@@ -371,18 +375,18 @@ watch(() => [pagination.page, pagination.pageSize], load)
                 <span v-else>—</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.users.accountType')" width="160">
+            <el-table-column :label="t('platformOps.users.accountType')" width="136">
               <template #default="{ row }">
                 <HflTypeLabel :label="row.is_staff ? t('platformOps.users.administrator') : t('platformOps.users.customer')" />
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.users.colActive')" width="110">
+            <el-table-column :label="t('platformOps.users.colActive')" width="96">
               <template #default="{ row }"><PlatformOpsActiveTag :active="row.is_active" /></template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.users.colLastLogin')" width="176">
+            <el-table-column :label="t('platformOps.users.colLastLogin')" width="156">
               <template #default="{ row }">{{ displayTime(row.last_login, t('platformOps.users.never')) }}</template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.users.colJoined')" width="176">
+            <el-table-column :label="t('platformOps.users.colJoined')" width="156">
               <template #default="{ row }">{{ displayTime(row.date_joined) }}</template>
             </el-table-column>
             <el-table-column width="64" fixed="right" align="center">

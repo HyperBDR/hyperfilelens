@@ -90,7 +90,7 @@ export async function listPlatformOpsUsers(params: {
   search?: string
   status?: string
   account_type?: string
-}): Promise<PlatformOpsUserListResponse> {
+}, options?: { signal?: AbortSignal }): Promise<PlatformOpsUserListResponse> {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
@@ -98,7 +98,10 @@ export async function listPlatformOpsUsers(params: {
   if (params.status) qs.set('status', params.status)
   if (params.account_type) qs.set('account_type', params.account_type)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const raw = await api<unknown>(`/api/v1/platform-ops/users${suffix}`)
+  const path = `/api/v1/platform-ops/users${suffix}`
+  const raw = options?.signal
+    ? await api<unknown>(path, { signal: options.signal })
+    : await api<unknown>(path)
   return unwrapApiPayload<PlatformOpsUserListResponse>(raw)
 }
 
@@ -157,7 +160,7 @@ export async function listPlatformOpsOrganizations(params: {
   search?: string
   status?: string
   health?: string
-}): Promise<PlatformOpsOrganizationListResponse> {
+}, options?: { signal?: AbortSignal }): Promise<PlatformOpsOrganizationListResponse> {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
@@ -165,7 +168,10 @@ export async function listPlatformOpsOrganizations(params: {
   if (params.status) qs.set('status', params.status)
   if (params.health) qs.set('health', params.health)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const raw = await api<unknown>(`/api/v1/platform-ops/orgs${suffix}`)
+  const path = `/api/v1/platform-ops/orgs${suffix}`
+  const raw = options?.signal
+    ? await api<unknown>(path, { signal: options.signal })
+    : await api<unknown>(path)
   return unwrapApiPayload<PlatformOpsOrganizationListResponse>(raw)
 }
 

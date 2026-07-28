@@ -504,6 +504,7 @@ export interface PlatformIdentitySettings {
   email_signup_enabled: boolean
   platform_ops_enabled: boolean
   platform_ops_allowed_cidrs: string[]
+  platform_ops_source?: 'deployment' | 'runtime' | 'default'
   turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_secret_configured: boolean

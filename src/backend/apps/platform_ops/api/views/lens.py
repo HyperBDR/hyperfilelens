@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
@@ -53,6 +55,7 @@ from apps.node.api.serializers.node_operation import (
     NodeOperationStartSerializer,
 )
 from apps.node.api.views.node_operation import _lifecycle_error_response
+from apps.node import conf as node_conf
 from apps.node.models import Node, NodeToken
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_lifecycle import (
@@ -63,6 +66,7 @@ from apps.node.services.internal.node_lifecycle import (
 )
 from apps.node.services.internal.local_platform_gateway import platform_gateway_api_base
 from apps.platform_ops.api.permissions import IsPlatformOpsStaff
+from apps.platform_ops.services.internal.audit import write_platform_audit_log
 from apps.platform_ops.selectors.internal.ai_usage import platform_ai_usage_payload
 from common.deploy.site import enrollment_tls_verify
 
@@ -197,6 +201,8 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
 
     permission_classes = [IsPlatformOpsStaff]
 
+    allowed_ttl_seconds = {900, 3600, 14400, 86400}
+
     def post(self, request):
         try:
             api_base = platform_gateway_api_base()
@@ -206,13 +212,37 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        raw_ttl = request.data.get("ttl_seconds")
+        if raw_ttl in (None, ""):
+            ttl_seconds = node_conf.ENROLLMENT_TOKEN_TTL_SECONDS
+        else:
+            try:
+                ttl_seconds = int(raw_ttl)
+            except (TypeError, ValueError):
+                ttl_seconds = 0
+            if ttl_seconds not in self.allowed_ttl_seconds:
+                return Response(
+                    {"detail": "ttl_seconds must be one of 900, 3600, 14400, or 86400"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         org = _platform_org()
+        expires_at = timezone.now() + timedelta(seconds=ttl_seconds) if ttl_seconds > 0 else None
         token = NodeToken.objects.create(
             organization=org,
             role=NodeRole.GATEWAY,
             note=str(request.data.get("note") or "deploy:platform-gateway")[:200],
             created_by=request.user,
             gateway_scope=LensGatewayLink.GatewayScope.PLATFORM,
+            expires_at=expires_at,
+        )
+        write_platform_audit_log(
+            request=request,
+            action="gateway.enrollment.generate",
+            target_type="node_token",
+            target_id=str(token.id),
+            org_key=org.key,
+            details={"expires_at": expires_at.isoformat() if expires_at else None},
         )
         return Response(
             {
@@ -222,9 +252,62 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
                 "gateway_scope": LensGatewayLink.GatewayScope.PLATFORM,
                 "api_base": api_base,
                 "tls_verify": enrollment_tls_verify(),
+                "expires_at": expires_at,
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+def _platform_gateway_token(token_id: int) -> NodeToken:
+    return NodeToken.objects.get(
+        pk=token_id,
+        organization=_platform_org(),
+        role=NodeRole.GATEWAY,
+        gateway_scope=LensGatewayLink.GatewayScope.PLATFORM,
+    )
+
+
+class PlatformOpsLensGatewayEnrollmentRevokeView(APIView):
+    """Revoke a platform gateway enrollment token before it expires."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def delete(self, request, token_id: int):
+        try:
+            token = _platform_gateway_token(token_id)
+        except NodeToken.DoesNotExist:
+            return Response({"detail": "Enrollment token not found"}, status=status.HTTP_404_NOT_FOUND)
+        token.is_active = False
+        token.save(update_fields=["is_active", "updated_at"])
+        write_platform_audit_log(
+            request=request,
+            action="gateway.enrollment.revoke",
+            target_type="node_token",
+            target_id=str(token.id),
+            org_key=token.organization.key,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PlatformOpsLensGatewayEnrollmentCopyView(APIView):
+    """Audit operator copies without persisting the token or command."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def post(self, request, token_id: int):
+        try:
+            token = _platform_gateway_token(token_id)
+        except NodeToken.DoesNotExist:
+            return Response({"detail": "Enrollment token not found"}, status=status.HTTP_404_NOT_FOUND)
+        write_platform_audit_log(
+            request=request,
+            action="gateway.enrollment.copy",
+            target_type="node_token",
+            target_id=str(token.id),
+            org_key=token.organization.key,
+            details={"expires_at": token.expires_at.isoformat() if token.expires_at else None},
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PlatformOpsLensGatewayEnableAiView(APIView):

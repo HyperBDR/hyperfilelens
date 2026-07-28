@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
+from urllib.parse import quote
 
+from django.http import FileResponse, Http404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -38,6 +41,14 @@ _BOOTSTRAP_FILES = frozenset(
 )
 _ENROLL_SCRIPT_FILES = frozenset({"enroll-linux.sh", "enroll-windows.ps1"})
 _KIND_ORDER = {"binary": 0, "bootstrap": 1, "enroll": 2, "other": 3}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _artifact_kind(name: str) -> str:
@@ -120,19 +131,54 @@ class PlatformOpsPlatformAgentReleasesView(APIView):
         page = safe_int(request.query_params.get("page"), 1)
         page_size = safe_int(request.query_params.get("page_size"), 20, max_value=200)
         artifacts = _list_agent_release_artifacts(root)
+        latest_stable = artifacts[0]["version"] if artifacts else latest
+        recommended = pinned or latest_stable
         total = len(artifacts)
         offset = (page - 1) * page_size
-        page_rows = artifacts[offset : offset + page_size]
+        page_rows = []
+        for artifact in artifacts[offset : offset + page_size]:
+            version = str(artifact["version"])
+            name = str(artifact["name"])
+            file = root / version / name
+            page_rows.append(
+                {
+                    **artifact,
+                    "sha256": _sha256_file(file),
+                    "download_url": (
+                        "/api/v1/platform-ops/platform/agent-releases/download"
+                        f"?version={quote(version)}&name={quote(name)}"
+                    ),
+                }
+            )
         payload = paginated(page_rows, total=total, page=page, page_size=page_size)
         payload.update(
             {
                 "pinned_version": pinned,
-                "latest_version": latest,
+                "latest_version": latest_stable,
+                "latest_stable_version": latest_stable,
+                "recommended_version": recommended,
+                "installed_version": os.getenv("HFL_AGENT_INSTALLED_VERSION", "").strip() or None,
+                "management_mode": "ci_cd",
                 "root": str(root),
                 "bootstrap": _bootstrap_runtime_info(),
             }
         )
         return Response(payload)
+
+
+class PlatformOpsPlatformAgentReleaseDownloadView(APIView):
+    permission_classes = [IsPlatformOpsStaff]
+
+    def get(self, request):
+        version = str(request.query_params.get("version") or "").strip()
+        name = str(request.query_params.get("name") or "").strip()
+        if not version or not name or Path(version).name != version or Path(name).name != name:
+            raise Http404
+        root = agent_releases_root().resolve()
+        target = (root / version / name).resolve()
+        if root not in target.parents or not target.is_file():
+            raise Http404
+        return FileResponse(target.open("rb"), as_attachment=True, filename=name)
 
 
 class PlatformOpsPlatformNotificationChannelsView(APIView):

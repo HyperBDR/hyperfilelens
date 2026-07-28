@@ -245,6 +245,7 @@ class PlatformOpsSettingsIdentityView(APIView):
                 "email_signup_enabled": email_signup_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
+                "platform_ops_source": get_source(KEY_IDENTITY_PLATFORM_OPS),
                 "turnstile_enabled": turnstile_enabled(),
                 "turnstile_site_key": turnstile_site_key(),
                 "turnstile_secret_configured": secret_configured(
@@ -271,6 +272,24 @@ class PlatformOpsSettingsIdentityView(APIView):
 
     def patch(self, request):
         data = request.data or {}
+        if "platform_ops_enabled" in data:
+            if get_source(KEY_IDENTITY_PLATFORM_OPS) == "deployment":
+                return Response(
+                    {
+                        "detail": "Admin Console availability is managed by deployment configuration.",
+                        "code": "PLATFORM_OPS_MANAGED_BY_DEPLOYMENT",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if platform_ops_enabled() and not bool(data["platform_ops_enabled"]):
+                if str(data.get("confirm_disable") or "") != "DISABLE":
+                    return Response(
+                        {
+                            "detail": "Type DISABLE to confirm turning off Admin Console access.",
+                            "code": "PLATFORM_OPS_DISABLE_CONFIRMATION_REQUIRED",
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
         bool_map = {
             "email_signup_enabled": KEY_IDENTITY_EMAIL_SIGNUP,
             "google_oauth_enabled": KEY_IDENTITY_GOOGLE_OAUTH,

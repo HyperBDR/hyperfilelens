@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import ModulePage from '../../components/ModulePage.vue'
 import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
 import { setLensApiScope } from '../../lib/lensApi'
@@ -18,10 +19,12 @@ onUnmounted(() => {
 })
 
 const sideNav = usePlatformOpsSideNav()
+const route = useRoute()
+const hidePageTitle = computed(() => /\/(?:add|edit)$/.test(route.path))
 </script>
 
 <template>
-  <ModulePage :menus="sideNav" body-fill>
+  <ModulePage :menus="sideNav" body-fill :hide-page-title="hidePageTitle">
     <router-view />
   </ModulePage>
 </template>

@@ -137,6 +137,10 @@ export const platformOpsRoutes = [
         component: lazyRoute(() => import('../pages/insight/InsightDataGateways.vue')),
       },
       {
+        path: 'gateways/add',
+        component: lazyRoute(() => import('./pages/engine/PlatformGatewayAdd.vue')),
+      },
+      {
         path: 'data-connections',
         component: lazyRoute(() => import('./pages/engine/DataConnections.vue')),
       },

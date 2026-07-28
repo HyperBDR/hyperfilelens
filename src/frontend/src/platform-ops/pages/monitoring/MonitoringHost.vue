@@ -538,6 +538,8 @@ onMounted(loadHealth)
   }
 
   .platform-host-monitor__host {
+    flex: 0 1 auto;
+    width: 100%;
     max-width: none;
   }
 
@@ -545,6 +547,48 @@ onMounted(loadHealth)
     margin-left: 0;
     width: 100%;
     justify-content: flex-end;
+  }
+
+  .platform-host-monitor__time-range {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .platform-host-monitor__time-range :deep(.hfl-date-time-range-picker__trigger) {
+    width: 100%;
+    min-height: 44px !important;
+    justify-content: center;
+  }
+
+  .platform-host-monitor__toolbar-tail .hfl-refresh-button.el-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  .platform-host-monitor :deep(.chart-card:has(> .chart-card__empty)) {
+    min-height: 180px;
+  }
+
+  .platform-host-monitor :deep(.chart-card__empty) {
+    min-height: 132px;
+  }
+}
+
+@media (max-width: 420px) {
+  .platform-host-monitor__host-btn {
+    min-height: 44px;
+  }
+
+  .platform-host-monitor__host-btn-main,
+  .platform-host-monitor__host-text {
+    gap: 4px;
+  }
+
+  .platform-host-monitor__host-panel {
+    width: 100%;
+    max-width: calc(100vw - 32px);
   }
 }
 </style>
