@@ -94,6 +94,7 @@ exec >>"$LOG_FILE" 2>&1
 
 uninstall_ts_utc() { date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ" 2>/dev/null || date -u; }
 log() { echo "$(uninstall_ts_utc) $*"; }
+%s
 
 log "detached uninstall script started install_dir=$INSTALL_DIR data_dir=$DATA_DIR keep_data=$KEEP_DATA log_file=$LOG_FILE"
 sleep "$SLEEP_SECONDS"
@@ -137,6 +138,11 @@ elif command -v systemctl >/dev/null 2>&1; then
   fi
 else
   log "systemctl not found; skipped service stop/disable"
+fi
+
+if ! unmount_agent_mounts "$DATA_DIR"; then
+  log "Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry"
+  exit 1
 fi
 
 if [[ "$(uname -s)" != "Darwin" && -f "$RESOURCE_DROPIN" ]]; then
@@ -208,9 +214,14 @@ if [[ "$KEEP_DATA" == "0" ]]; then
     /var/lib/hyperfilelens-agent|/var/lib/hyperfilelens-agent/*|/opt/hyperfilelens-agent|/opt/hyperfilelens-agent/*)
       if [[ -e "$DATA_DIR" ]]; then
         if rm -rf "$DATA_DIR"; then
+          if [[ -e "$DATA_DIR" ]]; then
+            log "data directory $DATA_DIR remains after removal"
+            exit 1
+          fi
           log "removed data directory $DATA_DIR"
         else
           log "failed to remove data directory $DATA_DIR (exit=$?)"
+          exit 1
         fi
       else
         log "data directory $DATA_DIR not present"
@@ -244,6 +255,7 @@ log "detached uninstall script finished"
 		unixLaunchdLabel,
 		unixDefaultDataRoot,
 		uninstallDelaySecond,
+		unixManagedMountCleanupScript,
 		unixGatewaySidecarUninstallHook,
 	)
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o750); err != nil {

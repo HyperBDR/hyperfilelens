@@ -4,6 +4,7 @@ package install
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -53,5 +54,24 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	}
 	if strings.Contains(body, `gateway sidecar uninstall reported errors; continuing agent uninstall`) {
 		t.Fatalf("script must not remove the Agent after LensNode removal fails:\n%s", body)
+	}
+	if !strings.Contains(body, `unmount_agent_mounts "$DATA_DIR"`) {
+		t.Fatalf("script must unmount Agent-managed NAS shares:\n%s", body)
+	}
+	if !strings.Contains(body, `Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry`) {
+		t.Fatalf("script must stop removal when managed mounts remain:\n%s", body)
+	}
+	unmountAt := strings.Index(body, `unmount_agent_mounts "$DATA_DIR"`)
+	removeAt := strings.Index(body, `for target in "$INSTALL_DIR/hfl-agent"`)
+	if unmountAt < 0 || removeAt < 0 || unmountAt > removeAt {
+		t.Fatalf("script must unmount managed shares before removing Agent files:\n%s", body)
+	}
+	if !strings.Contains(body, `if [[ -e "$DATA_DIR" ]]; then
+            log "data directory $DATA_DIR remains after removal"
+            exit 1`) {
+		t.Fatalf("script must verify data directory removal:\n%s", body)
+	}
+	if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
+		t.Fatalf("generated uninstall script is not valid bash: %v\n%s", err, out)
 	}
 }

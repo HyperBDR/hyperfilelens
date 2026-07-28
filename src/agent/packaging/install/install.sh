@@ -1289,13 +1289,24 @@ cmd_upgrade() {
 }
 
 collect_agent_mount_points() {
-	local mounts_root="$1"
-	local mp
+	local mounts_root="$1" targets=""
 
 	[[ -d "$mounts_root" ]] || return 0
 
 	case "$(uname -s)" in
 		Linux)
+			if command -v findmnt >/dev/null 2>&1; then
+				if targets="$(LC_ALL=C findmnt -rn -o TARGET 2>/dev/null)"; then
+					printf '%s\n' "$targets" | awk -v root="$mounts_root" '
+						BEGIN { len = length(root) }
+						length($0) >= len && substr($0, 1, len) == root &&
+							(length($0) == len || substr($0, len + 1, 1) == "/") {
+							print $0
+						}
+					'
+					return 0
+				fi
+			fi
 			[[ -r /proc/mounts ]] || return 0
 			awk -v root="$mounts_root" '
 				BEGIN { len = length(root) }
@@ -1324,25 +1335,42 @@ sort_mount_points_deepest_first() {
 	awk -F/ '{ print NF, $0 }' | sort -t' ' -k1,1rn | cut -d' ' -f2-
 }
 
+agent_mount_point_is_active() {
+	local mounts_root="$1" point="$2"
+	collect_agent_mount_points "$mounts_root" | grep -Fqx -- "$point"
+}
+
+run_managed_umount() {
+	if command -v timeout >/dev/null 2>&1; then
+		timeout 10 umount "$@"
+	else
+		umount "$@"
+	fi
+}
+
 try_umount_point() {
-	local point="$1"
+	local mounts_root="$1" point="$2"
 	local msg=""
 
-	if umount "$point" 2>/dev/null; then
+	if run_managed_umount "$point" 2>/dev/null \
+		&& ! agent_mount_point_is_active "$mounts_root" "$point"; then
 		log_ok "unmounted ${point}"
 		return 0
 	fi
-	if umount -l "$point" 2>/dev/null; then
+	if [[ "$(uname -s)" == "Linux" ]] \
+		&& run_managed_umount -l "$point" 2>/dev/null \
+		&& ! agent_mount_point_is_active "$mounts_root" "$point"; then
 		log_ok "lazy-unmounted ${point}"
 		return 0
 	fi
-	if umount -f "$point" 2>/dev/null; then
+	if run_managed_umount -f "$point" 2>/dev/null \
+		&& ! agent_mount_point_is_active "$mounts_root" "$point"; then
 		log_ok "force-unmounted ${point}"
 		return 0
 	fi
-	msg="$(umount "$point" 2>&1 || true)"
+	msg="$(run_managed_umount "$point" 2>&1 || true)"
 	if [[ -z "$msg" ]]; then
-		msg="$(umount -l "$point" 2>&1 || true)"
+		msg="mount is still active after unmount attempts"
 	fi
 	log_warn "failed to unmount ${point}${msg:+: ${msg}}"
 	return 1
@@ -1351,7 +1379,7 @@ try_umount_point() {
 unmount_agent_mounts() {
 	local data_dir="$1"
 	local mounts_root="${data_dir%/}/mounts"
-	local -a points=()
+	local -a points=() remaining=()
 	local point failed=0
 
 	mapfile -t points < <(
@@ -1366,8 +1394,17 @@ unmount_agent_mounts() {
 	log_step "unmounting NAS shares under ${mounts_root}"
 	for point in "${points[@]}"; do
 		[[ -n "$point" ]] || continue
-		try_umount_point "$point" || failed=1
+		try_umount_point "$mounts_root" "$point" || failed=1
 	done
+	mapfile -t remaining < <(
+		collect_agent_mount_points "$mounts_root" | sort -u | sort_mount_points_deepest_first
+	)
+	if [[ ${#remaining[@]} -gt 0 ]]; then
+		for point in "${remaining[@]}"; do
+			log_warn "Agent-managed mount remains active: ${point}"
+		done
+		failed=1
+	fi
 	return "$failed"
 }
 
@@ -1412,6 +1449,9 @@ cmd_uninstall() {
 	uninstall_gateway_sidecar_if_needed "${env_file}"
 
 	stop_service
+	if ! unmount_agent_mounts "$resolved_data"; then
+		log_fail "Agent-managed NAS mount cleanup failed; Agent files and data were preserved for manual retry." 1
+	fi
 	remove_service_unit
 
 	remove_install_file "${INSTALL_DIR}/hfl-agent"
@@ -1445,21 +1485,25 @@ cmd_uninstall() {
 		log_skip "${env_file} was not present."
 	fi
 
-	log_info "Uninstallation completed. If this node still appears in the console, remove it there."
-	finish_uninstall_log 0
-	trap - EXIT
-
 	if [[ $PURGE_ALL -eq 0 ]]; then
 		log_skip "Data directory ${resolved_data} was preserved (use --purge-all to remove it)."
 	elif data_dir_allowed_for_removal "$resolved_data" && [[ -e "$resolved_data" ]]; then
-		unmount_agent_mounts "$resolved_data" || log_warn "Some NAS mounts could not be unmounted; data directory cleanup may be incomplete."
-		rm -rf "$resolved_data"
-		log_ok "Data directory removed (${resolved_data})."
+		if rm -rf "$resolved_data"; then
+			[[ ! -e "$resolved_data" ]] \
+				|| log_fail "Data directory ${resolved_data} remains after removal." 1
+			log_ok "Data directory removed (${resolved_data})."
+		else
+			log_fail "Failed to remove data directory ${resolved_data}." 1
+		fi
 	elif [[ -n "$resolved_data" ]]; then
 		log_warn "Data directory ${resolved_data} is outside allowed prefixes and was not deleted."
 	else
 		log_skip "No data directory was resolved for removal."
 	fi
+
+	log_info "Uninstallation completed. If this node still appears in the console, remove it there."
+	finish_uninstall_log 0
+	trap - EXIT
 }
 
 cmd_status() {
