@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from django.conf import settings
+
 
 def client_ip_from_meta(meta: dict | None) -> str | None:
     """Return the left-most client IP from request META or ASGI-derived headers."""
     if not meta:
         return None
     forwarded = str(meta.get("HTTP_X_FORWARDED_FOR", "") or "").strip()
-    if forwarded:
+    if forwarded and getattr(settings, "TRUSTED_PROXY", False):
         return forwarded.split(",")[0].strip() or None
     remote = meta.get("REMOTE_ADDR")
     return str(remote).strip() if remote else None
@@ -23,7 +25,7 @@ def client_ip_from_scope(scope: dict | None) -> str | None:
         for key, value in scope.get("headers", [])
     }
     forwarded = headers.get("x-forwarded-for", "").strip()
-    if forwarded:
+    if forwarded and getattr(settings, "TRUSTED_PROXY", False):
         return forwarded.split(",")[0].strip() or None
     client = scope.get("client")
     if isinstance(client, (list, tuple)) and client:

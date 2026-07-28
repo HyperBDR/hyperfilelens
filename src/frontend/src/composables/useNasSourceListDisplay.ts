@@ -60,7 +60,7 @@ export function useNasSourceListDisplay(proxyNodes: Ref<ApiNode[]>) {
   }
 
   function sourceNodeIp(row: SourceResource) {
-    return sourceConfigValue(row, 'host_ip') || boundNodeForRow(row)?.ip_address?.trim() || '—'
+    return proxyNodeStackIpLine(boundNodeForRow(row), sourceConfigValue(row, 'host_ip')) || '—'
   }
 
   function sourceNodeOnlineStatus(row: SourceResource): 'online' | 'reconnecting' | 'offline' {

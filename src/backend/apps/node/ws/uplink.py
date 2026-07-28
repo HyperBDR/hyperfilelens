@@ -17,6 +17,10 @@ from apps.node.services.internal.node_naming import (
     resolve_inventory_node_name,
     uniquify_node_name,
 )
+from apps.node.services.internal.network_inventory import (
+    normalize_agent_network_state,
+    same_network_inventory,
+)
 from apps.node.services.interface import (
     complete_task,
     record_task_progress,
@@ -35,7 +39,7 @@ def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None =
         "status": Node.Status.ONLINE,
     }
     if client_ip:
-        updates["ip_address"] = client_ip
+        updates["connection_ip_address"] = client_ip
     Node.objects.filter(pk=node_id).update(**updates)
     try:
         sync_agent_source_host_by_id(node_id=node_id)
@@ -101,9 +105,20 @@ def _inventory_throttle_key(*, node_id: int) -> str:
 def _merge_heartbeat_inventory_updates(*, node: Node, inventory: dict) -> dict:
     """Build ``Node.objects.update`` kwargs for inventory snapshot fields (not metrics)."""
     updates: dict = {}
-    inv_only = {k: v for k, v in inventory.items() if k != "metrics"}
+    state = normalize_agent_network_state(inventory)
+    inv_only = {k: v for k, v in state.metadata_inventory.items() if k != "metrics"}
     if ver := str(inventory.get("agent_version") or "").strip():
         updates["version"] = ver
+    if (
+        state.primary_ip_address
+        and str(node.ip_address or "") != state.primary_ip_address
+    ):
+        updates["ip_address"] = state.primary_ip_address
+    if state.inventory is not None and not same_network_inventory(
+        node.network_inventory,
+        state.inventory,
+    ):
+        updates["network_inventory"] = state.inventory
     if inv_only:
         meta = dict(node.metadata or {})
         meta["inventory"] = {**dict(meta.get("inventory") or {}), **inv_only}

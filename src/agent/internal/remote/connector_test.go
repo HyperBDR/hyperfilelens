@@ -86,6 +86,9 @@ func TestHeartbeatLoopReportsWriteFailure(t *testing.T) {
 	connector := NewConnector(staticProvider{cfg: &model.AgentConfig{}})
 	connector.heartbeatInterval = time.Millisecond
 	connector.setConn(clientConn)
+	if got := connector.LocalIPAddress(); net.ParseIP(got) == nil {
+		t.Fatalf("LocalIPAddress()=%q, want active socket address", got)
+	}
 
 	done := make(chan struct{})
 	sessionErr := make(chan error, 1)

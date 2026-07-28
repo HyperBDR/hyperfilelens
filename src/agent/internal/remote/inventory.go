@@ -2,10 +2,8 @@ package remote
 
 import (
 	"context"
-	"net"
 	"os"
 	"runtime"
-	"strings"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -16,7 +14,7 @@ import (
 	"hyperfilelens/agent/internal/platform/hostinfo"
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/kopia"
-	"hyperfilelens/agent/internal/platform/netmac"
+	"hyperfilelens/agent/internal/platform/networkinventory"
 	"hyperfilelens/agent/internal/platform/vfs"
 	"hyperfilelens/agent/internal/selfupdate"
 	"hyperfilelens/agent/internal/wire"
@@ -48,16 +46,29 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 			"repository_operation_v1",
 			"repository_cleanup_v1",
 			"backup_prepared_snapshot_v1",
+			"network_inventory_v1",
 		},
 	} {
 		payload[key] = value
 	}
-	if mac := netmac.PrimaryMAC(); mac != "" {
-		payload["mac_address"] = mac
+	preferredAddress := ""
+	if reporter, ok := sink.(interface{ LocalIPAddress() string }); ok {
+		preferredAddress = reporter.LocalIPAddress()
 	}
-	if addresses := hostIPv4Addresses(); len(addresses) > 0 {
+	networkSnapshot := networkinventory.CollectWithPreferredAddress(
+		ctx,
+		cfg.APIBaseURL,
+		preferredAddress,
+	)
+	if mac := networkSnapshot.PrimaryMACAddress(); mac != "" {
+		payload["mac_address"] = mac
+		payload["primary_mac_address"] = mac
+	}
+	if addresses := networkSnapshot.IPAddresses(); len(addresses) > 0 {
 		payload["ip_addresses"] = addresses
-		payload["primary_ip_address"] = addresses[0]
+		payload["primary_ip_address"] = networkSnapshot.PrimaryAddress()
+		payload["primary_ip_source"] = networkSnapshot.Selection.Source
+		payload["network_inventory"] = networkSnapshot
 	}
 	if total, used, free, count, err := agentdisk.HostStorageUsage(); err == nil && count > 0 {
 		payload["disk_total_bytes"] = total
@@ -94,55 +105,4 @@ func hostname() string {
 		return ""
 	}
 	return h
-}
-
-func hostIPv4Addresses() []string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	out := make([]string, 0)
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		name := strings.ToLower(iface.Name)
-		if strings.HasPrefix(name, "docker") ||
-			strings.HasPrefix(name, "br-") ||
-			strings.HasPrefix(name, "veth") ||
-			strings.HasPrefix(name, "virbr") {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ip := addressIP(addr)
-			if ip == nil {
-				continue
-			}
-			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
-				continue
-			}
-			value := ip.String()
-			if !seen[value] {
-				out = append(out, value)
-				seen[value] = true
-			}
-		}
-	}
-	return out
-}
-
-func addressIP(addr net.Addr) net.IP {
-	switch value := addr.(type) {
-	case *net.IPNet:
-		return value.IP.To4()
-	case *net.IPAddr:
-		return value.IP.To4()
-	default:
-		return nil
-	}
 }

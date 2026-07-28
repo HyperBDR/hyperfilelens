@@ -1,14 +1,16 @@
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
 from apps.iam.models import Organization
 from apps.node.api.views.node import NodeViewSet
+from apps.node.api.serializers.node import NodeSerializer
 from apps.node.models import Node, NodeToken
 from apps.node.models.base import NodeRole
 from common.http.client_ip import client_ip_from_meta, client_ip_from_scope
 
 
 class ClientIpHelperTests(SimpleTestCase):
+    @override_settings(TRUSTED_PROXY=True)
     def test_prefers_x_forwarded_for(self):
         meta = {
             "HTTP_X_FORWARDED_FOR": "203.0.113.10, 172.18.0.7",
@@ -20,6 +22,15 @@ class ClientIpHelperTests(SimpleTestCase):
         meta = {"REMOTE_ADDR": "10.0.0.8"}
         self.assertEqual(client_ip_from_meta(meta), "10.0.0.8")
 
+    @override_settings(TRUSTED_PROXY=False)
+    def test_ignores_forwarded_header_without_trusted_proxy(self):
+        meta = {
+            "HTTP_X_FORWARDED_FOR": "203.0.113.10",
+            "REMOTE_ADDR": "10.0.0.8",
+        }
+        self.assertEqual(client_ip_from_meta(meta), "10.0.0.8")
+
+    @override_settings(TRUSTED_PROXY=True)
     def test_scope_reads_forwarded_header(self):
         scope = {
             "headers": [
@@ -30,6 +41,7 @@ class ClientIpHelperTests(SimpleTestCase):
         self.assertEqual(client_ip_from_scope(scope), "192.168.10.15")
 
 
+@override_settings(TRUSTED_PROXY=True)
 class NodeHeartbeatClientIpTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(key="node-ip-org", name="Node IP Org")
@@ -41,7 +53,7 @@ class NodeHeartbeatClientIpTests(TestCase):
         )
         self.factory = APIRequestFactory()
 
-    def test_heartbeat_persists_forwarded_client_ip(self):
+    def test_heartbeat_separates_reported_host_ip_from_forwarded_client_ip(self):
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
             {
@@ -49,6 +61,12 @@ class NodeHeartbeatClientIpTests(TestCase):
                 "name": "agent-host",
                 "version": "1.0.0",
                 "os_name": "linux",
+                "metadata": {
+                    "inventory": {
+                        "primary_ip_address": "10.20.1.15",
+                        "ip_addresses": ["10.20.1.15"],
+                    }
+                },
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
@@ -60,14 +78,15 @@ class NodeHeartbeatClientIpTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
         node = Node.objects.get(organization=self.org)
-        self.assertEqual(str(node.ip_address), "192.168.10.15")
+        self.assertEqual(str(node.ip_address), "10.20.1.15")
+        self.assertEqual(str(node.connection_ip_address), "192.168.10.15")
 
-    def test_heartbeat_updates_existing_node_ip(self):
+    def test_heartbeat_updates_host_and_connection_addresses_independently(self):
         node = Node.objects.create(
             organization=self.org,
             name="agent-existing",
             role=NodeRole.AGENT,
-            ip_address="172.18.0.7",
+            ip_address="10.20.1.40",
         )
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
@@ -75,6 +94,12 @@ class NodeHeartbeatClientIpTests(TestCase):
                 "node_id": node.id,
                 "role": "agent",
                 "name": node.name,
+                "metadata": {
+                    "inventory": {
+                        "primary_ip_address": "10.20.1.41",
+                        "ip_addresses": ["10.20.1.41"],
+                    }
+                },
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
@@ -86,4 +111,35 @@ class NodeHeartbeatClientIpTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
         node.refresh_from_db()
-        self.assertEqual(str(node.ip_address), "192.168.7.51")
+        self.assertEqual(str(node.ip_address), "10.20.1.41")
+        self.assertEqual(str(node.connection_ip_address), "192.168.7.51")
+
+    def test_connection_only_heartbeat_does_not_overwrite_host_ip(self):
+        node = Node.objects.create(
+            organization=self.org,
+            name="agent-existing",
+            role=NodeRole.AGENT,
+            ip_address="10.20.1.50",
+        )
+        request = self.factory.post(
+            "/api/v1/node/nodes/heartbeat/",
+            {
+                "node_id": node.id,
+                "role": "agent",
+                "name": node.name,
+            },
+            format="json",
+            HTTP_X_ORG_KEY=self.org.key,
+            HTTP_X_NODE_TOKEN="ignored",
+            HTTP_X_FORWARDED_FOR="203.0.113.20",
+            REMOTE_ADDR="172.18.0.7",
+        )
+
+        response = NodeViewSet.as_view({"post": "heartbeat"})(request)
+        self.assertEqual(response.status_code, 200)
+        node.refresh_from_db()
+        self.assertEqual(str(node.ip_address), "10.20.1.50")
+        self.assertEqual(str(node.connection_ip_address), "203.0.113.20")
+
+    def test_host_ip_is_read_only_in_tenant_serializer(self):
+        self.assertTrue(NodeSerializer().fields["ip_address"].read_only)

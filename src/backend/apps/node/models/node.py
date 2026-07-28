@@ -25,7 +25,21 @@ class Node(OrganizationScopedModel):
     role = models.CharField(max_length=20, choices=Role.choices)
     version = models.CharField(max_length=50, blank=True, default="")
     os_name = models.CharField(max_length=80, blank=True, default="")
-    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(
+        blank=True,
+        null=True,
+        help_text="Agent-reported primary host address.",
+    )
+    connection_ip_address = models.GenericIPAddressField(
+        blank=True,
+        null=True,
+        help_text="Latest HTTP/WebSocket source address observed by the control plane.",
+    )
+    network_inventory = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Bounded current Agent network-interface snapshot.",
+    )
     status = models.CharField(
         max_length=20,
         choices=Status.choices,

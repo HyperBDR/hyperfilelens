@@ -42,6 +42,7 @@ from apps.node.services.internal.node_naming import (
     resolve_registration_node_name,
     uniquify_node_name,
 )
+from apps.node.services.internal.network_inventory import split_network_from_metadata
 from apps.node.services.internal.local_platform_gateway import registration_metadata
 from apps.node.exceptions import NodeLifecycleError
 from apps.node.services.internal.agent_uninstall import ProxyHasBoundResources
@@ -289,6 +290,9 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         node_id = payload.get("node_id")
         node = None
         token_row = None
+        metadata_payload, network_state = split_network_from_metadata(
+            payload.get("metadata")
+        )
         if node_id:
             node = list_nodes(organization=org).filter(pk=node_id).first()
 
@@ -313,11 +317,13 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 version=payload.get("version", ""),
                 os_name=payload.get("os_name", ""),
                 metadata=registration_metadata(
-                    payload.get("metadata"),
+                    metadata_payload,
                     token_note=token_row.note,
                 ),
                 last_seen_at=timezone.now(),
-                ip_address=client_ip,
+                ip_address=network_state.primary_ip_address,
+                connection_ip_address=client_ip,
+                network_inventory=network_state.inventory or {},
             )
             unique_name = uniquify_node_name(
                 organization_id=org.id,
@@ -348,11 +354,15 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
             node.os_name = payload.get("os_name", node.os_name)
             if "metadata" in payload:
                 node.metadata = registration_metadata(
-                    payload.get("metadata"),
+                    metadata_payload,
                     existing_metadata=node.metadata,
                 )
+                if network_state.primary_ip_address:
+                    node.ip_address = network_state.primary_ip_address
+                if network_state.inventory is not None:
+                    node.network_inventory = network_state.inventory
             if client_ip:
-                node.ip_address = client_ip
+                node.connection_ip_address = client_ip
             node.save()
         else:
             return Response(

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -110,6 +111,25 @@ func (c *Connector) TaskResultAckEnabled() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.conn != nil && c.conn.Subprotocol() == wire.TaskResultAckSubprotocol
+}
+
+// LocalIPAddress returns the local address of the active control-plane connection.
+func (c *Connector) LocalIPAddress() string {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn == nil {
+		return ""
+	}
+	local := conn.UnderlyingConn().LocalAddr()
+	if tcpAddress, ok := local.(*net.TCPAddr); ok && tcpAddress.IP != nil {
+		return tcpAddress.IP.String()
+	}
+	host, _, err := net.SplitHostPort(local.String())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(host)
 }
 
 func (c *Connector) endpoint() (baseURL, agentID, token string) {
