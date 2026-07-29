@@ -1,11 +1,38 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
+from apps.task.api.serializers.task import TaskStepInputSerializer
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import complete_task, create_task
+
+
+class TaskStepInputSerializerTests(SimpleTestCase):
+    def test_progress_uses_decimal_bounds_and_default(self):
+        default_serializer = TaskStepInputSerializer(data={"step_name": "snapshot"})
+        self.assertTrue(default_serializer.is_valid(), default_serializer.errors)
+        self.assertEqual(default_serializer.validated_data["progress"], Decimal("0.00"))
+
+        for value, expected in (("0", Decimal("0.00")), ("100", Decimal("100.00"))):
+            with self.subTest(value=value):
+                serializer = TaskStepInputSerializer(
+                    data={"step_name": "snapshot", "progress": value}
+                )
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                self.assertEqual(serializer.validated_data["progress"], expected)
+
+    def test_progress_rejects_values_outside_decimal_bounds(self):
+        for value in ("-0.01", "100.01"):
+            with self.subTest(value=value):
+                serializer = TaskStepInputSerializer(
+                    data={"step_name": "snapshot", "progress": value}
+                )
+                self.assertFalse(serializer.is_valid())
+                self.assertIn("progress", serializer.errors)
 
 
 class TaskApiTests(TestCase):

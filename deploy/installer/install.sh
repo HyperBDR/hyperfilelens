@@ -21,6 +21,10 @@ SHOW_GENERATED_CREDENTIALS="${HFL_SHOW_GENERATED_CREDENTIALS:-auto}"
 UPGRADE_RECOVERY_ARMED=0
 UPGRADE_HFL_WAS_RUNNING=0
 UPGRADE_SOURCELENS_WAS_RUNNING=0
+LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent"
+LOCAL_PLATFORM_AGENT_DATA_DIR="/var/lib/hyperfilelens-agent"
+LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
+LOCAL_PLATFORM_LENSNODE_IMAGE="hyperfilelens-sourcelens-lensnode:latest"
 
 usage() {
 	cat <<'USAGE'
@@ -657,6 +661,98 @@ sync_runtime_media() {
 	fi
 	find "${ROOT}/data/media/gateway-bootstrap" -type f -name '*.sh' \
 		-exec chmod 755 {} + 2>/dev/null || true
+}
+
+prune_agent_release_media() {
+	local releases="${ROOT}/data/media/agent-releases"
+	local desired="" installed="" marker="${ROOT}/data/.platform-gateway-agent-upgrade"
+	local action name target
+	[[ -d "${releases}" ]] || return 0
+	desired="$(read_version 2>/dev/null || true)"
+	if [[ -f "${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/INSTALLED_VERSION" ]]; then
+		installed="$(tr -d ' \t\r\n' <"${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/INSTALLED_VERSION")"
+	fi
+
+	while IFS=$'\t' read -r action name; do
+		[[ -n "${action}" ]] || continue
+		case "${action}" in
+		REMOVE)
+			target="${releases}/${name}"
+			if [[ ! -d "${target}" || -L "${target}" ]]; then
+				warn "Skipping unsafe Agent release retention candidate ${target}"
+				continue
+			fi
+			safe_assert_path_under_dir "${target}" "${releases}" "Agent release path"
+			safe_rm_dir "${target}"
+			log "Removed expired Agent release media ${name}"
+			;;
+		RETAIN_INVALID)
+			warn "Retaining unrecognized or unsafe Agent release media entry ${name}"
+			;;
+		esac
+	done < <(python3 - "${releases}" "${desired}" "${installed}" "${marker}" <<'PY'
+from __future__ import annotations
+
+import os
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+desired = sys.argv[2].strip()
+installed = sys.argv[3].strip()
+marker_path = pathlib.Path(sys.argv[4])
+main_pattern = re.compile(r"^main-[0-9a-f]{7}$")
+semver_pattern = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+protected = {value for value in (desired, installed) if value}
+try:
+    marker_version = marker_path.read_text(encoding="utf-8").strip()
+except OSError:
+    marker_version = ""
+if marker_version:
+    protected.add(marker_version)
+
+main_entries = []
+semver_entries = []
+invalid_entries = []
+with os.scandir(root) as entries:
+    for entry in entries:
+        try:
+            if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+                invalid_entries.append(entry.name)
+                continue
+            stat = entry.stat(follow_symlinks=False)
+        except OSError:
+            invalid_entries.append(entry.name)
+            continue
+        if main_pattern.fullmatch(entry.name):
+            main_entries.append((stat.st_mtime_ns, entry.name))
+            continue
+        match = semver_pattern.fullmatch(entry.name)
+        if match:
+            semver_entries.append((tuple(map(int, match.groups())), entry.name))
+            continue
+        invalid_entries.append(entry.name)
+
+keep = set(protected)
+semver_entries.sort(reverse=True)
+keep.update(name for _, name in semver_entries[:3])
+
+main_entries.sort(reverse=True)
+ordered_main = [name for _, name in main_entries]
+if desired in ordered_main:
+    ordered_main.remove(desired)
+    ordered_main.insert(0, desired)
+keep.update(ordered_main[:3])
+
+for _, name in [*main_entries, *semver_entries]:
+    if name not in keep:
+        print(f"REMOVE\t{name}")
+for name in sorted(invalid_entries):
+    print(f"RETAIN_INVALID\t{name}")
+PY
+	)
 }
 
 ensure_tls_certs() {
@@ -1353,6 +1449,22 @@ for line in sys.stdin:
 	fi
 }
 
+managed_image_ref_is_in_use() {
+	local ref=$1 image_id container_id container_image_id
+	local -a containers=()
+	image_id="$(docker image inspect "${ref}" --format '{{.Id}}' 2>/dev/null || true)"
+	[[ -n "${image_id}" ]] || return 1
+	mapfile -t containers < <(docker ps -aq --no-trunc 2>/dev/null || true)
+	for container_id in "${containers[@]}"; do
+		[[ -n "${container_id}" ]] || continue
+		container_image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+		if [[ "${container_image_id}" == "${image_id}" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 prune_old_managed_image_refs() {
 	local backup_manifest="" ref output
 	local -a removable=()
@@ -1421,7 +1533,9 @@ PY
 	fi
 	for ref in "${removable[@]}"; do
 		[[ -n "${ref}" ]] || continue
-		if docker image rm "${ref}" >/dev/null 2>&1; then
+		if managed_image_ref_is_in_use "${ref}"; then
+			log "Retained in-use old HFL image tag ${ref}"
+		elif docker image rm "${ref}" >/dev/null 2>&1; then
 			log "Removed unreferenced old HFL image tag ${ref}"
 		else
 			warn "Unable to remove old HFL image tag ${ref}; deployment remains healthy"
@@ -2018,10 +2132,129 @@ platform_gateway_auto_deploy_enabled() {
 }
 
 read_agent_env_value() {
-	local key=$1 env_file="/var/lib/hyperfilelens-agent/agent.env"
+	local key=$1 env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
 	[[ -f "${env_file}" ]] || return 0
 	grep -E "^${key}=" "${env_file}" 2>/dev/null \
 		| head -1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+local_platform_gateway_installed_agent_version() {
+	local version_file="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/INSTALLED_VERSION"
+	[[ -f "${version_file}" ]] || return 0
+	tr -d ' \t\r\n' <"${version_file}"
+}
+
+local_platform_gateway_agent_archive() {
+	local version=$1 release_dir="${ROOT}/data/media/agent-releases/${1}"
+	local ubuntu_release="" candidate
+	local -a candidates=()
+	if [[ -f /etc/os-release ]]; then
+		ubuntu_release="$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2; exit}' /etc/os-release)"
+	fi
+	case "${ubuntu_release}" in
+	20.04) ubuntu_release=ubuntu2004 ;;
+	22.04) ubuntu_release=ubuntu2204 ;;
+	24.04) ubuntu_release=ubuntu2404 ;;
+	*) ubuntu_release="" ;;
+	esac
+	if [[ -n "${ubuntu_release}" ]]; then
+		candidates+=("${release_dir}/hfl-agent-${version}-linux-amd64-${ubuntu_release}.tar.gz")
+	fi
+	candidates+=("${release_dir}/hfl-agent-${version}-linux-amd64.tar.gz")
+	for candidate in "${candidates[@]}"; do
+		if [[ -f "${candidate}" && ! -L "${candidate}" ]]; then
+			printf '%s' "${candidate}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+upgrade_local_platform_gateway_agent() {
+	local desired=$1 archive install_script marker
+	archive="$(local_platform_gateway_agent_archive "${desired}")" \
+		|| die "no exact local platform Gateway Agent archive exists for ${desired}"
+	install_script="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}/install.sh"
+	marker="${ROOT}/data/.platform-gateway-agent-upgrade"
+	[[ -f "${install_script}" && ! -L "${install_script}" ]] \
+		|| die "installer-managed local platform Gateway has no trusted Agent installer"
+
+	step "Upgrading installer-managed local platform Gateway Agent to ${desired}"
+	printf '%s\n' "${desired}" | run_as_root tee "${marker}" >/dev/null
+	if ! run_as_root /bin/bash "${install_script}" upgrade \
+		--from "${archive}" --yes --quiet-footer; then
+		die "installer-managed local platform Gateway Agent upgrade failed; its rollback was requested"
+	fi
+	if [[ "$(local_platform_gateway_installed_agent_version)" != "${desired}" ]]; then
+		die "installer-managed local platform Gateway Agent did not converge to ${desired}"
+	fi
+	run_as_root rm -f "${marker}"
+	ok "Installer-managed local platform Gateway Agent upgraded to ${desired}"
+}
+
+verify_local_platform_gateway_agent() {
+	local desired=$1 installed
+	installed="$(local_platform_gateway_installed_agent_version)"
+	[[ "${installed}" == "${desired}" ]] \
+		|| die "installer-managed local platform Gateway Agent is ${installed:-unknown}, expected ${desired}"
+	run_as_root systemctl is-active --quiet hyperfilelens-agent.service \
+		|| die "installer-managed local platform Gateway Agent service is not active"
+}
+
+converge_local_platform_gateway_lensnode() {
+	local desired_id current_id container_id running script
+	desired_id="$(docker image inspect --format '{{.Id}}' \
+		"${LOCAL_PLATFORM_LENSNODE_IMAGE}" 2>/dev/null || true)"
+	[[ -n "${desired_id}" ]] \
+		|| die "local platform Gateway LensNode image is unavailable: ${LOCAL_PLATFORM_LENSNODE_IMAGE}"
+	container_id="$(docker ps -aq --no-trunc \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+		--filter 'label=com.docker.compose.service=lensnode' | head -1)"
+	[[ -n "${container_id}" ]] \
+		|| die "installer-managed local platform Gateway LensNode container is missing"
+	current_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+	if [[ "${current_id}" == "${desired_id}" ]]; then
+		skip "Local platform Gateway LensNode already uses the desired image"
+	else
+		script="${ROOT}/data/media/gateway-bootstrap/gateway-install-lensnode-sidecar.sh"
+		[[ -f "${script}" && ! -L "${script}" ]] \
+			|| die "local platform Gateway LensNode installer is missing: ${script}"
+		step "Recreating local platform Gateway LensNode for a changed image"
+		run_as_root env \
+			HFL_LENS_ENV_FILE="${LOCAL_PLATFORM_LENSNODE_ENV_FILE}" \
+			HFL_INSECURE_TLS=1 \
+			LENSNODE_IMAGE="${LOCAL_PLATFORM_LENSNODE_IMAGE}" \
+			/bin/bash "${script}"
+		container_id="$(docker ps -aq --no-trunc \
+			--filter 'label=com.hyperfilelens.managed=true' \
+			--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+			--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+			--filter 'label=com.docker.compose.service=lensnode' | head -1)"
+		current_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+		[[ "${current_id}" == "${desired_id}" ]] \
+			|| die "local platform Gateway LensNode did not converge to the desired image"
+	fi
+	running="$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)"
+	[[ "${running}" == "true" ]] \
+		|| die "installer-managed local platform Gateway LensNode is not running"
+}
+
+wait_for_local_platform_gateway_online() {
+	local node_id=$1 attempt
+	[[ "${node_id}" =~ ^[0-9]+$ ]] \
+		|| die "installer-managed local platform Gateway has no valid node ID"
+	for attempt in $(seq 1 12); do
+		if compose_in_root exec -T api python manage.py shell -c \
+			"from apps.node.models import Node; from apps.node.services.internal.node_registry import agent_ws_routable; node = Node.objects.filter(pk=${node_id}, status=Node.Status.ONLINE).first(); raise SystemExit(0 if node is not None and agent_ws_routable(agent_id=node.id) else 1)" \
+			>/dev/null 2>&1; then
+			ok "Installer-managed local platform Gateway WebSocket is online"
+			return 0
+		fi
+		((attempt < 12)) && sleep 2
+	done
+	die "installer-managed local platform Gateway did not reconnect its WebSocket"
 }
 
 ensure_local_platform_gateway() {
@@ -2075,7 +2308,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	api_base="https://127.0.0.1:${tenant_port}"
 	wss_url="wss://127.0.0.1:${tenant_port}/ws/node/agent/"
 
-	local existing_org existing_role existing_node_id existing_token
+	local existing_org existing_role existing_node_id existing_token desired_version installed_version
 	existing_org="$(read_agent_env_value HFL_ORG_KEY)"
 	existing_role="$(read_agent_env_value HFL_NODE_ROLE)"
 	existing_node_id="$(read_agent_env_value HFL_NODE_ID)"
@@ -2091,6 +2324,13 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		elif [[ "${existing_token}" != "${token}" ]]; then
 			die "the partially enrolled platform Gateway Agent was not created by the HFL installer"
 		fi
+		desired_version="$(read_version)"
+		installed_version="$(local_platform_gateway_installed_agent_version)"
+		if [[ "${installed_version}" == "${desired_version}" ]]; then
+			skip "Local platform Gateway Agent already uses ${desired_version}"
+		else
+			upgrade_local_platform_gateway_agent "${desired_version}"
+		fi
 	fi
 
 	run_as_root env \
@@ -2101,6 +2341,11 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
 		"${helper}" gateway-install --yes
+	desired_version="$(read_version)"
+	verify_local_platform_gateway_agent "${desired_version}"
+	converge_local_platform_gateway_lensnode
+	existing_node_id="$(read_agent_env_value HFL_NODE_ID)"
+	wait_for_local_platform_gateway_online "${existing_node_id}"
 	ok "Installer-managed local platform Gateway is ready"
 }
 
@@ -2217,6 +2462,7 @@ cmd_install() {
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
 	sync_optional_identity_settings
 	ensure_local_platform_gateway
+	prune_agent_release_media
 
 	step "[6/6] Done"
 	log "Install and startup complete"
@@ -2962,6 +3208,7 @@ cmd_upgrade() {
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-upgrade health gate"
 	sync_optional_identity_settings
 	ensure_local_platform_gateway
+	prune_agent_release_media
 	UPGRADE_RECOVERY_ARMED=0
 	prune_old_managed_image_refs
 

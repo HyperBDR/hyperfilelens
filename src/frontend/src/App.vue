@@ -38,12 +38,21 @@ watch(
           </div>
         </template>
         <template #fallback>
-          <div class="app-route-loading" role="status" aria-label="Loading">
-            <div class="app-route-loading__panel" aria-hidden="true">
-              <i class="app-route-loading__mark"></i>
-              <div class="app-route-loading__brand"><span>Hyper</span>FileLens</div>
-              <div class="app-route-loading__sub"></div>
-              <div class="app-route-loading__bar"></div>
+          <div
+            class="app-route-loading"
+            role="status"
+            aria-label="Loading"
+          >
+            <div
+              class="app-route-loading__panel"
+              aria-hidden="true"
+            >
+              <i class="app-route-loading__mark" />
+              <div class="app-route-loading__brand">
+                <span>Hyper</span>FileLens
+              </div>
+              <div class="app-route-loading__sub" />
+              <div class="app-route-loading__bar" />
             </div>
           </div>
         </template>

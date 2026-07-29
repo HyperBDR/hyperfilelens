@@ -460,9 +460,13 @@ function applyThemeVars(t: string) {
       {{ t('common.supportModeBanner', { org: supportOrgKey }) }}
     </div>
     <main class="content-wrapper">
-      <RouterView v-slot="{ Component, route }">
+      <RouterView v-slot="{ Component, route: matchedRoute }">
         <Suspense
-          :key="route.path === '/protection/backups' || route.path === '/ops/task' ? route.path : route.fullPath"
+          :key="
+            matchedRoute.path === '/protection/backups' || matchedRoute.path === '/ops/task'
+              ? matchedRoute.path
+              : matchedRoute.fullPath
+          "
           timeout="0"
         >
           <component :is="Component" />

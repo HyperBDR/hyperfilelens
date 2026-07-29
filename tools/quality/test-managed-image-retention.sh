@@ -22,6 +22,7 @@ case "$*" in
 "info") ;;
 "ps -aq --no-trunc") printf 'foreign-container\n' ;;
 "inspect --format {{.Config.Image}} foreign-container") printf 'hyperfilelens-backend:0.1.6\n' ;;
+"inspect --format {{.Image}} foreign-container") printf 'sha256:in-use\n' ;;
 "image ls --format {{.Repository}}:{{.Tag}}")
 	printf '%s\n' \
 		hyperfilelens-backend:latest \
@@ -29,8 +30,11 @@ case "$*" in
 		hyperfilelens-backend:0.1.7 \
 		hyperfilelens-backend:0.1.6 \
 		hyperfilelens-backend:0.1.5 \
+		hyperfilelens-backend:0.1.4 \
 		customer-backend:0.1.5
 	;;
+"image inspect hyperfilelens-backend:0.1.5 --format {{.Id}}") printf 'sha256:unused\n' ;;
+"image inspect hyperfilelens-backend:0.1.4 --format {{.Id}}") printf 'sha256:in-use\n' ;;
 "image rm hyperfilelens-backend:0.1.5")
 	printf '%s\n' 'hyperfilelens-backend:0.1.5' >>"${HFL_TEST_REMOVED_IMAGES}"
 	;;
@@ -43,7 +47,7 @@ export HFL_TEST_REMOVED_IMAGES="${tmp}/removed-images"
 
 warn() { printf 'WARN: %s\n' "$*"; }
 log() { printf 'INFO: %s\n' "$*"; }
-source <(sed -n '/^prune_old_managed_image_refs()/,/^apply_upgrade_files()/p' "${installer}" | sed '$d')
+source <(sed -n '/^managed_image_ref_is_in_use()/,/^apply_upgrade_files()/p' "${installer}" | sed '$d')
 
 prune_old_managed_image_refs
 [[ "$(<"${HFL_TEST_REMOVED_IMAGES}")" == "hyperfilelens-backend:0.1.5" ]]

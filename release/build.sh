@@ -1120,9 +1120,11 @@ sudo ./install.sh upgrade --from /path/to/new.tar.gz --remove-sourcelens
 \`\`\`
 
 When the package includes \`sourcelens/\`, upgrade also refreshes SourceLens under \`/opt/hyperfilelens/sourcelens\` and updates
-\`data/media/gateway-bootstrap/\` / \`data/media/enroll-bootstrap/\` publish artifacts on this host. Existing enrolled nodes and
-installed Data Gateways are not upgraded automatically; new enrollments and offline DG installs use the updated files.
-\`data/media/agent-releases/\` versions are merged (older versions are kept).
+\`data/media/gateway-bootstrap/\` / \`data/media/enroll-bootstrap/\` publish artifacts on this host. User-managed Data Gateways
+are not upgraded automatically; new enrollments and offline DG installs use the updated files. The installer-managed local
+Platform Gateway converges to the control-plane Agent version and only recreates LensNode when its image changes.
+Agent release media retention keeps the desired and locally installed versions, the latest three Main builds, and the latest
+three formal releases. An interrupted local Agent upgrade is also protected until a later successful deployment.
 
 ## Uninstall
 
