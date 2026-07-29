@@ -15,6 +15,9 @@ from apps.storage.services.internal.repository_cleanup import (
     create_repository_cleanup_task,
     run_repository_cleanup_task,
 )
+from apps.storage.services.internal.repository_agent_operation import (
+    queue_repository_agent_result_followup,
+)
 from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task,
     discover_repository_execution_targets,
@@ -158,6 +161,55 @@ class RepositoryOperationRecoveryTests(TestCase):
         self.assertEqual(result["status"], "waiting")
         self.assertEqual(repository_task.remote_task_id, node_task.id)
         self.assertEqual(repository_task.task.status, Task.Status.RUNNING)
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    def test_terminal_agent_result_queues_repository_parent_by_correlation(
+        self,
+        apply_async,
+    ):
+        repository_task = self._maintenance_task()
+        self._start_maintenance(repository_task)
+        node_task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            correlation_type="repository_operation",
+            correlation_id=str(repository_task.task.task_uuid),
+            kind="repository.operation",
+            status=NodeTask.Status.SUCCESS,
+            result={"maintenance": {"exit_code": 0}},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        queued = queue_repository_agent_result_followup(node_task=node_task)
+
+        self.assertTrue(queued)
+        apply_async.assert_called_once_with(
+            kwargs={"repository_task_id": repository_task.id},
+            countdown=1,
+        )
+
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    @mock.patch("apps.storage.tasks.cache.add", return_value=False)
+    def test_cleanup_lock_conflict_reschedules_instead_of_dropping_wakeup(
+        self,
+        _cache_add,
+        apply_async,
+    ):
+        repository_task = create_repository_cleanup_task(
+            repository=self.repository,
+            dispatch=False,
+        )
+
+        result = execute_repository_operation.run(
+            repository_task_id=repository_task.id,
+        )
+
+        self.assertEqual(result["status"], "rescheduled")
+        self.assertEqual(result["retry_in_seconds"], 3)
+        apply_async.assert_called_once_with(
+            kwargs={"repository_task_id": repository_task.id},
+            countdown=3,
+        )
 
     @mock.patch(
         "apps.storage.services.internal.repository_agent_operation.run_agent_task_async"

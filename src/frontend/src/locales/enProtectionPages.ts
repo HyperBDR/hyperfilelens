@@ -832,9 +832,9 @@ export const enProtectionPages = {
     deleteStrictRiskTitle: 'Cannot Complete Remotely:',
     deleteBlockingTitle: 'Unregister Is Blocked:',
     deleteBlockingHint: 'Wait for tasks to finish or stop them manually before unregistering.',
-    deleteForceLabel: 'Force Unregister',
+    deleteForceLabel: 'Force Cleanup',
     deleteForceHint:
-      'Skip cleanup that cannot finish now. The source is still unregistered; you may need to clean up hosts manually.',
+      'Attempt every cleanup step, record any residue, and continue unregistering the source.',
     deleteReasonAgentOffline: '{name} is offline. Its Agent cannot be uninstalled remotely.',
     deleteReasonProxyOffline: 'Proxy for {name} is offline. The NAS share cannot be unmounted remotely.',
     deleteReasonProxyUnbound: 'No Proxy is bound to {name}. Repository cleanup may fail in strict mode.',

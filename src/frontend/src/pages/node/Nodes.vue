@@ -441,21 +441,10 @@ async function renameNode(node: ApiNode, name: string) {
 const proxyDeleteBlockedOpen = ref(false)
 const proxyDeleteBlockedName = ref('')
 const proxyDeleteBlockedBindings = ref<NodeBindings | null>(null)
-const proxyDeleteForceTarget = ref<ApiNode | null>(null)
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const pendingDeleteNodes = ref<ApiNode[]>([])
 const pendingDeleteForce = ref(false)
-
-async function confirmProxyForceDelete() {
-  const node = proxyDeleteForceTarget.value
-  if (!node) return
-  proxyDeleteBlockedOpen.value = false
-  pendingDeleteNodes.value = [node]
-  pendingDeleteForce.value = true
-  deleteOpen.value = true
-  proxyDeleteForceTarget.value = null
-}
 
 async function deleteSelectedNodes() {
   if (batchDisabled.value) return
@@ -474,7 +463,6 @@ async function deleteSelectedNodes() {
         if (blocked) {
           proxyDeleteBlockedName.value = node.name
           proxyDeleteBlockedBindings.value = bindings
-          proxyDeleteForceTarget.value = node
           proxyDeleteBlockedOpen.value = true
           return
         }
@@ -862,7 +850,6 @@ async function submitRename() {
       v-model="proxyDeleteBlockedOpen"
       :proxy-name="proxyDeleteBlockedName"
       :bindings="proxyDeleteBlockedBindings"
-      @force-delete="confirmProxyForceDelete"
     />
     <NodeLifecycleUpgradeConfirmDialog
       v-model="upgradeConfirmOpen"

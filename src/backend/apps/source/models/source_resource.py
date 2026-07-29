@@ -74,6 +74,7 @@ class SourceResource(OrganizationScopedModel):
             models.UniqueConstraint(
                 fields=["organization", "name"],
                 name="uniq_source_resource_org_name",
+                condition=models.Q(is_deleted=False),
             )
         ]
         indexes = [

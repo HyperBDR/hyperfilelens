@@ -13,7 +13,7 @@ from django.utils import timezone
 from apps.audit.constants import AuditAction, AuditResult
 from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.node_registry import (
@@ -31,12 +31,12 @@ from apps.protection.services.snapshot_delete import (
     run_snapshot_delete_task,
 )
 from apps.restore.models import RestorePlan, RestoreRecord
-from apps.source.constants import ResourceType, SelectableSourceKind
+from apps.source.constants import ResourceStatus, ResourceType, SelectableSourceKind
 from apps.source.models import BackupSourceRepositoryPurgePending, SourceResource
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.source.services.internal.source_pipeline import delete_pipeline_entry, purge_pipeline_entry
 from apps.source.services.interface import unmount_resource
-from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import Repository, RepositoryUsageShard
 from apps.storage.services.interface import (
     RepositoryCleanupBlocked,
     create_direct_nas_target_cleanup_task,
@@ -123,6 +123,15 @@ class SourceDeleteContext:
         return self.source_kind == SelectableSourceKind.AGENT
 
 
+@dataclass(frozen=True)
+class DirectNasCleanupOutcome:
+    """Current state of Direct NAS physical cleanup for one source."""
+
+    cleaned_repository_ids: set[int]
+    cleanup_tasks: list[dict[str, Any]]
+    waiting: bool = False
+
+
 class BackupSourceDeleteFailed(Exception):
     def __init__(
         self,
@@ -135,7 +144,7 @@ class BackupSourceDeleteFailed(Exception):
         self.message = message
         self.reasons = reasons
         self.hint = hint or (
-            "Fix the issues above and try again, or enable force delete to continue."
+            "Fix the issues above and try again, or use Force Cleanup where allowed."
         )
 
 
@@ -268,10 +277,124 @@ def _create_source_unregister_task(
         request_payload={
             "source_ids": [selectable_id],
             "force": bool(force),
+            "cleanup_plan": _source_unregister_cleanup_plan(
+                org=org,
+                selectable_id=selectable_id,
+            ),
         },
         resources=_source_resource_defs([selectable_id]),
         steps=_SOURCE_UNREGISTER_STEPS,
     )
+
+
+def _source_unregister_cleanup_plan(
+    *,
+    org: Organization,
+    selectable_id: str,
+) -> dict[str, Any]:
+    """Capture immutable source/config/repository identities for retries."""
+    ctx = _resolve_context(
+        organization_id=org.id,
+        selectable_id=selectable_id,
+    )
+    if ctx is None:
+        return {"version": 1, "source_id": selectable_id}
+    configs = list(
+        BackupConfig.objects.filter(
+            organization_id=org.id,
+            source_type=ctx.source_type,
+            source_ref_id=ctx.source_ref_id,
+        ).values("id", "repository_id")
+    )
+    config_ids = [int(config["id"]) for config in configs]
+    repository_ids = sorted(
+        {int(config["repository_id"]) for config in configs}
+    )
+    snapshot_ids = list(
+        BackupSourceSnapshot.objects.filter(
+            organization_id=org.id,
+            backup_config_id__in=config_ids,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    shards = list(
+        RepositoryUsageShard.objects.filter(
+            organization_id=org.id,
+            repository_id__in=repository_ids,
+            node_id=(ctx.agent_node.id if ctx.agent_node is not None else 0),
+        )
+        .order_by("id")
+        .values(
+            "id",
+            "repository_id",
+            "node_id",
+            "repository_subdir",
+            "mount_point",
+        )
+    )
+    endpoint: dict[str, Any] = {
+        "kind": ctx.source_kind,
+        "ref_id": ctx.source_ref_id,
+        "name": ctx.display_name,
+    }
+    if ctx.nas_resource is not None:
+        endpoint.update(
+            {
+                "bound_node_id": ctx.nas_resource.bound_node_id,
+                "mount_point": ctx.nas_resource.effective_mount_point(),
+                "resource_type": ctx.nas_resource.resource_type,
+                "config": _cleanup_config_identity(ctx.nas_resource.config),
+            }
+        )
+    elif ctx.agent_node is not None:
+        endpoint.update(
+            {
+                "node_id": ctx.agent_node.id,
+                "role": ctx.agent_node.role,
+            }
+        )
+    return {
+        "version": 1,
+        "source_id": selectable_id,
+        "source": endpoint,
+        "backup_config_ids": config_ids,
+        "repository_ids": repository_ids,
+        "snapshot_ids": [int(value) for value in snapshot_ids],
+        "usage_shards": shards,
+    }
+
+
+def _cleanup_config_identity(config: Any) -> dict[str, Any]:
+    """Keep endpoint identity fields while excluding credentials and tokens."""
+    if not isinstance(config, dict):
+        return {}
+    sanitized = _sanitize_cleanup_value(config)
+    return sanitized if isinstance(sanitized, dict) else {}
+
+
+def _sanitize_cleanup_value(value: Any) -> Any:
+    """Recursively remove secret-bearing fields from immutable cleanup plans."""
+    secret_markers = (
+        "password",
+        "secret",
+        "token",
+        "access_key",
+        "credential",
+        "private_key",
+        "ciphertext",
+    )
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_cleanup_value(item)
+            for key, item in value.items()
+            if not any(marker in str(key).lower() for marker in secret_markers)
+        }
+    if isinstance(value, list):
+        return [_sanitize_cleanup_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_cleanup_value(item) for item in value)
+    return value
 
 
 def _set_unregister_step(
@@ -430,7 +553,7 @@ def _assert_strict_delete_blockers(*, ctx: SourceDeleteContext, force: bool) -> 
                     source_name=ctx.display_name,
                 )
             )
-    if ctx.nas_resource is not None and ctx.nas_resource.mount_status == "mounted":
+    if ctx.nas_resource is not None:
         proxy = ctx.nas_resource.bound_node
         if proxy is None or proxy.status != Node.Status.ONLINE:
             reasons.append(
@@ -491,9 +614,12 @@ def _prepare_delete_batch(
             source_type=ctx.source_type,
             source_ref_id=ctx.source_ref_id,
         )
-        if active_unregister is not None and (
-            not executing_task_uuid or str(active_unregister.task_uuid) != executing_task_uuid
-        ):
+        owns_unregister = bool(
+            active_unregister is not None
+            and executing_task_uuid
+            and str(active_unregister.task_uuid) == executing_task_uuid
+        )
+        if active_unregister is not None and not owns_unregister:
             raise BackupSourceDeleteFailed(
                 message="Backup source was not deleted.",
                 reasons=[
@@ -521,9 +647,145 @@ def _prepare_delete_batch(
                     )
                 ],
             )
+        running = _running_tasks_for_source(
+            organization_id=org.id,
+            source_type=ctx.source_type,
+            source_ref_id=ctx.source_ref_id,
+        )
+        if running:
+            raise BackupSourceDeleteFailed(
+                message="Backup source was not deleted.",
+                reasons=[
+                    DeleteReason(
+                        code="running_tasks",
+                        detail=(
+                            f"{len(running)} backup or restore task(s) are still running. "
+                            "Stop them or wait for completion before unregistering the source."
+                        ),
+                        source_id=ctx.selectable_id,
+                        source_name=ctx.display_name,
+                    )
+                ],
+            )
+        if ctx.is_agent and ctx.agent_node is not None:
+            from apps.node.services.internal.node_lifecycle import (
+                _active_lifecycle_task,
+            )
+            from apps.node.services.internal.node_workload import (
+                get_node_workload_blockers,
+            )
+
+            active_lifecycle = _active_lifecycle_task(org=org, node=ctx.agent_node)
+            lifecycle_payload = (
+                active_lifecycle.payload
+                if active_lifecycle is not None
+                and isinstance(active_lifecycle.payload, dict)
+                else {}
+            )
+            owns_lifecycle = bool(
+                owns_unregister
+                and active_lifecycle is not None
+                and active_lifecycle.kind == "agent.uninstall"
+                and int(
+                    lifecycle_payload.get("source_unregister_task_id") or 0
+                )
+                == int(active_unregister.id)
+            )
+            if active_lifecycle is not None and not owns_lifecycle:
+                raise BackupSourceDeleteFailed(
+                    message="Backup source was not deleted.",
+                    reasons=[
+                        DeleteReason(
+                            code="lifecycle_in_progress",
+                            detail="A lifecycle operation is already in progress.",
+                            source_id=ctx.selectable_id,
+                            source_name=ctx.display_name,
+                        )
+                    ],
+                )
+            node_blockers = get_node_workload_blockers(node=ctx.agent_node)
+            non_product_blockers = [
+                blocker
+                for blocker in node_blockers
+                if blocker.code not in {"backup_running", "restore_running"}
+            ]
+            if non_product_blockers:
+                raise BackupSourceDeleteFailed(
+                    message="Backup source was not deleted.",
+                    reasons=[
+                        DeleteReason(
+                            code="node_workload_active",
+                            detail=blocker.label,
+                            source_id=ctx.selectable_id,
+                            source_name=ctx.display_name,
+                        )
+                        for blocker in non_product_blockers
+                    ],
+                )
         _assert_strict_delete_blockers(ctx=ctx, force=force)
         prepared.append((ctx, {}, []))
     return prepared
+
+
+def _lock_delete_identities(*, organization_id: int, ids: list[str]) -> None:
+    """Lock source identity rows before the authoritative delete preflight."""
+    node_ids: set[int] = set()
+    resource_ids: set[int] = set()
+    for selectable_id in ids:
+        parsed = parse_selectable_id(selectable_id)
+        if parsed is None:
+            continue
+        kind, ref_id = parsed
+        if kind == SelectableSourceKind.AGENT:
+            node_ids.add(int(ref_id))
+        elif kind == SelectableSourceKind.NAS:
+            resource_ids.add(int(ref_id))
+
+    if node_ids:
+        list(
+            Node.objects.select_for_update()
+            .filter(
+                organization_id=organization_id,
+                id__in=sorted(node_ids),
+            )
+            .order_by("id")
+        )
+    if resource_ids:
+        list(
+            SourceResource.all_objects.select_for_update()
+            .filter(
+                organization_id=organization_id,
+                id__in=sorted(resource_ids),
+            )
+            .order_by("id")
+        )
+
+
+def _set_source_nas_removal_status(
+    *,
+    organization_id: int,
+    ids: list[str],
+    status: str,
+    message: str,
+) -> None:
+    """Persist the Source NAS removal fence or retryable failure state."""
+    resource_ids = [
+        int(parsed[1])
+        for selectable_id in ids
+        if (parsed := parse_selectable_id(selectable_id)) is not None
+        and parsed[0] == SelectableSourceKind.NAS
+    ]
+    if not resource_ids:
+        return
+    SourceResource.all_objects.filter(
+        organization_id=organization_id,
+        id__in=resource_ids,
+        is_deleted=False,
+    ).update(
+        status=status,
+        status_message=message[:2000],
+        updated_at=timezone.now(),
+    )
 
 
 def _resolve_unregister_user(*, org: Organization, task: Task):
@@ -542,7 +804,8 @@ def _cleanup_direct_nas_for_unregister(
     ctx: SourceDeleteContext,
     unregister_task: Task,
     user,
-) -> tuple[set[int], list[dict[str, Any]]]:
+    force: bool,
+) -> DirectNasCleanupOutcome:
     configs = list(
         BackupConfig.objects.filter(
             organization_id=org.id,
@@ -600,6 +863,7 @@ def _cleanup_direct_nas_for_unregister(
                     target_id=target_id,
                     triggered_by_task=unregister_task,
                     requested_by=user,
+                    force=force,
                     dispatch=False,
                 )
             except RepositoryCleanupBlocked as exc:
@@ -638,6 +902,12 @@ def _cleanup_direct_nas_for_unregister(
             run_repository_cleanup_task(repository_task_id=repository_task.id)
             repository_task.task.refresh_from_db()
             cleanup_tasks.append(repository_cleanup_task_payload(repository_task))
+            if repository_task.task.status in _ACTIVE_TASK_STATUSES:
+                return DirectNasCleanupOutcome(
+                    cleaned_repository_ids=cleaned_repository_ids,
+                    cleanup_tasks=cleanup_tasks,
+                    waiting=True,
+                )
             if repository_task.task.status != Task.Status.SUCCESS:
                 raise BackupSourceDeleteFailed(
                     message="Direct NAS repository cleanup failed.",
@@ -656,7 +926,10 @@ def _cleanup_direct_nas_for_unregister(
                     ],
                 )
         cleaned_repository_ids.add(repository.id)
-    return cleaned_repository_ids, cleanup_tasks
+    return DirectNasCleanupOutcome(
+        cleaned_repository_ids=cleaned_repository_ids,
+        cleanup_tasks=cleanup_tasks,
+    )
 
 
 def _execute_source_unregister_work(
@@ -697,18 +970,46 @@ def _execute_source_unregister_work(
             tuple[SourceDeleteContext, dict[str, int], list[DeleteWarning]]
         ] = []
         for ctx, _blob_stats, _warnings in prepared:
-            cleaned_repository_ids, cleanup_tasks = _cleanup_direct_nas_for_unregister(
+            cleanup_outcome = _cleanup_direct_nas_for_unregister(
                 org=org,
                 ctx=ctx,
                 unregister_task=unregister_task,
                 user=user,
+                force=force,
             )
-            direct_cleanup_by_source[ctx.selectable_id] = cleanup_tasks
+            direct_cleanup_by_source[ctx.selectable_id] = cleanup_outcome.cleanup_tasks
+            if cleanup_outcome.waiting:
+                _set_unregister_step(
+                    task=unregister_task,
+                    step_name="cleanup_direct_nas_repositories",
+                    status=TaskStep.Status.RUNNING,
+                    progress=20,
+                    message="Waiting for Direct NAS repository cleanup",
+                    metadata={"cleanup_tasks": direct_cleanup_by_source},
+                )
+                return {
+                    "ok": True,
+                    "accepted": True,
+                    "result": "waiting",
+                    "deleted": [],
+                    "pending_removals": [],
+                    "warnings": [],
+                    "cleanup": {},
+                    "repository_cleanup_tasks": [
+                        item
+                        for cleanup_tasks in direct_cleanup_by_source.values()
+                        for item in cleanup_tasks
+                    ],
+                    "sources": [],
+                    "task_id": unregister_task.id,
+                    "task_uuid": str(unregister_task.task_uuid),
+                    "status": Task.Status.RUNNING,
+                }
             blob_stats, warnings, reasons = _prepare_single_source_snapshot_cleanup(
                 organization_id=org.id,
                 ctx=ctx,
                 force=force,
-                skip_repository_ids=cleaned_repository_ids,
+                skip_repository_ids=cleanup_outcome.cleaned_repository_ids,
             )
             if reasons:
                 raise BackupSourceDeleteFailed(
@@ -754,6 +1055,12 @@ def _execute_source_unregister_work(
                 else:
                     deleted.append(ctx.selectable_id)
     except BackupSourceDeleteFailed as exc:
+        _set_source_nas_removal_status(
+            organization_id=org.id,
+            ids=normalized,
+            status=ResourceStatus.REMOVE_FAILED,
+            message=exc.message,
+        )
         _set_unregister_step(
             task=unregister_task,
             step_name=str(unregister_task.current_step or "reset_backup_config"),
@@ -801,8 +1108,80 @@ def _execute_source_unregister_work(
             if node is None:
                 deleted.append(selectable_id)
                 continue
+            existing_remove = (
+                NodeTask.objects.filter(
+                    organization_id=org.id,
+                    node_id=node.id,
+                    kind="agent.uninstall",
+                    correlation_type="node.lifecycle",
+                    correlation_id=f"remove:{node.id}",
+                    status__in={NodeTask.Status.PENDING, NodeTask.Status.RUNNING},
+                )
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            existing_payload = (
+                existing_remove.payload
+                if existing_remove is not None
+                and isinstance(existing_remove.payload, dict)
+                else {}
+            )
+            if (
+                existing_remove is not None
+                and int(
+                    existing_payload.get("source_unregister_task_id") or 0
+                )
+                == unregister_task.id
+            ):
+                pending_removals.append(
+                    {
+                        "source_id": selectable_id,
+                        "node_id": node.id,
+                        "task_id": str(existing_remove.id),
+                        "operation_id": existing_remove.correlation_id,
+                        "state": "removing",
+                    }
+                )
+                continue
             try:
-                removal = start_node_remove(org=org, node=node, user=user)
+                removal = start_node_remove(
+                    org=org,
+                    node=node,
+                    user=user,
+                    force=force,
+                    triggered_by_task_id=unregister_task.id,
+                )
+                if removal.get("purged") or removal.get("state") == "removed":
+                    deleted.append(selectable_id)
+                    removal_failures = [
+                        dict(item)
+                        for item in removal.get("cleanup_failures") or []
+                        if isinstance(item, dict)
+                    ]
+                    removal_retained = [
+                        str(item)
+                        for item in removal.get("retained_resources") or []
+                        if str(item).strip()
+                    ]
+                    for source in per_source:
+                        if source.get("source_id") != selectable_id:
+                            continue
+                        source["cleanup_complete"] = bool(
+                            removal.get("cleanup_complete", True)
+                        )
+                        source["cleanup_failures"] = removal_failures
+                        source["retained_resources"] = removal_retained
+                        source.pop("pending_removal", None)
+                        source.pop("node_id", None)
+                        break
+                    all_warnings.extend(
+                        {
+                            **failure,
+                            "source_id": selectable_id,
+                        }
+                        for failure in removal_failures
+                    )
+                    continue
                 pending_removals.append(
                     {
                         "source_id": selectable_id,
@@ -819,7 +1198,51 @@ def _execute_source_unregister_work(
                     node_id,
                     exc,
                 )
-                ctx = _resolve_context(organization_id=org.id, selectable_id=selectable_id)
+                if not force:
+                    failure = BackupSourceDeleteFailed(
+                        message="Agent uninstall could not be started.",
+                        reasons=[
+                            DeleteReason(
+                                code=getattr(
+                                    exc,
+                                    "code",
+                                    "lifecycle_rejected",
+                                ),
+                                detail=str(exc),
+                                source_id=selectable_id,
+                            )
+                        ],
+                    )
+                    _set_unregister_step(
+                        task=unregister_task,
+                        step_name="cleanup_source_endpoint",
+                        status=TaskStep.Status.FAILED,
+                        progress=70,
+                        message=failure.message,
+                        level="ERROR",
+                        metadata={
+                            "reasons": [
+                                reason.as_dict() for reason in failure.reasons
+                            ]
+                        },
+                    )
+                    _complete_unregister_task(
+                        task=unregister_task,
+                        status=Task.Status.FAILED,
+                        result_payload={
+                            "source_ids": normalized,
+                            "reasons": [
+                                reason.as_dict() for reason in failure.reasons
+                            ],
+                        },
+                        error_code="AGENT_UNINSTALL_START_FAILED",
+                        error_message=failure.message,
+                    )
+                    raise failure
+                ctx = _resolve_context(
+                    organization_id=org.id,
+                    selectable_id=selectable_id,
+                )
                 if ctx is not None:
                     _soft_delete_identity(org=org, ctx=ctx, user=user)
                 deleted.append(selectable_id)
@@ -831,9 +1254,66 @@ def _execute_source_unregister_work(
                     }
                 )
 
-    if pending_removals and not deleted:
-        result = "pending"
-    elif pending_removals or all_warnings:
+    if pending_removals:
+        _set_unregister_step(
+            task=unregister_task,
+            step_name="cleanup_source_endpoint",
+            status=TaskStep.Status.RUNNING,
+            progress=75,
+            message="Waiting for Agent uninstall completion",
+            metadata={"pending_removals": pending_removals},
+        )
+        return {
+            "ok": True,
+            "accepted": True,
+            "result": "waiting",
+            "deleted": deleted,
+            "pending_removals": pending_removals,
+            "warnings": all_warnings,
+            "cleanup": aggregate_cleanup,
+            "repository_cleanup_tasks": [
+                item
+                for cleanup_tasks in direct_cleanup_by_source.values()
+                for item in cleanup_tasks
+            ],
+            "sources": per_source,
+            "task_id": unregister_task.id,
+            "task_uuid": str(unregister_task.task_uuid),
+            "status": Task.Status.RUNNING,
+        }
+
+    cleanup_failures = [
+        dict(failure)
+        for source in per_source
+        for failure in source.get("cleanup_failures") or []
+        if isinstance(failure, dict)
+    ]
+    retained_resources = [
+        str(resource)
+        for source in per_source
+        for resource in source.get("retained_resources") or []
+        if str(resource).strip()
+    ]
+    if force:
+        cleanup_failures.extend(
+            {
+                "code": str(warning.get("code") or "cleanup_warning"),
+                "detail": str(warning.get("detail") or "Cleanup retained residue."),
+            }
+            for warning in all_warnings
+            if isinstance(warning, dict)
+        )
+    source_cleanup_complete = all(
+        bool(source.get("cleanup_complete", True))
+        for source in per_source
+    )
+    cleanup_complete = (
+        source_cleanup_complete
+        and not cleanup_failures
+        and not retained_resources
+    )
+
+    if not cleanup_complete or all_warnings:
         result = "partial_success"
     else:
         result = "success"
@@ -877,6 +1357,13 @@ def _execute_source_unregister_work(
         "pending_removals": pending_removals,
         "warnings": all_warnings,
         "cleanup": aggregate_cleanup,
+        "force": bool(force),
+        "outcome": (
+            "force_cleanup_success" if force else "cleanup_success"
+        ),
+        "cleanup_complete": cleanup_complete,
+        "cleanup_failures": cleanup_failures,
+        "retained_resources": retained_resources,
         "repository_cleanup_tasks": [
             item
             for cleanup_tasks in direct_cleanup_by_source.values()
@@ -908,6 +1395,14 @@ def queue_delete_backup_sources(
     user_id = getattr(user, "id", None)
     unregister_tasks: list[Task] = []
     with transaction.atomic():
+        _lock_delete_identities(organization_id=org.id, ids=normalized)
+        _prepare_delete_batch(org=org, ids=normalized, force=force)
+        _set_source_nas_removal_status(
+            organization_id=org.id,
+            ids=normalized,
+            status=ResourceStatus.REMOVING,
+            message="Source unregister is in progress.",
+        )
         for selectable_id in normalized:
             unregister_task = _create_source_unregister_task(
                 org=org,
@@ -1007,6 +1502,12 @@ def run_source_unregister_task(*, organization_id: int, task_uuid: str) -> dict[
             executing_task_uuid=str(task.task_uuid),
         )
     except BackupSourceDeleteFailed as exc:
+        _set_source_nas_removal_status(
+            organization_id=organization_id,
+            ids=normalized,
+            status=ResourceStatus.REMOVE_FAILED,
+            message=exc.message,
+        )
         _set_unregister_step(
             task=task,
             step_name=str(task.current_step or "prepare_source_unregister"),
@@ -1165,17 +1666,16 @@ def preflight_delete_backup_sources(
                         source_name=ctx.display_name,
                     ).as_dict()
                 )
-            if resource.mount_status == "mounted":
-                proxy = resource.bound_node
-                if proxy is None or proxy.status != Node.Status.ONLINE:
-                    risks.append(
-                        DeleteReason(
-                            code="proxy_offline",
-                            detail="Proxy is offline — NAS unmount cannot complete in strict mode.",
-                            source_id=ctx.selectable_id,
-                            source_name=ctx.display_name,
-                        ).as_dict()
-                    )
+            proxy = resource.bound_node
+            if proxy is None or proxy.status != Node.Status.ONLINE:
+                risks.append(
+                    DeleteReason(
+                        code="proxy_offline",
+                        detail="Proxy is offline — NAS unmount cannot complete in strict mode.",
+                        source_id=ctx.selectable_id,
+                        source_name=ctx.display_name,
+                    ).as_dict()
+                )
         for risk in _repository_unreachable_preflight_risks(
             organization_id=organization_id,
             ctx=ctx,
@@ -1231,7 +1731,7 @@ def _repository_unreachable_preflight_risks(
                 code="repository_unreachable",
                 detail=(
                     f"Target repository \"{repo_name}\" is offline. Strict delete may fail; "
-                    "use force delete to remove the source and queue cleanup."
+                    "use Force Cleanup to remove the source and record cleanup residue."
                 ),
                 source_id=ctx.selectable_id,
                 source_name=ctx.display_name,
@@ -1479,7 +1979,7 @@ def _strict_nas_umount(
     warnings: list[DeleteWarning],
 ) -> dict[str, Any]:
     resource = ctx.nas_resource
-    if resource is None or resource.mount_status != "mounted":
+    if resource is None:
         return {"skipped": True}
     result = unmount_resource(resource=resource)
     if result.get("success"):
@@ -1635,7 +2135,10 @@ def _soft_delete_identity(
         source_kind=SelectableSourceKind.NAS,
         ref_id=resource.id,
     )
-    resource.delete()
+    resource.status = ResourceStatus.REMOVED
+    resource.status_message = "Source unregister completed."
+    resource.save(update_fields=["status", "status_message", "updated_at"])
+    resource.soft_delete()
 
 
 def _finalize_single_source_delete(
@@ -1648,6 +2151,19 @@ def _finalize_single_source_delete(
     user,
 ) -> dict[str, Any]:
     reasons: list[DeleteReason] = []
+
+    if ctx.nas_resource is not None:
+        umount_result = _strict_nas_umount(
+            ctx=ctx,
+            force=force,
+            reasons=reasons,
+            warnings=warnings,
+        )
+        if umount_result.get("failed"):
+            raise BackupSourceDeleteFailed(
+                message="Backup source was not deleted.",
+                reasons=reasons,
+            )
 
     config_ids = list(
         BackupConfig.objects.filter(
@@ -1664,11 +2180,6 @@ def _finalize_single_source_delete(
         source_ref_id=ctx.source_ref_id,
     )
 
-    if ctx.nas_resource is not None:
-        umount_result = _strict_nas_umount(ctx=ctx, force=force, reasons=reasons, warnings=warnings)
-        if umount_result.get("failed"):
-            raise BackupSourceDeleteFailed(message="Backup source was not deleted.", reasons=reasons)
-
     tasks_orphaned = _mark_tasks_orphaned(
         organization_id=org.id,
         source_type=ctx.source_type,
@@ -1681,6 +2192,57 @@ def _finalize_single_source_delete(
 
     if ctx.is_agent and ctx.agent_node is not None:
         node = ctx.agent_node
+        remove_task = (
+            NodeTask.objects.filter(
+                organization_id=org.id,
+                node_id=node.id,
+                kind="agent.uninstall",
+                correlation_type="node.lifecycle",
+                correlation_id=f"remove:{node.id}",
+            )
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        remove_result = (
+            dict(remove_task.result or {}) if remove_task is not None else {}
+        )
+        if remove_task is not None and remove_task.status in {
+            NodeTask.Status.FAILED,
+            NodeTask.Status.TIMEOUT,
+            NodeTask.Status.CANCELED,
+        }:
+            raise BackupSourceDeleteFailed(
+                message="Agent uninstall failed.",
+                reasons=[
+                    DeleteReason(
+                        code="agent_uninstall_failed",
+                        detail=(
+                            remove_task.last_error
+                            or "Agent uninstall did not complete successfully."
+                        ),
+                        source_id=ctx.selectable_id,
+                        source_name=ctx.display_name,
+                    )
+                ],
+            )
+        if (
+            remove_task is not None
+            and remove_task.status == NodeTask.Status.SUCCESS
+            and (
+                remove_result.get("completion_received_at")
+                or remove_result.get("completion_timed_out_at")
+            )
+        ):
+            _soft_delete_identity(org=org, ctx=ctx, user=user)
+            return {
+                "source_id": ctx.selectable_id,
+                "source_name": ctx.display_name,
+                "cleanup": cleanup,
+                "cleanup_complete": bool(remove_result.get("cleanup_complete")),
+                "cleanup_failures": remove_result.get("cleanup_failures") or [],
+                "retained_resources": remove_result.get("retained_resources") or [],
+                "warnings": [warning.as_dict() for warning in warnings],
+            }
         conn = agent_connection_status(node=node)
         if conn == CONNECTION_OFFLINE:
             if not force:
@@ -1706,6 +2268,14 @@ def _finalize_single_source_delete(
                 "source_id": ctx.selectable_id,
                 "source_name": ctx.display_name,
                 "cleanup": cleanup,
+                "cleanup_complete": False,
+                "cleanup_failures": [
+                    {
+                        "code": "agent_offline",
+                        "detail": "Remote uninstall was skipped because the Agent was offline.",
+                    }
+                ],
+                "retained_resources": ["agent_installation"],
                 "warnings": [warning.as_dict() for warning in warnings],
             }
         return {
@@ -1719,10 +2289,26 @@ def _finalize_single_source_delete(
 
     _soft_delete_identity(org=org, ctx=ctx, user=user)
 
+    nas_unmount_failed = any(
+        warning.code == "nas_umount_failed" for warning in warnings
+    )
+    retained_resources = (
+        [ctx.nas_resource.effective_mount_point()]
+        if nas_unmount_failed and ctx.nas_resource is not None
+        else []
+    )
+
     return {
         "source_id": ctx.selectable_id,
         "source_name": ctx.display_name,
         "cleanup": cleanup,
+        "cleanup_complete": not nas_unmount_failed,
+        "cleanup_failures": [
+            warning.as_dict()
+            for warning in warnings
+            if warning.code == "nas_umount_failed"
+        ],
+        "retained_resources": retained_resources,
         "warnings": warning_payload,
     }
 
@@ -1777,34 +2363,41 @@ def delete_backup_sources(
 ) -> dict[str, Any]:
     """Synchronously unregister backup-selectable sources (tests and internal callers)."""
     normalized = _normalize_delete_ids(ids)
-    prepared = _prepare_delete_batch(org=org, ids=normalized, force=force)
-
     if len(normalized) != 1:
         raise BackupSourceDeleteFailed(
             message="Synchronous source unregister accepts one source at a time.",
             reasons=[DeleteReason(code="batch_not_supported", detail="Provide exactly one source ID.")],
         )
-    unregister_task = _create_source_unregister_task(
-        org=org,
-        selectable_id=normalized[0],
-        force=force,
-    )
-    payload = dict(unregister_task.request_payload or {})
-    user_id = getattr(user, "id", None)
-    if user_id:
-        payload["user_id"] = int(user_id)
-    unregister_task.request_payload = payload
-    unregister_task.save(update_fields=["request_payload", "updated_at"])
+    with transaction.atomic():
+        _lock_delete_identities(organization_id=org.id, ids=normalized)
+        prepared = _prepare_delete_batch(org=org, ids=normalized, force=force)
+        _set_source_nas_removal_status(
+            organization_id=org.id,
+            ids=normalized,
+            status=ResourceStatus.REMOVING,
+            message="Source unregister is in progress.",
+        )
+        unregister_task = _create_source_unregister_task(
+            org=org,
+            selectable_id=normalized[0],
+            force=force,
+        )
+        payload = dict(unregister_task.request_payload or {})
+        user_id = getattr(user, "id", None)
+        if user_id:
+            payload["user_id"] = int(user_id)
+        unregister_task.request_payload = payload
+        unregister_task.save(update_fields=["request_payload", "updated_at"])
 
-    start_task(task_uuid=unregister_task.task_uuid, organization_id=org.id)
-    _set_unregister_step(
-        task=unregister_task,
-        step_name="prepare_source_unregister",
-        status=TaskStep.Status.SUCCESS,
-        progress=15,
-        message="Source unregister prepared",
-        metadata={"source_ids": normalized, "force": bool(force)},
-    )
+        start_task(task_uuid=unregister_task.task_uuid, organization_id=org.id)
+        _set_unregister_step(
+            task=unregister_task,
+            step_name="prepare_source_unregister",
+            status=TaskStep.Status.SUCCESS,
+            progress=15,
+            message="Source unregister prepared",
+            metadata={"source_ids": normalized, "force": bool(force)},
+        )
     return _execute_source_unregister_work(
         org=org,
         prepared=prepared,
@@ -1829,7 +2422,11 @@ def reconcile_stuck_source_unregister_tasks(
         Task.objects.filter(
             task_type=Task.Type.SOURCE_UNREGISTER,
             status=Task.Status.RUNNING,
-            current_step="reset_backup_config",
+            current_step__in={
+                "cleanup_direct_nas_repositories",
+                "reset_backup_config",
+                "cleanup_source_endpoint",
+            },
             updated_at__lt=cutoff,
         )
         .order_by("updated_at", "id")[: max(1, int(limit))]

@@ -93,7 +93,7 @@ function humanizeLegacyAgentWsMessage(message: string, t?: TranslateFn): string 
   const normalized = message.trim().toLowerCase()
   if (normalized.includes(LEGACY_AGENT_WS_NOT_ROUTABLE)) {
     if (t) return t('errors.agentWsNotRoutable')
-    return 'The agent node is offline or unreachable. Wait until the host is back online and try again, or enable force delete to skip remote cleanup.'
+    return 'The agent node is offline or unreachable. Wait until the host is back online and try again, or use Force Cleanup to record the retained installation.'
   }
   if (normalized.includes(LEGACY_AGENT_WS_RECONNECTING)) {
     if (t) return t('errors.agentWsReconnecting')

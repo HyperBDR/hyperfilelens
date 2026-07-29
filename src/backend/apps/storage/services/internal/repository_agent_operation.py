@@ -5,11 +5,13 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.node.models import Node, NodeTask
 from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.storage.repositories.models import RepositoryTask
+from apps.task.models import Task
 from apps.task.services.recovery import (
     RecoveryDecision,
     RecoveryPlan,
@@ -34,6 +36,48 @@ class RepositoryAgentOperationResult:
     waiting: bool
     node_task_id: UUID | None
     result: dict[str, Any]
+
+
+def queue_repository_agent_result_followup(*, node_task: NodeTask) -> bool:
+    """Queue repository parents affected by one terminal Agent result."""
+    if node_task.kind != "repository.operation":
+        return False
+    if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
+        return False
+    if node_task.correlation_type not in {
+        "repository_cleanup",
+        "repository_operation",
+    }:
+        return False
+
+    relation = Q(remote_task_id=node_task.id)
+    try:
+        correlation_uuid = UUID(str(node_task.correlation_id))
+    except (TypeError, ValueError):
+        correlation_uuid = None
+    if correlation_uuid is not None:
+        relation |= Q(task__task_uuid=correlation_uuid)
+
+    repository_task_ids = list(
+        RepositoryTask.objects.filter(
+            relation,
+            repository__organization_id=node_task.organization_id,
+            task__status__in={Task.Status.PENDING, Task.Status.RUNNING},
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    if not repository_task_ids:
+        return False
+
+    from apps.storage.tasks import execute_repository_operation
+
+    for repository_task_id in repository_task_ids:
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task_id},
+            countdown=1,
+        )
+    return True
 
 
 def _related_node_task(

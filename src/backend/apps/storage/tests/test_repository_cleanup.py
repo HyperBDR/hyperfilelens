@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node
+from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.storage.repositories.models import (
     Repository,
     RepositoryTask,
@@ -59,13 +60,17 @@ class RepositoryCleanupTests(TestCase):
             repository_task.task.display_name,
             "Delete Repository · cleanup-s3",
         )
+        cleanup_plan = repository_task.task.request_payload["cleanup_plan"]
+        self.assertEqual(cleanup_plan["repository"]["id"], repository.id)
+        self.assertEqual(cleanup_plan["repository"]["prefix"], "managed/repository/")
+        self.assertNotIn("access_key_id", cleanup_plan["repository"])
 
         result = run_repository_cleanup_task(repository_task_id=repository_task.id)
         duplicate_result = run_repository_cleanup_task(repository_task_id=repository_task.id)
 
         repository.refresh_from_db()
         repository_task.task.refresh_from_db()
-        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["status"], "success", result)
         self.assertEqual(duplicate_result["physical_cleanup"], "deleted")
         self.assertEqual(repository_task.operation_type, RepositoryTask.OperationType.CLEANUP_REPOSITORY)
         self.assertEqual(repository.status, Repository.Status.REMOVED)
@@ -156,7 +161,7 @@ class RepositoryCleanupTests(TestCase):
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
         side_effect=RuntimeError("owner offline"),
     )
-    def test_force_cleanup_can_be_selected_initially_and_skips_physical_delete(
+    def test_force_cleanup_attempts_physical_delete_and_records_residue(
         self,
         execute_cleanup,
     ):
@@ -174,7 +179,13 @@ class RepositoryCleanupTests(TestCase):
         self.assertEqual(forced_task.task.status, Task.Status.SUCCESS)
         self.assertEqual(repository.status, Repository.Status.REMOVED)
         self.assertEqual(repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED)
-        execute_cleanup.assert_not_called()
+        self.assertFalse(forced_task.task.result_payload["cleanup_complete"])
+        self.assertEqual(
+            forced_task.task.result_payload["outcome"],
+            "force_cleanup_success",
+        )
+        self.assertTrue(forced_task.task.result_payload["cleanup_failures"])
+        execute_cleanup.assert_called_once()
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
@@ -243,9 +254,12 @@ class RepositoryCleanupTests(TestCase):
         )
 
         preflight = repository_cleanup_preflight(repository=repository)
-        self.assertFalse(preflight["allowed"])
+        self.assertTrue(preflight["allowed"])
         self.assertTrue(
-            any(item["code"] == "active_physical_targets" for item in preflight["blockers"])
+            any(
+                item["code"] == "physical_targets_to_cleanup"
+                for item in preflight["warnings"]
+            )
         )
 
         physical_tasks = []
@@ -314,6 +328,111 @@ class RepositoryCleanupTests(TestCase):
         self.assertEqual(repository.status, Repository.Status.REMOVED)
         self.assertEqual(execute_cleanup.call_count, 3)
 
+    def test_direct_nas_parent_cleans_historical_targets_before_tombstone(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="direct-nas-parent",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "10.0.0.9", "share_path": "/parent"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="historical-owner",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        shard = RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=f"hp-repos/agent-{node.id}",
+            status=RepositoryUsageShard.Status.SUCCESS,
+        )
+        parent = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        with mock.patch(
+            "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+            return_value={"physical_cleanup": "deleted"},
+        ):
+            result = run_repository_cleanup_task(repository_task_id=parent.id)
+
+        repository.refresh_from_db()
+        shard.refresh_from_db()
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertFalse(shard.is_active)
+        self.assertTrue(
+            RepositoryTask.objects.filter(
+                repository=repository,
+                operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+                triggered_by_task=parent.task,
+            ).exists()
+        )
+
+    def test_force_direct_nas_parent_aggregates_child_residue(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="force-direct-nas-parent",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"server_address": "10.0.0.10", "share_path": "/force-parent"},
+        )
+        node = Node.objects.create(
+            organization=self.org,
+            name="force-historical-owner",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repository.id,
+            node_id=node.id,
+            repository_subdir=f"hp-repos/agent-{node.id}",
+            status=RepositoryUsageShard.Status.SUCCESS,
+        )
+        parent = create_repository_cleanup_task(
+            repository=repository,
+            force=True,
+            dispatch=False,
+        )
+
+        with mock.patch(
+            "apps.storage.services.internal.repository_cleanup.resolve_or_dispatch_repository_agent_operation",
+            side_effect=RuntimeError("target owner unreachable"),
+        ):
+            result = run_repository_cleanup_task(repository_task_id=parent.id)
+
+        repository.refresh_from_db()
+        parent.task.refresh_from_db()
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(parent.task.status, Task.Status.SUCCESS)
+        self.assertEqual(repository.status, Repository.Status.REMOVED)
+        self.assertEqual(
+            repository.cleanup_result,
+            Repository.CleanupResult.FORCE_SKIPPED,
+        )
+        self.assertFalse(result["cleanup_complete"])
+        self.assertTrue(result["cleanup_failures"])
+        self.assertTrue(result["retained_resources"])
+        child = RepositoryTask.objects.get(
+            repository=repository,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+            triggered_by_task=parent.task,
+        )
+        child.task.refresh_from_db()
+        self.assertEqual(child.task.status, Task.Status.SUCCESS)
+        self.assertFalse(child.task.result_payload["cleanup_complete"])
+
     def test_preflight_reports_active_repository_task(self):
         repository = self._s3_repository("blocked-s3")
         task = create_task(
@@ -335,6 +454,57 @@ class RepositoryCleanupTests(TestCase):
         self.assertFalse(preflight["allowed"])
         blocker = next(item for item in preflight["blockers"] if item["code"] == "active_task")
         self.assertEqual(blocker["task_uuid"], str(task.task_uuid))
+
+    def test_force_preflight_does_not_bypass_restore_record_relationship(self):
+        repository = self._s3_repository("restore-bound-s3")
+        restore_task = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.RESTORE,
+            display_name="Historical restore",
+        )
+        restore_task.status = Task.Status.SUCCESS
+        restore_task.save(update_fields=["status", "updated_at"])
+        record = RestoreRecord.objects.create(
+            organization_id=self.org.id,
+            restore_uid="restore-bound-record",
+            source_mode=RestoreRecord.SourceMode.MANUAL,
+            task_id=restore_task.id,
+            task_uuid=restore_task.task_uuid,
+            source_type=RestoreRecord.EndpointType.AGENT,
+            source_ref_id=101,
+            source_snapshot_id=201,
+            target_type=RestoreRecord.EndpointType.AGENT,
+            target_ref_id=102,
+            target_path="/restore",
+            scope=RestoreRecord.Scope.PATHS,
+            conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+        )
+        RestoreRecordItem.objects.create(
+            organization_id=self.org.id,
+            restore_record=record,
+            source_snapshot_directory_id=301,
+            backup_config_dir_id=401,
+            repository_id=repository.id,
+            kopia_snapshot_id="kopia-restore-bound",
+            source_path="/source",
+            target_path="/restore/source",
+            conflict_mode=RestoreRecordItem.ConflictMode.OVERWRITE,
+            status=RestoreRecordItem.Status.SUCCESS,
+        )
+
+        preflight = repository_cleanup_preflight(
+            repository=repository,
+            force=True,
+        )
+
+        self.assertFalse(preflight["allowed"])
+        self.assertEqual(preflight["restore_record_count"], 1)
+        self.assertTrue(
+            any(
+                blocker["code"] == "associated_restore_records"
+                for blocker in preflight["blockers"]
+            )
+        )
 
 
 class RepositoryCleanupApiTests(TestCase):
@@ -400,7 +570,7 @@ class RepositoryCleanupApiTests(TestCase):
             )
             self.assertEqual(response.status_code, 404, response.content)
 
-    def test_force_preflight_allows_active_direct_nas_targets_with_warning(self):
+    def test_preflight_plans_active_direct_nas_target_cleanup(self):
         repository = Repository.objects.create(
             organization_id=self.org.id,
             name="force-direct-nas",
@@ -428,7 +598,10 @@ class RepositoryCleanupApiTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertTrue(response.data["allowed"])
         self.assertTrue(response.data["force"])
-        self.assertEqual(response.data["warnings"][0]["code"], "active_physical_targets")
+        self.assertEqual(
+            response.data["warnings"][0]["code"],
+            "physical_targets_to_cleanup",
+        )
 
     def test_cleanup_request_endpoint_is_removed(self):
         response = self.client.get(

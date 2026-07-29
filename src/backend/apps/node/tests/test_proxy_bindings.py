@@ -53,11 +53,14 @@ class ProxyBindingsTests(TestCase):
             return inner["bound"]
         return {}
 
-    def test_proxy_with_no_bindings_can_be_deleted(self):
-        response = self.client.delete(
-            f"/api/v1/node/nodes/{self.proxy.id}/", **self._headers()
+    def test_offline_proxy_with_no_bindings_requires_force_cleanup(self):
+        response = self.client.post(
+            f"/api/v1/node/nodes/{self.proxy.id}/operations/",
+            {"kind": "remove", "force": True},
+            format="json",
+            **self._headers(),
         )
-        self.assertIn(response.status_code, (status.HTTP_200_OK, status.HTTP_204_NO_CONTENT))
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         self.assertFalse(Node.objects.filter(id=self.proxy.id, is_deleted=False).exists())
 
     def test_proxy_with_target_nas_repository_cannot_be_deleted(self):
@@ -154,8 +157,7 @@ class ProxyBindingsTests(TestCase):
         })
 
     @patch("apps.source.services.interface.unmount_resource")
-    def test_force_remove_proxy_marks_source_nas_needs_proxy(self, mock_umount):
-        mock_umount.return_value = {"success": True}
+    def test_force_remove_proxy_cannot_bypass_source_nas_binding(self, mock_umount):
         resource = SourceResource.objects.create(
             organization=self.org,
             name="source-nas-force",
@@ -171,17 +173,16 @@ class ProxyBindingsTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
         resource.refresh_from_db()
-        self.assertIsNone(resource.bound_node_id)
-        self.assertEqual(resource.mount_status, MountStatus.UNMOUNTED)
-        self.assertEqual(resource.status_message, "needs_proxy")
-        self.assertEqual(resource.status, ResourceStatus.INACTIVE)
-        self.assertFalse(Node.objects.filter(id=self.proxy.id, is_deleted=False).exists())
+        self.assertEqual(resource.bound_node_id, self.proxy.id)
+        self.assertEqual(resource.mount_status, MountStatus.MOUNTED)
+        self.assertEqual(resource.status, ResourceStatus.ACTIVE)
+        self.assertTrue(Node.objects.filter(id=self.proxy.id, is_deleted=False).exists())
+        mock_umount.assert_not_called()
 
     @patch("apps.source.services.interface.unmount_resource")
-    def test_force_remove_proxy_marks_target_nas_repo_needs_proxy(self, mock_umount):
-        mock_umount.return_value = {"success": True}
+    def test_force_remove_proxy_cannot_bypass_target_nas_binding(self, mock_umount):
         repo = Repository.objects.create(
             organization_id=self.org.id,
             name="target-nas-force",
@@ -199,9 +200,10 @@ class ProxyBindingsTests(TestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
         repo.refresh_from_db()
-        self.assertIsNone(repo.bind_node_id)
-        self.assertEqual(repo.health, Repository.Health.OFFLINE)
-        self.assertTrue(repo.config.get("needs_proxy"))
-        self.assertFalse(Node.objects.filter(id=self.proxy.id, is_deleted=False).exists())
+        self.assertEqual(repo.bind_node_id, self.proxy.id)
+        self.assertEqual(repo.health, Repository.Health.ONLINE)
+        self.assertFalse(repo.config.get("needs_proxy"))
+        self.assertTrue(Node.objects.filter(id=self.proxy.id, is_deleted=False).exists())
+        mock_umount.assert_not_called()

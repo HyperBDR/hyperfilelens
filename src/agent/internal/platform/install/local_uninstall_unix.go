@@ -21,7 +21,11 @@ const (
 
 // ScheduleDetachedUninstall stops the agent service and removes install/data files
 // after a short delay so the running process can report task.result upstream first.
-func ScheduleDetachedUninstall(installDir, dataDir, logDir string, keepData bool) error {
+func ScheduleDetachedUninstall(
+	installDir, dataDir, logDir string,
+	keepData bool,
+	completion UninstallCompletion,
+) error {
 	installDir = strings.TrimSpace(installDir)
 	if installDir == "" {
 		installDir = DefaultInstallDir()
@@ -42,16 +46,27 @@ func ScheduleDetachedUninstall(installDir, dataDir, logDir string, keepData bool
 			),
 		)
 	}
-	return scheduleDetachedUninstallUnix(installDir, dataDir, logDir, keepData)
+	return scheduleDetachedUninstallUnix(installDir, dataDir, logDir, keepData, completion)
 }
 
-func scheduleDetachedUninstallUnix(installDir, dataDir, logDir string, keepData bool) error {
+func scheduleDetachedUninstallUnix(
+	installDir, dataDir, logDir string,
+	keepData bool,
+	completion UninstallCompletion,
+) error {
 	pendingDir := LifecycleUninstallDir(dataDir)
 	if err := os.MkdirAll(pendingDir, 0o750); err != nil {
 		return err
 	}
 	scriptPath := filepath.Join(pendingDir, pendingUninstallRunnerName)
-	if err := writeUnixUninstallScript(installDir, dataDir, logDir, keepData, scriptPath); err != nil {
+	if err := writeUnixUninstallScript(
+		installDir,
+		dataDir,
+		logDir,
+		keepData,
+		completion,
+		scriptPath,
+	); err != nil {
 		if logDir != "" {
 			_ = AppendUninstallLog(logDir, fmt.Sprintf("failed to write uninstall script: %v", err))
 		}
@@ -68,10 +83,27 @@ func scheduleDetachedUninstallUnix(installDir, dataDir, logDir string, keepData 
 	return nil
 }
 
-func writeUnixUninstallScript(installDir, dataDir, logDir string, keepData bool, scriptPath string) error {
+func writeUnixUninstallScript(
+	installDir, dataDir, logDir string,
+	keepData bool,
+	completion UninstallCompletion,
+	scriptPath string,
+) error {
 	keepFlag := "0"
 	if keepData {
 		keepFlag = "1"
+	}
+	callbackURL, err := completion.CallbackURL()
+	if err != nil {
+		return err
+	}
+	insecureTLSFlag := "0"
+	if completion.InsecureTLS {
+		insecureTLSFlag = "1"
+	}
+	forceCleanupFlag := "0"
+	if completion.ForceCleanup {
+		forceCleanupFlag = "1"
 	}
 	logFile := UninstallLogPath(logDir)
 	body := fmt.Sprintf(`#!/usr/bin/env bash
@@ -87,6 +119,11 @@ LAUNCHD_PLIST=%q
 LAUNCHD_LABEL=%q
 DEFAULT_DATA_ROOT=%q
 SLEEP_SECONDS=%d
+CALLBACK_URL=%q
+CALLBACK_TOKEN=%q
+CALLBACK_INSECURE_TLS=%s
+FORCE_CLEANUP=%s
+CLEANUP_FAILED=0
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 umask 022
@@ -94,15 +131,106 @@ exec >>"$LOG_FILE" 2>&1
 
 uninstall_ts_utc() { date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ" 2>/dev/null || date -u; }
 log() { echo "$(uninstall_ts_utc) $*"; }
+report_uninstall_completion() {
+  local rc="$1" complete="true" payload_file
+  local failures='[]' retained='[]'
+  [[ "$rc" -eq 0 && "$CLEANUP_FAILED" -eq 0 ]] || {
+    complete="false"
+    failures='[{"code":"detached_uninstall_failed","detail":"Detached uninstall exited before all cleanup steps completed."}]'
+    retained='["agent_installation_or_managed_mounts"]'
+  }
+  command -v curl >/dev/null 2>&1 || {
+    log "curl not found; uninstall completion callback could not be sent"
+    return 0
+  }
+  payload_file="$(mktemp "${TMPDIR:-/tmp}/hfl-uninstall-completion.XXXXXX")" || return 0
+  chmod 600 "$payload_file" 2>/dev/null || true
+  printf '{"token":"%%s","cleanup_complete":%%s,"cleanup_failures":%%s,"retained_resources":%%s}\n' \
+    "$CALLBACK_TOKEN" "$complete" "$failures" "$retained" >"$payload_file"
+  local -a curl_args=(-fsS -X POST -H 'Content-Type: application/json' --data-binary "@$payload_file")
+  [[ "$CALLBACK_INSECURE_TLS" == "1" ]] && curl_args+=(-k)
+  local attempt
+  for attempt in 1 2 3 4 5 6; do
+    if curl "${curl_args[@]}" "$CALLBACK_URL" >/dev/null; then
+      log "uninstall completion callback accepted cleanup_complete=$complete attempt=$attempt"
+      break
+    fi
+    log "uninstall completion callback failed attempt=$attempt"
+    [[ "$attempt" -lt 6 ]] && sleep 10
+  done
+  rm -f "$payload_file"
+}
+finish_detached_uninstall() {
+  local rc="$?"
+  trap - EXIT
+  report_uninstall_completion "$rc"
+  rm -f -- "$0" 2>/dev/null || true
+  exit "$rc"
+}
+trap finish_detached_uninstall EXIT
 %s
+
+verify_uninstall_artifacts() {
+  local failed=0 target
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if launchctl print "system/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+      log "launchd service remains loaded: $LAUNCHD_LABEL"
+      failed=1
+    fi
+  elif command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+      log "systemd service remains active: $SERVICE_NAME"
+      failed=1
+    fi
+    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+      log "systemd service remains enabled: $SERVICE_NAME"
+      failed=1
+    fi
+  fi
+  for target in \
+    "$INSTALL_DIR/hfl-agent" \
+    "$INSTALL_DIR/kopia" \
+    "$INSTALL_DIR/run-agent.sh" \
+    "$INSTALL_DIR/INSTALLED_VERSION" \
+    "$INSTALL_DIR/install.sh" \
+    "$INSTALL_DIR/MANIFEST.json" \
+    "$UNIT_FILE" \
+    "$RESOURCE_DROPIN" \
+    "$LAUNCHD_PLIST"; do
+    if [[ -e "$target" ]]; then
+      log "uninstall artifact remains: $target"
+      failed=1
+    fi
+  done
+  if [[ "$KEEP_DATA" == "0" && -e "$DATA_DIR" ]]; then
+    log "data directory remains after requested purge: $DATA_DIR"
+    failed=1
+  fi
+  return "$failed"
+}
 
 log "detached uninstall script started install_dir=$INSTALL_DIR data_dir=$DATA_DIR keep_data=$KEEP_DATA log_file=$LOG_FILE"
 sleep "$SLEEP_SECONDS"
 log "delay elapsed; running gateway sidecar uninstall when applicable"
 %s
 if ! run_gateway_sidecar_uninstall_if_needed; then
-  log "gateway sidecar uninstall failed; keeping the Agent installed for retry"
-  exit 1
+  CLEANUP_FAILED=1
+  if [[ "$FORCE_CLEANUP" == "1" ]]; then
+    log "gateway sidecar uninstall failed; Force Cleanup will continue with Agent cleanup"
+  else
+    log "gateway sidecar uninstall failed; keeping the Agent installed for retry"
+    exit 1
+  fi
+fi
+log "cleaning Agent-managed NAS mounts before stopping the Agent service"
+if ! unmount_agent_mounts "$DATA_DIR"; then
+  CLEANUP_FAILED=1
+  if [[ "$FORCE_CLEANUP" == "1" ]]; then
+    log "Agent-managed NAS mount cleanup failed; Force Cleanup will continue with Agent cleanup"
+  else
+    log "Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry"
+    exit 1
+  fi
 fi
 log "delay elapsed; stopping service"
 
@@ -138,11 +266,6 @@ elif command -v systemctl >/dev/null 2>&1; then
   fi
 else
   log "systemctl not found; skipped service stop/disable"
-fi
-
-if ! unmount_agent_mounts "$DATA_DIR"; then
-  log "Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry"
-  exit 1
 fi
 
 if [[ "$(uname -s)" != "Darwin" && -f "$RESOURCE_DROPIN" ]]; then
@@ -242,6 +365,16 @@ else
   log "keep_data=1; preserved data directory $DATA_DIR (uninstall log retained under logs/)"
 fi
 
+if ! verify_uninstall_artifacts; then
+  CLEANUP_FAILED=1
+  if [[ "$FORCE_CLEANUP" == "1" ]]; then
+    log "post-uninstall verification found residue; Force Cleanup will report it and finish"
+  else
+    log "post-uninstall verification failed; Strict Cleanup remains retryable"
+    exit 1
+  fi
+fi
+
 log "detached uninstall script finished"
 `,
 		installDir,
@@ -255,6 +388,10 @@ log "detached uninstall script finished"
 		unixLaunchdLabel,
 		unixDefaultDataRoot,
 		uninstallDelaySecond,
+		callbackURL,
+		completion.Token,
+		insecureTLSFlag,
+		forceCleanupFlag,
 		unixManagedMountCleanupScript,
 		unixGatewaySidecarUninstallHook,
 	)

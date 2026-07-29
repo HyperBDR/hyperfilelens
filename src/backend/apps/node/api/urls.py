@@ -7,6 +7,7 @@ from apps.node.api.views import (
     AgentLatestReleaseView,
     AgentReleaseView,
     AgentReleasesAuthView,
+    AgentUninstallCompletionView,
     BootstrapGatewayView,
     BootstrapView,
     EnrollmentTokenCreateView,
@@ -29,6 +30,11 @@ router.register(r"node-tasks", NodeTaskViewSet, basename="node-task")
 urlpatterns = [
     path("health", health, name="node-health"),
     path("enrollment/health", enrollment_health, name="enrollment-health"),
+    path(
+        "agent-uninstall/completion/",
+        AgentUninstallCompletionView.as_view(),
+        name="agent-uninstall-completion",
+    ),
     path(
         "enrollment/enrollment-token",
         EnrollmentTokenCreateView.as_view(),

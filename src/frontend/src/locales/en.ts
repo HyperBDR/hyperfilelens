@@ -38,7 +38,7 @@ export const en = {
   },
   errors: {
     agentWsNotRoutable:
-      'The agent node is offline or unreachable. Wait until the host is back online and try again, or enable force delete to skip remote cleanup.',
+      'The agent node is offline or unreachable. Wait until the host is back online and try again, or use Force Cleanup to record the retained installation.',
     agentWsReconnecting:
       'The agent node is reconnecting. Wait a moment and try again.',
     generic: {
@@ -1162,14 +1162,14 @@ export const en = {
     proxyDeleteBlockedHint:
       'Remove or rebind the resources below, then try again.',
     proxyDeleteBlockedHintForce:
-      'Unregister backup sources first, or use Force Delete to unmount NAS bindings and remove the Proxy while keeping inventory records for rebind.',
+      'Remove or rebind every Source NAS, Target NAS, and Local Disk relationship before deleting this Proxy.',
     proxyDeleteBlockedTitleForce: 'Proxy Host Has Bindings',
-    proxyDeleteForceTitle: 'Force Delete Proxy Host',
-    proxyDeleteForceAction: 'Force Delete',
+    proxyDeleteForceTitle: 'Force Cleanup Proxy Host',
+    proxyDeleteForceAction: 'Force Cleanup',
     proxyDeleteForceConfirm:
-      'Force delete proxy host "{name}"? Source NAS shares will be unmounted and target NAS repositories will be marked offline. Inventory records are kept so you can rebind later. The Proxy Agent will be uninstalled if online.',
+      'Force Cleanup proxy host "{name}"? The Agent uninstall will still be attempted. Any physical cleanup failure is recorded as residue, but configured resource bindings can never be bypassed.',
     proxyDeleteForceNote:
-      'Force Delete unmounts Source NAS and clears Target NAS repository bindings only. Local disk repositories must be removed manually first.',
+      'Force Cleanup cannot bypass Source NAS, Target NAS, or Local Disk bindings.',
     proxyDeleteBlockedGoNas: 'Source NAS',
     proxyDeleteBlockedGoRepos: 'Repositories',
     proxyDeleteBindingsFailed: 'Could not check proxy bindings.',
@@ -1540,10 +1540,12 @@ export const en = {
     batchDeleteDone: 'Selected repository cleanup accepted',
     cleanupBlocked: 'Repository cleanup is blocked.',
     cleanupAcceptedCount: '{accepted} cleanup task(s) accepted; {failed} failed.',
-    cleanupForcePrompt: 'Physical cleanup will be skipped. Type FORCE CLEANUP to remove platform metadata only.',
+    cleanupForcePrompt:
+      'Every physical cleanup step will be attempted. Failures are recorded as residue while repository removal continues. Type FORCE CLEANUP to confirm.',
     cleanupForceConfirm: 'Force Cleanup',
-    cleanupForceOption: 'Force delete this repository',
-    cleanupForceOptionHint: 'Skip physical cleanup, remove platform metadata, and leave the physical repository for manual handling.',
+    cleanupForceOption: 'Use Force Cleanup for this repository',
+    cleanupForceOptionHint:
+      'Continue through all cleanup steps, record any retained physical resources, and finalize repository removal.',
     editNeedSelect: 'Select one row first',
     colListName: 'Name',
     colPlatform: 'Platform',
