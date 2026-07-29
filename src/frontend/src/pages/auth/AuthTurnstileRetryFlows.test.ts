@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   blockTurnstile: vi.fn(),
   buildTurnstilePayload: vi.fn(),
   loadTurnstileConfig: vi.fn(),
+  retryTurnstileConfig: vi.fn(),
   resetWidget: vi.fn(),
   routerPush: vi.fn(),
 }))
@@ -38,6 +39,7 @@ vi.mock('../../composables/useTurnstileConfig', () => ({
     isTurnstileBlocked: ref(false),
     authTurnstileMountGeneration: ref(0),
     loadTurnstileConfig: mocks.loadTurnstileConfig,
+    retryTurnstileConfig: mocks.retryTurnstileConfig,
     buildTurnstilePayload: mocks.buildTurnstilePayload,
     blockTurnstile: mocks.blockTurnstile,
   }),
@@ -56,6 +58,9 @@ const AuthTurnstileFieldStub = defineComponent({
   name: 'AuthTurnstileField',
   props: {
     errorMessage: { type: String, default: '' },
+    errorCodeLabel: { type: String, default: '' },
+    verified: { type: Boolean, default: false },
+    manualRetryLabel: { type: String, default: '' },
   },
   emits: ['retry', 'success', 'expire', 'invalidate', 'error', 'load-failed'],
   setup(props, { expose }) {
@@ -123,6 +128,7 @@ describe('authentication Turnstile retry flows', () => {
     vi.clearAllMocks()
     localStorage.clear()
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
+    mocks.retryTurnstileConfig.mockResolvedValue(undefined)
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
       token ? { turnstile_token: token } : {}
     ))
@@ -130,6 +136,26 @@ describe('authentication Turnstile retry flows', () => {
 
   afterEach(() => {
     localStorage.clear()
+  })
+
+  it.each([
+    ['registration', mountRegister],
+    ['password reset', mountResetPasswordCard],
+  ])('fully reloads Turnstile from the manual recovery action on %s', async (_name, mountView) => {
+    const wrapper = mountView()
+    await flushPromises()
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    expect(turnstile.props('verified')).toBe(true)
+
+    turnstile.vm.$emit('retry')
+    await flushPromises()
+
+    expect(mocks.retryTurnstileConfig).toHaveBeenCalledTimes(1)
+    expect(turnstile.props('verified')).toBe(false)
+    wrapper.unmount()
   })
 
   it('uses a replacement token when registration code sending is retried', async () => {

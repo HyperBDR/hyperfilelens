@@ -11,11 +11,14 @@ const baseProps = {
   pending: false,
   ready: false,
   blocked: false,
+  verified: false,
   siteKey: 'test-site-key',
   action: 'login',
   loadingMessage: 'Loading Cloudflare human verification...',
   blockedMessage: 'Cloudflare verification unavailable.',
   retryLabel: 'Retry',
+  manualRetryLabel: 'Verification taking longer than expected? Reload',
+  errorCodeLabel: '',
 }
 
 function mountField(overrides: Partial<typeof baseProps> & { errorMessage?: string } = {}) {
@@ -59,15 +62,44 @@ describe('AuthTurnstileField display states', () => {
     expect(wrapper.emitted('expire')).toBeUndefined()
   })
 
+  it('offers manual recovery only while widget loading is unusually slow', async () => {
+    const wrapper = mountField({ ready: true })
+    const widget = wrapper.getComponent({ name: 'TurnstileWidget' })
+
+    expect(wrapper.find('.auth-turnstile-field__manual-retry').exists()).toBe(false)
+
+    widget.vm.$emit('slow-load')
+    await wrapper.vm.$nextTick()
+
+    const retry = wrapper.get('.auth-turnstile-field__manual-retry')
+    expect(retry.text()).toBe(baseProps.manualRetryLabel)
+    expect(retry.element.tagName).toBe('BUTTON')
+    expect(retry.find('.auth-turnstile-field__manual-retry-icon').exists()).toBe(true)
+
+    await retry.trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+    expect(wrapper.find('.auth-turnstile-field__manual-retry').exists()).toBe(false)
+
+    widget.vm.$emit('slow-load')
+    await wrapper.vm.$nextTick()
+    widget.vm.$emit('rendered')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.auth-turnstile-field__manual-retry').exists()).toBe(false)
+  })
+
   it('shows an unavailable message only once and exposes retry', async () => {
     const wrapper = mountField({
       blocked: true,
       errorMessage: baseProps.blockedMessage,
+      errorCodeLabel: 'Reference code: 300030',
     })
 
     expect(wrapper.find('.auth-turnstile-field__blocked').exists()).toBe(true)
     expect(wrapper.find('.auth-turnstile-field__error').exists()).toBe(false)
     expect(wrapper.text().match(/Cloudflare verification unavailable\./g)).toHaveLength(1)
+    expect(wrapper.get('.auth-turnstile-field__reference-code').text()).toBe(
+      'Reference code: 300030',
+    )
 
     await wrapper.get('.auth-turnstile-field__retry').trigger('click')
     expect(wrapper.emitted('retry')).toHaveLength(1)
@@ -103,6 +135,9 @@ describe('AuthTurnstileField display states', () => {
     )
     expect(fieldSource).toMatch(
       /\.auth-turnstile-field__spinner\s*{[^}]*width:\s*16px;[^}]*height:\s*16px;/s,
+    )
+    expect(fieldSource).toMatch(
+      /\.auth-turnstile-field__manual-retry\s*{[^}]*width:\s*100%;[^}]*background:\s*color-mix\(in srgb, var\(--color-primary\) 6%, transparent\);[^}]*border:\s*1px solid color-mix\(in srgb, var\(--color-primary\) 22%, transparent\);/s,
     )
     expect(widgetSource).toMatch(
       /\.turnstile-widget\s*{[^}]*height:\s*65px;[^}]*min-height:\s*65px;[^}]*position:\s*relative;/s,

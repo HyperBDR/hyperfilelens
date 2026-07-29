@@ -31,6 +31,7 @@ const {
   isTurnstileReady,
   isTurnstileBlocked,
   loadTurnstileConfig,
+  retryTurnstileConfig,
   buildTurnstilePayload,
   blockTurnstile,
 } = useTurnstileConfig()
@@ -38,6 +39,7 @@ const {
 const view = ref<'request' | 'reset'>('request')
 const turnstileToken = ref('')
 const turnstileError = ref('')
+const turnstileErrorCode = ref('')
 const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(null)
 
 const formItems = reactive({
@@ -179,41 +181,47 @@ function startResendCooldown(seconds = 60) {
   }, 1000)
 }
 
-function blockUnavailableTurnstile() {
+function blockUnavailableTurnstile(errorCode = '') {
   blockTurnstile()
   turnstileToken.value = ''
   turnstileError.value = t('login.captchaUnavailable')
+  turnstileErrorCode.value = errorCode
 }
 
 async function retryTurnstile() {
   turnstileToken.value = ''
   turnstileError.value = ''
-  await loadTurnstileConfig(true)
+  turnstileErrorCode.value = ''
+  await retryTurnstileConfig()
 }
 
 function resetTurnstile() {
   if (!isTurnstileReady.value) return
   turnstileToken.value = ''
+  turnstileErrorCode.value = ''
   turnstileFieldRef.value?.reset()
 }
 
 function onTurnstileSuccess(token: string) {
   turnstileToken.value = token
   turnstileError.value = ''
+  turnstileErrorCode.value = ''
 }
 
 function onTurnstileExpire() {
   turnstileToken.value = ''
   turnstileError.value = t('login.captchaExpired')
+  turnstileErrorCode.value = ''
 }
 
 function onTurnstileInvalidate() {
   turnstileToken.value = ''
   turnstileError.value = ''
+  turnstileErrorCode.value = ''
 }
 
-function onTurnstileError() {
-  blockUnavailableTurnstile()
+function onTurnstileError(errorCode?: string) {
+  blockUnavailableTurnstile(errorCode)
 }
 
 function onTurnstileLoadFailed() {
@@ -460,11 +468,14 @@ onUnmounted(() => {
           :pending="isTurnstilePending"
           :ready="isTurnstileReady"
           :blocked="isTurnstileBlocked"
+          :verified="Boolean(turnstileToken)"
           :site-key="turnstileSiteKey"
           action="forgot_password"
           :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
           :retry-label="t('login.captchaRetry')"
+          :manual-retry-label="t('login.captchaManualRetry')"
+          :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
           :error-message="turnstileError"
           @retry="retryTurnstile"
           @success="onTurnstileSuccess"

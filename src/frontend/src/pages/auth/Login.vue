@@ -42,6 +42,7 @@ const {
   isTurnstileBlocked,
   authTurnstileMountGeneration,
   loadTurnstileConfig,
+  retryTurnstileConfig,
   buildTurnstilePayload,
   blockTurnstile,
 } = useTurnstileConfig()
@@ -49,6 +50,7 @@ const {
 const { setUser } = useAuth()
 const turnstileToken = ref('')
 const turnstileError = ref('')
+const turnstileErrorCode = ref('')
 const turnstileFieldRef = ref<InstanceType<typeof AuthTurnstileField> | null>(null)
 const googleEnabled = ref(false)
 const googleLoginUrl = ref('/accounts/google/login/?process=login')
@@ -146,41 +148,47 @@ function validatePasswordPresenceOnInput() {
   }
 }
 
-function blockUnavailableTurnstile() {
+function blockUnavailableTurnstile(errorCode = '') {
   blockTurnstile()
   turnstileToken.value = ''
   turnstileError.value = t('login.captchaUnavailable')
+  turnstileErrorCode.value = errorCode
 }
 
 async function retryTurnstile() {
   turnstileToken.value = ''
   turnstileError.value = ''
-  await loadTurnstileConfig(true)
+  turnstileErrorCode.value = ''
+  await retryTurnstileConfig()
 }
 
 function resetTurnstile() {
   if (!isTurnstileReady.value) return
   turnstileToken.value = ''
+  turnstileErrorCode.value = ''
   turnstileFieldRef.value?.reset()
 }
 
 function onTurnstileSuccess(token: string) {
   turnstileToken.value = token
   turnstileError.value = ''
+  turnstileErrorCode.value = ''
 }
 
 function onTurnstileExpire() {
   turnstileToken.value = ''
   turnstileError.value = t('login.captchaExpired')
+  turnstileErrorCode.value = ''
 }
 
 function onTurnstileInvalidate() {
   turnstileToken.value = ''
   turnstileError.value = ''
+  turnstileErrorCode.value = ''
 }
 
-function onTurnstileError() {
-  blockUnavailableTurnstile()
+function onTurnstileError(errorCode?: string) {
+  blockUnavailableTurnstile(errorCode)
 }
 
 function onTurnstileLoadFailed() {
@@ -615,11 +623,14 @@ onMounted(async () => {
           :pending="isTurnstilePending"
           :ready="isTurnstileReady"
           :blocked="isTurnstileBlocked"
+          :verified="Boolean(turnstileToken)"
           :site-key="turnstileSiteKey"
           action="login"
           :loading-message="t('login.captchaLoading')"
           :blocked-message="t('login.captchaUnavailable')"
           :retry-label="t('login.captchaRetry')"
+          :manual-retry-label="t('login.captchaManualRetry')"
+          :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
           :error-message="turnstileError"
           @retry="retryTurnstile"
           @success="onTurnstileSuccess"
