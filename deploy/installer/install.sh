@@ -376,6 +376,8 @@ ensure_host_docker() {
 	min_version="$(manifest_min_engine_version)"
 	installer="${root}/payload/media/gateway-bootstrap/gateway-install-docker-ubuntu-amd64.sh"
 	[[ -x "${installer}" ]] || die "release package is missing the offline Docker installer"
+	# The helper normally preserves a healthy sidecar. This installer owns the
+	# local Gateway and must refresh its URL, credentials, and image together.
 	run_as_root env \
 		HFL_GATEWAY_BOOTSTRAP_BASE="file://${root}/payload/media/gateway-bootstrap" \
 		HFL_INSECURE_TLS=0 HFL_DOCKER_MIN_ENGINE="${min_version}" \
@@ -2342,6 +2344,7 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 		HFL_API_BASE="${api_base}" \
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
+		HFL_FORCE_SIDECAR_INSTALL=1 \
 		"${helper}" gateway-install --yes
 	desired_version="$(read_version)"
 	verify_local_platform_gateway_agent "${desired_version}"
