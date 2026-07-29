@@ -45,6 +45,10 @@ func RunStreaming(
 		return Result{}, err
 	}
 
+	if err := cmd.Start(); err != nil {
+		return Result{}, err
+	}
+
 	var stdoutBuf, stderrBuf bytes.Buffer
 	var wg sync.WaitGroup
 	capture := func(reader io.Reader, stderr bool, buf *bytes.Buffer) {
@@ -56,9 +60,6 @@ func RunStreaming(
 	go capture(stdoutPipe, false, &stdoutBuf)
 	go capture(stderrPipe, true, &stderrBuf)
 
-	if err := cmd.Start(); err != nil {
-		return Result{}, err
-	}
 	stopKill := startContextProcessGroupKill(ctx, cmd)
 	runErr := cmd.Wait()
 	stopKill()
