@@ -126,7 +126,7 @@ class ProviderCatalogReadAPITests(TransactionTestCase):
         self.assertEqual(response.data["schema_version"], 1)
         self.assertEqual(
             [provider["id"] for provider in response.data["providers"]],
-            ["huaweicloud", "aliyun"],
+            ["huaweicloud", "aliyun", "aws"],
         )
         self.assertNotIn("source", response.data["providers"][0])
         self.assertNotIn("checksum", response.data["providers"][0])

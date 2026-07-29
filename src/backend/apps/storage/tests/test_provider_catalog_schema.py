@@ -23,7 +23,7 @@ class ProviderCatalogSchemaTests(SimpleTestCase):
         self.assertEqual(catalog["schema_version"], 1)
         self.assertEqual(
             [provider["id"] for provider in catalog["providers"]],
-            ["huaweicloud", "aliyun"],
+            ["huaweicloud", "aliyun", "aws"],
         )
         self.assertNotIn("custom", [item["id"] for item in catalog["providers"]])
 
@@ -53,7 +53,7 @@ class ProviderCatalogSchemaTests(SimpleTestCase):
 
         self.assertEqual(
             [item["id"] for item in normalized["providers"]],
-            ["aliyun", "huaweicloud"],
+            ["aws", "aliyun", "huaweicloud"],
         )
         for item in normalized["providers"]:
             self.assertEqual(

@@ -442,7 +442,7 @@ class StorageProviderCatalogAPITests(TransactionTestCase):
         self.assertEqual(StorageProviderOverride.objects.count(), 0)
         self.assertEqual(
             response.data["provider_ids"],
-            ["aliyun", "huaweicloud"],
+            ["aliyun", "aws", "huaweicloud"],
         )
 
     def test_reset_token_cannot_cross_single_and_all_endpoints(self):
