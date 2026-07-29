@@ -3467,6 +3467,8 @@ export const en = {
     captchaUnavailable: 'Cloudflare verification unavailable.',
     captchaExpired: 'Human verification expired. Please complete the new challenge.',
     captchaRetry: 'Retry',
+    captchaManualRetry: 'Verification taking longer than expected? Reload',
+    captchaReferenceCode: 'Reference code: {code}',
     btnSubmit: 'Sign In',
     btnSubmitLoading: 'Signing in...',
     forgotPwd: 'Forgot Password?',

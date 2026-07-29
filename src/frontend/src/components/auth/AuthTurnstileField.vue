@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { KeyRound } from 'lucide-vue-next'
+import { KeyRound, RotateCcw } from 'lucide-vue-next'
 
 import TurnstileWidget from '../TurnstileWidget.vue'
 
@@ -8,11 +8,14 @@ defineProps<{
   pending: boolean
   ready: boolean
   blocked: boolean
+  verified: boolean
   siteKey: string
   action: string
   loadingMessage: string
   blockedMessage: string
   retryLabel: string
+  manualRetryLabel: string
+  errorCodeLabel?: string
   errorMessage?: string
 }>()
 
@@ -21,11 +24,46 @@ const emit = defineEmits<{
   success: [token: string]
   expire: []
   invalidate: []
-  error: []
+  error: [errorCode?: string]
   'load-failed': []
 }>()
 
 const turnstileWidgetRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
+const showManualRetry = ref(false)
+
+function hideManualRetry() {
+  showManualRetry.value = false
+}
+
+function retry() {
+  hideManualRetry()
+  emit('retry')
+}
+
+function onSuccess(token: string) {
+  hideManualRetry()
+  emit('success', token)
+}
+
+function onExpire() {
+  hideManualRetry()
+  emit('expire')
+}
+
+function onInvalidate() {
+  hideManualRetry()
+  emit('invalidate')
+}
+
+function onError(errorCode?: string) {
+  hideManualRetry()
+  emit('error', errorCode)
+}
+
+function onLoadFailed() {
+  hideManualRetry()
+  emit('load-failed')
+}
 
 function reset() {
   turnstileWidgetRef.value?.reset()
@@ -44,7 +82,10 @@ defineExpose({ reset })
       class="auth-turnstile-field__control auth-turnstile-field__loading"
       role="status"
     >
-      <span class="auth-turnstile-field__spinner" aria-hidden="true" />
+      <span
+        class="auth-turnstile-field__spinner"
+        aria-hidden="true"
+      />
       <span>{{ loadingMessage }}</span>
     </div>
 
@@ -59,28 +100,63 @@ defineExpose({ reset })
           :action="action"
           theme="dark"
           size="flexible"
-          @success="emit('success', $event)"
-          @expire="emit('expire')"
-          @invalidate="emit('invalidate')"
-          @error="emit('error')"
-          @load-failed="emit('load-failed')"
+          @success="onSuccess"
+          @expire="onExpire"
+          @invalidate="onInvalidate"
+          @error="onError"
+          @load-failed="onLoadFailed"
+          @slow-load="showManualRetry = true"
+          @rendered="hideManualRetry"
         />
       </div>
     </div>
 
+    <button
+      v-if="ready && siteKey && !verified && showManualRetry"
+      type="button"
+      class="auth-turnstile-field__manual-retry"
+      @click="retry"
+    >
+      <RotateCcw
+        class="auth-turnstile-field__manual-retry-icon"
+        :size="14"
+        aria-hidden="true"
+      />
+      <span class="auth-turnstile-field__manual-retry-label">{{ manualRetryLabel }}</span>
+    </button>
+
     <div
-      v-else-if="blocked"
+      v-if="blocked"
       class="auth-turnstile-field__control auth-turnstile-field__blocked"
       role="alert"
     >
-      <KeyRound :size="18" aria-hidden="true" />
-      <span class="auth-turnstile-field__blocked-text">{{ blockedMessage }}</span>
-      <button type="button" class="auth-turnstile-field__retry" @click="emit('retry')">
+      <KeyRound
+        :size="18"
+        aria-hidden="true"
+      />
+      <span class="auth-turnstile-field__blocked-text">
+        <span>{{ blockedMessage }}</span>
+        <span
+          v-if="errorCodeLabel"
+          class="auth-turnstile-field__reference-code"
+        >
+          {{ errorCodeLabel }}
+        </span>
+      </span>
+      <button
+        type="button"
+        class="auth-turnstile-field__retry"
+        @click="retry"
+      >
         {{ retryLabel }}
       </button>
     </div>
 
-    <p v-if="errorMessage && !blocked" class="auth-turnstile-field__error" role="alert">
+    <p
+      v-if="errorMessage && !blocked"
+      class="auth-turnstile-field__error"
+      role="alert"
+    >
       {{ errorMessage }}
     </p>
   </div>
@@ -157,7 +233,17 @@ defineExpose({ reset })
 .auth-turnstile-field__blocked-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   white-space: nowrap;
+}
+
+.auth-turnstile-field__reference-code {
+  color: var(--color-text-secondary, #a0a0a8);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
 }
 
 .auth-turnstile-field__retry {
@@ -184,6 +270,46 @@ defineExpose({ reset })
   outline-offset: 2px;
 }
 
+.auth-turnstile-field__manual-retry {
+  box-sizing: border-box;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  color: var(--color-brand-violet-soft);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-radius: var(--radius-card);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    color 160ms ease-out,
+    background-color 160ms ease-out,
+    border-color 160ms ease-out;
+}
+
+.auth-turnstile-field__manual-retry:hover {
+  color: #fff;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 48%, transparent);
+}
+
+.auth-turnstile-field__manual-retry:active {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.auth-turnstile-field__manual-retry:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.auth-turnstile-field__manual-retry-icon {
+  flex: 0 0 auto;
+}
+
 .auth-turnstile-field__error {
   margin: 0;
   color: var(--color-error);
@@ -192,11 +318,16 @@ defineExpose({ reset })
 }
 
 @keyframes auth-turnstile-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-turnstile-field__spinner { animation: none; }
+  .auth-turnstile-field__spinner {
+    animation: none;
+  }
+
 }
 
 @media (max-width: 479.98px) {

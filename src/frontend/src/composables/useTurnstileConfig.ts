@@ -1,6 +1,9 @@
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { api } from '../lib/api'
-import { preloadTurnstileScript } from '../lib/turnstileLoader'
+import {
+  preloadTurnstileScript,
+  resetTurnstileScriptLoad,
+} from '../lib/turnstileLoader'
 
 export type TurnstileState = 'pending' | 'disabled' | 'ready' | 'blocked'
 
@@ -17,6 +20,7 @@ const state = ref<TurnstileState>('pending')
 const siteKey = ref('')
 const configLoaded = ref(false)
 let configLoadPromise: Promise<void> | null = null
+let configRetryPromise: Promise<void> | null = null
 const authTurnstileMountGeneration = ref(0)
 
 async function loadTurnstileConfig(force = false): Promise<void> {
@@ -45,7 +49,10 @@ async function loadTurnstileConfig(force = false): Promise<void> {
 
       siteKey.value = res.data.site_key
       state.value = 'ready'
-      void preloadTurnstileScript()
+      // The mounted widget owns user-visible load failure handling. Prefetch
+      // failures are intentionally swallowed here to avoid an unhandled
+      // rejection before the lazy authentication page finishes mounting.
+      void preloadTurnstileScript().catch(() => undefined)
     } catch {
       state.value = 'blocked'
       siteKey.value = ''
@@ -55,6 +62,27 @@ async function loadTurnstileConfig(force = false): Promise<void> {
     }
   })()
   return configLoadPromise
+}
+
+async function retryTurnstileConfig(): Promise<void> {
+  if (configRetryPromise) return configRetryPromise
+  if (configLoadPromise) return configLoadPromise
+
+  configRetryPromise = (async () => {
+    // Leave the ready state first so any mounted widget is removed before the
+    // shared Turnstile API and script tag are discarded.
+    state.value = 'pending'
+    await nextTick()
+    resetTurnstileScriptLoad()
+    authTurnstileMountGeneration.value += 1
+    await loadTurnstileConfig(true)
+  })()
+
+  try {
+    await configRetryPromise
+  } finally {
+    configRetryPromise = null
+  }
 }
 
 export function resetAuthTurnstileSession(): void {
@@ -90,6 +118,7 @@ export function useTurnstileConfig() {
     isTurnstileReady,
     isTurnstileBlocked,
     loadTurnstileConfig,
+    retryTurnstileConfig,
     buildTurnstilePayload,
     blockTurnstile,
   }

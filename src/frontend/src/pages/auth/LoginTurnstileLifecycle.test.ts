@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   fetchCurrentUser: vi.fn(),
   fetchDeployProfile: vi.fn(),
   loadTurnstileConfig: vi.fn(),
+  retryTurnstileConfig: vi.fn(),
   resetWidget: vi.fn(),
   routeQuery: {} as Record<string, string>,
   routerPush: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('../../composables/useTurnstileConfig', () => ({
     isTurnstileBlocked: ref(false),
     authTurnstileMountGeneration: ref(0),
     loadTurnstileConfig: mocks.loadTurnstileConfig,
+    retryTurnstileConfig: mocks.retryTurnstileConfig,
     buildTurnstilePayload: mocks.buildTurnstilePayload,
     blockTurnstile: mocks.blockTurnstile,
   }),
@@ -72,6 +74,9 @@ const AuthTurnstileFieldStub = defineComponent({
   name: 'AuthTurnstileField',
   props: {
     errorMessage: { type: String, default: '' },
+    errorCodeLabel: { type: String, default: '' },
+    verified: { type: Boolean, default: false },
+    manualRetryLabel: { type: String, default: '' },
   },
   emits: ['retry', 'success', 'expire', 'invalidate', 'error', 'load-failed'],
   setup(props, { expose }) {
@@ -166,6 +171,7 @@ describe('Login Turnstile lifecycle', () => {
       password_reset_available: false,
     })
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
+    mocks.retryTurnstileConfig.mockResolvedValue(undefined)
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
       token ? { turnstile_token: token } : {}
     ))
@@ -355,6 +361,43 @@ describe('Login Turnstile lifecycle', () => {
 
     expect(emailLoginCalls()).toHaveLength(2)
     expect(submittedBody(emailLoginCalls()[1]).turnstile_token).toBe('accepted-token')
+    wrapper.unmount()
+  })
+
+  it('clears a token and fully reloads Turnstile on manual retry', async () => {
+    const wrapper = await mountLogin(1440)
+    await fillCredentials(wrapper)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    const submit = wrapper.get('button.submit-btn')
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await wrapper.vm.$nextTick()
+    expect(turnstile.props('verified')).toBe(true)
+    expect(submit.attributes('disabled')).toBeUndefined()
+
+    turnstile.vm.$emit('retry')
+    await flushPromises()
+
+    expect(mocks.retryTurnstileConfig).toHaveBeenCalledTimes(1)
+    expect(turnstile.props('verified')).toBe(false)
+    expect(submit.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('shows and clears a safe Turnstile reference code', async () => {
+    const wrapper = await mountLogin(1440)
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+
+    turnstile.vm.$emit('error', '300030')
+    await wrapper.vm.$nextTick()
+
+    expect(turnstile.props('errorCodeLabel')).toBe('Reference code: 300030')
+    expect(mocks.blockTurnstile).toHaveBeenCalledTimes(1)
+
+    turnstile.vm.$emit('retry')
+    await flushPromises()
+
+    expect(turnstile.props('errorCodeLabel')).toBe('')
     wrapper.unmount()
   })
 
