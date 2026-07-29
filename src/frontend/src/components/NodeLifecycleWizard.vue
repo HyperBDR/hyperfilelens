@@ -113,7 +113,9 @@ const proxyReqCards = computed(() => [
     kind: 'icon' as const,
     icon: HardDrive,
     title: t('nodesDeploy.proxyReqDisk'),
-    sub: t('nodesDeploy.proxyReqDiskSub'),
+    sub: props.role === 'gateway'
+      ? t('nodesDeploy.gatewayReqDiskSub')
+      : t('nodesDeploy.proxyReqDiskSub'),
   },
 ])
 
