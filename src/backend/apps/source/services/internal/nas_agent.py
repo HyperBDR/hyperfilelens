@@ -126,7 +126,7 @@ def explain_nas_mount_point_error(
 _KNOWN_AGENT_WS_ERRORS: dict[str, str] = {
     "agent websocket is not routable": (
         "Proxy agent is offline or unreachable. "
-        "Enable force delete to remove the source anyway, or wait until the proxy is online."
+        "Use Force Cleanup to record retained residue, or wait until the proxy is online."
     ),
     "agent websocket is reconnecting": (
         "Proxy agent is reconnecting. Wait a moment and try again."

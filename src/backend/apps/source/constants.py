@@ -35,11 +35,17 @@ class ResourceStatus:
     ACTIVE = "active"
     INACTIVE = "inactive"
     ERROR = "error"
+    REMOVING = "removing"
+    REMOVE_FAILED = "remove_failed"
+    REMOVED = "removed"
 
     CHOICES = (
         (ACTIVE, "Active"),
         (INACTIVE, "Inactive"),
         (ERROR, "Error"),
+        (REMOVING, "Removing"),
+        (REMOVE_FAILED, "Remove failed"),
+        (REMOVED, "Removed"),
     )
 
 

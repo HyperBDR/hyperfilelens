@@ -1,14 +1,7 @@
-"""
-Agent removal: optional WSS uninstall, then always purge SaaS-side records.
-
-When the agent is routable over WebSocket, dispatch ``agent.uninstall`` and wait
-briefly (default 15s) for detached task.result. Agent disconnect or task failure
-during uninstall must not block server-side cleanup.
-"""
+"""Compatibility entry points and server-record cleanup for Agent removal."""
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from django.db import transaction
@@ -19,14 +12,7 @@ from apps.iam.models import Organization
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
-from apps.node.services.internal.agent_task import (
-    run_agent_task_async,
-    wait_for_agent_task,
-)
-from apps.node.services.internal.node_registry import agent_ws_routable
 from apps.source.models import SourceResource
-
-logger = logging.getLogger(__name__)
 
 
 class ProxyHasBoundResources(RuntimeError):
@@ -49,14 +35,15 @@ def remove_agent_node(
     node: Node,
     user=None,
     keep_data: bool = False,
+    force: bool = False,
     wait_timeout_seconds: int = _DEFAULT_UNINSTALL_WAIT_SECONDS,
 ) -> dict[str, Any]:
     """
     Remove an enrolled node (agent, proxy, or gateway) from the control plane.
 
-    - Online (WSS routable): dispatch ``agent.uninstall`` with ``keep_data`` (default purge host data).
-    - Offline: skip agent contact.
-    - Always: soft-delete bound source resources and the node row.
+    This compatibility wrapper delegates to the asynchronous lifecycle service.
+    Online removal must not wait for a terminal WebSocket result because the
+    detached uninstall intentionally stops the Agent process.
     """
     if node.role not in _MANAGED_NODE_ROLES:
         raise ValueError("remove_agent_node applies to agent/proxy/gateway roles only")
@@ -76,49 +63,25 @@ def remove_agent_node(
         if not bindings.is_empty():
             raise ProxyHasBoundResources(bindings)
 
-    uninstall_attempted = False
-    uninstall_task_status: str | None = None
-    timed_out = False
+    from apps.node.services.internal.node_lifecycle import start_node_remove
 
-    if agent_ws_routable(agent_id=node.id):
-        uninstall_attempted = True
-        try:
-            handle = run_agent_task_async(
-                org=org,
-                node_id=node.id,
-                kind="agent.uninstall",
-                payload={"keep_data": keep_data},
-                correlation_type="agent.uninstall",
-                correlation_id=str(node.id),
-            )
-            outcome = wait_for_agent_task(
-                task_id=handle.task_id,
-                timeout_seconds=max(15, int(wait_timeout_seconds)),
-            )
-            uninstall_task_status = outcome.task.status
-            timed_out = outcome.timed_out
-            logger.info(
-                "agent uninstall finished node_id=%s status=%s timed_out=%s",
-                node.id,
-                uninstall_task_status,
-                timed_out,
-            )
-        except Exception as exc:
-            logger.warning(
-                "agent uninstall dispatch/wait failed node_id=%s: %s",
-                node.id,
-                exc,
-                exc_info=True,
-            )
-            uninstall_task_status = "error"
-
-    summary = _purge_agent_server_records(org=org, node=node, user=user)
+    lifecycle = start_node_remove(
+        org=org,
+        node=node,
+        user=user,
+        keep_data=keep_data,
+        force=force,
+    )
+    summary = dict(lifecycle.get("summary") or {})
+    uninstall_attempted = lifecycle.get("task_id") is not None
     summary.update(
         {
             "node_id": node.id,
             "uninstall_attempted": uninstall_attempted,
-            "uninstall_task_status": uninstall_task_status,
-            "uninstall_timed_out": timed_out,
+            "uninstall_task_status": "running" if uninstall_attempted else None,
+            "uninstall_timed_out": False,
+            "server_records_purged": bool(lifecycle.get("purged")),
+            "lifecycle": lifecycle,
         }
     )
     return summary
@@ -129,6 +92,7 @@ def remove_agent_node_for_source_resource(
     resource: SourceResource,
     user=None,
     keep_data: bool = False,
+    force: bool = False,
     wait_timeout_seconds: int = _DEFAULT_UNINSTALL_WAIT_SECONDS,
 ) -> dict[str, Any] | None:
     """When a local source host is backed by an Agent, remove the whole agent."""
@@ -149,6 +113,7 @@ def remove_agent_node_for_source_resource(
         node=node,
         user=user,
         keep_data=keep_data,
+        force=force,
         wait_timeout_seconds=wait_timeout_seconds,
     )
 
@@ -218,25 +183,26 @@ def _purge_agent_server_records(
 
 def _purge_gateway_lens_records(*, org: Organization, gateway: Node, user) -> None:
     from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+    from apps.node.exceptions import NodeLifecycleError
 
-    ks_removed = 0
-    for ks in LensKnowledgeSource.objects.filter(
+    knowledge_sources = LensKnowledgeSource.objects.filter(
         organization_id=org.id,
         gateway=gateway,
         is_deleted=False,
-    ):
-        write_audit_log(
-            organization=org,
-            user=user,
-            action=AuditAction.DELETE,
-            resource_type="lens_knowledge_source",
-            resource_id=str(ks.id),
-            resource_name=ks.name,
-            result=AuditResult.SUCCESS,
-            metadata={"reason": "gateway_removed", "gateway_id": gateway.id},
+    )
+    if knowledge_sources.exists():
+        raise NodeLifecycleError(
+            "Data Gateway still has configured Knowledge Sources.",
+            code="node_remove_blocked",
+            blockers=[
+                {
+                    "code": "knowledge_source_bound",
+                    "knowledge_source_id": source.id,
+                    "detail": f'Knowledge Source "{source.name}" is still bound.',
+                }
+                for source in knowledge_sources.order_by("id")
+            ],
         )
-        ks.soft_delete()
-        ks_removed += 1
 
     for link in LensGatewayLink.objects.filter(
         organization_id=org.id,

@@ -262,6 +262,22 @@ def trigger_task_result_followup(*, node_task_id) -> None:
     if task is None:
         return
     try:
+        from apps.node.services.internal.node_lifecycle import (
+            queue_detached_remove_verification,
+        )
+
+        queue_detached_remove_verification(node_task=task)
+    except Exception:
+        logger.exception("lifecycle result follow-up queue failed task_id=%s", task.id)
+    try:
+        from apps.storage.services.internal.repository_agent_operation import (
+            queue_repository_agent_result_followup,
+        )
+
+        queue_repository_agent_result_followup(node_task=task)
+    except Exception:
+        logger.exception("repository result follow-up queue failed task_id=%s", task.id)
+    try:
         from apps.protection.services.backup_orchestrator import queue_backup_result_projection
 
         if queue_backup_result_projection(node_task=task):

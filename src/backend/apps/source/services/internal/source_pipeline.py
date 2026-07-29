@@ -64,6 +64,33 @@ def _backup_config_exists(*, organization_id: int, source_kind: str, ref_id: int
     ).exists()
 
 
+def _pipeline_operation_fenced(
+    *,
+    organization_id: int,
+    source_kind: str,
+    ref_id: int,
+    operation_task_uuid: str | None = None,
+) -> bool:
+    """Return True while Reset/Unregister exclusively owns Pipeline changes."""
+    from apps.task.models import Task, TaskResource
+
+    source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+    operations = Task.objects.filter(
+        organization_id=organization_id,
+        task_type__in={
+            Task.Type.BACKUP_CONFIG_RESET,
+            Task.Type.SOURCE_UNREGISTER,
+        },
+        status__in={Task.Status.PENDING, Task.Status.RUNNING},
+        resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resources__resource_subtype=source_type,
+        resources__resource_id=ref_id,
+    ).distinct()
+    if operation_task_uuid:
+        operations = operations.exclude(task_uuid=operation_task_uuid)
+    return operations.exists()
+
+
 def _upsert_pipeline_step(
     *,
     organization_id: int,
@@ -110,6 +137,12 @@ def set_pipeline_steps(*, organization_id: int, ids: list[str], step: int) -> li
         source_kind, ref_id = parsed
         if not _source_exists(organization_id=organization_id, source_kind=source_kind, ref_id=ref_id):
             continue
+        if _pipeline_operation_fenced(
+            organization_id=organization_id,
+            source_kind=source_kind,
+            ref_id=ref_id,
+        ):
+            continue
         key = _selectable_key(source_kind, ref_id)
         if step == PipelineStep.READY and not _backup_config_exists(
             organization_id=organization_id,
@@ -139,7 +172,13 @@ def set_pipeline_steps(*, organization_id: int, ids: list[str], step: int) -> li
     return updated
 
 
-def force_set_pipeline_steps(*, organization_id: int, ids: list[str], step: int) -> list[str]:
+def force_set_pipeline_steps(
+    *,
+    organization_id: int,
+    ids: list[str],
+    step: int,
+    operation_task_uuid: str | None = None,
+) -> list[str]:
     if step not in PipelineStep.VALID:
         raise ValueError(f"invalid pipeline step: {step}")
 
@@ -150,6 +189,13 @@ def force_set_pipeline_steps(*, organization_id: int, ids: list[str], step: int)
             continue
         source_kind, ref_id = parsed
         if not _source_exists(organization_id=organization_id, source_kind=source_kind, ref_id=ref_id):
+            continue
+        if _pipeline_operation_fenced(
+            organization_id=organization_id,
+            source_kind=source_kind,
+            ref_id=ref_id,
+            operation_task_uuid=operation_task_uuid,
+        ):
             continue
         key = _selectable_key(source_kind, ref_id)
         if step == PipelineStep.READY and not _backup_config_exists(
@@ -245,6 +291,12 @@ def ensure_pipeline_entry(
         source_kind=source_kind,
         ref_id=ref_id,
     ).first()
+    if _pipeline_operation_fenced(
+        organization_id=organization_id,
+        source_kind=source_kind,
+        ref_id=ref_id,
+    ):
+        return entry
     if entry is None:
         return SourceBackupPipelineEntry.objects.create(
             organization_id=organization_id,

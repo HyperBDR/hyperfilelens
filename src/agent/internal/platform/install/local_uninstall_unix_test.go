@@ -4,6 +4,7 @@ package install
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,11 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 		"/var/lib/hyperfilelens-agent",
 		"/var/lib/hyperfilelens-agent/logs",
 		false,
+		UninstallCompletion{
+			APIBaseURL: "https://control.example",
+			Path:       "/api/v1/node/agent-uninstall/completion/",
+			Token:      "signed-test-token",
+		},
 		path,
 	)
 	if err != nil {
@@ -53,5 +59,41 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	}
 	if strings.Contains(body, `gateway sidecar uninstall reported errors; continuing agent uninstall`) {
 		t.Fatalf("script must not remove the Agent after LensNode removal fails:\n%s", body)
+	}
+	if !strings.Contains(body, `unmount_agent_mounts "$DATA_DIR"`) {
+		t.Fatalf("script must unmount Agent-managed NAS shares:\n%s", body)
+	}
+	if !strings.Contains(body, `for attempt in 1 2 3 4 5 6`) {
+		t.Fatalf("script must retry the signed completion callback:\n%s", body)
+	}
+	if !strings.Contains(body, `rm -f -- "$0"`) {
+		t.Fatalf("script must remove its callback-token runner after completion:\n%s", body)
+	}
+	if !strings.Contains(body, `verify_uninstall_artifacts`) ||
+		!strings.Contains(body, `post-uninstall verification failed; Strict Cleanup remains retryable`) {
+		t.Fatalf("script must verify service, files, and data before reporting success:\n%s", body)
+	}
+	if !strings.Contains(body, `Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry`) {
+		t.Fatalf("script must stop removal when managed mounts remain:\n%s", body)
+	}
+	unmountAt := strings.Index(body, `unmount_agent_mounts "$DATA_DIR"`)
+	stopAt := strings.Index(body, `systemctl stop "$SERVICE_NAME"`)
+	removeAt := strings.Index(body, `for target in "$INSTALL_DIR/hfl-agent"`)
+	if unmountAt < 0 || stopAt < 0 || removeAt < 0 || unmountAt > stopAt || stopAt > removeAt {
+		t.Fatalf("script must unmount managed shares before stopping and removing the Agent:\n%s", body)
+	}
+	if !strings.Contains(body, `report_uninstall_completion "$rc"`) {
+		t.Fatalf("script must report the signed completion result:\n%s", body)
+	}
+	if !strings.Contains(body, `CALLBACK_TOKEN="signed-test-token"`) {
+		t.Fatalf("script must embed the one-time completion token:\n%s", body)
+	}
+	if !strings.Contains(body, `if [[ -e "$DATA_DIR" ]]; then
+            log "data directory $DATA_DIR remains after removal"
+            exit 1`) {
+		t.Fatalf("script must verify data directory removal:\n%s", body)
+	}
+	if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
+		t.Fatalf("generated uninstall script is not valid bash: %v\n%s", err, out)
 	}
 }

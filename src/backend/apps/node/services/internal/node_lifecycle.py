@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.iam.models import Organization
@@ -24,6 +25,8 @@ from apps.node.services.internal.agent_upgrade import validate_agent_upgrade
 from apps.node.services.internal.node_registry import agent_session_registered, agent_ws_routable
 from apps.node.services.internal.node_workload import (
     assert_node_available_for_lifecycle,
+    assert_node_available_for_removal,
+    get_node_remove_blockers,
     get_node_workload_blockers,
     node_workload_payload,
 )
@@ -420,19 +423,11 @@ def _remove_lifecycle_payload(
 
     if task.status in _ACTIVE_TASK_STATUSES:
         phase = _task_progress_phase(task) or "dispatching"
-        if _is_detached_lifecycle_task(task) and not agent_ws_routable(agent_id=node.id):
-            elapsed = _elapsed_since_detached(task)
-            finalize_after = timedelta(seconds=node_conf.REMOVE_FINALIZE_SECONDS)
-            if elapsed is not None and elapsed >= finalize_after:
-                return {
-                    **base,
-                    "state": "cleaning_up",
-                    "phase": "agent_disconnected",
-                }
+        if _is_detached_lifecycle_task(task):
             return {
                 **base,
                 "state": "removing",
-                "phase": phase or "waiting_for_agent",
+                "phase": "waiting_for_completion",
             }
         return {
             **base,
@@ -451,50 +446,93 @@ def _remove_lifecycle_payload(
     if task.status != NodeTask.Status.SUCCESS:
         return None
 
-    if agent_ws_routable(agent_id=node.id):
-        finished = task.updated_at or task.created_at
-        grace = timedelta(seconds=node_conf.REMOVE_PURGE_GRACE_SECONDS)
-        if finished and timezone.now() - finished < grace:
-            return {**base, "state": "removing", "phase": "waiting_for_disconnect"}
-        # Grace elapsed but still routable — proceed to cleanup anyway.
+    result = task.result if isinstance(task.result, dict) else {}
+    if result.get("completion_received_at") or result.get(
+        "completion_timed_out_at"
+    ):
+        return {**base, "state": "cleaning_up", "phase": "completion_received"}
 
-    return {**base, "state": "cleaning_up", "phase": "purging_records"}
+    return {**base, "state": "removing", "phase": "waiting_for_completion"}
 
 
-def _finalize_remove_task_if_agent_disconnected(*, node: Node, task: NodeTask) -> bool:
-    """
-    Uninstall stops the agent process and tears down its WSS session.
-
-    Finalize only after detached uninstall was scheduled and WS stayed gone
-    long enough for the script to run.
-    """
-    if task.kind != "agent.uninstall":
+def _fail_stale_remove_task(*, node: Node, task: NodeTask) -> bool:
+    """Finalize a detached uninstall that never delivered its signed callback."""
+    if task.kind != _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_REMOVE]:
         return False
     if task.status != NodeTask.Status.RUNNING:
         return False
     if not _is_detached_lifecycle_task(task):
         return False
-    if agent_ws_routable(agent_id=node.id):
-        return False
     elapsed = _elapsed_since_detached(task)
-    if elapsed is None or elapsed < timedelta(seconds=node_conf.REMOVE_FINALIZE_SECONDS):
+    if elapsed is None or elapsed < timedelta(
+        seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS,
+    ):
         return False
-
     from apps.node.services.internal.task import complete_task
 
-    merged = dict(task.result or {})
-    merged["mode"] = "local_detached"
-    merged["finalized"] = True
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    force_cleanup = bool(payload.get("force_cleanup"))
+    result = dict(task.result or {})
+    result.update(
+        {
+            "mode": "local_detached",
+            "completion_timed_out_at": timezone.now().isoformat(),
+            "cleanup_complete": False,
+            "cleanup_failures": [
+                {
+                    "code": "completion_callback_timeout",
+                    "detail": "Detached uninstall did not report a terminal cleanup result.",
+                }
+            ],
+            "retained_resources": ["unverified_agent_installation"],
+            "force": force_cleanup,
+            "outcome": (
+                "force_cleanup_success" if force_cleanup else "cleanup_failed"
+            ),
+        }
+    )
     complete_task(
         task_id=task.id,
         node_id=node.id,
-        status=NodeTask.Status.SUCCESS,
-        result=merged,
+        status=(
+            NodeTask.Status.SUCCESS if force_cleanup else NodeTask.Status.FAILED
+        ),
+        error="Uninstall timed out waiting for its completion callback.",
+        result=result,
+        replace_result=True,
     )
-    logger.info(
-        "node lifecycle remove finalized after agent disconnect node_id=%s task_id=%s",
+    logger.warning(
+        "node lifecycle remove callback timed out node_id=%s task_id=%s force=%s",
         node.id,
         task.id,
+        force_cleanup,
+    )
+    return True
+
+
+def queue_detached_remove_verification(*, node_task: NodeTask) -> bool:
+    """Schedule remove verification without relying exclusively on Celery Beat."""
+    if node_task.kind != _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_REMOVE]:
+        return False
+    if node_task.status != NodeTask.Status.RUNNING:
+        return False
+    if node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE:
+        return False
+    if not _is_detached_lifecycle_task(node_task):
+        return False
+
+    elapsed = _elapsed_since_detached(node_task) or timedelta(0)
+    elapsed_seconds = max(0, int(elapsed.total_seconds()))
+    timeout_delay = max(
+        1,
+        int(node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS) - elapsed_seconds + 1,
+    )
+
+    from apps.node.tasks.lifecycle import advance_node_lifecycle_for_node
+
+    advance_node_lifecycle_for_node.apply_async(
+        kwargs={"node_id": int(node_task.node_id)},
+        countdown=timeout_delay,
     )
     return True
 
@@ -534,12 +572,31 @@ def advance_node_lifecycle(
     if remove_task is None:
         return None
 
-    if _finalize_remove_task_if_agent_disconnected(node=node, task=remove_task):
+    if _fail_stale_remove_task(node=node, task=remove_task):
         remove_task.refresh_from_db()
 
     payload = _remove_lifecycle_payload(node=node, task=remove_task)
     if payload is None or payload.get("state") != "cleaning_up":
         return None
+
+    task_payload = remove_task.payload if isinstance(remove_task.payload, dict) else {}
+    source_unregister_task_id = int(
+        task_payload.get("source_unregister_task_id") or 0
+    )
+    if source_unregister_task_id > 0:
+        from apps.source.tasks.source_unregister import queue_source_unregister_task
+
+        transaction.on_commit(
+            lambda: queue_source_unregister_task(
+                task_id=source_unregister_task_id,
+                countdown_seconds=1,
+            )
+        )
+        return {
+            "node_id": node.id,
+            "source_unregister_task_id": source_unregister_task_id,
+            "waiting_for_parent_finalize": True,
+        }
 
     if node.is_deleted:
         return {"node_id": node.id, "already_removed": True}
@@ -605,7 +662,35 @@ def start_node_remove(
     node: Node,
     user=None,
     force: bool = False,
+    keep_data: bool = False,
+    triggered_by_task_id: int | None = None,
 ) -> dict[str, Any]:
+    with transaction.atomic():
+        locked_node = Node.objects.select_for_update().get(
+            pk=node.id,
+            organization_id=org.id,
+            is_deleted=False,
+        )
+        return _start_node_remove_locked(
+            org=org,
+            node=locked_node,
+            user=user,
+            force=force,
+            keep_data=keep_data,
+            triggered_by_task_id=triggered_by_task_id,
+        )
+
+
+def _start_node_remove_locked(
+    *,
+    org: Organization,
+    node: Node,
+    user=None,
+    force: bool,
+    keep_data: bool,
+    triggered_by_task_id: int | None,
+) -> dict[str, Any]:
+    """Run authoritative node-remove preflight while holding the node fence."""
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY):
         raise NodeLifecycleError("Only enrolled agents support remote removal.", code="role_not_managed")
 
@@ -616,7 +701,7 @@ def start_node_remove(
             code="lifecycle_in_progress",
         )
 
-    assert_node_available_for_lifecycle(node=node)
+    assert_node_available_for_removal(node=node)
 
     if node.role == NodeRole.PROXY:
         from apps.node.services.internal.bindings import collect_proxy_bindings
@@ -626,22 +711,24 @@ def start_node_remove(
             proxy_id=node.id,
         )
         if not bindings.is_empty():
-            if not force:
-                raise NodeLifecycleError(
-                    "Proxy has bound resources. Replace them before deletion.",
-                    code="proxy_has_bindings",
-                )
-            from apps.node.services.internal.proxy_decommission import (
-                ProxyDecommissionBlocked,
-                force_cleanup_proxy_bindings,
+            raise NodeLifecycleError(
+                "Proxy has bound resources. Replace or remove them before deleting the Proxy.",
+                code="proxy_has_bindings",
+                blockers=[
+                    {
+                        "code": "proxy_has_bindings",
+                        "detail": "Proxy bindings cannot be bypassed by Force Cleanup.",
+                        "bound": bindings.to_payload(),
+                    }
+                ],
             )
 
-            try:
-                force_cleanup_proxy_bindings(org=org, proxy=node, user=user)
-            except ProxyDecommissionBlocked as exc:
-                raise NodeLifecycleError(str(exc), code=exc.code) from exc
-
     if not agent_ws_routable(agent_id=node.id):
+        if not force:
+            raise NodeLifecycleError(
+                "Node is offline. Strict Cleanup requires the Agent to be reachable.",
+                code="node_offline",
+            )
         summary = _purge_agent_server_records(org=org, node=node, user=user)
         return {
             "operation_id": f"offline-remove:{node.id}",
@@ -652,18 +739,40 @@ def start_node_remove(
             "phase": "offline_purged",
             "offline": True,
             "purged": True,
+            "force": True,
+            "outcome": "force_cleanup_success",
+            "cleanup_complete": False,
+            "cleanup_failures": [
+                {
+                    "code": "agent_offline",
+                    "detail": "Remote uninstall was not executed because the Agent was offline.",
+                }
+            ],
+            "retained_resources": ["agent_installation"],
             "summary": summary,
         }
 
+    uninstall_payload: dict[str, Any] = {
+        "keep_data": bool(keep_data),
+        "force_cleanup": bool(force),
+    }
+    if triggered_by_task_id:
+        uninstall_payload["source_unregister_task_id"] = int(
+            triggered_by_task_id
+        )
     handle = run_agent_task_async(
         org=org,
         node_id=node.id,
         kind="agent.uninstall",
-        payload={"keep_data": False},
+        payload=uninstall_payload,
         correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
         correlation_id=_correlation_id(node_id=node.id, kind=LIFECYCLE_KIND_REMOVE),
     )
-    task = handle.task
+    from apps.node.services.internal.uninstall_completion import (
+        attach_uninstall_completion,
+    )
+
+    task = attach_uninstall_completion(task=handle.task)
     logger.info(
         "node lifecycle dispatch kind=%s node_id=%s task_id=%s offline=%s",
         LIFECYCLE_KIND_REMOVE,
@@ -679,6 +788,7 @@ def start_node_remove(
         "state": "removing",
         "phase": "dispatching",
         "offline": False,
+        "force": bool(force),
     }
 
 
@@ -715,7 +825,11 @@ def preview_batch_operations(
             skipped_in_progress.append({**item, "reason": "lifecycle_in_progress"})
             continue
 
-        blockers = get_node_workload_blockers(node=node)
+        blockers = (
+            get_node_remove_blockers(node=node)
+            if kind == LIFECYCLE_KIND_REMOVE
+            else get_node_workload_blockers(node=node)
+        )
         if blockers:
             skipped_workload.append(
                 {

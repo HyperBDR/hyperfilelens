@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from celery import shared_task
 from celery.signals import worker_ready
@@ -60,7 +60,8 @@ logger = logging.getLogger(__name__)
 _REPOSITORY_HEALTH_LOCK_TIMEOUT_SECONDS = 300
 _REPOSITORY_HEALTH_STARTUP_DISPATCH_LOCK_TIMEOUT_SECONDS = 600
 _REPOSITORY_HEALTH_RETRY_DELAY_SECONDS = 30
-_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS = 600
+_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS = 30
+_REPOSITORY_OPERATION_CONFLICT_RETRY_SECONDS = 3
 
 
 def _repository_health_lock(repository_id: int) -> str:
@@ -295,21 +296,45 @@ def reconcile_repository_operations(*, limit: int = 100):
     trace_keys=("repository_task_id",),
 )
 def execute_repository_operation(*, repository_task_id: int):
-    owner_type = (
+    task_identity = (
         RepositoryTask.objects.filter(pk=repository_task_id)
-        .values_list("owner_type", flat=True)
+        .values_list("owner_type", "operation_type")
         .first()
     )
-    if owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER:
+    if task_identity is None:
+        raise RepositoryTask.DoesNotExist(repository_task_id)
+    owner_type, operation_type = task_identity
+    is_cleanup = operation_type in {
+        RepositoryTask.OperationType.CLEANUP_TARGET,
+        RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+    }
+    if (
+        owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
+        and not is_cleanup
+    ):
         return _execute_repository_operation(repository_task_id=repository_task_id)
 
     lock_key = f"storage:repository-operation:advance:{int(repository_task_id)}"
-    if not cache.add(lock_key, "1", timeout=_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS):
-        return {"status": "already_running", "repository_task_id": repository_task_id}
+    owner_token = str(uuid4())
+    if not cache.add(
+        lock_key,
+        owner_token,
+        timeout=_REPOSITORY_OPERATION_LOCK_TIMEOUT_SECONDS,
+    ):
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": int(repository_task_id)},
+            countdown=_REPOSITORY_OPERATION_CONFLICT_RETRY_SECONDS,
+        )
+        return {
+            "status": "rescheduled",
+            "repository_task_id": repository_task_id,
+            "retry_in_seconds": _REPOSITORY_OPERATION_CONFLICT_RETRY_SECONDS,
+        }
     try:
         return _execute_repository_operation(repository_task_id=repository_task_id)
     finally:
-        cache.delete(lock_key)
+        if cache.get(lock_key) == owner_token:
+            cache.delete(lock_key)
 
 
 def _execute_repository_operation(*, repository_task_id: int):

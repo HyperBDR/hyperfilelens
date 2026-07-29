@@ -35,7 +35,7 @@ def _lifecycle_error_response(exc: Exception) -> Response:
             payload["blockers"] = exc.blockers
         status_code = (
             status.HTTP_409_CONFLICT
-            if exc.code == "node_workload_active"
+            if exc.code in {"node_workload_active", "node_remove_blocked"}
             else status.HTTP_400_BAD_REQUEST
         )
         return Response(payload, status=status_code)

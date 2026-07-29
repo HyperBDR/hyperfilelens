@@ -11,11 +11,13 @@ from .node import NodeViewSet, health
 from .node_operation import NodeOperationBatchPreviewView, NodeOperationBatchStartView
 from .node_task import NodeTaskViewSet
 from .node_token import NodeTokenViewSet
+from .uninstall_completion import AgentUninstallCompletionView
 
 __all__ = [
     "AgentLatestReleaseView",
     "AgentReleaseView",
     "AgentReleasesAuthView",
+    "AgentUninstallCompletionView",
     "BootstrapGatewayView",
     "BootstrapView",
     "EnrollmentTokenCreateView",

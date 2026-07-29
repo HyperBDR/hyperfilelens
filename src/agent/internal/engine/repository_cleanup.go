@@ -87,6 +87,17 @@ func (e *Engine) runManagedRepositoryCleanup(
 		return "failed", result, redactRepositoryCleanupPaths(err.Error(), cacheDir)
 	}
 	result["repository_cache_existed"] = cacheExisted
+	if spec.Type == "nas" {
+		mountPoint := spec.TargetNAS.MountPoint
+		if err := nassvc.NewService().Unmount(ctx, mountPoint); err != nil {
+			return "failed", result, redactRepositoryCleanupPaths(
+				err.Error(),
+				mountPoint,
+				nassvc.ResolvedMountPoint(mountPoint),
+			)
+		}
+		result["mount_status"] = "unmounted"
+	}
 	if err := ctx.Err(); err != nil {
 		return "failed", result, "canceled"
 	}

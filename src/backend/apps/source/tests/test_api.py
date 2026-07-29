@@ -1594,6 +1594,43 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertFalse(self.agent.is_deleted)
         self.assertEqual(Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).count(), 0)
 
+    def test_bulk_delete_force_does_not_bypass_running_backup(self):
+        backup_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="Running backup",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=backup_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [f"agent:{self.agent.id}"],
+                "force": True,
+                "confirmation": "UNREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            response.content,
+        )
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
+        )
+        self.agent.refresh_from_db()
+        self.assertFalse(self.agent.is_deleted)
+
     def test_bulk_delete_422_wraps_reasons_in_problem_meta(self):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
@@ -1697,7 +1734,7 @@ class BackupSourceBulkDeleteTests(TestCase):
     @patch("apps.source.services.internal.backup_source_delete._delete_repository_snapshots")
     @patch("apps.source.services.internal.backup_source_delete._purge_protection_db")
     @patch("apps.source.services.internal.backup_source_delete._mark_tasks_orphaned")
-    def test_nas_bulk_delete_hard_deletes_and_allows_recreate(
+    def test_nas_bulk_delete_soft_deletes_and_allows_recreate(
         self,
         mock_orphan,
         mock_purge,
@@ -1756,7 +1793,9 @@ class BackupSourceBulkDeleteTests(TestCase):
                 resource_id=resource.id,
             ).exists()
         )
-        self.assertFalse(SourceResource.all_objects.filter(id=resource.id).exists())
+        removed = SourceResource.all_objects.get(id=resource.id)
+        self.assertTrue(removed.is_deleted)
+        self.assertEqual(removed.status, "removed")
 
         recreate = self.client.post(
             "/api/v1/source/resources/",
@@ -1777,13 +1816,36 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.assertEqual(recreate.status_code, status.HTTP_201_CREATED)
 
-    def test_bulk_delete_removes_source_nas_record(self):
+    @patch(
+        "apps.source.services.internal.backup_source_delete._strict_nas_umount",
+        return_value={"success": True},
+    )
+    def test_bulk_delete_soft_deletes_source_nas_record(self, _unmount):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="delete-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+        )
         resource = SourceResource.objects.create(
             organization=self.org,
             name="delete-nas-record",
             resource_type="nas",
-            config={"protocol": "nfs", "server": "192.168.10.20", "export_path": "/data"},
+            config={
+                "protocol": "nfs",
+                "server": "192.168.10.20",
+                "export_path": "/data",
+                "connection": {
+                    "username": "cleanup-user",
+                    "password": "nested-password-must-not-persist",
+                    "options": [
+                        {"label": "safe-option"},
+                        {"access_token": "nested-token-must-not-persist"},
+                    ],
+                },
+            },
             mount_status="unmounted",
+            bound_node=proxy,
         )
         nas_key = f"nas:{resource.id}"
 
@@ -1798,6 +1860,15 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertIn(nas_key, response.data["deleted"])
         task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertEqual(task.status, Task.Status.SUCCESS)
+        cleanup_plan = task.request_payload["cleanup_plan"]
+        cleanup_config = cleanup_plan["source"]["config"]
+        self.assertEqual(cleanup_config["connection"]["username"], "cleanup-user")
+        self.assertEqual(
+            cleanup_config["connection"]["options"],
+            [{"label": "safe-option"}, {}],
+        )
+        self.assertNotIn("nested-password-must-not-persist", repr(cleanup_plan))
+        self.assertNotIn("nested-token-must-not-persist", repr(cleanup_plan))
         self.assertTrue(
             TaskResource.objects.filter(
                 task=task,
@@ -1806,8 +1877,71 @@ class BackupSourceBulkDeleteTests(TestCase):
                 resource_id=resource.id,
             ).exists()
         )
-        self.assertFalse(SourceResource.all_objects.filter(id=resource.id).exists())
+        removed = SourceResource.all_objects.get(id=resource.id)
+        self.assertTrue(removed.is_deleted)
+        self.assertEqual(removed.status, "removed")
         self.assertFalse(
+            SourceBackupPipelineEntry.objects.filter(
+                organization=self.org,
+                source_kind="nas",
+                ref_id=resource.id,
+            ).exists()
+        )
+
+    @patch(
+        "apps.source.services.internal.backup_source_delete.unmount_resource",
+        return_value={"success": False, "message": "share is still busy"},
+    )
+    def test_source_nas_strict_unmount_failure_is_retryable(self, _unmount):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="strict-unmount-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+        )
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="strict-unmount-nas",
+            resource_type="nas",
+            config={
+                "protocol": "nfs",
+                "server": "192.168.10.21",
+                "export_path": "/busy",
+            },
+            mount_status="mounted",
+            bound_node=proxy,
+        )
+        SourceBackupPipelineEntry.objects.create(
+            organization=self.org,
+            source_kind="nas",
+            ref_id=resource.id,
+            step=1,
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [f"nas:{resource.id}"],
+                "force": False,
+                "confirmation": "UNREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            response.content,
+        )
+        self.assertEqual(response.data["reasons"][0]["code"], "nas_umount_failed")
+        task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
+        task.refresh_from_db()
+        resource.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(resource.status, "remove_failed")
+        self.assertFalse(resource.is_deleted)
+        self.assertTrue(
             SourceBackupPipelineEntry.objects.filter(
                 organization=self.org,
                 source_kind="nas",

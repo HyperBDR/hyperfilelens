@@ -160,6 +160,31 @@ def get_node_workload_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
     return blockers
 
 
+def get_node_remove_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
+    """Return workload and configuration blockers specific to node removal."""
+    blockers = get_node_workload_blockers(node=node)
+    if node.role != NodeRole.GATEWAY:
+        return blockers
+
+    from apps.lens_bridge.models import LensKnowledgeSource
+
+    knowledge_sources = LensKnowledgeSource.objects.filter(
+        organization_id=node.organization_id,
+        gateway_id=node.id,
+        is_deleted=False,
+    ).order_by("id")
+    blockers.extend(
+        NodeWorkloadBlocker(
+            code="knowledge_source_bound",
+            task_uuid=f"knowledge_source:{source.id}",
+            task_type="lens_knowledge_source",
+            label=f'Knowledge Source · {source.name}',
+        )
+        for source in knowledge_sources
+    )
+    return blockers
+
+
 def node_workload_payload(*, node: Node) -> dict[str, Any]:
     reasons = get_node_workload_blockers(node=node)
     return {
@@ -176,5 +201,18 @@ def assert_node_available_for_lifecycle(*, node: Node) -> None:
         raise NodeLifecycleError(
             "Node has active backup, restore, or execution tasks.",
             code="node_workload_active",
+            blockers=[item.to_payload() for item in reasons],
+        )
+
+
+def assert_node_available_for_removal(*, node: Node) -> None:
+    """Reject removal while runtime or configuration dependencies remain."""
+    from apps.node.exceptions import NodeLifecycleError
+
+    reasons = get_node_remove_blockers(node=node)
+    if reasons:
+        raise NodeLifecycleError(
+            "Node has active tasks or configured dependencies.",
+            code="node_remove_blocked",
             blockers=[item.to_payload() for item in reasons],
         )

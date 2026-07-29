@@ -14,7 +14,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'force-delete'): void
 }>()
 
 const { t } = useI18n()
@@ -29,8 +28,6 @@ const targetNasRepoRows = computed(() => props.bindings?.target_nas_repositories
 const diskRepoRows = computed(() => props.bindings?.standalone_disk_repositories ?? [])
 
 const hasSourceNas = computed(() => sourceNasRows.value.length > 0)
-const hasTargetNasRepos = computed(() => targetNasRepoRows.value.length > 0)
-const hasDiskRepos = computed(() => diskRepoRows.value.length > 0)
 const hasRepos = computed(() => targetNasRepoRows.value.length + diskRepoRows.value.length > 0)
 
 const resourceCount = computed(() => {
@@ -41,20 +38,8 @@ const resourceCount = computed(() => {
   return sourceNasRows.value.length + targetNasRepoRows.value.length + diskRepoRows.value.length
 })
 
-const allowForceDelete = computed(() => !hasDiskRepos.value && (hasSourceNas.value || hasTargetNasRepos.value))
-
-const blockedHint = computed(() =>
-  allowForceDelete.value
-    ? t('nodesPage.proxyDeleteBlockedHintForce')
-    : t('nodesPage.proxyDeleteBlockedHint'),
-)
-
 function close() {
   visible.value = false
-}
-
-function requestForceDelete() {
-  emit('force-delete')
 }
 </script>
 
@@ -122,15 +107,8 @@ function requestForceDelete() {
           </div>
         </div>
 
-        <p
-          v-if="allowForceDelete"
-          class="hfl-flow-action-dialog__lead-text"
-        >
-          {{ t('nodesPage.proxyDeleteForceNote') }}
-        </p>
-
         <p class="hfl-flow-action-dialog__hint">
-          {{ blockedHint }}
+          {{ t('nodesPage.proxyDeleteBlockedHint') }}
         </p>
       </div>
     </div>
@@ -138,13 +116,6 @@ function requestForceDelete() {
     <template #footer>
       <ElButton @click="close">
         {{ t('common.close') }}
-      </ElButton>
-      <ElButton
-        v-if="allowForceDelete"
-        type="danger"
-        @click="requestForceDelete"
-      >
-        {{ t('nodesPage.proxyDeleteForceAction') }}
       </ElButton>
     </template>
   </ElDialog>

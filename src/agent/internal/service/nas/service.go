@@ -68,7 +68,13 @@ func (s *Service) Unmount(ctx context.Context, mountPoint string) error {
 	if !isMounted(mountPoint) {
 		return nil
 	}
-	return unmountShare(ctx, mountPoint)
+	if err := unmountShare(ctx, mountPoint); err != nil {
+		return err
+	}
+	if isMounted(mountPoint) {
+		return fmt.Errorf("mount point remains active after unmount")
+	}
+	return nil
 }
 
 // Test mounts the share when needed and returns space information.

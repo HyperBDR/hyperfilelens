@@ -12,6 +12,7 @@ import (
 
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/release"
+	"hyperfilelens/agent/internal/platform/tlsclient"
 	"hyperfilelens/agent/internal/platform/vfs"
 	"hyperfilelens/agent/internal/selfupdate"
 )
@@ -65,6 +66,10 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 	if v, ok := p.Extra["keep_data"].(bool); ok {
 		keepData = v
 	}
+	forceCleanup := false
+	if v, ok := p.Extra["force_cleanup"].(bool); ok {
+		forceCleanup = v
+	}
 
 	cfg := e.current()
 	dataDir := strings.TrimSpace(cfg.DataDir)
@@ -77,6 +82,20 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 		logDir = vfs.AgentLogDir(dataDir)
 	}
 	uninstallLog := install.UninstallLogPath(logDir)
+	completionPayload, ok := p.Extra["completion"].(map[string]any)
+	if !ok {
+		return "failed", nil, "signed uninstall completion configuration is required"
+	}
+	completion := install.UninstallCompletion{
+		APIBaseURL:   cfg.APIBaseURL,
+		Path:         payloadStringValue(completionPayload["path"]),
+		Token:        payloadStringValue(completionPayload["token"]),
+		InsecureTLS:  tlsclient.InsecureTLSEnabled(),
+		ForceCleanup: forceCleanup,
+	}
+	if _, err := completion.CallbackURL(); err != nil {
+		return "failed", nil, err.Error()
+	}
 
 	_ = sendProgress(ctx, rep, taskID, map[string]any{
 		"phase":         "uninstall",
@@ -85,7 +104,13 @@ func (e *Engine) runAgentUninstall(ctx context.Context, rep ReporterSink, taskID
 		"uninstall_log": uninstallLog,
 	})
 
-	if err := install.ScheduleDetachedUninstall(installDir, dataDir, logDir, keepData); err != nil {
+	if err := install.ScheduleDetachedUninstall(
+		installDir,
+		dataDir,
+		logDir,
+		keepData,
+		completion,
+	); err != nil {
 		slog.Warn("detached uninstall schedule failed", "err", err, "uninstall_log", uninstallLog)
 		return "failed", nil, err.Error()
 	}

@@ -18,6 +18,7 @@ from apps.node.services.internal.node_lifecycle import (
     advance_node_lifecycle,
     compute_node_lifecycle,
     preview_batch_operations,
+    queue_detached_remove_verification,
     start_node_remove,
     start_node_upgrade,
 )
@@ -42,9 +43,27 @@ class NodeLifecycleTests(TestCase):
         )
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
-    def test_offline_remove_purges_immediately(self, _routable):
-        result = start_node_remove(org=self.org, node=self.node, user=self.user)
+    def test_offline_strict_remove_is_blocked_before_task_creation(self, _routable):
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(org=self.org, node=self.node, user=self.user)
+
+        self.assertEqual(raised.exception.code, "node_offline")
+        self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.is_deleted)
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_offline_force_remove_purges_with_residue_summary(self, _routable):
+        result = start_node_remove(
+            org=self.org,
+            node=self.node,
+            user=self.user,
+            force=True,
+        )
         self.assertEqual(result["state"], "completed")
+        self.assertEqual(result["outcome"], "force_cleanup_success")
+        self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(result["retained_resources"], ["agent_installation"])
         self.node.refresh_from_db()
         self.assertTrue(self.node.is_deleted)
 
@@ -105,6 +124,39 @@ class NodeLifecycleTests(TestCase):
         with self.assertRaises(NodeLifecycleError) as ctx:
             start_node_upgrade(org=self.org, node=self.node, user=self.user)
         self.assertEqual(ctx.exception.code, "node_workload_active")
+
+    def test_force_gateway_remove_does_not_bypass_knowledge_source_binding(self):
+        from apps.lens_bridge.models import LensKnowledgeSource
+
+        gateway = Node.objects.create(
+            organization=self.org,
+            name="gateway-with-knowledge-source",
+            role=NodeRole.GATEWAY,
+            status=Node.Status.ONLINE,
+        )
+        LensKnowledgeSource.objects.create(
+            organization=self.org,
+            gateway=gateway,
+            name="Bound knowledge source",
+            source_path="/protected/source",
+        )
+
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(
+                org=self.org,
+                node=gateway,
+                user=self.user,
+                force=True,
+            )
+
+        self.assertEqual(raised.exception.code, "node_remove_blocked")
+        self.assertTrue(
+            any(
+                blocker["code"] == "knowledge_source_bound"
+                for blocker in raised.exception.blockers
+            )
+        )
+        self.assertFalse(NodeTask.objects.filter(node=gateway).exists())
 
     @patch("apps.node.services.internal.node_lifecycle.validate_agent_upgrade", return_value="1.2.0")
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
@@ -283,7 +335,7 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(lifecycle["state"], "restarting")
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
-    def test_remove_finalizes_when_detached_and_ws_gone(self, _routable):
+    def test_remove_does_not_finalize_from_ws_disconnect_alone(self, _routable):
         detached_at = timezone.now() - timezone.timedelta(seconds=35)
         task = NodeTask.objects.create(
             organization=self.org,
@@ -299,12 +351,95 @@ class NodeLifecycleTests(TestCase):
             correlation_id=f"remove:{self.node.id}",
         )
         summary = advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
-        self.assertIsNotNone(summary)
-        self.assertTrue(summary.get("purged"))
+        self.assertIsNone(summary)
         task.refresh_from_db()
-        self.assertEqual(task.status, NodeTask.Status.SUCCESS)
+        self.assertEqual(task.status, NodeTask.Status.RUNNING)
+        lifecycle = compute_node_lifecycle(org=self.org, node=self.node)
+        self.assertEqual(lifecycle["phase"], "waiting_for_completion")
         self.node.refresh_from_db()
+        self.assertFalse(self.node.is_deleted)
+
+    def test_remove_fails_when_completion_callback_times_out(self):
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 1
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.RUNNING,
+            result={
+                "mode": "local_detached",
+                "detached_at": detached_at.isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        summary = advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.node.refresh_from_db()
+        self.assertIsNone(summary)
+        self.assertEqual(task.status, NodeTask.Status.FAILED)
+        self.assertIn("timed out", task.last_error)
+        self.assertFalse(self.node.is_deleted)
+
+    def test_force_remove_purges_after_completion_callback_timeout(self):
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 1
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.RUNNING,
+            payload={"force_cleanup": True},
+            result={
+                "mode": "local_detached",
+                "detached_at": detached_at.isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        summary = advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.node.refresh_from_db()
+        self.assertTrue(summary.get("purged"))
+        self.assertEqual(task.status, NodeTask.Status.SUCCESS)
+        self.assertFalse(task.result["cleanup_complete"])
+        self.assertEqual(task.result["outcome"], "force_cleanup_success")
+        self.assertTrue(task.result["completion_timed_out_at"])
+        self.assertNotIn("completion_received_at", task.result)
         self.assertTrue(self.node.is_deleted)
+
+    @patch("apps.node.tasks.lifecycle.advance_node_lifecycle_for_node.apply_async")
+    def test_detached_remove_queues_callback_timeout_verification(self, apply_async):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.RUNNING,
+            result={
+                "mode": "local_detached",
+                "detached_at": timezone.now().isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        queued = queue_detached_remove_verification(node_task=task)
+
+        self.assertTrue(queued)
+        apply_async.assert_called_once_with(
+            kwargs={"node_id": self.node.id},
+            countdown=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 1,
+        )
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_pending_remove_does_not_finalize_when_ws_gone(self, _routable):

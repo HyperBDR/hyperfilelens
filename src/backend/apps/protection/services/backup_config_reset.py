@@ -467,6 +467,7 @@ def _run_backup_config_reset_task_locked(
             organization_id=organization_id,
             ids=[_source_key(source_type, source_ref_id)],
             step=PipelineStep.CONFIG,
+            operation_task_uuid=str(task.task_uuid),
         )
         _set_step_status(
             task=task,
