@@ -152,6 +152,130 @@ class DirectNasCleanupUnregisterTests(TestCase):
     )
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        return_value={"physical_cleanup": "deleted"},
+    )
+    def test_force_unregister_records_failed_agent_uninstall_as_residue(
+        self,
+        _execute_cleanup,
+        start_node_remove,
+        _agent_status,
+    ):
+        waiting = delete_backup_sources(
+            org=self.org,
+            ids=[f"agent:{self.agent.id}"],
+            force=True,
+        )
+        unregister_task = Task.objects.get(pk=waiting["task_id"])
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="agent.uninstall",
+            status=NodeTask.Status.TIMEOUT,
+            payload={
+                "source_unregister_task_id": unregister_task.id,
+                "force_cleanup": True,
+            },
+            result={},
+            last_error="Uninstall timed out waiting for its completion callback.",
+            watchdog_deadline_at=timezone.now(),
+            correlation_type="node.lifecycle",
+            correlation_id=f"remove:{self.agent.id}",
+        )
+
+        completed = run_source_unregister_task(
+            organization_id=self.org.id,
+            task_uuid=str(unregister_task.task_uuid),
+        )
+
+        unregister_task.refresh_from_db()
+        self.agent.refresh_from_db()
+        self.assertEqual(completed["result"], "partial_success")
+        self.assertEqual(completed["outcome"], "force_cleanup_success")
+        self.assertFalse(completed["cleanup_complete"])
+        self.assertEqual(
+            completed["cleanup_failures"][0]["code"],
+            "agent_uninstall_failed",
+        )
+        self.assertEqual(completed["retained_resources"], ["agent_installation"])
+        self.assertEqual(unregister_task.status, Task.Status.SUCCESS)
+        self.assertTrue(self.agent.is_deleted)
+        start_node_remove.assert_called_once()
+
+    @mock.patch(
+        "apps.source.services.internal.backup_source_delete.agent_connection_status",
+        return_value="online",
+    )
+    @mock.patch(
+        "apps.node.services.internal.node_lifecycle.start_node_remove",
+        return_value={"task_id": 123, "operation_id": "remove-1", "state": "removing"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        return_value={"physical_cleanup": "deleted"},
+    )
+    def test_strict_retry_dispatches_new_uninstall_after_previous_failure(
+        self,
+        _execute_cleanup,
+        start_node_remove,
+        _agent_status,
+    ):
+        first = delete_backup_sources(
+            org=self.org,
+            ids=[f"agent:{self.agent.id}"],
+        )
+        first_unregister = Task.objects.get(pk=first["task_id"])
+        NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="agent.uninstall",
+            status=NodeTask.Status.FAILED,
+            payload={"source_unregister_task_id": first_unregister.id},
+            result={
+                "cleanup_complete": False,
+                "cleanup_failures": [
+                    {
+                        "code": "agent_uninstall_failed",
+                        "detail": "Agent cleanup failed.",
+                    }
+                ],
+                "retained_resources": ["agent_installation"],
+            },
+            last_error="Agent cleanup failed.",
+            watchdog_deadline_at=timezone.now(),
+            correlation_type="node.lifecycle",
+            correlation_id=f"remove:{self.agent.id}",
+        )
+
+        with self.assertRaises(BackupSourceDeleteFailed):
+            run_source_unregister_task(
+                organization_id=self.org.id,
+                task_uuid=str(first_unregister.task_uuid),
+            )
+
+        first_unregister.refresh_from_db()
+        self.assertEqual(first_unregister.status, Task.Status.FAILED)
+
+        retried = delete_backup_sources(
+            org=self.org,
+            ids=[f"agent:{self.agent.id}"],
+        )
+
+        self.assertEqual(retried["result"], "waiting")
+        self.assertNotEqual(retried["task_id"], first_unregister.id)
+        self.agent.refresh_from_db()
+        self.assertFalse(self.agent.is_deleted)
+        self.assertEqual(start_node_remove.call_count, 2)
+
+    @mock.patch(
+        "apps.source.services.internal.backup_source_delete.agent_connection_status",
+        return_value="online",
+    )
+    @mock.patch(
+        "apps.node.services.internal.node_lifecycle.start_node_remove",
+        return_value={"task_id": 123, "operation_id": "remove-1", "state": "removing"},
+    )
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
         side_effect=[
             RepositoryAgentOperationResult(
                 waiting=True,
@@ -258,6 +382,11 @@ class DirectNasCleanupUnregisterTests(TestCase):
         self.assertEqual(result["pending_removals"], [])
         self.assertEqual(result["deleted"], [f"agent:{self.agent.id}"])
         self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(len(result["cleanup_failures"]), 1)
+        self.assertEqual(
+            result["cleanup_failures"][0]["source_id"],
+            f"agent:{self.agent.id}",
+        )
         self.assertEqual(result["retained_resources"], ["agent_installation"])
         self.assertEqual(unregister_task.status, Task.Status.SUCCESS)
         start_node_remove.assert_called_once()

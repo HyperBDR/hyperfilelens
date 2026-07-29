@@ -6,6 +6,9 @@ export type SourcePendingOp = {
   kind: SourcePendingKind
   targetStep?: 1 | 2
   nodeId?: number
+  taskId?: number
+  taskUuid?: string
+  startedAt?: number
 }
 
 export const WIZARD_PENDING_STORAGE_KEY = 'hfl-backup-wizard-source-pending'

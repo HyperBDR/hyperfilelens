@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from uuid import uuid4
+
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
 
@@ -8,11 +11,17 @@ from apps.audit.services.interface import write_audit_log
 from apps.iam.models import Organization
 from apps.node import agent_paths
 from apps.node.models import Node
-from apps.source.constants import MountStatus, ResourceStatus, ResourceType, SelectableSourceKind
+from apps.source.constants import (
+    ConnectionTestStatus,
+    MountStatus,
+    ResourceStatus,
+    ResourceType,
+    SelectableSourceKind,
+)
 from apps.source.models import SourceResource
 from apps.source.selectors.interface import source_resource_by_id, source_resources_queryset
 from apps.source.services.internal.connection import (
-    apply_connection_test_result,
+    apply_connection_test_result_if_current,
     mount_resource as _mount_resource,
     schedule_remount_after_proxy_change,
     run_connection_test,
@@ -25,6 +34,15 @@ from apps.source.services.internal.source_pipeline import (
     ensure_pipeline_entry,
     purge_pipeline_entry,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _cancel_active_connection_probe(resource: SourceResource) -> None:
+    if resource.connection_test_status not in ConnectionTestStatus.ACTIVE:
+        return
+    resource.connection_test_status = ConnectionTestStatus.IDLE
+    resource.connection_probe_token = None
 
 
 def _purge_soft_deleted_name_collision(*, organization_id: int, name: str) -> None:
@@ -99,6 +117,9 @@ def create_source_resource(
         validate_bound_node_role(resource_type=resource_type, node=node)
 
     try:
+        connection_probe_token = (
+            uuid4() if resource_type in ResourceType.REQUIRES_MOUNT else None
+        )
         resource = SourceResource.objects.create(
             organization=organization,
             name=normalized_name,
@@ -108,6 +129,12 @@ def create_source_resource(
             credentials=credentials or {},
             bound_node=node,
             status=status or ResourceStatus.ACTIVE,
+            connection_test_status=(
+                ConnectionTestStatus.PENDING
+                if connection_probe_token is not None
+                else ConnectionTestStatus.IDLE
+            ),
+            connection_probe_token=connection_probe_token,
             created_by=user if user and user.is_authenticated else None,
         )
     except IntegrityError as exc:
@@ -132,22 +159,24 @@ def create_source_resource(
         result=AuditResult.SUCCESS,
     )
     if resource.resource_type in ResourceType.REQUIRES_MOUNT:
-        try_probe_resource_capacity(resource)
+        from apps.source.tasks.connection_probe import (
+            queue_source_resource_capacity_probe,
+        )
+
+        # The create API only queues remote I/O after commit. The task uses this
+        # token to discard stale results after edits, rebinds, or deletion.
+        transaction.on_commit(
+            lambda resource_id=resource.id,
+            probe_token=str(resource.connection_probe_token),
+            expected_bound_node_id=int(resource.bound_node_id or 0): (
+                queue_source_resource_capacity_probe(
+                    resource_id=resource_id,
+                    probe_token=probe_token,
+                    expected_bound_node_id=expected_bound_node_id,
+                )
+            )
+        )
     return resource
-
-
-def try_probe_resource_capacity(resource: SourceResource) -> dict | None:
-    """Best-effort NAS/NFS/CIFS capacity probe when a bound proxy is online."""
-    if resource.resource_type not in ResourceType.REQUIRES_MOUNT:
-        return None
-    node = resource.bound_node
-    if node is None and resource.bound_node_id:
-        node = Node.objects.filter(id=resource.bound_node_id).first()
-    if node is None or node.status != Node.Status.ONLINE:
-        return None
-    result = run_connection_test(resource=resource)
-    apply_connection_test_result(resource, result)
-    return result
 
 
 @transaction.atomic
@@ -217,6 +246,8 @@ def update_source_resource(
     if "status" in fields and fields["status"]:
         resource.status = fields["status"]
 
+    _cancel_active_connection_probe(resource)
+
     validate_resource_payload(
         resource_type=resource.resource_type,
         config=resource.config,
@@ -275,8 +306,34 @@ def delete_source_resource(*, resource: SourceResource, user, force: bool = Fals
 
 
 def test_resource_connection(*, resource: SourceResource) -> dict:
-    result = run_connection_test(resource=resource)
-    apply_connection_test_result(resource, result)
+    probe_token = uuid4()
+    resource.connection_test_status = ConnectionTestStatus.RUNNING
+    resource.connection_probe_token = probe_token
+    resource.save(
+        update_fields=[
+            "connection_test_status",
+            "connection_probe_token",
+            "updated_at",
+        ]
+    )
+    try:
+        result = run_connection_test(resource=resource)
+    except Exception:
+        logger.exception(
+            "manual source connection test failed resource_id=%s",
+            resource.id,
+        )
+        result = {
+            "success": False,
+            "message": "Connection test failed unexpectedly. Try again.",
+        }
+    current, _skip_reason = apply_connection_test_result_if_current(
+        resource_id=resource.id,
+        probe_token=probe_token,
+        result=result,
+    )
+    if current is None:
+        return {**result, "stale": True}
     return result
 
 
@@ -320,7 +377,15 @@ def bind_node(*, resource: SourceResource, node_id: int) -> dict:
         return {"success": False, "message": f'Node "{node.name}" is not online.'}
     old_bound_node_id = resource.bound_node_id
     resource.bound_node = node
-    resource.save(update_fields=["bound_node", "updated_at"])
+    _cancel_active_connection_probe(resource)
+    resource.save(
+        update_fields=[
+            "bound_node",
+            "connection_test_status",
+            "connection_probe_token",
+            "updated_at",
+        ]
+    )
     if resource.resource_type in ResourceType.REQUIRES_MOUNT:
         _queue_remount_after_proxy_binding(
             resource=resource,
@@ -344,8 +409,17 @@ def unbind_node(*, resource: SourceResource) -> dict:
     resource.mount_status = "unmounted"
     resource.mount_point = ""
     resource.mount_error = ""
+    _cancel_active_connection_probe(resource)
     resource.save(
-        update_fields=["bound_node", "mount_status", "mount_point", "mount_error", "updated_at"]
+        update_fields=[
+            "bound_node",
+            "mount_status",
+            "mount_point",
+            "mount_error",
+            "connection_test_status",
+            "connection_probe_token",
+            "updated_at",
+        ]
     )
     return {"success": True, "message": "Resource unbound."}
 

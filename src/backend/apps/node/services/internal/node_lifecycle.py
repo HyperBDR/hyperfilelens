@@ -473,6 +473,9 @@ def _fail_stale_remove_task(*, node: Node, task: NodeTask) -> bool:
     payload = task.payload if isinstance(task.payload, dict) else {}
     force_cleanup = bool(payload.get("force_cleanup"))
     result = dict(task.result or {})
+    retained_resources = ["unverified_agent_installation"]
+    if node.role == NodeRole.GATEWAY:
+        retained_resources.append("unverified_lensnode_sidecar")
     result.update(
         {
             "mode": "local_detached",
@@ -484,7 +487,7 @@ def _fail_stale_remove_task(*, node: Node, task: NodeTask) -> bool:
                     "detail": "Detached uninstall did not report a terminal cleanup result.",
                 }
             ],
-            "retained_resources": ["unverified_agent_installation"],
+            "retained_resources": retained_resources,
             "force": force_cleanup,
             "outcome": (
                 "force_cleanup_success" if force_cleanup else "cleanup_failed"
@@ -729,6 +732,9 @@ def _start_node_remove_locked(
                 "Node is offline. Strict Cleanup requires the Agent to be reachable.",
                 code="node_offline",
             )
+        retained_resources = ["agent_installation"]
+        if node.role == NodeRole.GATEWAY:
+            retained_resources.append("lensnode_sidecar")
         summary = _purge_agent_server_records(org=org, node=node, user=user)
         return {
             "operation_id": f"offline-remove:{node.id}",
@@ -748,7 +754,7 @@ def _start_node_remove_locked(
                     "detail": "Remote uninstall was not executed because the Agent was offline.",
                 }
             ],
-            "retained_resources": ["agent_installation"],
+            "retained_resources": retained_resources,
             "summary": summary,
         }
 

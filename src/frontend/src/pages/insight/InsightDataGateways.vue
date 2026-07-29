@@ -11,7 +11,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-vue-next'
-import { ElMessage, type ElTable } from 'element-plus'
+import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
 import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBanner.vue'
 import NodeLifecycleUpgradeConfirmDialog from '../../components/NodeLifecycleUpgradeConfirmDialog.vue'
@@ -80,6 +80,7 @@ const latestAgentVersion = ref<string | null>(null)
 const selectedRows = ref<InsightGatewayRow[]>([])
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
+const deleteForce = ref(false)
 const pendingDelete = ref<InsightGatewayRow[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
@@ -434,7 +435,31 @@ async function deleteSelected() {
   if (batchDisabled.value) return
   await afterOverlayDismiss()
   pendingDelete.value = [...selectedRows.value]
+  deleteForce.value = false
   deleteOpen.value = true
+}
+
+function gatewayDeleteDialogItem(row: InsightGatewayRow) {
+  return {
+    key: row.id,
+    name: row.name,
+    status: {
+      label: readinessLabel(row),
+      tone: row.hfl_agent_online && row.hfl_sidecar_online ? 'success' as const : 'danger' as const,
+    },
+  }
+}
+
+function gatewayDeleteCanRetryWithForce() {
+  return lifecycleOps.lastStartErrors.value.some((item) =>
+    ['node_offline', 'agent_uninstall_failed', 'completion_callback_timeout']
+      .includes(String(item.code || '')),
+  )
+}
+
+function cancelDelete() {
+  pendingDelete.value = []
+  deleteForce.value = false
 }
 
 async function confirmDelete() {
@@ -442,11 +467,23 @@ async function confirmDelete() {
   if (!targets.length) return
   deleteLoading.value = true
   try {
-    const started = await lifecycleOps.runBatch('remove', targets, { skipConfirm: true })
+    const started = await lifecycleOps.runBatch('remove', targets, {
+      skipConfirm: true,
+      force: deleteForce.value,
+    })
     if (started) {
       clearSelection()
       deleteOpen.value = false
       pendingDelete.value = []
+      deleteForce.value = false
+    } else if (lifecycleOps.lastStartErrors.value.length) {
+      const failedIds = new Set(
+        lifecycleOps.lastStartErrors.value.map((item) => Number(item.node_id || 0)),
+      )
+      pendingDelete.value = targets.filter((node) => failedIds.has(node.id))
+      if (!deleteForce.value && gatewayDeleteCanRetryWithForce()) {
+        deleteForce.value = true
+      }
     }
   } finally {
     deleteLoading.value = false
@@ -611,7 +648,13 @@ onUnmounted(() => {
           @scroll="handleTableScroll"
           @selection-change="onSelectionChange"
         >
-          <el-table-column type="selection" width="35" fixed="left" :selectable="canManageGateway" />
+          <el-table-column
+            type="selection"
+            width="35"
+            fixed="left"
+            :selectable="canManageGateway"
+            :reserve-selection="true"
+          />
           <el-table-column
             :label="t('protection.sourceResources.colName')"
             min-width="200"
@@ -801,17 +844,24 @@ onUnmounted(() => {
     />
     <DangerConfirmDialog
       v-model="deleteOpen"
-      :title="t('nodesPage.deleteTitle')"
-      :message="deleteConfirmationMessage"
-      :items="pendingDelete.map((row) => ({ key: row.id, name: row.name }))"
+      :title="deleteForce ? t('insight.dataGateway.deleteForceTitle') : t('nodesPage.deleteTitle')"
+      :message="deleteForce ? t('insight.dataGateway.deleteForceConfirm', { n: pendingDelete.length }) : deleteConfirmationMessage"
+      :items="pendingDelete.map(gatewayDeleteDialogItem)"
       confirm-mode="keyword"
-      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword="deleteForce ? 'FORCE CLEANUP' : t('common.deleteKeyword')"
       :cancel-text="t('common.cancel')"
-      :confirm-text="t('nodesPage.actionDelete')"
+      :confirm-text="deleteForce ? t('nodesPage.proxyDeleteForceAction') : t('nodesPage.actionDelete')"
       :loading="deleteLoading"
       @confirm="confirmDelete"
-      @cancel="pendingDelete = []"
-    />
+      @cancel="cancelDelete"
+    >
+      <div class="gateway-delete-force-option">
+        <ElCheckbox v-model="deleteForce">
+          {{ t('nodesPage.proxyDeleteForceAction') }}
+        </ElCheckbox>
+        <p>{{ t('insight.dataGateway.deleteForceHint') }}</p>
+      </div>
+    </DangerConfirmDialog>
   </div>
 </template>
 
@@ -823,6 +873,20 @@ onUnmounted(() => {
   color: var(--color-primary, #2563eb);
   cursor: pointer;
   font-size: 13px;
+}
+
+.gateway-delete-force-option {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.gateway-delete-force-option p {
+  margin: 4px 0 0 24px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .dg-muted {

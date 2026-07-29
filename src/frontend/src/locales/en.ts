@@ -841,6 +841,11 @@ export const en = {
         'Remove {n} data gateway(s)? {offline} gateway(s) are offline, so only their console records can be removed; Agent and LensNode files may remain on those hosts.',
       deleteInstallerManagedConfirm:
         'Remove {n} data gateway(s)? Installer-managed platform gateways are recreated by the next deployment while auto-deploy remains enabled. Offline hosts may retain Agent and LensNode files.',
+      deleteForceTitle: 'Force Cleanup Data Gateway',
+      deleteForceConfirm:
+        'Force Cleanup {n} data gateway(s)? Agent and LensNode cleanup will still be attempted. Failures are recorded as retained resources while control-plane removal continues.',
+      deleteForceHint:
+        'Force Cleanup cannot bypass active tasks or Knowledge Source bindings. It only changes how physical cleanup failures are handled.',
       origin: {
         user: 'User',
         platform: 'Platform',

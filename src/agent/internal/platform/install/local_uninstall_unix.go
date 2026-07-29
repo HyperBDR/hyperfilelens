@@ -124,6 +124,9 @@ CALLBACK_TOKEN=%q
 CALLBACK_INSECURE_TLS=%s
 FORCE_CLEANUP=%s
 CLEANUP_FAILED=0
+GATEWAY_SIDECAR_FAILED=0
+MANAGED_MOUNTS_FAILED=0
+AGENT_ARTIFACTS_FAILED=0
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 umask 022
@@ -133,11 +136,28 @@ uninstall_ts_utc() { date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ" 2>/dev/null || date -u;
 log() { echo "$(uninstall_ts_utc) $*"; }
 report_uninstall_completion() {
   local rc="$1" complete="true" payload_file
-  local failures='[]' retained='[]'
+  local failures retained
+  local -a failure_items=() retained_items=()
+  if [[ "$GATEWAY_SIDECAR_FAILED" -eq 1 ]]; then
+    failure_items+=('{"code":"gateway_sidecar_uninstall_failed","detail":"LensNode sidecar cleanup did not complete."}')
+    retained_items+=('"lensnode_sidecar"')
+  fi
+  if [[ "$MANAGED_MOUNTS_FAILED" -eq 1 ]]; then
+    failure_items+=('{"code":"managed_mount_cleanup_failed","detail":"One or more Agent-managed NAS mounts could not be unmounted."}')
+    retained_items+=('"managed_nas_mounts"')
+  fi
+  if [[ "$AGENT_ARTIFACTS_FAILED" -eq 1 ]]; then
+    failure_items+=('{"code":"agent_uninstall_failed","detail":"Agent service, files, or data remain after cleanup."}')
+    retained_items+=('"agent_installation"')
+  fi
+  if [[ "${#failure_items[@]}" -eq 0 && ( "$rc" -ne 0 || "$CLEANUP_FAILED" -ne 0 ) ]]; then
+    failure_items+=('{"code":"detached_uninstall_failed","detail":"Detached uninstall exited before all cleanup steps completed."}')
+    retained_items+=('"agent_installation_or_managed_mounts"')
+  fi
+  failures="[$(IFS=,; echo "${failure_items[*]}")]"
+  retained="[$(IFS=,; echo "${retained_items[*]}")]"
   [[ "$rc" -eq 0 && "$CLEANUP_FAILED" -eq 0 ]] || {
     complete="false"
-    failures='[{"code":"detached_uninstall_failed","detail":"Detached uninstall exited before all cleanup steps completed."}]'
-    retained='["agent_installation_or_managed_mounts"]'
   }
   command -v curl >/dev/null 2>&1 || {
     log "curl not found; uninstall completion callback could not be sent"
@@ -215,9 +235,11 @@ log "delay elapsed; running gateway sidecar uninstall when applicable"
 %s
 if ! run_gateway_sidecar_uninstall_if_needed; then
   CLEANUP_FAILED=1
+  GATEWAY_SIDECAR_FAILED=1
   if [[ "$FORCE_CLEANUP" == "1" ]]; then
     log "gateway sidecar uninstall failed; Force Cleanup will continue with Agent cleanup"
   else
+    AGENT_ARTIFACTS_FAILED=1
     log "gateway sidecar uninstall failed; keeping the Agent installed for retry"
     exit 1
   fi
@@ -225,9 +247,11 @@ fi
 log "cleaning Agent-managed NAS mounts before stopping the Agent service"
 if ! unmount_agent_mounts "$DATA_DIR"; then
   CLEANUP_FAILED=1
+  MANAGED_MOUNTS_FAILED=1
   if [[ "$FORCE_CLEANUP" == "1" ]]; then
     log "Agent-managed NAS mount cleanup failed; Force Cleanup will continue with Agent cleanup"
   else
+    AGENT_ARTIFACTS_FAILED=1
     log "Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry"
     exit 1
   fi
@@ -339,11 +363,13 @@ if [[ "$KEEP_DATA" == "0" ]]; then
         if rm -rf "$DATA_DIR"; then
           if [[ -e "$DATA_DIR" ]]; then
             log "data directory $DATA_DIR remains after removal"
+            AGENT_ARTIFACTS_FAILED=1
             exit 1
           fi
           log "removed data directory $DATA_DIR"
         else
           log "failed to remove data directory $DATA_DIR (exit=$?)"
+          AGENT_ARTIFACTS_FAILED=1
           exit 1
         fi
       else
@@ -367,6 +393,7 @@ fi
 
 if ! verify_uninstall_artifacts; then
   CLEANUP_FAILED=1
+  AGENT_ARTIFACTS_FAILED=1
   if [[ "$FORCE_CLEANUP" == "1" ]]; then
     log "post-uninstall verification found residue; Force Cleanup will report it and finish"
   else

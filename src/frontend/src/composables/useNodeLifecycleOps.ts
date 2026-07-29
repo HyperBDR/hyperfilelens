@@ -141,6 +141,7 @@ export function useNodeLifecycleOps(options: {
   const completed = ref<LifecycleQueueItem[]>([])
   const failed = ref<LifecycleQueueItem[]>([])
   const skipped = ref<Array<{ nodeId: number; name: string; reason: string }>>([])
+  const lastStartErrors = ref<Array<Record<string, unknown>>>([])
   const polling = ref(false)
   const pollRole = ref<NodeRole | null>(null)
   const upgradeConfirmOpen = ref(false)
@@ -456,6 +457,32 @@ export function useNodeLifecycleOps(options: {
     return t('nodeLifecycle.nothingEligible')
   }
 
+  function previewStartErrors(preview: NodeOperationBatchPreview): Array<Record<string, unknown>> {
+    const fromRows = (
+      rows: Array<{ node_id: number; name: string; reason: string; message?: string }>,
+      fallbackCode: string,
+    ) => rows.map((item) => ({
+      node_id: item.node_id,
+      name: item.name,
+      code: item.reason || fallbackCode,
+      error: item.message || item.reason || fallbackCode,
+    }))
+
+    return [
+      ...fromRows(preview.skipped_offline || [], 'node_offline'),
+      ...fromRows(preview.skipped_workload || [], 'node_workload_active'),
+      ...fromRows(preview.skipped_in_progress || [], 'lifecycle_in_progress'),
+      ...fromRows(preview.skipped_not_upgradeable || [], 'not_upgradeable'),
+      ...fromRows(preview.skipped_proxy_bound || [], 'proxy_has_bindings'),
+      ...fromRows(preview.skipped_disk_full || [], 'disk_full'),
+      ...(preview.missing_node_ids || []).map((nodeId) => ({
+        node_id: nodeId,
+        code: 'node_not_found',
+        error: 'Node was not found.',
+      })),
+    ]
+  }
+
   function runBatch(
     kind: 'remove',
     nodes: ApiNode[],
@@ -472,6 +499,7 @@ export function useNodeLifecycleOps(options: {
     runOptions?: { skipConfirm?: boolean; force?: boolean },
   ): Promise<boolean> {
     if (nodes.length === 0) return false
+    lastStartErrors.value = []
     const nodeIds = nodes.map((n) => n.id)
     try {
       const preview = await previewNodeOperationsBatch({
@@ -480,6 +508,8 @@ export function useNodeLifecycleOps(options: {
         maxConcurrent: maxConcurrent.value,
         scope: resolveScope(),
       })
+      const previewErrors = previewStartErrors(preview)
+      lastStartErrors.value = previewErrors
       if (preview.eligible.length === 0) {
         ElMessage.warning({ message: explainIneligiblePreview(preview), grouping: true })
         return false
@@ -525,6 +555,7 @@ export function useNodeLifecycleOps(options: {
         force: Boolean(runOptions?.force),
         scope: resolveScope(),
       })
+      lastStartErrors.value = [...previewErrors, ...(batchResult.errors || [])]
 
       for (const started of batchResult.started || []) {
         const node = nodes.find((n) => n.id === started.node_id)
@@ -553,6 +584,12 @@ export function useNodeLifecycleOps(options: {
         })
       }
 
+      if (lastStartErrors.value.length) {
+        const first = lastStartErrors.value[0] || {}
+        const message = String(first.error || first.code || 'Node operation could not be started.')
+        ElMessage.error({ message, grouping: true })
+      }
+
       persistQueue()
       if (hasActiveOps.value) {
         startPolling()
@@ -560,7 +597,7 @@ export function useNodeLifecycleOps(options: {
         finishBatch()
         await options.onRefresh?.()
       }
-      return true
+      return lastStartErrors.value.length === 0
     } catch (e) {
       if (e instanceof NodeLifecycleApiError) {
         ElMessage.error({ message: e.message, grouping: true })
@@ -811,6 +848,7 @@ export function useNodeLifecycleOps(options: {
     completed,
     failed,
     skipped,
+    lastStartErrors,
     polling,
     hasActiveOps,
     activeBatchNodeIds,

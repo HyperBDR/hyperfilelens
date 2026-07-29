@@ -31,6 +31,24 @@ class MountStatus:
     )
 
 
+class ConnectionTestStatus:
+    IDLE = "idle"
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+    CHOICES = (
+        (IDLE, "Idle"),
+        (PENDING, "Pending"),
+        (RUNNING, "Running"),
+        (SUCCESS, "Success"),
+        (FAILED, "Failed"),
+    )
+
+    ACTIVE = frozenset({PENDING, RUNNING})
+
+
 class ResourceStatus:
     ACTIVE = "active"
     INACTIVE = "inactive"

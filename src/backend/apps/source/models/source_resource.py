@@ -5,7 +5,12 @@ from django.db import models
 
 from apps.node import agent_paths
 from apps.node.models.base import OrganizationScopedModel
-from apps.source.constants import MountStatus, ResourceStatus, ResourceType
+from apps.source.constants import (
+    ConnectionTestStatus,
+    MountStatus,
+    ResourceStatus,
+    ResourceType,
+)
 
 
 class SourceResource(OrganizationScopedModel):
@@ -53,6 +58,13 @@ class SourceResource(OrganizationScopedModel):
 
     last_connection_test = models.DateTimeField(null=True, blank=True)
     connection_test_result = models.TextField(blank=True, default="")
+    connection_test_status = models.CharField(
+        max_length=20,
+        choices=ConnectionTestStatus.CHOICES,
+        default=ConnectionTestStatus.IDLE,
+        db_index=True,
+    )
+    connection_probe_token = models.UUIDField(null=True, blank=True, editable=False)
 
     total_size = models.BigIntegerField(default=0)
     used_size = models.BigIntegerField(default=0)

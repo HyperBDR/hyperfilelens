@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -21,6 +22,7 @@ from apps.protection.models import (
 from apps.restore.models import RestorePlan
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
+from apps.source.tasks.connection_probe import run_source_resource_capacity_probe
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskResource
 
@@ -373,24 +375,42 @@ class SourceResourceApiTests(TestCase):
                 },
             },
         )
-        create = self.client.post(
-            "/api/v1/source/resources/",
-            {
-                "name": "nas-capacity-probe",
-                "resource_type": "nas",
-                "config": {
-                    "protocol": "nfs",
-                    "server": "192.168.1.50",
-                    "export_path": "/export/data",
-                    "path": custom_mount("nfs-export"),
-                },
-                "bound_node_id": self.node.id,
-            },
-            format="json",
-            **self._headers(),
-        )
+        with patch(
+            "apps.source.tasks.connection_probe.probe_source_resource_capacity.apply_async"
+        ) as apply_async:
+            with self.captureOnCommitCallbacks(execute=True):
+                create = self.client.post(
+                    "/api/v1/source/resources/",
+                    {
+                        "name": "nas-capacity-probe",
+                        "resource_type": "nas",
+                        "config": {
+                            "protocol": "nfs",
+                            "server": "192.168.1.50",
+                            "export_path": "/export/data",
+                            "path": custom_mount("nfs-export"),
+                        },
+                        "bound_node_id": self.node.id,
+                    },
+                    format="json",
+                    **self._headers(),
+                )
         self.assertEqual(create.status_code, status.HTTP_201_CREATED)
         resource = SourceResource.objects.get(id=create.data["id"])
+        self.assertEqual(resource.total_size, 0)
+        self.assertIsNone(resource.last_connection_test)
+        apply_async.assert_called_once()
+        self.assertEqual(
+            apply_async.call_args.kwargs["queue"],
+            "source.remote-io",
+        )
+
+        result = run_source_resource_capacity_probe(
+            **apply_async.call_args.kwargs["kwargs"]
+        )
+
+        self.assertEqual(result["status"], "success")
+        resource.refresh_from_db()
         self.assertEqual(resource.total_size, 1_000_000_000_000)
         self.assertEqual(resource.used_size, 250_000_000_000)
         self.assertEqual(resource.free_size, 750_000_000_000)
@@ -1609,6 +1629,18 @@ class BackupSourceBulkDeleteTests(TestCase):
             is_primary=True,
         )
 
+        preflight = self.client.post(
+            "/api/v1/source/backup-selectable/delete-preflight/",
+            {"ids": [f"agent:{self.agent.id}"]},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(preflight.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["code"] for item in preflight.data["blocking"]],
+            ["running_tasks"],
+        )
+
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
             {
@@ -1630,6 +1662,63 @@ class BackupSourceBulkDeleteTests(TestCase):
         )
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
+
+    def test_bulk_delete_force_does_not_bypass_source_nas_probe(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="probe-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+        )
+        resource = SourceResource.objects.create(
+            organization=self.org,
+            name="probing-source-nas",
+            resource_type="nas",
+            config={
+                "protocol": "nfs",
+                "server": "192.0.2.30",
+                "export_path": "/source",
+            },
+            bound_node=proxy,
+            connection_test_status="running",
+            connection_probe_token=uuid4(),
+        )
+
+        preflight = self.client.post(
+            "/api/v1/source/backup-selectable/delete-preflight/",
+            {"ids": [f"nas:{resource.id}"]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(preflight.status_code, status.HTTP_200_OK)
+        self.assertTrue(preflight.data["delete_disabled"])
+        self.assertEqual(
+            [item["code"] for item in preflight.data["blocking"]],
+            ["source_operation_in_progress"],
+        )
+
+        response = self.client.post(
+            "/api/v1/source/backup-selectable/bulk-delete/",
+            {
+                "ids": [f"nas:{resource.id}"],
+                "force": True,
+                "confirmation": "UNREGISTER",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            response.content,
+        )
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).exists()
+        )
+        resource.refresh_from_db()
+        self.assertFalse(resource.is_deleted)
 
     def test_bulk_delete_422_wraps_reasons_in_problem_meta(self):
         agent_key = f"agent:{self.agent.id}"

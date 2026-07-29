@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import logging
 import threading
+from uuid import UUID
 
 from django.db import transaction
 from django.utils import timezone
 
 from apps.node.models import Node
-from apps.source.constants import MountStatus, ResourceStatus, ResourceType
+from apps.source.constants import (
+    ConnectionTestStatus,
+    MountStatus,
+    ResourceStatus,
+    ResourceType,
+)
 from apps.source.models import SourceResource
 from apps.source.services.internal.nas_agent import (
     _task_error_message,
@@ -133,6 +139,12 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
         ResourceStatus.ACTIVE if result.get("success") else ResourceStatus.ERROR
     )
     resource.status_message = resource.connection_test_result
+    resource.connection_test_status = (
+        ConnectionTestStatus.SUCCESS
+        if result.get("success")
+        else ConnectionTestStatus.FAILED
+    )
+    resource.connection_probe_token = None
 
     details = result.get("details") or {}
     space = details.get("space_info") or {}
@@ -148,6 +160,39 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
         resource.mount_point = mount_point
         resource.mount_error = ""
     resource.save()
+
+
+def apply_connection_test_result_if_current(
+    *,
+    resource_id: int,
+    probe_token: UUID | str,
+    result: dict,
+    expected_bound_node_id: int | None = None,
+    require_mount: bool = False,
+) -> tuple[SourceResource | None, str]:
+    """Apply a probe result only while it still owns the source revision."""
+    with transaction.atomic():
+        resource = (
+            SourceResource.all_objects.select_for_update()
+            .filter(pk=resource_id)
+            .first()
+        )
+        if resource is None or resource.is_deleted:
+            return None, "source_deleted"
+        if resource.status in {ResourceStatus.REMOVING, ResourceStatus.REMOVED}:
+            return None, "source_removing"
+        if require_mount and not resource.requires_mount:
+            return None, "mount_not_required"
+        if (
+            expected_bound_node_id is not None
+            and int(resource.bound_node_id or 0)
+            != int(expected_bound_node_id or 0)
+        ):
+            return None, "proxy_binding_changed"
+        if str(resource.connection_probe_token or "") != str(probe_token or ""):
+            return None, "source_changed"
+        apply_connection_test_result(resource, result)
+        return resource, ""
 
 
 def mount_resource(resource: SourceResource) -> dict:
