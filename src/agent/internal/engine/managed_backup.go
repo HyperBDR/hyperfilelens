@@ -29,6 +29,7 @@ import (
 const (
 	managedRepositoryFSOperationTimeout  = 30 * time.Second
 	managedRepositoryKopiaCommandTimeout = 2 * time.Minute
+	managedRepositoryReadyTTL            = 30 * time.Second
 	kopiaEstimatedUsageFactor            = 1.05
 	repositoryAlreadyExistsCode          = "STORAGE.REPOSITORY_ALREADY_EXISTS"
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
@@ -64,6 +65,16 @@ type repositorySpec struct {
 	ServerCert      string
 	SessionID       string
 }
+
+type repositoryReadyEntry struct {
+	fingerprint string
+	readyAt     time.Time
+}
+
+var (
+	kopiaS3URLStyleCapabilities sync.Map
+	managedRepositoryReadiness  sync.Map
+)
 
 func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 	data, ok := raw.(map[string]any)
@@ -142,6 +153,19 @@ func resolveKopiaS3URLStyleCapability(ctx context.Context, bin string, spec *rep
 	if spec == nil || spec.Type != "s3" || spec.S3URLStyle == "auto" {
 		return nil
 	}
+	cacheKey := kopiaCapabilityCacheKey(bin)
+	if cached, ok := kopiaS3URLStyleCapabilities.Load(cacheKey); ok {
+		if cached.(bool) {
+			spec.S3URLStyleFlag = true
+			return nil
+		}
+		if spec.S3URLStyle == "virtual_hosted" {
+			return fmt.Errorf(
+				"repository requires virtual-hosted S3 URLs, but Kopia does not support --url-style; use the HyperFileLens-built Kopia artifact",
+			)
+		}
+		return nil
+	}
 	res, err := runProcessWithTimeout(
 		ctx,
 		10*time.Second,
@@ -151,9 +175,12 @@ func resolveKopiaS3URLStyleCapability(ctx context.Context, bin string, spec *rep
 		"",
 	)
 	supports := strings.Contains(res.Stdout+"\n"+res.Stderr, "--url-style")
-	if err == nil && supports {
-		spec.S3URLStyleFlag = true
-		return nil
+	if err == nil {
+		kopiaS3URLStyleCapabilities.Store(cacheKey, supports)
+		if supports {
+			spec.S3URLStyleFlag = true
+			return nil
+		}
 	}
 	if spec.S3URLStyle == "virtual_hosted" {
 		return fmt.Errorf(
@@ -161,6 +188,59 @@ func resolveKopiaS3URLStyleCapability(ctx context.Context, bin string, spec *rep
 		)
 	}
 	return nil
+}
+
+func kopiaCapabilityCacheKey(bin string) string {
+	info, err := os.Stat(bin)
+	if err != nil {
+		return filepath.Clean(bin)
+	}
+	return fmt.Sprintf("%s\x00%d\x00%d", filepath.Clean(bin), info.Size(), info.ModTime().UnixNano())
+}
+
+func repositoryConnectionFingerprint(spec repositorySpec) (string, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func repositoryReady(configFile string, spec repositorySpec) bool {
+	if _, err := os.Stat(configFile); err != nil {
+		invalidateRepositoryReady(configFile)
+		return false
+	}
+	fingerprint, err := repositoryConnectionFingerprint(spec)
+	if err != nil {
+		return false
+	}
+	value, ok := managedRepositoryReadiness.Load(filepath.Clean(configFile))
+	if !ok {
+		return false
+	}
+	entry := value.(repositoryReadyEntry)
+	if entry.fingerprint != fingerprint || time.Since(entry.readyAt) > managedRepositoryReadyTTL {
+		managedRepositoryReadiness.Delete(filepath.Clean(configFile))
+		return false
+	}
+	return true
+}
+
+func markRepositoryReady(configFile string, spec repositorySpec) {
+	fingerprint, err := repositoryConnectionFingerprint(spec)
+	if err != nil {
+		return
+	}
+	managedRepositoryReadiness.Store(filepath.Clean(configFile), repositoryReadyEntry{
+		fingerprint: fingerprint,
+		readyAt:     time.Now(),
+	})
+}
+
+func invalidateRepositoryReady(configFile string) {
+	managedRepositoryReadiness.Delete(filepath.Clean(configFile))
 }
 
 func s3ConnectionFingerprint(spec repositorySpec) (string, error) {
@@ -401,7 +481,9 @@ func (e *Engine) prepareManagedRepository(
 	if mkErr := os.MkdirAll(filepath.Dir(configFile), 0o700); mkErr != nil {
 		return "", nil, nil, repositorySpec{}, mkErr.Error()
 	}
+	lockStarted := time.Now()
 	return withRepositoryPrepareLock(ctx, configFile, func() (string, map[string]string, map[string]any, repositorySpec, string) {
+		slog.Info("managed_repository", "event", "prepare_lock_acquired", "task_id", taskID, "wait_ms", time.Since(lockStarted).Milliseconds())
 		return e.prepareManagedRepositoryLocked(ctx, rep, taskID, p, spec, bin, configFile, mode)
 	})
 }
@@ -483,29 +565,49 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		"repository_create":  nil,
 		"repository_connect": nil,
 	}
-	if spec.Type == "kopia_server" {
-		if mode == repositoryPrepareInitialize {
-			return "", nil, result, spec, "kopia_server repositories cannot be initialized"
-		}
+	if spec.Type == "kopia_server" && mode == repositoryPrepareInitialize {
+		return "", nil, result, spec, "kopia_server repositories cannot be initialized"
+	}
+	backupDirectoryID, managedBackupDirectory := payloadIntValue(p.Extra["backup_config_dir_id"])
+	managedBackupDirectory = managedBackupDirectory && backupDirectoryID > 0
+	if mode == repositoryPrepareConnect && managedBackupDirectory && repositoryReady(configFile, spec) {
+		result["repository_cached"] = true
+		slog.Info("managed_repository", "event", "ready_cache_hit", "task_id", taskID, "repo_type", spec.Type)
+		_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
+			"repository_ready",
+			"Repository ready",
+			map[string]any{"config_file": configFile, "cached": true},
+		))
+		return configFile, env, result, spec, ""
+	}
+
+	statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
+	runStatus := func(event string) (process.Result, error) {
+		started := time.Now()
+		slog.Info("managed_repository", "event", event+"_begin", "task_id", taskID, "repo_type", spec.Type)
+		statusRes, statusErr := runProcessWithTimeout(
+			ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "",
+		)
+		result["repository_status"] = commandResult(statusRes)
+		slog.Info("managed_repository", "event", event+"_finished", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds(), "ok", statusErr == nil)
+		return statusRes, statusErr
+	}
+	runConnect := func(event string) (process.Result, error) {
+		started := time.Now()
 		connectArgs := repositoryArgs(configFile, spec, false)
-		slog.Info("managed_repository", "event", "connect_begin", "task_id", taskID, "repo_type", spec.Type)
-		connectRes, connectErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "")
+		slog.Info("managed_repository", "event", event+"_begin", "task_id", taskID, "repo_type", spec.Type)
+		connectRes, connectErr := runProcessWithTimeout(
+			ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "",
+		)
 		result["repository_connect"] = commandResult(connectRes)
-		if connectErr != nil {
-			statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
-			statusRes, statusErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "")
-			result["repository_status"] = commandResult(statusRes)
-			if statusErr == nil {
-				slog.Info("managed_repository", "event", "connect_failed_status_ok", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
-			} else {
-				slog.Warn("managed_repository", "event", "connect_failed", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
-				return "", nil, result, spec, connectErr.Error()
-			}
-		} else {
-			slog.Info("managed_repository", "event", "connect_ok", "task_id", taskID, "repo_type", spec.Type)
-		}
-	} else if mode == repositoryPrepareInitialize {
+		slog.Info("managed_repository", "event", event+"_finished", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds(), "ok", connectErr == nil)
+		return connectRes, connectErr
+	}
+
+	statusVerified := false
+	if mode == repositoryPrepareInitialize {
 		createArgs := repositoryArgs(configFile, spec, true)
+		started := time.Now()
 		slog.Info("managed_repository", "event", "create_begin", "task_id", taskID, "repo_type", spec.Type)
 		createRes, createErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, createArgs, env, "")
 		result["repository_create"] = commandResult(createRes)
@@ -518,44 +620,52 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			slog.Warn("managed_repository", "event", "create_failed", "task_id", taskID, "repo_type", spec.Type, "err", createErr.Error())
 			return "", nil, result, spec, repositoryCommandFailureMessage(createRes, createErr)
 		}
-		slog.Info("managed_repository", "event", "create_ok", "task_id", taskID, "repo_type", spec.Type)
+		slog.Info("managed_repository", "event", "create_ok", "task_id", taskID, "repo_type", spec.Type, "duration_ms", time.Since(started).Milliseconds())
 	} else {
-		connectArgs := repositoryArgs(configFile, spec, false)
-		slog.Info("managed_repository", "event", "connect_begin", "task_id", taskID, "repo_type", spec.Type)
-		connectRes, connectErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "")
-		result["repository_connect"] = commandResult(connectRes)
+		if _, statErr := os.Stat(configFile); statErr == nil {
+			if _, statusErr := runStatus("status_first"); statusErr == nil {
+				markRepositoryReady(configFile, spec)
+				slog.Info("managed_repository", "event", "status_first_ok", "task_id", taskID, "repo_type", spec.Type)
+				_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
+					"repository_ready",
+					"Repository ready",
+					map[string]any{"config_file": configFile, "reused": true},
+				))
+				return configFile, env, result, spec, ""
+			}
+			invalidateRepositoryReady(configFile)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", nil, result, spec, statErr.Error()
+		}
+
+		_, connectErr := runConnect("connect")
 		if connectErr != nil {
-			statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
-			statusRes, statusErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "")
-			result["repository_status"] = commandResult(statusRes)
-			if statusErr != nil {
+			if _, statusErr := runStatus("status_after_connect_error"); statusErr == nil {
+				slog.Info("managed_repository", "event", "connect_failed_status_ok", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
+				statusVerified = true
+			} else {
 				slog.Warn("managed_repository", "event", "connect_failed", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
 				return "", nil, result, spec, connectErr.Error()
 			}
-			slog.Info("managed_repository", "event", "connect_failed_status_ok", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
-		} else {
-			slog.Info("managed_repository", "event", "connect_ok", "task_id", taskID, "repo_type", spec.Type)
 		}
 	}
-	statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
-	slog.Info("managed_repository", "event", "status_begin", "task_id", taskID, "repo_type", spec.Type)
-	statusRes, statusErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "")
-	result["repository_status"] = commandResult(statusRes)
+	statusRes := process.Result{}
+	var statusErr error
+	if !statusVerified {
+		statusRes, statusErr = runStatus("status")
+	}
 	if statusErr != nil {
 		if mode == repositoryPrepareInitialize {
 			slog.Warn("managed_repository", "event", "status_failed_after_create", "task_id", taskID, "repo_type", spec.Type, "err", statusErr.Error())
 			return "", nil, result, spec, repositoryCommandFailureMessage(statusRes, statusErr)
 		}
 		slog.Info("managed_repository", "event", "status_failed_reconnect_begin", "task_id", taskID, "repo_type", spec.Type, "err", statusErr.Error())
-		connectArgs := repositoryArgs(configFile, spec, false)
-		connectRes, connectErr := runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, connectArgs, env, "")
-		result["repository_connect"] = commandResult(connectRes)
+		_, connectErr := runConnect("reconnect")
 		if connectErr != nil {
 			slog.Warn("managed_repository", "event", "reconnect_failed", "task_id", taskID, "repo_type", spec.Type, "err", connectErr.Error())
 			return "", nil, result, spec, connectErr.Error()
 		}
-		statusRes, statusErr = runProcessWithTimeout(ctx, managedRepositoryKopiaCommandTimeout, bin, statusArgs, env, "")
-		result["repository_status"] = commandResult(statusRes)
+		statusRes, statusErr = runStatus("status_after_reconnect")
 		if statusErr != nil {
 			slog.Warn("managed_repository", "event", "status_failed", "task_id", taskID, "repo_type", spec.Type, "err", statusErr.Error())
 			return "", nil, result, spec, statusErr.Error()
@@ -567,6 +677,7 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			return "", nil, result, spec, err.Error()
 		}
 	}
+	markRepositoryReady(configFile, spec)
 
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"repository_ready",
@@ -986,8 +1097,10 @@ func (e *Engine) runManagedPolicyApply(
 		result[key] = value
 	}
 	if policyErr != nil {
+		invalidateRepositoryReady(configFile)
 		return "failed", result, policyErr.Error()
 	}
+	markRepositoryReady(configFile, repository)
 	return "success", result, ""
 }
 
@@ -1029,7 +1142,13 @@ func (e *Engine) runManagedPreparedSnapshot(
 		return "failed", result, lockErr.Error()
 	}
 	defer releasePathLock()
-	return runPreparedManagedSnapshot(ctx, rep, taskID, bin, configFile, env, p.Path, result)
+	status, snapshotResult, errMsg := runPreparedManagedSnapshot(
+		ctx, rep, taskID, bin, configFile, env, p.Path, result,
+	)
+	if status != "success" {
+		invalidateRepositoryReady(configFile)
+	}
+	return status, snapshotResult, errMsg
 }
 
 func runPreparedManagedBackup(

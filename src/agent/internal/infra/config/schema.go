@@ -20,6 +20,7 @@ var Registry = []Field{
 	{Env: "HFL_DATA_DIR", Key: "data_dir", Persistent: true, Description: "Agent state directory"},
 	{Env: "HFL_LOG_DIR", Key: "log_dir", Persistent: true, Description: "Rolling log directory"},
 	{Env: "HFL_KOPIA_PATH", Key: "kopia_path", Persistent: true, Description: "Kopia CLI absolute path"},
+	{Env: "HFL_BACKUP_SNAPSHOT_CONCURRENCY", Key: "backup_snapshot_concurrency", Persistent: true, Description: "Maximum concurrent prepared backup snapshots"},
 	{Env: "HFL_NODE_ROLE", Key: "role", Persistent: true, Description: "Topology role: agent|proxy|gateway"},
 }
 

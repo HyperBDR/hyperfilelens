@@ -185,6 +185,11 @@ class ProviderCatalogValidationTests(TransactionTestCase):
 
     def test_cancel_without_cloud_resources_does_not_require_expired_credentials(self):
         run, _send_task = self._create()
+        region = run.region_validations.order_by("id").first()
+        assert region is not None
+        region.status = StorageProviderRegionValidation.Status.RUNNING
+        region.current_step = StorageProviderRegionValidation.Step.CREATE_BUCKET
+        region.save(update_fields=["status", "current_step", "updated_at"])
         run.status = StorageProviderValidationRun.Status.VALIDATION_FAILED
         run.save(update_fields=["status", "updated_at"])
         delete_validation_credentials(run.id)
@@ -200,8 +205,27 @@ class ProviderCatalogValidationTests(TransactionTestCase):
         self.assertEqual(run.status, StorageProviderValidationRun.Status.CANCELLED)
         self.assertIsNone(run.candidate_config)
         self.assertIsNone(run.candidate_checksum)
+        region.refresh_from_db()
+        self.assertEqual(region.status, StorageProviderRegionValidation.Status.CANCELLED)
+        self.assertIsNone(region.current_step)
+        self.assertFalse(
+            run.region_validations.exclude(
+                status=StorageProviderRegionValidation.Status.CANCELLED
+            ).exists()
+        )
         with self.assertRaises(ProviderCredentialUnavailable):
             load_validation_credentials(run.id)
+
+        with patch("apps.storage.provider_catalog.validation.current_app.send_task"):
+            replacement = create_validation_run(
+                provider_id="aliyun",
+                region_ids=[_aliyun_candidate()["regions"][0]["id"]],
+                access_key_id="replacement-access-key",
+                secret_access_key="replacement-secret-key",
+                requested_by_id=self.user.pk,
+                candidate_config=_aliyun_candidate(suffix=" Replacement"),
+            )
+        self.assertNotEqual(replacement.id, run.id)
 
     def test_worker_success_creates_current_validation_evidence(self):
         candidate = _aliyun_candidate(suffix=" Validated")
@@ -293,6 +317,39 @@ class ProviderCatalogValidationTests(TransactionTestCase):
         cleanup_expired_validation_runs()
         self.assertTrue(StorageProviderValidationRun.objects.filter(pk=run.pk).exists())
 
+    def test_endpoint_policy_failure_marks_region_failed_and_allows_replacement(self):
+        candidate = _aliyun_candidate()
+        run, _send_task = self._create(
+            candidate=candidate,
+            region_ids=[candidate["regions"][0]["id"]],
+        )
+        with patch(
+            "apps.storage.provider_catalog.validation.validate_region",
+            side_effect=ProviderEndpointPolicyError(
+                "ENDPOINT_PRIVATE_ADDRESS",
+                "Endpoint resolves to an unauthorized network address.",
+            ),
+        ):
+            execute_validation_run(run.id)
+
+        run.refresh_from_db()
+        region = run.region_validations.get()
+        self.assertEqual(run.status, StorageProviderValidationRun.Status.VALIDATION_FAILED)
+        self.assertEqual(run.error_code, "ENDPOINT_PRIVATE_ADDRESS")
+        self.assertEqual(region.status, StorageProviderRegionValidation.Status.FAILED)
+        self.assertEqual(region.error_code, "ENDPOINT_PRIVATE_ADDRESS")
+
+        with patch("apps.storage.provider_catalog.validation.current_app.send_task"):
+            replacement = create_validation_run(
+                provider_id="aliyun",
+                region_ids=[candidate["regions"][0]["id"]],
+                access_key_id="replacement-access-key",
+                secret_access_key="replacement-secret-key",
+                requested_by_id=self.user.pk,
+                candidate_config=candidate,
+            )
+        self.assertNotEqual(replacement.id, run.id)
+
     def test_model_constraints_reject_duplicate_region_and_invalid_status(self):
         run, _send_task = self._create()
         region = run.region_validations.first()
@@ -321,6 +378,52 @@ class ProviderCatalogValidationTests(TransactionTestCase):
 
 
 class ProviderBucketOwnershipTests(SimpleTestCase):
+    def test_validation_bucket_creation_targets_the_selected_region(self):
+        cases = [
+            (
+                "huaweicloud",
+                "cn-north-4",
+                {"LocationConstraint": "cn-north-4"},
+            ),
+            ("aws", "us-east-1", None),
+        ]
+        for provider_id, region_id, expected_configuration in cases:
+            with self.subTest(provider_id=provider_id, region_id=region_id):
+                context = cloud_validation.RegionValidationContext(
+                    run_id=StorageProviderValidationRun._meta.get_field("id").default(),
+                    provider_id=provider_id,
+                    region={"id": region_id},
+                    credentials=ProviderCredentials("access", "secret"),
+                )
+
+                args = cloud_validation._create_bucket_args(context, "validation-bucket")
+
+                self.assertEqual(args["Bucket"], "validation-bucket")
+                self.assertEqual(
+                    args.get("CreateBucketConfiguration"),
+                    expected_configuration,
+                )
+
+    def test_cloud_client_error_retains_safe_provider_diagnostics(self):
+        error = cloud_validation.ClientError(
+            {
+                "Error": {
+                    "Code": "InvalidLocationConstraint",
+                    "Message": "The specified location does not match the endpoint.",
+                },
+                "ResponseMetadata": {"HTTPStatusCode": 400},
+            },
+            "CreateBucket",
+        )
+
+        message = cloud_validation._cloud_operation_message(error)
+
+        self.assertEqual(
+            message,
+            "Cloud storage validation failed: InvalidLocationConstraint: "
+            "The specified location does not match the endpoint.",
+        )
+
     @patch("apps.storage.provider_catalog.security.socket.getaddrinfo")
     def test_managed_network_check_accepts_any_public_https_hostname(self, getaddrinfo):
         getaddrinfo.return_value = [
@@ -339,6 +442,40 @@ class ProviderBucketOwnershipTests(SimpleTestCase):
             validate_managed_endpoint_network("https://objects.example.net")
 
         self.assertEqual(caught.exception.code, "ENDPOINT_PRIVATE_ADDRESS")
+
+    @patch(
+        "apps.storage.provider_catalog.security.provider_validation_allow_proxy_fake_ip",
+        return_value=True,
+    )
+    @patch("apps.storage.provider_catalog.security.socket.getaddrinfo")
+    def test_managed_network_check_accepts_proxy_fake_ip_when_enabled(
+        self,
+        getaddrinfo,
+        _allow_proxy_fake_ip,
+    ):
+        getaddrinfo.return_value = [
+            (2, 1, 6, "", ("198.18.2.161", 443)),
+            (10, 1, 6, "", ("fdfe:dcba:9876::152", 443, 0, 0)),
+        ]
+
+        validate_managed_endpoint_network("https://objects.example.net")
+
+    @patch(
+        "apps.storage.provider_catalog.security.provider_validation_allow_proxy_fake_ip",
+        return_value=True,
+    )
+    @patch("apps.storage.provider_catalog.security.socket.getaddrinfo")
+    def test_proxy_fake_ip_setting_does_not_allow_other_private_addresses(
+        self,
+        getaddrinfo,
+        _allow_proxy_fake_ip,
+    ):
+        getaddrinfo.return_value = [
+            (2, 1, 6, "", ("127.0.0.1", 443)),
+        ]
+
+        with self.assertRaises(ProviderEndpointPolicyError):
+            validate_managed_endpoint_network("https://objects.example.net")
 
     def test_validation_connection_uses_external_endpoint_only(self):
         provider = _aliyun_candidate()

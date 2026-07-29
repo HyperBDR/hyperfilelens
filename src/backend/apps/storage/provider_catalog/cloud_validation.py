@@ -122,6 +122,17 @@ def _bucket_exists(client, bucket_name: str) -> bool:
         raise
 
 
+def _create_bucket_args(
+    context: RegionValidationContext,
+    bucket_name: str,
+) -> dict[str, object]:
+    args: dict[str, object] = {"Bucket": bucket_name}
+    region = str(context.region.get("id") or "").strip()
+    if region and region != "us-east-1":
+        args["CreateBucketConfiguration"] = {"LocationConstraint": region}
+    return args
+
+
 def _create_owned_bucket(
     context: RegionValidationContext,
     *,
@@ -135,7 +146,7 @@ def _create_owned_bucket(
             set_bucket(None)
             continue
         try:
-            client.create_bucket(Bucket=bucket_name)
+            client.create_bucket(**_create_bucket_args(context, bucket_name))
         except ClientError as exc:
             if _error_code(exc) in {"BucketAlreadyExists", "BucketAlreadyOwnedByYou"}:
                 set_bucket(None)
@@ -168,6 +179,17 @@ def _create_owned_bucket(
         "BUCKET_NAME_EXHAUSTED",
         "Unable to allocate a unique validation Bucket name.",
     )
+
+
+def _cloud_operation_message(exc: BotoCoreError | ClientError) -> str:
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code") or "").strip()
+        message = str(error.get("Message") or "").strip()
+        detail = ": ".join(part for part in (code, message) if part)
+        if detail:
+            return f"Cloud storage validation failed: {detail}"
+    return "Cloud storage validation failed."
 
 
 def _verify_ownership(
@@ -529,7 +551,7 @@ def validate_region(
         if isinstance(error, (BotoCoreError, ClientError)):
             raise ProviderRegionValidationError(
                 "CLOUD_OPERATION_FAILED",
-                "Cloud storage validation failed.",
+                _cloud_operation_message(error),
             ) from error
         raise ProviderRegionValidationError(
             "VALIDATION_FAILED",

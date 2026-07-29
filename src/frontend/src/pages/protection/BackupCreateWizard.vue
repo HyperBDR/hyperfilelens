@@ -1109,6 +1109,7 @@ const filterPolicyBatchDialogOpen = ref(false)
 const activeFilterPolicyBatchOperation = ref<FilterPolicyBatchOperation>('policy')
 type HflPopoverInstance = InstanceType<typeof HflPopover>
 const optionPopoverRefs = ref<HflPopoverInstance[]>([])
+const configSelectMenuOpen = ref(false)
 const nasTargetModes = reactive<Record<string, NasTargetMode>>({})
 const sourcePolicyMap = ref<Record<string, string>>({})
 const createRecoveryPlanMap = ref<Record<string, CreateRecoveryPlanConfig>>({})
@@ -1190,6 +1191,10 @@ function hideOptionPopovers() {
 
 function handleOptionSelectVisibleChange(visible: boolean) {
   if (!visible) hideOptionPopovers()
+}
+
+function handleConfigSelectVisibleChange(visible: boolean) {
+  configSelectMenuOpen.value = visible
 }
 
 function closeBatchFilterSelect() {
@@ -6190,11 +6195,20 @@ function preserveShallowestPathOrder(paths: string[]) {
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('protection.backupsPage.labelBackupDirs')" min-width="180">
+                <el-table-column
+                  :label="t('protection.backupsPage.labelBackupDirs')"
+                  min-width="180"
+                  class-name="hfl-table-no-tooltip"
+                >
                   <template #default="{ row: group }">
-                    <HflPopover trigger="hover" placement="top-start" :width="520">
+                    <HflPopover
+                      trigger="hover"
+                      placement="bottom-start"
+                      :width="520"
+                      :disabled="configSelectMenuOpen"
+                    >
                       <template #reference>
-                        <div class="create-source-dir-preview">
+                        <div class="create-source-dir-preview hfl-table-no-tooltip">
                           <div class="create-source-dir-preview__count">
                             {{ t('protection.backupsPage.addedDirTotal', { n: group.entries.length }) }}
                           </div>
@@ -6237,7 +6251,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                     </HflPopover>
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('protection.backupsPage.labelBackupPolicy')" min-width="220">
+                <el-table-column
+                  :label="t('protection.backupsPage.labelBackupPolicy')"
+                  min-width="220"
+                  class-name="hfl-table-no-tooltip"
+                >
                   <template #default="{ row: group }">
                     <div class="create-config-summary-cell">
                       <div class="create-config-select-row">
@@ -6250,7 +6268,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 class="target-picker-grid__target"
                                 popper-class="create-policy-select-popper"
                                 @update:model-value="setGroupPolicyId(group, String($event ?? ''))"
-                                @visible-change="handleOptionSelectVisibleChange"
+                                @visible-change="handleConfigSelectVisibleChange"
                               >
                                 <el-option
                                   v-for="pol in realPolicies"
@@ -6337,7 +6355,14 @@ function preserveShallowestPathOrder(paths: string[]) {
                           <RefreshCw :size="15" stroke-width="2" :class="{ 'is-spinning': policiesRefreshing }" />
                         </ElButton>
                       </div>
-                      <HflPopover v-if="getRealPolicy(groupPolicyId(group))" trigger="hover" placement="bottom-start" :width="420" popper-class="create-policy-option-popper">
+                      <HflPopover
+                        v-if="getRealPolicy(groupPolicyId(group))"
+                        trigger="hover"
+                        placement="bottom-start"
+                        :width="420"
+                        :disabled="configSelectMenuOpen"
+                        popper-class="create-policy-option-popper"
+                      >
                         <template #reference>
                           <span class="create-config-selected-summary hfl-table-no-tooltip">
                             <span
@@ -6411,7 +6436,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('protection.backupsPage.labelFileFilter')" min-width="220">
+                <el-table-column
+                  :label="t('protection.backupsPage.labelFileFilter')"
+                  min-width="220"
+                  class-name="hfl-table-no-tooltip"
+                >
                   <template #default="{ row: group }">
                     <div class="create-config-summary-cell">
                       <div class="create-config-select-row">
@@ -6424,7 +6453,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 class="target-picker-grid__target"
                                 popper-class="create-policy-select-popper"
                                 @update:model-value="(value) => setGroupFilterId(group, String(value || ''))"
-                                @visible-change="handleOptionSelectVisibleChange"
+                                @visible-change="handleConfigSelectVisibleChange"
                               >
                                 <el-option
                                   v-for="gf in realFilters"
@@ -6522,7 +6551,14 @@ function preserveShallowestPathOrder(paths: string[]) {
                           <RefreshCw :size="15" stroke-width="2" :class="{ 'is-spinning': filtersRefreshing }" />
                         </ElButton>
                       </div>
-                      <HflPopover v-if="getRealFilter(groupFilterId(group))" trigger="hover" placement="bottom-start" :width="460" popper-class="create-policy-option-popper">
+                      <HflPopover
+                        v-if="getRealFilter(groupFilterId(group))"
+                        trigger="hover"
+                        placement="bottom-start"
+                        :width="460"
+                        :disabled="configSelectMenuOpen"
+                        popper-class="create-policy-option-popper"
+                      >
                         <template #reference>
                           <span class="create-config-selected-summary hfl-table-no-tooltip">
                             <span
@@ -6593,7 +6629,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('protection.backupsPage.labelCompressionStrategy')" min-width="208">
+                <el-table-column
+                  :label="t('protection.backupsPage.labelCompressionStrategy')"
+                  min-width="208"
+                  class-name="hfl-table-no-tooltip"
+                >
                   <template #default="{ row: group }">
                     <div class="create-config-summary-cell create-config-compression-cell">
                       <div class="create-config-select-row">
@@ -6605,6 +6645,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             :options="compressionOptions"
                             :aria-label="t('protection.backupsPage.labelCompressionStrategy')"
                             @update:model-value="(value) => value && setGroupCompression(group, value)"
+                            @visible-change="handleConfigSelectVisibleChange"
                           />
                         </div>
                       </div>
@@ -6613,6 +6654,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                         placement="bottom-start"
                         :width="288"
                         :fallback-placements="['bottom-start', 'bottom-end']"
+                        :disabled="configSelectMenuOpen"
                         popper-class="create-policy-option-popper create-compression-description-popper"
                       >
                         <template #reference>

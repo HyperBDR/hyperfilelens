@@ -146,6 +146,38 @@ func TestRepositoryArgsIncludePatchedS3URLStyle(t *testing.T) {
 	}
 }
 
+func TestResolveKopiaS3URLStyleCapabilityCachesByBinaryIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\necho '--url-style string'\nexit 0\n",
+		commandLog,
+	)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		spec := repositorySpec{Type: "s3", S3URLStyle: "virtual_hosted"}
+		if err := resolveKopiaS3URLStyleCapability(context.Background(), kopiaPath, &spec); err != nil {
+			t.Fatal(err)
+		}
+		if !spec.S3URLStyleFlag {
+			t.Fatal("expected cached capability to set S3 URL style flag")
+		}
+	}
+	raw, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(raw), "repository create s3 --help"); got != 1 {
+		t.Fatalf("capability probe ran %d times, want 1: %q", got, string(raw))
+	}
+}
+
 func TestS3ConnectionFingerprintChangesWithURLStyleAndCredentials(t *testing.T) {
 	spec := repositorySpec{
 		Type:            "s3",
@@ -381,6 +413,110 @@ func TestManagedRepositoryStatusHealthOnlyControlsUsageMetrics(t *testing.T) {
 				t.Fatalf("content stats present=%v, want %v: %q", got, tt.wantContentStats, commands)
 			}
 		})
+	}
+}
+
+func TestManagedRepositoryReadyCacheSkipsRepeatedConnectAndStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase \"$*\" in *\"repository connect\"*) touch \"${1#--config-file=}\" ;; esac\nexit 0\n",
+		commandLog,
+	)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   filepath.Join(tempDir, "data"),
+		KopiaPath: kopiaPath,
+	}})
+	payload := ParsePayload(map[string]any{
+		"health_only":          true,
+		"backup_config_dir_id": 7,
+		"repository": map[string]any{
+			"id":             84,
+			"type":           "proxy_fs",
+			"path":           filepath.Join(tempDir, "repository"),
+			"kopia_password": "repo-pass",
+		},
+	})
+
+	for _, taskID := range []string{"task-1", "task-2"} {
+		status, result, message := engine.runManagedRepositoryStatus(
+			context.Background(), ReporterSink{}, taskID, payload,
+		)
+		if status != "success" {
+			t.Fatalf("task=%s status=%q message=%q result=%#v", taskID, status, message, result)
+		}
+	}
+	raw, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := string(raw)
+	if got := strings.Count(commands, "repository connect filesystem"); got != 1 {
+		t.Fatalf("connect ran %d times, want 1: %q", got, commands)
+	}
+	if got := strings.Count(commands, "repository status"); got != 1 {
+		t.Fatalf("status ran %d times, want 1: %q", got, commands)
+	}
+}
+
+func TestManagedRepositoryUsesStatusFirstForExistingConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	tempDir := t.TempDir()
+	commandLog := filepath.Join(tempDir, "commands.log")
+	kopiaPath := filepath.Join(tempDir, "kopia")
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n",
+		commandLog,
+	)
+	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(staticConfigProvider{cfg: &model.AgentConfig{
+		DataDir:   filepath.Join(tempDir, "data"),
+		KopiaPath: kopiaPath,
+	}})
+	spec := repositorySpec{ID: 85, Type: "proxy_fs"}
+	configFile := engine.repositoryConfigPath(spec)
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configFile, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := ParsePayload(map[string]any{
+		"health_only": true,
+		"repository": map[string]any{
+			"id":             85,
+			"type":           "proxy_fs",
+			"path":           filepath.Join(tempDir, "repository"),
+			"kopia_password": "repo-pass",
+		},
+	})
+	status, result, message := engine.runManagedRepositoryStatus(
+		context.Background(), ReporterSink{}, "task-1", payload,
+	)
+	if status != "success" {
+		t.Fatalf("status=%q message=%q result=%#v", status, message, result)
+	}
+	raw, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := string(raw)
+	if strings.Contains(commands, "repository connect") {
+		t.Fatalf("existing healthy config should not reconnect: %q", commands)
+	}
+	if got := strings.Count(commands, "repository status"); got != 1 {
+		t.Fatalf("status ran %d times, want 1: %q", got, commands)
 	}
 }
 

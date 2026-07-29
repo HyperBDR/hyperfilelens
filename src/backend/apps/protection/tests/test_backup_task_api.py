@@ -24,6 +24,7 @@ from apps.protection.services.backup_orchestrator import (
     _repository_public_host,
     cancel_backup,
     project_backup_node_task_result,
+    queue_backup_result_projection,
     reconcile_backup_tasks,
 )
 from apps.protection.services.backup_task import (
@@ -106,6 +107,32 @@ class ProtectionBackupTaskApiTests(TestCase):
 
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
+
+    @patch("apps.protection.tasks.backup.advance_backup_task.delay")
+    def test_policy_prepare_result_immediately_queues_backup_advance(self, mock_delay):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-policy-result-followup",
+        )
+        node_task = NodeTask.objects.create(
+            organization_id=self.org.id,
+            node=self.agent,
+            kind="repository.policy.apply",
+            status=NodeTask.Status.SUCCESS,
+            correlation_type=(
+                protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE
+            ),
+            correlation_id=str(task.task_uuid),
+            payload={"backup_config_dir_id": self.config.directories.first().id},
+            result={},
+            watchdog_deadline_at=timezone.now(),
+        )
+
+        self.assertTrue(queue_backup_result_projection(node_task=node_task))
+        mock_delay.assert_called_once_with(
+            organization_id=self.org.id,
+            task_uuid=str(task.task_uuid),
+            source_snapshot_id=snapshot.id,
+        )
 
     def _async_outcome(
         self,

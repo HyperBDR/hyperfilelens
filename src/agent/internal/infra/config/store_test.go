@@ -12,8 +12,9 @@ func TestStoreReloadFromEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, agentEnvFileName)
 	if err := WriteEnvFile(envPath, map[string]string{
-		"HFL_WSS_URL": "wss://first.example/ws/node/agent/",
-		"HFL_NODE_ROLE": "agent",
+		"HFL_WSS_URL":                     "wss://first.example/ws/node/agent/",
+		"HFL_NODE_ROLE":                   "agent",
+		"HFL_BACKUP_SNAPSHOT_CONCURRENCY": "4",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -29,9 +30,12 @@ func TestStoreReloadFromEnvFile(t *testing.T) {
 	if got := s.Current().WSSURL; got != "wss://first.example/ws/node/agent/" {
 		t.Fatalf("wss_url = %q", got)
 	}
+	if got := s.Current().BackupSnapshotConcurrency; got != 4 {
+		t.Fatalf("backup_snapshot_concurrency = %d", got)
+	}
 
 	if err := WriteEnvFile(envPath, map[string]string{
-		"HFL_WSS_URL": "wss://second.example/ws/node/agent/",
+		"HFL_WSS_URL":   "wss://second.example/ws/node/agent/",
 		"HFL_NODE_ROLE": "proxy",
 	}); err != nil {
 		t.Fatal(err)
@@ -51,7 +55,7 @@ func TestStoreReloadFromEnvFile(t *testing.T) {
 func TestParseEnvFileRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.env")
 	values := map[string]string{
-		"HFL_WSS_URL": "wss://x/ws/",
+		"HFL_WSS_URL":    "wss://x/ws/",
 		"HFL_NODE_TOKEN": "secret-token",
 	}
 	if err := WriteEnvFile(path, values); err != nil {

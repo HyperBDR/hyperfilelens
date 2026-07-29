@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
   CloudCog,
   Download,
   FileJson,
@@ -10,12 +13,15 @@ import {
   RotateCcw,
   Search,
   Upload,
+  X,
 } from 'lucide-vue-next'
 import JsonCodeEditor from '../../../components/JsonCodeEditor.vue'
 import HflTablePanel from '../../../components/HflTablePanel.vue'
 import ModulePage from '../../../components/ModulePage.vue'
+import WizardSteps from '../../../components/WizardSteps.vue'
 import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDrawerWidth'
 import { apiErrorMessage } from '../../../lib/api'
+import { formatLocalDateTime } from '../../../lib/dateTime'
 import {
   applyProviderImport,
   cancelProviderValidationRun,
@@ -24,7 +30,6 @@ import {
   diffProviderImport,
   exportProviders,
   fetchPlatformStorageProviders,
-  normalizedStorageProviderSnapshot,
   retryProviderValidationRun,
   reviewProviderImport,
   reviewProviderReset,
@@ -36,10 +41,13 @@ import {
   type ProviderValidationStatus,
   type StorageProvider,
   type StorageProviderConfig,
+  type StorageProviderRegion,
 } from '../../../lib/storageProviderCatalogApi'
 import PlatformOpsDetailSection from '../../components/PlatformOpsDetailSection.vue'
 import { usePlatformOpsSideNav } from '../../composables/usePlatformOpsSideNav'
+import ProviderDiffDialog from './ProviderDiffDialog.vue'
 import ProviderDiffDetails from './ProviderDiffDetails.vue'
+import ProviderImportRegionReview from './ProviderImportRegionReview.vue'
 
 const { t } = useI18n()
 const sideNav = usePlatformOpsSideNav()
@@ -52,7 +60,10 @@ const selectedProviders = ref<StorageProvider[]>([])
 const providerDetailsOpen = ref(false)
 const regionSearch = ref('')
 const actionLoading = ref(false)
+const validationRefreshLoading = ref(false)
+const VALIDATION_REGION_LIMIT = 10
 let pollTimer: number | null = null
+let validationPollTimer: number | null = null
 
 const providers = computed(() => response.value?.providers || [])
 const selectedProvider = computed(() => (
@@ -115,6 +126,9 @@ async function load({ quiet = false } = {}) {
   loadError.value = ''
   try {
     response.value = await fetchPlatformStorageProviders()
+    for (const run of response.value.validation_runs) {
+      if (importRuns[run.provider_id]) importRuns[run.provider_id] = run
+    }
     if (providerDetailsOpen.value && !selectedProvider.value) providerDetailsOpen.value = false
   } catch (error) {
     loadError.value = apiErrorMessage(error, t('platformOps.storageProviders.loadFailed'))
@@ -123,35 +137,28 @@ async function load({ quiet = false } = {}) {
   }
 }
 
-watch(hasActiveRun, (active) => {
-  if (active && pollTimer === null) {
-    pollTimer = window.setInterval(() => void load({ quiet: true }), 3000)
-  } else if (!active && pollTimer !== null) {
-    window.clearInterval(pollTimer)
-    pollTimer = null
-  }
-}, { immediate: true })
-
-onMounted(load)
-onBeforeUnmount(() => {
-  if (pollTimer !== null) window.clearInterval(pollTimer)
-  clearSecrets()
-})
-
 // Import Edit -> Review -> Apply flow.
 type ImportCredential = { access_key_id: string; secret_access_key: string }
 const importOpen = ref(false)
 const importStep = ref<'editing' | 'reviewing' | 'success'>('editing')
 const importContent = ref('')
 const importPreview = ref<ProviderImportPreview | null>(null)
+const diffDialogOpen = ref(false)
 const importReview = ref<ProviderImportReview | null>(null)
 const importError = ref('')
-const riskConfirmations = ref<string[]>([])
 const importCredentials = reactive<Record<string, ImportCredential>>({})
 const importRegionIds = reactive<Record<string, string[]>>({})
 const importRuns = reactive<Record<string, ProviderValidationRun>>({})
-const validationSnapshots = reactive<Record<string, string>>({})
 const validationLoading = reactive<Record<string, boolean>>({})
+const validationDialogStep = ref<'scope' | 'result'>('scope')
+const validationProviderId = ref('')
+const validationDialogError = ref('')
+
+const importWizardSteps = computed(() => [
+  { step: 'editing', label: t('platformOps.storageProviders.editConfiguration'), icon: FileJson },
+  { step: 'reviewing', label: t('platformOps.storageProviders.review'), icon: CloudCog },
+  { step: 'success', label: t('platformOps.storageProviders.done'), icon: Check },
+])
 
 function clearSecrets() {
   for (const value of Object.values(importCredentials)) {
@@ -169,6 +176,80 @@ const parsedImportProviders = computed<StorageProviderConfig[]>(() => {
   }
 })
 
+const validationProvider = computed(() => (
+  parsedImportProviders.value.find((provider) => provider.id === validationProviderId.value) || null
+))
+const selectedValidationRegionIds = computed(() => {
+  const provider = validationProvider.value
+  return provider ? importRegionIds[provider.id] || [] : []
+})
+const validationRegionGroups = computed(() => {
+  const groups = new Map<string, { label: string; regions: StorageProviderRegion[] }>()
+  for (const region of validationProvider.value?.regions || []) {
+    const key = region.region_group || region.region_group_en || region.id
+    const group = groups.get(key) || {
+      label: region.region_group_en || region.region_group || key,
+      regions: [],
+    }
+    group.regions.push(region)
+    groups.set(key, group)
+  }
+  return Array.from(groups, ([key, group]) => ({ key, ...group }))
+})
+const validationRun = computed(() => (
+  validationProvider.value ? importRun(validationProvider.value.id) : undefined
+))
+const canStartValidation = computed(() => {
+  const provider = validationProvider.value
+  if (!provider) return false
+  const credentials = importCredentials[provider.id]
+  const regionCount = importRegionIds[provider.id]?.length || 0
+  return Boolean(
+    credentials?.access_key_id
+    && credentials.secret_access_key
+    && regionCount >= 1
+    && regionCount <= VALIDATION_REGION_LIMIT,
+  )
+})
+
+async function refreshValidationTool() {
+  if (validationRefreshLoading.value) return
+  validationRefreshLoading.value = true
+  try {
+    await load({ quiet: true })
+    const run = validationRun.value
+    if (run && activeStatuses.includes(run.status)) validationDialogStep.value = 'result'
+  } finally {
+    validationRefreshLoading.value = false
+  }
+}
+
+watch(() => hasActiveRun.value && !importOpen.value, (active) => {
+  if (active && pollTimer === null) {
+    pollTimer = window.setInterval(() => void load({ quiet: true }), 3000)
+  } else if (!active && pollTimer !== null) {
+    window.clearInterval(pollTimer)
+    pollTimer = null
+  }
+}, { immediate: true })
+
+watch(() => importOpen.value && importStep.value === 'editing', (visible) => {
+  if (visible && validationPollTimer === null) {
+    void refreshValidationTool()
+    validationPollTimer = window.setInterval(() => void refreshValidationTool(), 15_000)
+  } else if (!visible && validationPollTimer !== null) {
+    window.clearInterval(validationPollTimer)
+    validationPollTimer = null
+  }
+}, { immediate: true })
+
+onMounted(load)
+onBeforeUnmount(() => {
+  if (pollTimer !== null) window.clearInterval(pollTimer)
+  if (validationPollTimer !== null) window.clearInterval(validationPollTimer)
+  clearSecrets()
+})
+
 watch(parsedImportProviders, (items) => {
   for (const provider of items) {
     importCredentials[provider.id] ||= { access_key_id: '', secret_access_key: '' }
@@ -176,17 +257,14 @@ watch(parsedImportProviders, (items) => {
     importRegionIds[provider.id] = (importRegionIds[provider.id] || [])
       .filter((regionId) => available.has(regionId))
   }
+  if (!items.some((provider) => provider.id === validationProviderId.value)) {
+    clearSecrets()
+    validationProviderId.value = items[0]?.id || ''
+    validationDialogStep.value = validationProviderId.value && importRun(validationProviderId.value)
+      ? 'result'
+      : 'scope'
+  }
 }, { flush: 'sync' })
-
-function importValidationStatus(provider: StorageProviderConfig) {
-  const run = importRuns[provider.id] || runByProvider.value[provider.id]
-  if (!run) return 'not_run'
-  const snapshot = normalizedStorageProviderSnapshot(provider)
-  if (validationSnapshots[provider.id] && validationSnapshots[provider.id] !== snapshot) return 'stale'
-  if (run.candidate_config && normalizedStorageProviderSnapshot(run.candidate_config) !== snapshot) return 'stale'
-  if (run.status === 'passed') return `passed_${run.coverage || 'partial'}`
-  return run.status
-}
 
 function importRun(providerId: string) {
   return importRuns[providerId] || runByProvider.value[providerId]
@@ -204,7 +282,6 @@ async function validateImportProvider(provider: StorageProviderConfig, showSucce
       candidate_config: provider,
     })
     importRuns[provider.id] = run
-    validationSnapshots[provider.id] = normalizedStorageProviderSnapshot(provider)
     credentials.access_key_id = ''
     credentials.secret_access_key = ''
     if (showSuccess) ElMessage.success(t('platformOps.storageProviders.validationQueued'))
@@ -254,10 +331,73 @@ async function retryImportValidation(provider: StorageProviderConfig) {
   }
 }
 
+async function startValidation() {
+  const provider = validationProvider.value
+  if (!provider) return
+  const credentials = importCredentials[provider.id]
+  if (!credentials?.access_key_id || !credentials.secret_access_key) {
+    validationDialogError.value = t('platformOps.storageProviders.credentialsRequired')
+    return
+  }
+  const count = importRegionIds[provider.id]?.length || 0
+  if (count < 1 || count > VALIDATION_REGION_LIMIT) {
+    validationDialogError.value = t('platformOps.storageProviders.noValidationCandidates', {
+      limit: VALIDATION_REGION_LIMIT,
+    })
+    return
+  }
+  validationDialogError.value = ''
+  if (validationRun.value && activeStatuses.includes(validationRun.value.status)) {
+    validationDialogStep.value = 'result'
+    return
+  }
+  try {
+    await validateImportProvider(provider)
+    validationDialogStep.value = 'result'
+  } catch (error) {
+    validationDialogError.value = apiErrorMessage(error, t('platformOps.storageProviders.actionFailed'))
+  }
+}
+
+function selectValidationProvider(providerId: string) {
+  clearSecrets()
+  validationProviderId.value = providerId
+  validationDialogError.value = ''
+  validationDialogStep.value = 'scope'
+}
+
+function selectValidationRegions(regionIds: string[]) {
+  const provider = validationProvider.value
+  if (!provider) return
+  importRegionIds[provider.id] = regionIds
+  validationDialogError.value = ''
+}
+
+async function submitValidationRetry() {
+  const provider = validationProvider.value
+  if (!provider) return
+  const credentials = importCredentials[provider.id]
+  if (!credentials?.access_key_id || !credentials.secret_access_key) {
+    validationDialogError.value = t('platformOps.storageProviders.credentialsRequired')
+    return
+  }
+  validationDialogError.value = ''
+  await retryImportValidation(provider)
+}
+
+function beginNewValidation() {
+  validationDialogError.value = ''
+  validationDialogStep.value = 'scope'
+}
+
+function validationStepLabel(step: string | null) {
+  return step ? t(`platformOps.storageProviders.status.${step}`) : '—'
+}
+
 function resetImportReview() {
+  diffDialogOpen.value = false
   importPreview.value = null
   importReview.value = null
-  riskConfirmations.value = []
   if (importStep.value !== 'success') importStep.value = 'editing'
 }
 
@@ -272,9 +412,15 @@ function openImport() {
   importContent.value = JSON.stringify({ schema_version: 1, providers: [] }, null, 2)
   importError.value = ''
   importPreview.value = null
+  diffDialogOpen.value = false
   importReview.value = null
-  riskConfirmations.value = []
   importOpen.value = true
+}
+
+function closeImport() {
+  diffDialogOpen.value = false
+  importOpen.value = false
+  clearSecrets()
 }
 
 function formatImport() {
@@ -311,35 +457,10 @@ async function previewImport() {
   try {
     importPreview.value = await diffProviderImport(importContent.value)
     importError.value = ''
+    diffDialogOpen.value = true
   } catch (error) {
     importError.value = apiErrorMessage(error, t('platformOps.storageProviders.invalidJson'))
   } finally {
-    actionLoading.value = false
-  }
-}
-
-async function validateImportProviders() {
-  actionLoading.value = true
-  try {
-    const candidates = parsedImportProviders.value.filter((provider) => {
-      const count = importRegionIds[provider.id]?.length || 0
-      return count >= 1 && count <= 10
-    })
-    if (!candidates.length) throw new Error(t('platformOps.storageProviders.noValidationCandidates'))
-    const results = await Promise.allSettled(
-      candidates.map((provider) => validateImportProvider(provider, false)),
-    )
-    const failures = results.filter((result) => result.status === 'rejected')
-    if (failures.length) {
-      ElMessage.warning(t('platformOps.storageProviders.validationPartial', { count: failures.length }))
-    } else {
-      ElMessage.success(t('platformOps.storageProviders.validationQueued'))
-    }
-    await load({ quiet: true })
-  } catch (error) {
-    importError.value = apiErrorMessage(error, t('platformOps.storageProviders.actionFailed'))
-  } finally {
-    clearSecrets()
     actionLoading.value = false
   }
 }
@@ -348,7 +469,6 @@ async function nextImport() {
   actionLoading.value = true
   try {
     importReview.value = await reviewProviderImport(importContent.value)
-    riskConfirmations.value = []
     importStep.value = 'reviewing'
     importError.value = ''
   } catch (error) {
@@ -362,20 +482,19 @@ async function applyImport() {
   if (!importReview.value) return
   actionLoading.value = true
   try {
-    await applyProviderImport(importContent.value, importReview.value, riskConfirmations.value)
-    importStep.value = 'success'
+    await applyProviderImport(
+      importContent.value,
+      importReview.value,
+      importReview.value.required_risk_confirmation_ids,
+    )
     ElMessage.success(t('platformOps.storageProviders.applySuccess'))
+    closeImport()
     await load()
   } catch (error) {
     importError.value = apiErrorMessage(error, t('platformOps.storageProviders.actionFailed'))
   } finally {
     actionLoading.value = false
   }
-}
-
-function allRisksConfirmed() {
-  const required = importReview.value?.required_risk_confirmation_ids || []
-  return required.every((id) => riskConfirmations.value.includes(id))
 }
 
 // Export and reset confirmation flows.
@@ -475,25 +594,35 @@ async function confirmReset() {
             @row-click="openProviderDetails"
           >
             <el-table-column type="selection" width="42" />
-            <el-table-column :label="t('platformOps.storageProviders.provider')" min-width="300">
+            <el-table-column :label="t('platformOps.storageProviders.provider')" min-width="340">
               <template #default="{ row }">
                 <button type="button" class="storage-providers-page__title-button" @click.stop="openProviderDetails(row)">{{ row.display_name }}</button>
                 <small>{{ row.id }}</small>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.storageProviders.sourceLabel')" min-width="180">
+            <el-table-column :label="t('platformOps.storageProviders.sourceLabel')" min-width="160">
               <template #default="{ row }"><el-tag size="small" effect="plain">{{ providerSourceLabel(row.source) }}</el-tag></template>
             </el-table-column>
-            <el-table-column prop="region_count" :label="t('platformOps.storageProviders.regions')" width="110" />
-            <el-table-column :label="t('platformOps.storageProviders.validation')" min-width="180">
+            <el-table-column prop="region_count" :label="t('platformOps.storageProviders.regions')" min-width="110" />
+            <el-table-column :label="t('platformOps.storageProviders.updated')" min-width="170">
               <template #default="{ row }">
-                <el-tag v-if="runByProvider[row.id]" size="small" :type="statusType(runByProvider[row.id].status)">{{ statusLabel(runByProvider[row.id].status) }}</el-tag>
-                <span v-else>—</span>
+                <span class="hfl-table-cell-time">{{ formatLocalDateTime(row.updated_at, '—') }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="t('platformOps.storageProviders.actions')" width="110" fixed="right">
+            <el-table-column :label="t('platformOps.storageProviders.actions')" width="100" fixed="right" align="center">
               <template #default="{ row }">
-                <el-button link type="danger" :disabled="row.source !== 'override'" @click.stop="openReset(row.id)">{{ t('platformOps.storageProviders.reset') }}</el-button>
+                <div class="storage-providers-page__row-actions" @click.stop>
+                  <button
+                    type="button"
+                    class="storage-providers-page__action-button"
+                    :title="t('platformOps.storageProviders.reset')"
+                    :disabled="row.source !== 'override'"
+                    @click="openReset(row.id)"
+                  >
+                    <RotateCcw :size="14" class="storage-providers-page__action-icon" aria-hidden="true" />
+                    <span>{{ t('platformOps.storageProviders.reset') }}</span>
+                  </button>
+                </div>
               </template>
             </el-table-column>
             <template #empty>
@@ -536,7 +665,7 @@ async function confirmReset() {
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.storageProviders.updated') }}</span>
-              <span class="hfl-detail-row__value">{{ selectedProvider.updated_at || '—' }}</span>
+              <span class="hfl-detail-row__value hfl-table-cell-time">{{ formatLocalDateTime(selectedProvider.updated_at, '—') }}</span>
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.storageProviders.regions') }}</span>
@@ -561,7 +690,14 @@ async function confirmReset() {
           <div class="storage-provider-drawer__region-search">
             <el-input v-model="regionSearch" clearable :placeholder="t('platformOps.storageProviders.searchRegions')"><template #prefix><Search :size="14" /></template></el-input>
           </div>
-          <el-table :data="filteredRegions" stripe max-height="420" class="storage-provider-drawer__regions-table" empty-text="—">
+          <el-table
+            :data="filteredRegions"
+            stripe
+            max-height="var(--storage-provider-regions-table-max-height)"
+            scrollbar-always-on
+            class="storage-provider-drawer__regions-table"
+            empty-text="—"
+          >
             <el-table-column :label="t('platformOps.storageProviders.region')" min-width="220">
               <template #default="{ row }"><strong>{{ row.display_name }}</strong><small>{{ row.id }} · {{ row.region_group_en }}</small></template>
             </el-table-column>
@@ -576,102 +712,210 @@ async function confirmReset() {
       </div>
     </el-drawer>
 
-    <el-dialog v-model="importOpen" :title="t('platformOps.storageProviders.importTitle')" width="min(1080px, 96vw)" destroy-on-close @closed="clearSecrets">
-      <el-steps :active="importStep === 'editing' ? 0 : importStep === 'reviewing' ? 1 : 2" finish-status="success" simple>
-        <el-step :title="t('platformOps.storageProviders.editConfiguration')" />
-        <el-step :title="t('platformOps.storageProviders.review')" />
-        <el-step :title="t('platformOps.storageProviders.done')" />
-      </el-steps>
-      <template v-if="importStep === 'editing'">
-        <div class="storage-providers-page__editor-toolbar">
-          <label class="el-button"><FileJson :size="15" />{{ t('platformOps.storageProviders.uploadJson') }}<input type="file" accept="application/json,.json" hidden @change="uploadImport" /></label>
-          <el-button @click="formatImport">{{ t('platformOps.storageProviders.formatJson') }}</el-button>
-        </div>
-        <JsonCodeEditor :model-value="importContent" :aria-label="t('platformOps.storageProviders.catalogEditor')" @update:model-value="setImportContent" />
-        <el-alert v-if="importError" type="error" :title="importError" show-icon :closable="false" />
-        <section v-if="parsedImportProviders.length" class="storage-providers-page__validation-cards">
-          <article v-for="provider in parsedImportProviders" :key="provider.id">
-            <header><strong>{{ provider.display_name || provider.id }}</strong><el-tag size="small" :type="statusType(importValidationStatus(provider))">{{ statusLabel(importValidationStatus(provider)) }}</el-tag></header>
-            <template>
-              <el-select
-                v-model="importRegionIds[provider.id]"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                :max-collapse-tags="3"
-                :multiple-limit="10"
-                :placeholder="t('platformOps.storageProviders.selectValidationRegions')"
-              >
-                <el-option
-                  v-for="region in provider.regions"
-                  :key="region.id"
-                  :label="`${region.display_name} (${region.id})`"
-                  :value="region.id"
-                />
-              </el-select>
-              <small>{{ t('platformOps.storageProviders.selectedRegionLimit') }}</small>
-              <el-input v-model="importCredentials[provider.id].access_key_id" autocomplete="off" :placeholder="t('platformOps.storageProviders.accessKeyId')" />
-              <el-input v-model="importCredentials[provider.id].secret_access_key" type="password" autocomplete="new-password" show-password :placeholder="t('platformOps.storageProviders.secretAccessKey')" />
-              <div class="storage-providers-page__validation-actions">
-                <el-button
-                  v-if="!importRun(provider.id) || ['passed', 'cancelled', 'expired'].includes(importRun(provider.id)!.status)"
-                  type="primary"
-                  :disabled="!importRegionIds[provider.id]?.length"
-                  :loading="validationLoading[provider.id]"
-                  @click="validateImportProvider(provider)"
-                >{{ t('platformOps.storageProviders.validateProvider') }}</el-button>
-                <el-button
-                  v-if="importRun(provider.id) && activeStatuses.includes(importRun(provider.id)!.status)"
-                  type="danger"
-                  plain
-                  :loading="validationLoading[provider.id]"
-                  @click="cancelImportValidation(provider)"
-                >{{ t('common.stop') }}</el-button>
-                <el-button
-                  v-if="['validation_failed', 'cleanup_required'].includes(importRun(provider.id)?.status || '')"
-                  type="warning"
-                  :loading="validationLoading[provider.id]"
-                  @click="retryImportValidation(provider)"
-                >{{ t('platformOps.storageProviders.retryValidation') }}</el-button>
-              </div>
-            </template>
-          </article>
-        </section>
-        <ProviderDiffDetails v-if="importPreview" :diffs="importPreview.providers" />
-      </template>
-      <template v-else-if="importStep === 'reviewing' && importReview">
-        <el-alert type="info" :title="t('platformOps.storageProviders.reviewReadonly')" show-icon :closable="false" />
-        <ProviderDiffDetails :diffs="importReview.providers" />
-        <section class="storage-providers-page__review-evidence">
-          <div v-for="evidence in importReview.validation_evidence" :key="evidence.provider_id"><strong>{{ evidence.provider_id }}</strong><el-tag :type="statusType(evidence.status)">{{ statusLabel(evidence.status) }}</el-tag></div>
-        </section>
-        <el-checkbox-group v-model="riskConfirmations" class="storage-providers-page__risks">
-          <el-checkbox v-for="risk in importReview.required_risk_confirmation_ids" :key="risk" :value="risk">{{ t('platformOps.storageProviders.confirmRisk', { risk }) }}</el-checkbox>
-        </el-checkbox-group>
-        <el-alert v-if="importError" type="error" :title="importError" show-icon :closable="false" />
-      </template>
-      <el-result v-else icon="success" :title="t('platformOps.storageProviders.applySuccess')" :sub-title="t('platformOps.storageProviders.applySuccessHint')" />
-      <template #footer>
-        <el-button @click="importOpen = false">{{ importStep === 'success' ? t('common.close') : t('common.cancel') }}</el-button>
-        <template v-if="importStep === 'editing'">
-          <el-button :loading="actionLoading" @click="validateImportProviders">{{ t('platformOps.storageProviders.validate') }}</el-button>
-          <el-button :loading="actionLoading" @click="previewImport">{{ t('platformOps.storageProviders.diff') }}</el-button>
-          <el-button type="primary" :loading="actionLoading" @click="nextImport">{{ t('common.next') }}</el-button>
-        </template>
-        <template v-else-if="importStep === 'reviewing'">
-          <el-button @click="importStep = 'editing'">{{ t('common.back') }}</el-button>
-          <el-button type="primary" :disabled="!allRisksConfirmed()" :loading="actionLoading" @click="applyImport">{{ t('platformOps.storageProviders.apply') }}</el-button>
-        </template>
-      </template>
-    </el-dialog>
+    <Teleport to="body">
+      <div v-if="importOpen" class="fullscreen-form-fullscreen fullscreen-form-animated provider-import-fullscreen">
+        <div class="fullscreen-form-page provider-import-page">
+          <header class="fullscreen-form-header">
+            <button type="button" class="fullscreen-form-header__back" @click="closeImport">
+              <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+            </button>
+            <div class="fullscreen-form-header__content">
+              <h1 class="fullscreen-form-header__title">{{ t('platformOps.storageProviders.importTitle') }}</h1>
+              <p class="fullscreen-form-header__desc">{{ t('platformOps.storageProviders.importDescription') }}</p>
+            </div>
+          </header>
+          <div class="fullscreen-form-layout provider-import-layout">
+            <WizardSteps
+              as="aside"
+              class="provider-import-steps"
+              :steps="importWizardSteps"
+              :current-step="importStep"
+              :is-done="(_, index) => index < (importStep === 'editing' ? 0 : importStep === 'reviewing' ? 1 : 2)"
+              :clickable="false"
+              :aria-label="t('platformOps.storageProviders.importTitle')"
+            />
+            <main class="fullscreen-form-main provider-import-main">
+              <div class="provider-import-workspace" :class="{ 'provider-import-workspace--with-tool': importStep === 'editing' }">
+                <div class="provider-import-content" :class="{ 'provider-import-content--editing': importStep === 'editing' }">
+                <template v-if="importStep === 'editing'">
+                  <div class="storage-providers-page__editor-toolbar">
+                    <label class="el-button"><FileJson :size="15" />{{ t('platformOps.storageProviders.uploadJson') }}<input type="file" accept="application/json,.json" hidden @change="uploadImport" /></label>
+                    <el-button @click="formatImport">{{ t('platformOps.storageProviders.formatJson') }}</el-button>
+                  </div>
+                  <JsonCodeEditor :model-value="importContent" :aria-label="t('platformOps.storageProviders.catalogEditor')" @update:model-value="setImportContent" />
+                  <el-alert v-if="importError" type="error" :title="importError" show-icon :closable="false" />
+                </template>
+                <template v-else-if="importStep === 'reviewing' && importReview">
+                  <ProviderImportRegionReview :providers="parsedImportProviders" />
+                  <el-alert v-if="importError" type="error" :title="importError" show-icon :closable="false" />
+                </template>
+                <el-result v-else icon="success" :title="t('platformOps.storageProviders.applySuccess')" :sub-title="t('platformOps.storageProviders.applySuccessHint')" />
+                </div>
 
-    <el-dialog v-model="resetOpen" :title="t('platformOps.storageProviders.resetTitle')" width="min(720px, 92vw)">
-      <el-alert type="warning" :title="t('platformOps.storageProviders.resetWarning')" show-icon :closable="false" />
-      <ProviderDiffDetails v-if="resetReview" :diffs="resetReview.providers" />
+                <aside v-if="importStep === 'editing'" class="provider-validation-tool" :aria-label="t('platformOps.storageProviders.validationDialogTitle')">
+                  <header class="provider-validation-tool__header">
+                    <div>
+                      <h2>{{ t('platformOps.storageProviders.validationDialogTitle') }}</h2>
+                    </div>
+                    <div class="provider-validation-tool__header-actions">
+                      <el-tag v-if="validationRun" size="small" :type="statusType(validationRun.status)">{{ statusLabel(validationRun.status) }}</el-tag>
+                      <button
+                        class="provider-validation-tool__refresh"
+                        type="button"
+                        :title="t('common.refresh')"
+                        :aria-label="t('common.refresh')"
+                        :disabled="validationRefreshLoading"
+                        @click="refreshValidationTool"
+                      >
+                        <RefreshCw
+                          class="provider-validation-tool__refresh-icon"
+                          :class="{ 'provider-validation-tool__refresh-icon--spinning': validationRefreshLoading }"
+                          :size="16"
+                        />
+                      </button>
+                    </div>
+                  </header>
+                  <el-alert type="warning" :title="t('platformOps.storageProviders.costWarning')" show-icon :closable="false" />
+
+                  <div v-if="!parsedImportProviders.length" class="provider-validation-tool__empty">
+                    <el-empty :description="t('platformOps.storageProviders.noProvidersToValidate')" :image-size="64" />
+                  </div>
+                  <template v-else-if="validationDialogStep === 'scope'">
+                    <div class="provider-validation-tool__body">
+                      <el-form label-position="top">
+                        <el-form-item :label="t('platformOps.storageProviders.validationProvider')">
+                          <el-select :model-value="validationProviderId" :teleported="false" @update:model-value="selectValidationProvider">
+                            <el-option v-for="provider in parsedImportProviders" :key="provider.id" :label="provider.display_name || provider.id" :value="provider.id" />
+                          </el-select>
+                        </el-form-item>
+                        <el-form-item v-if="validationProvider" :label="t('platformOps.storageProviders.accessKeyId')">
+                          <el-input v-model="importCredentials[validationProvider.id].access_key_id" autocomplete="off" />
+                        </el-form-item>
+                        <el-form-item v-if="validationProvider" :label="t('platformOps.storageProviders.secretAccessKey')">
+                          <el-input v-model="importCredentials[validationProvider.id].secret_access_key" type="password" autocomplete="new-password" show-password />
+                        </el-form-item>
+                        <el-form-item :label="t('platformOps.storageProviders.selectValidationRegions')">
+                          <el-select
+                            v-if="validationProvider"
+                            class="provider-validation-tool__region-select"
+                            :model-value="selectedValidationRegionIds"
+                            multiple
+                            filterable
+                            clearable
+                            :multiple-limit="VALIDATION_REGION_LIMIT"
+                            :teleported="false"
+                            :placeholder="t('platformOps.storageProviders.selectValidationRegions')"
+                            @update:model-value="selectValidationRegions"
+                          >
+                            <template #tag>
+                              <span
+                                v-if="selectedValidationRegionIds.length"
+                                class="provider-validation-tool__region-selection-summary"
+                              >
+                                <Check :size="13" aria-hidden="true" />
+                                {{ t('platformOps.storageProviders.validationRegionsSelected', { count: selectedValidationRegionIds.length, limit: VALIDATION_REGION_LIMIT }) }}
+                              </span>
+                            </template>
+                            <el-option-group
+                              v-for="group in validationRegionGroups"
+                              :key="group.key"
+                              :label="group.label"
+                            >
+                              <el-option
+                                v-for="region in group.regions"
+                                :key="region.id"
+                                :label="`${region.display_name} (${region.id})`"
+                                :value="region.id"
+                              >
+                                <div
+                                  class="provider-validation-tool__region-option"
+                                  :title="`${region.display_name} (${region.id})`"
+                                >
+                                  <strong>{{ region.display_name || region.id }}</strong>
+                                  <code>{{ region.id }}</code>
+                                </div>
+                              </el-option>
+                            </el-option-group>
+                          </el-select>
+                          <small>{{ t('platformOps.storageProviders.selectedRegionLimit', { limit: VALIDATION_REGION_LIMIT }) }}</small>
+                        </el-form-item>
+                      </el-form>
+                      <small class="provider-validation-tool__security-note">{{ t('platformOps.storageProviders.credentialSecurityNote') }}</small>
+                    </div>
+                    <div class="provider-validation-tool__actions"><el-button type="primary" :disabled="!canStartValidation" :loading="validationProvider ? validationLoading[validationProvider.id] : false" @click="startValidation">{{ t('platformOps.storageProviders.startValidation') }}</el-button></div>
+                  </template>
+                  <template v-else-if="validationDialogStep === 'result' && validationProvider">
+                    <div class="provider-validation-tool__body">
+                      <div v-if="validationRun" class="provider-validation-tool__summary"><strong>{{ validationProvider.display_name || validationProvider.id }}</strong><span>{{ t('platformOps.storageProviders.progress', { completed: validationRun.completed_region_count, total: validationRun.region_count, failed: validationRun.failed_region_count }) }}</span></div>
+                      <el-empty v-else :description="t('platformOps.storageProviders.noValidationRun')" :image-size="64" />
+                      <div v-if="validationRun" class="provider-validation-tool__results">
+                        <div v-for="row in validationRun.regions" :key="row.id">
+                          <div><strong>{{ row.region_id }}</strong><span>{{ validationStepLabel(row.current_step) }}</span></div>
+                          <el-tag size="small" :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+                          <p v-if="row.error_message" :title="row.error_message">{{ row.error_message }}</p>
+                        </div>
+                      </div>
+                      <section v-if="validationRun && ['validation_failed', 'cleanup_required'].includes(validationRun.status)" class="provider-validation-tool__retry">
+                        <h3>{{ t('platformOps.storageProviders.retryValidation') }}</h3>
+                        <el-form label-position="top">
+                          <el-form-item :label="t('platformOps.storageProviders.accessKeyId')"><el-input v-model="importCredentials[validationProvider.id].access_key_id" autocomplete="off" /></el-form-item>
+                          <el-form-item :label="t('platformOps.storageProviders.secretAccessKey')"><el-input v-model="importCredentials[validationProvider.id].secret_access_key" type="password" autocomplete="new-password" show-password /></el-form-item>
+                        </el-form>
+                      </section>
+                    </div>
+                    <div class="provider-validation-tool__actions">
+                      <el-button v-if="validationRun && activeStatuses.includes(validationRun.status)" type="danger" plain :loading="validationLoading[validationProvider.id]" @click="cancelImportValidation(validationProvider)">{{ t('common.stop') }}</el-button>
+                      <template v-else-if="validationRun?.status === 'validation_failed'">
+                        <el-button type="warning" :disabled="!importCredentials[validationProvider.id]?.access_key_id || !importCredentials[validationProvider.id]?.secret_access_key" :loading="validationLoading[validationProvider.id]" @click="submitValidationRetry">{{ t('platformOps.storageProviders.retryValidation') }}</el-button>
+                        <el-button type="primary" @click="beginNewValidation">{{ t('platformOps.storageProviders.newValidation') }}</el-button>
+                      </template>
+                      <el-button v-else-if="validationRun?.status === 'cleanup_required'" type="warning" :disabled="!importCredentials[validationProvider.id]?.access_key_id || !importCredentials[validationProvider.id]?.secret_access_key" :loading="validationLoading[validationProvider.id]" @click="submitValidationRetry">{{ t('platformOps.storageProviders.retryValidation') }}</el-button>
+                      <el-button v-else type="primary" @click="beginNewValidation">{{ t('platformOps.storageProviders.newValidation') }}</el-button>
+                    </div>
+                  </template>
+                  <el-alert v-if="validationDialogError" class="provider-validation-tool__error" type="error" :title="validationDialogError" show-icon :closable="false" />
+                </aside>
+              </div>
+            </main>
+          </div>
+          <footer class="fullscreen-form-footer provider-import-footer">
+            <div class="provider-import-footer__actions">
+              <el-button class="hfl-btn-with-icon" @click="closeImport"><X :size="14" /><span>{{ importStep === 'success' ? t('common.close') : t('common.cancel') }}</span></el-button>
+              <template v-if="importStep === 'editing'">
+                <el-button :loading="actionLoading" @click="previewImport">{{ t('platformOps.storageProviders.diff') }}</el-button>
+                <el-button type="primary" class="hfl-btn-with-icon" :loading="actionLoading" @click="nextImport"><span>{{ t('common.next') }}</span><ArrowRight :size="14" /></el-button>
+              </template>
+              <template v-else-if="importStep === 'reviewing'">
+                <el-button class="hfl-btn-with-icon" @click="importStep = 'editing'"><ArrowLeft :size="14" /><span>{{ t('common.back') }}</span></el-button>
+                <el-button type="primary" class="hfl-btn-with-icon" :loading="actionLoading" @click="applyImport"><Check :size="14" /><span>{{ t('platformOps.storageProviders.apply') }}</span></el-button>
+              </template>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </Teleport>
+
+    <ProviderDiffDialog v-model="diffDialogOpen" :preview="importPreview" />
+
+    <el-dialog
+      v-model="resetOpen"
+      class="provider-reset-dialog"
+      :title="t('platformOps.storageProviders.resetTitle')"
+      width="min(720px, 92vw)"
+      top="6vh"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="provider-reset-dialog__content">
+        <el-alert type="warning" :title="t('platformOps.storageProviders.resetWarning')" show-icon :closable="false" />
+        <ProviderDiffDetails v-if="resetReview" :diffs="resetReview.providers" />
+      </div>
       <template #footer><el-button @click="resetOpen = false">{{ t('common.cancel') }}</el-button><el-button type="danger" :loading="actionLoading" @click="confirmReset">{{ t('platformOps.storageProviders.confirmReset') }}</el-button></template>
     </el-dialog>
   </ModulePage>
 </template>
+
+<style src="../../../styles/fullscreen-form-shell.css"></style>
 
 <style scoped>
 .storage-providers-page { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 14px; padding: 18px; overflow: hidden; }
@@ -682,15 +926,22 @@ async function confirmReset() {
 .storage-providers-page__actions :deep(.el-button span), .storage-providers-page__editor-toolbar .el-button { gap: 6px; }
 .storage-providers-page :deep(.hfl-list-panel) { flex: 1 1 auto; min-height: 0; }
 .storage-providers-page small, .storage-provider-drawer small { display: block; margin-top: 3px; color: var(--color-text-secondary, #777786); font-size: 11px; }
-.storage-providers-page__title-button { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 0; background: transparent; color: var(--color-text-title, #1c1c26); cursor: pointer; font: inherit; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.storage-providers-page__title-button:hover, .storage-providers-page__title-button:focus-visible { color: var(--color-primary, #6d5ef6); outline: none; text-decoration: underline; text-underline-offset: 3px; }
+.storage-providers-page__title-button { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 0; background: transparent; color: var(--color-primary, #6d5ef6); cursor: pointer; font: inherit; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.storage-providers-page__title-button:hover, .storage-providers-page__title-button:focus-visible { color: var(--el-color-primary-dark-2, #5548d9); outline: none; text-decoration: underline; text-underline-offset: 3px; }
+.storage-providers-page__row-actions { display: flex; width: 100%; align-items: center; justify-content: center; white-space: nowrap; }
+.storage-providers-page__action-button { appearance: button; display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 6px; margin: 0; padding: 4px 10px; border: 1px solid oklch(87% 0.065 274.039); border-radius: 6px; background: #fff; color: oklch(51.1% 0.262 276.966); cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 500; letter-spacing: normal; line-height: 16px; white-space: nowrap; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%); transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); }
+.storage-providers-page__action-icon { width: 14px; height: 14px; flex: 0 0 14px; color: oklch(58.5% 0.233 277.117); }
+.storage-providers-page__action-button:not(:disabled):hover { border-color: oklch(78.5% 0.115 274.713); background: oklch(96.2% 0.018 272.314); }
+.storage-providers-page__action-button:disabled { border-color: oklch(92.9% 0.013 255.508); background: oklch(98.4% 0.003 247.858); color: oklch(70.4% 0.04 256.788); opacity: .7; box-shadow: none; cursor: not-allowed; }
+.storage-providers-page__action-button:disabled .storage-providers-page__action-icon { color: oklch(70.4% 0.04 256.788); }
+.storage-providers-page__action-button:focus-visible { outline: 2px solid rgba(99, 102, 241, .28); outline-offset: 2px; }
 .storage-provider-drawer__header, .storage-provider-drawer__identity, .storage-provider-drawer__run-summary { display: flex; align-items: center; gap: 10px; }
 .storage-provider-drawer__header { width: 100%; min-width: 0; justify-content: space-between; }
 .storage-provider-drawer__identity { min-width: 0; }
 .storage-provider-drawer__identity > div { min-width: 0; }
 .storage-provider-drawer__identity h2 { margin: 0; overflow: hidden; color: var(--color-text-title, #1c1c26); font-size: 18px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .storage-provider-drawer__identity p { margin: 4px 0 0; color: var(--color-text-secondary, #70707e); font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.storage-provider-drawer__sections { padding-bottom: 8px; }
+.storage-provider-drawer__sections { --storage-provider-regions-table-max-height: clamp(280px, calc(100dvh - 470px), 560px); padding-bottom: 8px; }
 .storage-provider-drawer__sections :deep(.hfl-detail-section__title) { display: flex; align-items: center; gap: 8px; }
 .storage-provider-drawer__sections :deep(.hfl-detail-section__title::before) { width: 3px; height: 16px; flex: 0 0 auto; border-radius: 999px; background: var(--color-primary, #6d5ef6); content: ''; }
 .storage-provider-drawer__checksum { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -705,12 +956,68 @@ async function confirmReset() {
 .storage-providers-page__region-status > div { display: grid; grid-template-columns: minmax(130px, 1fr) auto minmax(120px, .7fr) minmax(180px, 1fr); align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--color-border-light, #ededf3); font-size: 12px; }
 .storage-providers-page__editor-toolbar { margin: 14px 0 8px; }
 .storage-providers-page__editor-toolbar label { display: inline-flex; align-items: center; gap: 6px; }
-.storage-providers-page__validation-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-.storage-providers-page__validation-cards article { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--color-border-light, #ededf3); border-radius: 9px; }
-.storage-providers-page__validation-cards header, .storage-providers-page__review-evidence > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.storage-providers-page__validation-cards p { margin: 0; color: var(--color-text-secondary, #777786); font-size: 12px; }
-.storage-providers-page__review-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
-.storage-providers-page__review-evidence > div { padding: 10px; border: 1px solid var(--color-border-light, #ededf3); border-radius: 8px; }
-.storage-providers-page__risks { display: grid; margin-top: 12px; }
-@media (max-width: 720px) { .storage-providers-page { padding: 12px; } .storage-providers-page__header { align-items: flex-start; flex-direction: column; } .storage-providers-page__actions { justify-content: flex-start; } .storage-providers-page__credentials, .storage-providers-page__validation-cards, .storage-providers-page__review-evidence { grid-template-columns: 1fr; } .storage-provider-drawer__run-summary a { width: 100%; margin-left: 0; } }
+.provider-reset-dialog__content { min-height: 0; }
+:global(.provider-reset-dialog) { display: flex; max-height: 88dvh; flex-direction: column; margin-bottom: 0; }
+:global(.provider-reset-dialog .el-dialog__header), :global(.provider-reset-dialog .el-dialog__footer) { flex: 0 0 auto; }
+:global(.provider-reset-dialog .el-dialog__body) { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+.provider-reset-dialog__content :deep(.provider-diff) { margin-top: 12px; }
+.provider-import-fullscreen { position: fixed; inset: var(--topnav-height, var(--app-header-height, 52px)) 0 0; z-index: 3000; overflow: hidden; background: #f2f3f5; color: #1d2129; }
+.provider-import-page { box-sizing: border-box; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; padding: 28px 28px calc(88px + var(--app-safe-bottom)); overflow: hidden; }
+.provider-import-page :deep(.fullscreen-form-header) { flex: 0 0 auto; width: min(100%, 1600px); margin: 0 auto 16px; }
+.provider-import-layout { display: flex; flex: 1 1 auto; flex-direction: column; gap: 24px; width: min(100%, 1600px); min-height: 0; margin: 0 auto; }
+.provider-import-steps { align-self: flex-start; }
+.provider-import-main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 55%, transparent); border-radius: 8px; background: #fff; box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-primary, #6d5ef6) 85%, transparent), 0 8px 20px rgba(15, 23, 42, .04); }
+.provider-import-workspace { display: grid; width: 100%; height: 100%; min-height: 0; }
+.provider-import-workspace--with-tool { grid-template-columns: minmax(0, 1fr) 368px; }
+.provider-import-content { display: flex; min-width: 0; min-height: 100%; flex-direction: column; gap: 14px; padding: 24px; overflow: auto; }
+.provider-import-content--editing :deep(.hfl-json-editor) { min-height: 360px; flex: 1 1 auto; }
+.provider-import-content--editing :deep(.hfl-json-editor .cm-editor) { height: 100%; min-height: 360px; }
+.provider-validation-tool { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: 14px; padding: 20px; overflow: auto; border-left: 1px solid var(--color-border-light, #e6e7ee); background: var(--color-fill-light, #fafafe); }
+.provider-validation-tool__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.provider-validation-tool__header h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--color-text-title, #1c1c26); font-size: 15px; font-weight: 650; }
+.provider-validation-tool__header h2::before { width: 3px; height: 16px; flex: 0 0 auto; border-radius: 999px; background: var(--color-primary, #6d5ef6); content: ''; }
+.provider-validation-tool__header-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 7px; }
+.provider-validation-tool__refresh { display: inline-flex; width: 40px; height: 34px; flex: 0 0 40px; align-items: center; justify-content: center; padding: 0; border: 1px solid #c8d3e0; border-radius: 6px; background: #f8fbff; color: #64748b; cursor: pointer; transition: all .15s ease; }
+.provider-validation-tool__refresh:hover:not(:disabled) { border-color: #7a99bc; background: #f1f6fc; color: var(--color-primary, #457ab0); }
+.provider-validation-tool__refresh:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary, #457ab0) 30%, transparent); outline-offset: 2px; }
+.provider-validation-tool__refresh:disabled { opacity: .6; cursor: not-allowed; }
+.provider-validation-tool__refresh-icon { flex-shrink: 0; }
+.provider-validation-tool__refresh-icon--spinning { animation: provider-validation-refresh-spin .8s linear infinite; }
+@keyframes provider-validation-refresh-spin { to { transform: rotate(360deg); } }
+:root[data-theme="dark"] .provider-validation-tool__refresh { border-color: #3b4658; background: #1b202a; color: var(--color-text-secondary, #a3a6ad); }
+:root[data-theme="dark"] .provider-validation-tool__refresh:hover:not(:disabled) { border-color: #5a6f8f; background: #202736; color: #fff; }
+.provider-validation-tool__body { display: grid; gap: 14px; }
+.provider-validation-tool__body :deep(.el-select), .provider-validation-tool__body :deep(.el-input) { width: 100%; }
+.provider-validation-tool__body :deep(.el-form-item) { margin-bottom: 14px; }
+.provider-validation-tool__body small { display: block; margin-top: 5px; color: var(--color-text-secondary, #777786); font-size: 11px; }
+.provider-validation-tool__region-select :deep(.el-select__wrapper) { min-height: 40px; padding: 6px 10px; border-radius: 6px; }
+.provider-validation-tool__region-select :deep(.el-select__selection.is-near) { margin-left: 0; }
+.provider-validation-tool__region-selection-summary { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 5px; padding: 1px 8px; overflow: hidden; border-radius: 5px; background: var(--el-color-primary-light-9, #eef2ff); color: var(--color-primary, #6d5ef6); font-size: 12px; font-weight: 600; line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.provider-validation-tool__region-selection-summary svg { flex: 0 0 auto; }
+.provider-validation-tool__region-select :deep(.el-select-group__title) { height: 30px; padding: 7px 16px 3px; color: var(--color-text-secondary, #777786); font-size: 11px; font-weight: 650; line-height: 20px; }
+.provider-validation-tool__region-select :deep(.el-select-dropdown__item) { display: flex; height: auto; min-height: 48px; align-items: center; padding: 7px 38px 7px 16px; line-height: normal; }
+.provider-validation-tool__region-option { display: grid; min-width: 0; width: 100%; gap: 3px; }
+.provider-validation-tool__region-option strong { overflow: hidden; color: var(--color-text-title, #1c1c26); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.provider-validation-tool__region-option code { overflow: hidden; color: var(--color-text-secondary, #777786); font: 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.provider-validation-tool__summary { display: grid; gap: 4px; margin: 0; }
+.provider-validation-tool__summary span { color: var(--color-text-secondary, #777786); font-size: 11px; }
+.provider-validation-tool__security-note { padding-left: 9px; border-left: 2px solid var(--color-primary, #6d5ef6); line-height: 1.45; }
+.provider-validation-tool__retry { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--color-border-light, #e6e7ee); }
+.provider-validation-tool__retry h3 { margin: 0; color: var(--color-text-title, #1c1c26); font-size: 13px; font-weight: 650; }
+.provider-validation-tool__results { max-height: 220px; overflow: auto; border: 1px solid var(--color-border-light, #e6e7ee); border-radius: 8px; background: #fff; }
+.provider-validation-tool__results > div:last-child { border-bottom: 0; }
+.provider-validation-tool__results > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; padding: 9px 10px; border-bottom: 1px solid var(--color-border-light, #ededf3); }
+.provider-validation-tool__results > div > div { display: grid; gap: 3px; min-width: 0; }
+.provider-validation-tool__results span { color: var(--color-text-secondary, #777786); font-size: 11px; }
+.provider-validation-tool__results p { grid-column: 1 / -1; margin: 0; overflow: hidden; color: var(--el-color-danger, #f56c6c); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.provider-validation-tool__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 4px; }
+.provider-validation-tool__actions :deep(.el-button + .el-button) { margin-left: 0; }
+.provider-validation-tool__error { flex: 0 0 auto; }
+.provider-validation-tool__empty { display: grid; min-height: 240px; place-items: center; }
+.provider-import-page :deep(.fullscreen-form-footer) { position: absolute; right: 0; bottom: 0; left: 0; z-index: 1; box-sizing: border-box; display: flex; align-items: center; min-height: 72px; padding: 12px max(28px, calc((100% - 1600px) / 2)); border-top: 1px solid #e5e6eb; background: rgb(255 255 255 / 96%); box-shadow: 0 -4px 16px rgb(29 33 41 / 6%); }
+.provider-import-footer__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; width: 100%; }
+.provider-import-footer__actions :deep(.el-button + .el-button) { margin-left: 0; }
+@media (min-width: 1024px) { .provider-import-layout { flex-direction: row; } }
+@media (max-width: 1199px) { .provider-import-workspace--with-tool { grid-template-columns: 1fr; overflow: auto; } .provider-validation-tool { min-height: 440px; border-top: 1px solid var(--color-border-light, #e6e7ee); border-left: 0; } }
+@media (max-width: 720px) { .storage-providers-page { padding: 12px; } .storage-providers-page__header { align-items: flex-start; flex-direction: column; } .storage-providers-page__actions { justify-content: flex-start; } .storage-providers-page__credentials { grid-template-columns: 1fr; } .storage-provider-drawer__sections { --storage-provider-regions-table-max-height: clamp(240px, calc(100dvh - 540px), 360px); } .storage-provider-drawer__run-summary a { width: 100%; margin-left: 0; } .provider-import-page { padding: 18px 12px calc(80px + var(--app-safe-bottom)); } .provider-import-layout { gap: 16px; } .provider-import-content, .provider-validation-tool { padding: 16px; } .provider-import-page :deep(.fullscreen-form-footer) { min-height: 64px; padding: 10px 12px; } }
 </style>

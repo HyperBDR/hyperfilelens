@@ -263,6 +263,7 @@ const resourceTypeTabs = computed(() => Object.entries(groupedResources.value).m
   count: items.length,
 })))
 const selectedResourceRows = computed(() => resourceDetails[selectedResourceType.value] || [])
+const isRepositoryResourceType = computed(() => selectedResourceType.value === 'repository')
 
 function textQueryValue(value: unknown) {
   if (Array.isArray(value)) return String(value[0] || '')
@@ -546,7 +547,7 @@ function normalizeResourceDetail(type: string, id: number, raw: unknown, source?
     backupSource: source?.backupSource,
     endpointName: source?.endpointName,
     endpointIp: source?.endpointIp,
-    registeredAt: source?.registeredAt,
+    registeredAt: source?.registeredAt || objectValue(record, ['created_at']),
     flowSource: source?.flowSource,
   }
 }
@@ -1493,20 +1494,28 @@ watch(
                   <span v-else class="hfl-empty-mark">{{ t('ops.task.emptyMark') }}</span>
                 </template>
               </el-table-column>
-              <el-table-column v-if="selectedResourceType !== 'backup_source'" :label="t('ops.task.nameLabel')" min-width="180">
+              <el-table-column
+                v-if="selectedResourceType !== 'backup_source'"
+                :label="t('ops.task.nameLabel')"
+                :min-width="isRepositoryResourceType ? 330 : 180"
+              >
                 <template #default="{ row }">
                   <div class="hfl-task-drawer__resource-name">{{ row.name }}</div>
                   <div class="hfl-task-drawer__resource-summary">{{ row.summary }}</div>
                 </template>
               </el-table-column>
-              <el-table-column v-if="selectedResourceType !== 'backup_source'" :label="t('ops.task.resourceTypeLabel')" width="140">
+              <el-table-column
+                v-if="selectedResourceType !== 'backup_source'"
+                :label="t('ops.task.resourceTypeLabel')"
+                :width="isRepositoryResourceType ? 195 : 140"
+              >
                 <template #default="{ row }">
                   <ElTag type="info" size="small" effect="plain">
                     {{ row.type }}
                   </ElTag>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('ops.task.colStatus')" width="110">
+              <el-table-column :label="t('ops.task.colStatus')" :width="isRepositoryResourceType ? 165 : 110">
                 <template #default="{ row }">
                   <ElTag v-if="row.status" v-bind="lifecycleStatusTagAttrs(row.statusValue)" size="small">
                     {{ row.status }}
@@ -1514,9 +1523,16 @@ watch(
                   <span v-else class="hfl-empty-mark">—</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="selectedResourceType === 'backup_source' ? t('protection.backupsPage.colRegistered') : t('ops.task.updatedAt')" width="180">
+              <el-table-column
+                :label="selectedResourceType === 'backup_source'
+                  ? t('protection.backupsPage.colRegistered')
+                  : isRepositoryResourceType
+                    ? t('ops.task.registeredAt')
+                    : t('ops.task.updatedAt')"
+                width="180"
+              >
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ formatTime(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }}</span>
+                  <span class="hfl-table-cell-time">{{ formatTime(selectedResourceType === 'backup_source' || isRepositoryResourceType ? row.registeredAt : row.updatedAt) }}</span>
                 </template>
               </el-table-column>
             </el-table>

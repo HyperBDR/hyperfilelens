@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from celery import current_app
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.storage.conf import (
@@ -34,6 +35,7 @@ from apps.storage.provider_catalog.diff import provider_diff
 from apps.storage.provider_catalog.errors import (
     ProviderCatalogConflictError,
     ProviderCatalogValidationError,
+    ProviderEndpointPolicyError,
 )
 from apps.storage.provider_catalog.locks import lock_provider_ids
 from apps.storage.provider_catalog.models import (
@@ -494,6 +496,27 @@ def _set_run_failure(
     message: str,
     cleanup_required: bool,
 ) -> None:
+    finished_at = timezone.now()
+    run.region_validations.filter(
+        status=StorageProviderRegionValidation.Status.RUNNING,
+    ).exclude(
+        Q(bucket_name__isnull=True) | Q(bucket_name="")
+    ).update(
+        status=StorageProviderRegionValidation.Status.CLEANUP_FAILED,
+        error_code=code,
+        error_message=message,
+        finished_at=finished_at,
+        updated_at=finished_at,
+    )
+    run.region_validations.filter(
+        status=StorageProviderRegionValidation.Status.RUNNING,
+    ).update(
+        status=StorageProviderRegionValidation.Status.FAILED,
+        error_code=code,
+        error_message=message,
+        finished_at=finished_at,
+        updated_at=finished_at,
+    )
     run.status = (
         StorageProviderValidationRun.Status.CLEANUP_REQUIRED
         if cleanup_required
@@ -501,7 +524,7 @@ def _set_run_failure(
     )
     run.error_code = code
     run.error_message = message
-    run.finished_at = timezone.now()
+    run.finished_at = finished_at
     run.save()
     _finish_task(
         _task_for_run(run),
@@ -714,6 +737,17 @@ def execute_validation_run(run_id: UUID | str) -> None:
                 ),
                 cleanup_required=exc.cleanup_required,
             )
+    except ProviderEndpointPolicyError as exc:
+        with transaction.atomic():
+            run = StorageProviderValidationRun.objects.select_for_update().filter(pk=run_id).first()
+            if run is None:
+                return
+            _set_run_failure(
+                run,
+                code=exc.code,
+                message=sanitize_cloud_error(exc.message),
+                cleanup_required=False,
+            )
     except Exception as exc:
         with transaction.atomic():
             run = StorageProviderValidationRun.objects.select_for_update().filter(pk=run_id).first()
@@ -804,6 +838,20 @@ def cleanup_validation_run(run_id: UUID | str) -> None:
             row.error_message = None
             row.finished_at = timezone.now()
             row.save()
+
+    now = timezone.now()
+    run.region_validations.filter(
+        Q(bucket_name__isnull=True) | Q(bucket_name="")
+    ).exclude(
+        status=StorageProviderRegionValidation.Status.SUCCESS
+    ).update(
+        status=StorageProviderRegionValidation.Status.CANCELLED,
+        current_step=None,
+        error_code=None,
+        error_message=None,
+        finished_at=now,
+        updated_at=now,
+    )
 
     with transaction.atomic():
         run = StorageProviderValidationRun.objects.select_for_update().get(pk=run_id)

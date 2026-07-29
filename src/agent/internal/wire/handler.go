@@ -16,10 +16,11 @@ import (
 
 // Handler routes downlink task frames to the engine and sends uplink progress/result.
 type Handler struct {
-	provider         config.Provider
-	tracker          *controller.Tracker
-	tasks            *database.TaskRepo
-	resultAckEnabled atomic.Bool
+	provider          config.Provider
+	tracker           *controller.Tracker
+	tasks             *database.TaskRepo
+	snapshotScheduler *controller.Scheduler
+	resultAckEnabled  atomic.Bool
 }
 
 // SetTaskResultAckEnabled selects ACK mode for the current WebSocket session.
@@ -35,8 +36,22 @@ func (h *Handler) TaskResultAckEnabled() bool {
 }
 
 // NewHandler returns a protocol handler bound to config, tracker, and local task storage.
-func NewHandler(provider config.Provider, tracker *controller.Tracker, tasks *database.TaskRepo) *Handler {
-	return &Handler{provider: provider, tracker: tracker, tasks: tasks}
+func NewHandler(
+	provider config.Provider,
+	tracker *controller.Tracker,
+	tasks *database.TaskRepo,
+	schedulers ...*controller.Scheduler,
+) *Handler {
+	snapshotScheduler := controller.NewScheduler(2)
+	if len(schedulers) > 0 && schedulers[0] != nil {
+		snapshotScheduler = schedulers[0]
+	}
+	return &Handler{
+		provider:          provider,
+		tracker:           tracker,
+		tasks:             tasks,
+		snapshotScheduler: snapshotScheduler,
+	}
 }
 
 // Handle parses one inbound WebSocket text frame and dispatches by type.
@@ -193,6 +208,47 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	h.tracker.Register(task, cancel)
 	defer h.tracker.Unregister(cmd.TaskID)
 
+	aliveDone := make(chan struct{})
+	go h.aliveLoop(taskCtx, sink, cmd.TaskID, aliveDone)
+	defer close(aliveDone)
+
+	if engine.NormalizeKind(cmd.Kind) == "backup.snapshot.create" {
+		releaseSlot, acquired := h.snapshotScheduler.TryAcquire()
+		if !acquired {
+			queuedAt := time.Now()
+			_ = SendTaskProgress(taskCtx, sink, cmd.TaskID, map[string]any{
+				"phase":               "orchestration",
+				"orchestration_phase": "dispatching",
+				"kopia_phase":         "waiting_for_snapshot_slot",
+				"orchestration_label": "Waiting for backup execution slot",
+				"status":              "queued",
+			})
+			logging.InfoTask(taskCtx, "backup snapshot queued", cmd.NodeID, cmd.TaskID, cmd.Kind)
+			var acquireErr error
+			releaseSlot, acquireErr = h.snapshotScheduler.Acquire(taskCtx)
+			if acquireErr != nil {
+				persistCtx := context.WithoutCancel(ctx)
+				if h.tasks != nil {
+					_ = h.tasks.Finish(
+						persistCtx, cmd.TaskID, model.TaskStatusCancelled, nil, "canceled",
+					)
+				}
+				_ = SendTaskResult(persistCtx, sink, cmd.TaskID, "failed", nil, "canceled")
+				return
+			}
+			logging.InfoTask(
+				taskCtx,
+				"backup snapshot execution slot acquired",
+				cmd.NodeID,
+				cmd.TaskID,
+				cmd.Kind,
+				"wait_ms",
+				time.Since(queuedAt).Milliseconds(),
+			)
+		}
+		defer releaseSlot()
+	}
+
 	_ = SendTaskProgress(taskCtx, sink, cmd.TaskID, map[string]any{
 		"phase":  "started",
 		"kind":   cmd.Kind,
@@ -202,10 +258,6 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	progressDone := make(chan struct{})
 	go h.progressLoop(taskCtx, sink, cmd.TaskID, progressDone)
 	defer close(progressDone)
-
-	aliveDone := make(chan struct{})
-	go h.aliveLoop(taskCtx, sink, cmd.TaskID, aliveDone)
-	defer close(aliveDone)
 
 	wsSink := websocketSink{sink: sink, taskID: cmd.TaskID}
 	out := eng.Run(taskCtx, engine.Command{
