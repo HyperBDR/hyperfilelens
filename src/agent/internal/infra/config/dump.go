@@ -62,8 +62,16 @@ func DumpText(cfg *model.AgentConfig) (string, error) {
 	fmt.Fprintf(&b, "log_dir=%q\n", logDir)
 	fmt.Fprintf(&b, "cache_dir=%q\n", cacheDir)
 	fmt.Fprintf(&b, "kopia_path=%q\n", cfg.KopiaPath)
+	fmt.Fprintf(&b, "backup_snapshot_concurrency=%d\n", effectiveBackupSnapshotConcurrency(cfg))
 	fmt.Fprintf(&b, "org_key=%q\n", cfg.OrgKey)
 	fmt.Fprintf(&b, "node_id=%q\n", cfg.NodeID)
 	fmt.Fprintf(&b, "node_token=%q\n", tok)
 	return b.String(), nil
+}
+
+func effectiveBackupSnapshotConcurrency(cfg *model.AgentConfig) int {
+	if cfg != nil && cfg.BackupSnapshotConcurrency > 0 {
+		return cfg.BackupSnapshotConcurrency
+	}
+	return 2
 }

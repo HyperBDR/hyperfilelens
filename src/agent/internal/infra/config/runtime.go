@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
@@ -28,16 +29,25 @@ func BootstrapAgentHome() error {
 // RuntimeFromEnv builds a config snapshot from HFL_* environment variables.
 func RuntimeFromEnv() *model.AgentConfig {
 	return &model.AgentConfig{
-		WSSURL:     strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
-		APIBaseURL: firstNonEmpty(strings.TrimSpace(os.Getenv("HFL_API_BASE")), strings.TrimSpace(os.Getenv("HFL_CONTROL_PLANE_API"))),
-		OrgKey:     strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
-		NodeID:     strings.TrimSpace(os.Getenv("HFL_NODE_ID")),
-		NodeToken:  strings.TrimSpace(os.Getenv("HFL_NODE_TOKEN")),
-		DataDir:    strings.TrimSpace(os.Getenv("HFL_DATA_DIR")),
-		LogDir:     strings.TrimSpace(os.Getenv("HFL_LOG_DIR")),
-		KopiaPath:  strings.TrimSpace(os.Getenv("HFL_KOPIA_PATH")),
-		Role:       roleFromEnv(),
+		WSSURL:                    strings.TrimSpace(os.Getenv("HFL_WSS_URL")),
+		APIBaseURL:                firstNonEmpty(strings.TrimSpace(os.Getenv("HFL_API_BASE")), strings.TrimSpace(os.Getenv("HFL_CONTROL_PLANE_API"))),
+		OrgKey:                    strings.TrimSpace(os.Getenv("HFL_ORG_KEY")),
+		NodeID:                    strings.TrimSpace(os.Getenv("HFL_NODE_ID")),
+		NodeToken:                 strings.TrimSpace(os.Getenv("HFL_NODE_TOKEN")),
+		DataDir:                   strings.TrimSpace(os.Getenv("HFL_DATA_DIR")),
+		LogDir:                    strings.TrimSpace(os.Getenv("HFL_LOG_DIR")),
+		KopiaPath:                 strings.TrimSpace(os.Getenv("HFL_KOPIA_PATH")),
+		BackupSnapshotConcurrency: positiveEnvInt("HFL_BACKUP_SNAPSHOT_CONCURRENCY"),
+		Role:                      roleFromEnv(),
 	}
+}
+
+func positiveEnvInt(key string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || value < 1 {
+		return 0
+	}
+	return value
 }
 
 func roleFromEnv() model.Role {

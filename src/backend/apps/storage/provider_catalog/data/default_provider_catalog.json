@@ -674,6 +674,266 @@
                     "use_tls": true
                 }
             ]
+        },
+        {
+            "id": "aws",
+            "display_name": "AWS",
+            "enabled": true,
+            "regions": [
+                {
+                    "id": "cn-north-1",
+                    "display_name": "China (Beijing)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.cn-north-1.amazonaws.com.cn",
+                    "internal_endpoint": "s3.cn-north-1.amazonaws.com.cn",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "cn-northwest-1",
+                    "display_name": "China (Ningxia)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.cn-northwest-1.amazonaws.com.cn",
+                    "internal_endpoint": "s3.cn-northwest-1.amazonaws.com.cn",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-east-1",
+                    "display_name": "Asia Pacific (Hong Kong)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-east-1.amazonaws.com",
+                    "internal_endpoint": "s3.ap-east-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-south-1",
+                    "display_name": "Asia Pacific (Mumbai)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-south-1.amazonaws.com",
+                    "internal_endpoint": "s3.ap-south-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-northeast-3",
+                    "display_name": "Asia Pacific (Osaka)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-northeast-3.amazonaws.com",
+                    "internal_endpoint": "s3.ap-northeast-3.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-northeast-2",
+                    "display_name": "Asia Pacific (Seoul)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-northeast-2.amazonaws.com",
+                    "internal_endpoint": "s3.ap-northeast-2.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-southeast-1",
+                    "display_name": "Asia Pacific (Singapore)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-southeast-1.amazonaws.com",
+                    "internal_endpoint": "s3.ap-southeast-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-southeast-2",
+                    "display_name": "Asia Pacific (Sydney)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-southeast-2.amazonaws.com",
+                    "internal_endpoint": "s3.ap-southeast-2.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ap-northeast-1",
+                    "display_name": "Asia Pacific (Tokyo)",
+                    "region_group": "asia_pacific",
+                    "region_group_en": "Asia Pacific",
+                    "external_endpoint": "s3.ap-northeast-1.amazonaws.com",
+                    "internal_endpoint": "s3.ap-northeast-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "me-south-1",
+                    "display_name": "Middle East (Bahrain)",
+                    "region_group": "middle_east",
+                    "region_group_en": "Middle East",
+                    "external_endpoint": "s3.me-south-1.amazonaws.com",
+                    "internal_endpoint": "s3.me-south-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "af-south-1",
+                    "display_name": "Africa (Cape Town)",
+                    "region_group": "africa",
+                    "region_group_en": "Africa",
+                    "external_endpoint": "s3.af-south-1.amazonaws.com",
+                    "internal_endpoint": "s3.af-south-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "us-east-2",
+                    "display_name": "US East (Ohio)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.us-east-2.amazonaws.com",
+                    "internal_endpoint": "s3.us-east-2.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "us-east-1",
+                    "display_name": "US East (N. Virginia)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.us-east-1.amazonaws.com",
+                    "internal_endpoint": "s3.us-east-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "us-west-1",
+                    "display_name": "US West (N. California)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.us-west-1.amazonaws.com",
+                    "internal_endpoint": "s3.us-west-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "us-west-2",
+                    "display_name": "US West (Oregon)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.us-west-2.amazonaws.com",
+                    "internal_endpoint": "s3.us-west-2.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "ca-central-1",
+                    "display_name": "Canada (Central)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.ca-central-1.amazonaws.com",
+                    "internal_endpoint": "s3.ca-central-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "sa-east-1",
+                    "display_name": "South America (S\u00e3o Paulo)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.sa-east-1.amazonaws.com",
+                    "internal_endpoint": "s3.sa-east-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "eu-central-1",
+                    "display_name": "Europe (Frankfurt)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.eu-central-1.amazonaws.com",
+                    "internal_endpoint": "s3.eu-central-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "eu-west-1",
+                    "display_name": "Europe (Ireland)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.eu-west-1.amazonaws.com",
+                    "internal_endpoint": "s3.eu-west-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "eu-west-2",
+                    "display_name": "Europe (London)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.eu-west-2.amazonaws.com",
+                    "internal_endpoint": "s3.eu-west-2.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "eu-south-1",
+                    "display_name": "Europe (Milan)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.eu-south-1.amazonaws.com",
+                    "internal_endpoint": "s3.eu-south-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "eu-west-3",
+                    "display_name": "Europe (Paris)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.eu-west-3.amazonaws.com",
+                    "internal_endpoint": "s3.eu-west-3.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                },
+                {
+                    "id": "eu-north-1",
+                    "display_name": "Europe (Stockholm)",
+                    "region_group": "europe_americas",
+                    "region_group_en": "Europe and Americas",
+                    "external_endpoint": "s3.eu-north-1.amazonaws.com",
+                    "internal_endpoint": "s3.eu-north-1.amazonaws.com",
+                    "driver": "s3",
+                    "s3_url_style": "path",
+                    "use_tls": true
+                }
+            ]
         }
     ]
 }

@@ -42,6 +42,9 @@ PROVIDER_VALIDATION_RETENTION_ENV = (
 PROVIDER_VALIDATION_REGION_TIMEOUT_ENV = (
     "STORAGE_PROVIDER_VALIDATION_REGION_TIMEOUT_SECONDS"
 )
+PROVIDER_VALIDATION_ALLOW_PROXY_FAKE_IP_ENV = (
+    "STORAGE_PROVIDER_VALIDATION_ALLOW_PROXY_FAKE_IP"
+)
 
 DEFAULT_PROVIDER_CATALOG_MAX_BYTES = 2 * 1024 * 1024
 DEFAULT_PROVIDER_CATALOG_MAX_DEPTH = 16
@@ -141,3 +144,14 @@ def provider_validation_region_timeout_seconds() -> int:
         PROVIDER_VALIDATION_REGION_TIMEOUT_ENV,
         DEFAULT_PROVIDER_VALIDATION_REGION_TIMEOUT_SECONDS,
     )
+
+
+def provider_validation_allow_proxy_fake_ip() -> bool:
+    """Allow reserved proxy Fake-IP ranges only when explicitly enabled."""
+
+    return os.getenv(PROVIDER_VALIDATION_ALLOW_PROXY_FAKE_IP_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }

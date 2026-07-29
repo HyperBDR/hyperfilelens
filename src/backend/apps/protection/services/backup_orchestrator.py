@@ -2525,6 +2525,26 @@ def project_backup_node_task_result(*, node_task_id) -> dict[str, Any]:
 
 
 def queue_backup_result_projection(*, node_task: NodeTask) -> bool:
+    if (
+        node_task.correlation_type
+        == protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_CORRELATION_TYPE
+    ):
+        if not node_task.correlation_id:
+            return False
+        snapshot = BackupSourceSnapshot.objects.filter(
+            organization_id=node_task.organization_id,
+            task_uuid=node_task.correlation_id,
+        ).only("id").first()
+        if snapshot is None:
+            return False
+        from apps.protection.tasks.backup import advance_backup_task
+
+        advance_backup_task.delay(
+            organization_id=node_task.organization_id,
+            task_uuid=str(node_task.correlation_id),
+            source_snapshot_id=snapshot.id,
+        )
+        return True
     if node_task.correlation_type != protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE:
         return False
     from apps.protection.tasks.backup import project_backup_node_task_result_task

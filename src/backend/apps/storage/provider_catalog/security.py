@@ -7,6 +7,7 @@ import re
 import socket
 from urllib.parse import urlsplit
 
+from apps.storage.conf import provider_validation_allow_proxy_fake_ip
 from apps.storage.provider_catalog.errors import ProviderEndpointPolicyError
 
 
@@ -17,6 +18,17 @@ _SECRET_PATTERNS = (
     ),
     re.compile(r"(?i)(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=[^\s]+"),
 )
+
+_PROXY_FAKE_IP_NETWORKS = (
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("fdfe:dcba:9876::/48"),
+)
+
+
+def _proxy_fake_ip_allowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return provider_validation_allow_proxy_fake_ip() and any(
+        ip in network for network in _PROXY_FAKE_IP_NETWORKS
+    )
 
 
 def sanitize_cloud_error(message: object, *, secrets: tuple[str, ...] = ()) -> str:
@@ -75,7 +87,7 @@ def validate_managed_endpoint_network(endpoint: str) -> None:
                 "ENDPOINT_DNS_FAILED",
                 "Endpoint DNS resolution returned an invalid address.",
             ) from exc
-        if not ip.is_global:
+        if not ip.is_global and not _proxy_fake_ip_allowed(ip):
             raise ProviderEndpointPolicyError(
                 "ENDPOINT_PRIVATE_ADDRESS",
                 "Endpoint resolves to an unauthorized network address.",

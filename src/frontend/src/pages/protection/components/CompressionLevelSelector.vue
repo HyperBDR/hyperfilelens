@@ -24,6 +24,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: CompressionLevel | '']
+  'visible-change': [visible: boolean]
 }>()
 
 function emitValue(value: unknown) {
@@ -49,12 +50,13 @@ function compressionIcon(level: CompressionLevel) {
     :model-value="modelValue"
     :clearable="clearable"
     :placeholder="ariaLabel"
-    class="w-full"
+    class="w-full hfl-table-no-tooltip"
     popper-class="batch-compression-select-popper"
     placement="bottom-start"
     :fallback-placements="['bottom-start', 'bottom-end']"
     :aria-label="ariaLabel"
     @update:model-value="emitValue"
+    @visible-change="emit('visible-change', $event)"
   >
     <template #label>
       <span

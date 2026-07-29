@@ -20,6 +20,41 @@ function functionSource(name: string, nextName: string) {
 }
 
 describe('backup wizard step 3 More Actions refresh', () => {
+  it('disables policy-step detail popovers while a configuration selector is open', () => {
+    expect(wizard).toContain('const configSelectMenuOpen = ref(false)')
+    expect(wizard).toContain('function handleConfigSelectVisibleChange(visible: boolean)')
+    expect(wizard).not.toContain('hideConfigTableHoverPopovers()')
+    expect(wizard.match(/@visible-change="handleConfigSelectVisibleChange"/g)).toHaveLength(3)
+    expect(wizard.match(/:disabled="configSelectMenuOpen"/g)?.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('keeps directory details while excluding generic overflow tooltips', () => {
+    const directoriesStart = wizard.indexOf(":label=\"t('protection.backupsPage.labelBackupDirs')\"")
+    const directoriesOpeningTagEnd = wizard.indexOf('>', directoriesStart)
+    const directoriesEnd = wizard.indexOf('</el-table-column>', directoriesStart)
+
+    expect(directoriesStart).toBeGreaterThan(-1)
+    expect(wizard.slice(directoriesStart, directoriesOpeningTagEnd)).toContain('class-name="hfl-table-no-tooltip"')
+    expect(wizard.slice(directoriesStart, directoriesEnd)).toContain('create-source-dir-preview hfl-table-no-tooltip')
+    expect(wizard.slice(directoriesStart, directoriesEnd)).toContain('placement="bottom-start"')
+  })
+
+  it('excludes policy, file-filter, and compression cells from generic overflow tooltips', () => {
+    const policyColumnStart = wizard.indexOf(":label=\"t('protection.backupsPage.labelBackupPolicy')\"")
+    const policyColumnEnd = wizard.indexOf('>', policyColumnStart)
+    const filterColumnStart = wizard.indexOf(":label=\"t('protection.backupsPage.labelFileFilter')\"")
+    const filterColumnEnd = wizard.indexOf('>', filterColumnStart)
+    const compressionColumnStart = wizard.indexOf(":label=\"t('protection.backupsPage.labelCompressionStrategy')\"")
+    const compressionColumnEnd = wizard.indexOf('>', compressionColumnStart)
+
+    expect(policyColumnStart).toBeGreaterThan(-1)
+    expect(filterColumnStart).toBeGreaterThan(-1)
+    expect(compressionColumnStart).toBeGreaterThan(-1)
+    expect(wizard.slice(policyColumnStart, policyColumnEnd)).toContain('class-name="hfl-table-no-tooltip"')
+    expect(wizard.slice(filterColumnStart, filterColumnEnd)).toContain('class-name="hfl-table-no-tooltip"')
+    expect(wizard.slice(compressionColumnStart, compressionColumnEnd)).toContain('class-name="hfl-table-no-tooltip"')
+  })
+
   it('uses operation-specific loading and saving copy for each edit action', () => {
     const waitingStart = wizard.indexOf('const editorWaitingText')
     const waitingEnd = wizard.indexOf('function hideOptionPopovers', waitingStart)

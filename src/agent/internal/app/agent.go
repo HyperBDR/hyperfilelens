@@ -37,10 +37,15 @@ type Agent struct {
 
 // New creates an Agent instance backed by a hot-reloadable config Store.
 func New(store *config.Store) *Agent {
+	snapshotConcurrency := 2
+	if store != nil && store.Current().BackupSnapshotConcurrency > 0 {
+		snapshotConcurrency = store.Current().BackupSnapshotConcurrency
+	}
+	slog.Info("backup snapshot scheduler configured", "max_concurrent", snapshotConcurrency)
 	return &Agent{
 		store:     store,
 		sender:    remote.NewSender(),
-		scheduler: controller.NewScheduler(2),
+		scheduler: controller.NewScheduler(snapshotConcurrency),
 		tracker:   controller.NewTracker(),
 		monitor:   monitor.NewCollector(),
 	}
@@ -65,7 +70,7 @@ func (a *Agent) Startup(ctx context.Context) error {
 	slog.Info("task database ready", "path", db.Path())
 
 	repo := database.NewTaskRepo(db)
-	a.wire = wire.NewHandler(a.store, a.tracker, repo)
+	a.wire = wire.NewHandler(a.store, a.tracker, repo, a.scheduler)
 	a.taskFixer = controller.NewTaskFixer(repo, a.tracker, dataRoot, logDir)
 
 	if _, err := a.taskFixer.RepairRunning(ctx); err != nil {

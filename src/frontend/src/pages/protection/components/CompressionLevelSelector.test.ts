@@ -104,4 +104,34 @@ describe('CompressionLevelSelector', () => {
 
     expect(wrapper.emitted('update:modelValue')).toEqual([['']])
   })
+
+  it('forwards select menu visibility changes', () => {
+    const wrapper = mount(CompressionLevelSelector, {
+      props: {
+        modelValue: 'balanced',
+        options,
+        mode: 'select',
+        ariaLabel: 'Compression',
+      },
+      global: { plugins: [ElementPlus] },
+    })
+
+    wrapper.findComponent(ElSelect).vm.$emit('visible-change', true)
+
+    expect(wrapper.emitted('visible-change')).toEqual([[true]])
+  })
+
+  it('excludes the selected value from generic table overflow tooltips', () => {
+    const wrapper = mount(CompressionLevelSelector, {
+      props: {
+        modelValue: 'balanced',
+        options,
+        mode: 'select',
+        ariaLabel: 'Compression',
+      },
+      global: { plugins: [ElementPlus] },
+    })
+
+    expect(wrapper.findComponent(ElSelect).classes()).toContain('hfl-table-no-tooltip')
+  })
 })

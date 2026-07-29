@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strconv"
 	"strings"
 
 	"hyperfilelens/agent/internal/model"
@@ -44,6 +45,10 @@ func applyEnvMap(cfg *model.AgentConfig, values map[string]string) {
 			cfg.LogDir = val
 		case "kopia_path":
 			cfg.KopiaPath = val
+		case "backup_snapshot_concurrency":
+			if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+				cfg.BackupSnapshotConcurrency = parsed
+			}
 		case "role":
 			if r, err := model.ParseRole(val); err == nil {
 				cfg.Role = r
@@ -107,6 +112,9 @@ func configToEnvMap(cfg *model.AgentConfig) map[string]string {
 	set("data_dir", cfg.DataDir)
 	set("log_dir", cfg.LogDir)
 	set("kopia_path", cfg.KopiaPath)
+	if cfg.BackupSnapshotConcurrency > 0 {
+		set("backup_snapshot_concurrency", strconv.Itoa(cfg.BackupSnapshotConcurrency))
+	}
 	if cfg.Role != "" {
 		set("role", string(cfg.Role))
 	}

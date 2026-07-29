@@ -36,5 +36,7 @@ type AgentConfig struct {
 	LogDir string `json:"log_dir"`
 	// KopiaPath is the path to the Kopia CLI; empty means rely on PATH.
 	KopiaPath string `json:"kopia_path"`
-	Role      Role   `json:"role"`
+	// BackupSnapshotConcurrency limits simultaneously running prepared snapshots.
+	BackupSnapshotConcurrency int  `json:"backup_snapshot_concurrency"`
+	Role                      Role `json:"role"`
 }

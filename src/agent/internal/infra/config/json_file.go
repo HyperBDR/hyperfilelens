@@ -4,21 +4,23 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 const configJSONName = "config.json"
 
 // JSONOverlay holds optional structured overrides (merged after agent.env on reload).
 type JSONOverlay struct {
-	WSSURL     string `json:"wss_url,omitempty"`
-	APIBaseURL string `json:"api_base_url,omitempty"`
-	OrgKey     string `json:"org_key,omitempty"`
-	NodeID     string `json:"node_id,omitempty"`
-	NodeToken  string `json:"node_token,omitempty"`
-	DataDir    string `json:"data_dir,omitempty"`
-	LogDir     string `json:"log_dir,omitempty"`
-	KopiaPath  string `json:"kopia_path,omitempty"`
-	Role       string `json:"role,omitempty"`
+	WSSURL                    string `json:"wss_url,omitempty"`
+	APIBaseURL                string `json:"api_base_url,omitempty"`
+	OrgKey                    string `json:"org_key,omitempty"`
+	NodeID                    string `json:"node_id,omitempty"`
+	NodeToken                 string `json:"node_token,omitempty"`
+	DataDir                   string `json:"data_dir,omitempty"`
+	LogDir                    string `json:"log_dir,omitempty"`
+	KopiaPath                 string `json:"kopia_path,omitempty"`
+	BackupSnapshotConcurrency int    `json:"backup_snapshot_concurrency,omitempty"`
+	Role                      string `json:"role,omitempty"`
 }
 
 func jsonConfigPath(dataDir string) string {
@@ -68,6 +70,9 @@ func overlayToEnvMap(o JSONOverlay) map[string]string {
 	put("HFL_DATA_DIR", o.DataDir)
 	put("HFL_LOG_DIR", o.LogDir)
 	put("HFL_KOPIA_PATH", o.KopiaPath)
+	if o.BackupSnapshotConcurrency > 0 {
+		put("HFL_BACKUP_SNAPSHOT_CONCURRENCY", strconv.Itoa(o.BackupSnapshotConcurrency))
+	}
 	put("HFL_NODE_ROLE", o.Role)
 	return out
 }
@@ -85,6 +90,9 @@ func envMapToOverlay(values map[string]string) JSONOverlay {
 	o.DataDir = values["HFL_DATA_DIR"]
 	o.LogDir = values["HFL_LOG_DIR"]
 	o.KopiaPath = values["HFL_KOPIA_PATH"]
+	if parsed, err := strconv.Atoi(values["HFL_BACKUP_SNAPSHOT_CONCURRENCY"]); err == nil && parsed > 0 {
+		o.BackupSnapshotConcurrency = parsed
+	}
 	o.Role = values["HFL_NODE_ROLE"]
 	return o
 }
