@@ -132,7 +132,10 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(monitor).toContain('getTask(taskUuid)')
     expect(monitor).toContain("new Set(['success', 'failed', 'cancelled', 'timeout'])")
     expect(monitor).toContain('refreshStep3AfterMoreAction({ preserveSelection: false })')
-    expect(unregister).toContain('monitorPendingUnregister(Array.from(idSet), taskUuids)')
+    expect(unregister).toContain('if (taskUuid)')
+    expect(unregister).toContain('monitoredSourceIds.push(sourceId)')
+    expect(unregister).toContain('monitoredTaskUuids.push(taskUuid)')
+    expect(unregister).toContain('monitorPendingUnregister(monitoredSourceIds, monitoredTaskUuids)')
   })
 
   it('refreshes source rows, pipeline membership, configurations, and pagination through one helper', () => {
