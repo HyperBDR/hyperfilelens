@@ -8,6 +8,7 @@ import { beginRouteTransition, finishRouteTransition } from '../lib/routeTransit
 import { lazyRoute } from './lazyRoute'
 import { isDynamicImportFailure, reloadOnceForChunkLoadFailure } from './chunkLoadRecovery'
 import { LOGIN_ROUTE_NAME, withoutLegacySessionReason } from '../lib/loginNavigation'
+import { PROTECTION_RETENTION_LEGACY_ROUTE } from './legacyRoutes'
 
 import { prefetchAuthTurnstile } from '../composables/useTurnstileConfig'
 
@@ -31,7 +32,6 @@ const ProtectionSnapshotDetailPage = lazyRoute(() => import('../pages/protection
 const ProtectionPoliciesPage = lazyRoute(() => import('../pages/protection/Policies.vue'))
 const ProtectionPolicyEditorPage = lazyRoute(() => import('../pages/protection/PolicyEditorPage.vue'))
 const ProtectionFileFilterRuleGuidePage = lazyRoute(() => import('../pages/protection/FileFilterRuleGuide.vue'))
-const ProtectionRetentionPage = lazyRoute(() => import('../pages/protection/Retention.vue'))
 const AssetsNodesPage = lazyRoute(() => import('../pages/node/Nodes.vue'))
 const AssetsRepositoriesPage = lazyRoute(() => import('../pages/node/Repositories.vue'))
 const AddS3RepositoryPage = lazyRoute(() => import('../pages/node/AddS3Repo.vue'))
@@ -94,7 +94,7 @@ export const router = createRouter({
         { path: 'protection/policies/create', component: ProtectionPolicyEditorPage, meta: fullscreenRouteMeta },
         { path: 'protection/policies/:id/edit', component: ProtectionPolicyEditorPage, meta: fullscreenRouteMeta },
         { path: 'protection/file-filter-rules/help', component: ProtectionFileFilterRuleGuidePage },
-        { path: 'protection/retention', component: ProtectionRetentionPage },
+        PROTECTION_RETENTION_LEGACY_ROUTE,
         { path: 'insight', redirect: '/insight/copilot' },
         { path: 'insight/copilot', component: InsightPage },
         {

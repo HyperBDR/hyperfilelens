@@ -9,6 +9,8 @@ grep -F './tools/quality/test-docker-image-digest-alias.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-offline-docker-package-plan.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-language-pack-runtime-index.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
@@ -714,6 +716,7 @@ for executable in \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
+	"${ROOT}/tools/quality/test-language-pack-runtime-index.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \
 	"${ROOT}/tools/quality/test-agent-release-retention.sh" \

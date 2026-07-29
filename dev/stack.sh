@@ -365,12 +365,17 @@ ensure_data_dirs() {
 		"${ROOT}/data/media/snapshot-downloads" \
 		"${ROOT}/data/staticfiles"
 	local manifest="${ROOT}/data/lang-packs/installed.json"
-	if [[ ! -f "${manifest}" ]]; then
+	local legacy_empty_manifest=0
+	if [[ -f "${manifest}" ]] \
+		&& [[ "$(tr -d '[:space:]' <"${manifest}")" == '{"packs":[]}' ]]; then
+		legacy_empty_manifest=1
+	fi
+	if [[ ! -f "${manifest}" || "${legacy_empty_manifest}" -eq 1 ]]; then
 		local temporary="${manifest}.tmp.$$"
-		printf '%s\n' '{"packs":[]}' >"${temporary}"
+		printf '%s\n' '{"schema":1,"packs":[]}' >"${temporary}"
 		chmod 0644 "${temporary}"
 		mv -f "${temporary}" "${manifest}"
-		log "Created empty runtime language-pack manifest"
+		log "Initialized empty runtime language-pack manifest schema"
 	fi
 }
 

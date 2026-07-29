@@ -641,6 +641,8 @@ ensure_data_dirs() {
 		"${ROOT}/data/media/snapshot-downloads" \
 		"${ROOT}/data/staticfiles" \
 		"${ROOT}/data/sourcelens/config"
+	chmod 0755 "${ROOT}/data/lang-packs"
+	refresh_language_pack_index "${ROOT}/data/lang-packs"
 }
 
 sync_runtime_media() {
@@ -2830,6 +2832,15 @@ for pack_dir in sorted(root.iterdir()):
     packs.append(entry)
 
 payload = {"schema": 1, "packs": packs}
+payload_text = json.dumps(payload, ensure_ascii=True, indent=2) + "\n"
+index_path = root / "installed.json"
+try:
+    if index_path.read_text(encoding="utf-8") == payload_text:
+        index_path.chmod(0o644)
+        raise SystemExit(0)
+except (FileNotFoundError, OSError, UnicodeDecodeError):
+    pass
+
 with tempfile.NamedTemporaryFile(
     mode="w",
     encoding="utf-8",
@@ -2838,10 +2849,12 @@ with tempfile.NamedTemporaryFile(
     suffix=".json",
     delete=False,
 ) as index_file:
-    json.dump(payload, index_file, ensure_ascii=True, indent=2)
-    index_file.write("\n")
+    index_file.write(payload_text)
+    index_file.flush()
+    os.fsync(index_file.fileno())
     temporary_path = pathlib.Path(index_file.name)
-os.replace(temporary_path, root / "installed.json")
+temporary_path.chmod(0o644)
+os.replace(temporary_path, index_path)
 PY
 }
 

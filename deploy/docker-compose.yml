@@ -208,7 +208,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "test -f /usr/share/nginx/html/index.html && test -f /usr/share/nginx/website/en/index.html && nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1:11443/health >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11442/health >/dev/null",
+          "test -f /usr/share/nginx/html/index.html && test -f /usr/share/nginx/website/en/index.html && nginx -t >/dev/null 2>&1 && wget --no-check-certificate -qO- https://127.0.0.1:11443/health >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11443/locales/installed.json >/dev/null && wget --no-check-certificate -qO- https://127.0.0.1:11442/health >/dev/null",
         ]
       interval: 5s
       timeout: 3s
