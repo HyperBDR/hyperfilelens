@@ -33,6 +33,7 @@ set -euo pipefail
 [[ "$HFL_NODE_ROLE" == "gateway" ]]
 [[ "$HFL_API_BASE" == "https://127.0.0.1:11443" ]]
 [[ "$HFL_WSS_URL" == "wss://127.0.0.1:11443/ws/node/agent/" ]]
+[[ "$HFL_FORCE_SIDECAR_INSTALL" == "1" ]]
 [[ "$1" == "gateway-install" && "$2" == "--yes" ]]
 mkdir -p "$TEST_AGENT_INSTALL_DIR" "$TEST_AGENT_DATA_DIR"
 if [[ ! -f "$TEST_AGENT_INSTALL_DIR/INSTALLED_VERSION" ]]; then
