@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
@@ -191,10 +193,10 @@ class TaskStepInputSerializer(serializers.Serializer):
     progress = serializers.DecimalField(
         max_digits=5,
         decimal_places=2,
-        min_value=0,
-        max_value=100,
+        min_value=Decimal("0.00"),
+        max_value=Decimal("100.00"),
         required=False,
-        default=0,
+        default=Decimal("0.00"),
     )
 
 

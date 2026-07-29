@@ -597,6 +597,7 @@ grep -F './tools/quality/test-release-download-proxy.sh' "${workflow}" >/dev/nul
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-agent-release-retention.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null
 grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/null
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
@@ -715,6 +716,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \
+	"${ROOT}/tools/quality/test-agent-release-retention.sh" \
 	"${ROOT}/tools/quality/test-managed-image-retention.sh" \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}/tools/quality/test-release-download-proxy.sh" \
