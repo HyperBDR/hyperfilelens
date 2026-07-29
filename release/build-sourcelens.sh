@@ -42,6 +42,7 @@ Usage: ./release/build-sourcelens.sh --pkg-root DIR --images-dir DIR [options]
   --prebuilt           Package normalized images already loaded in Docker
   --sourcelens-git-url URL  Override SOURCELENS_GIT_URL
   --sourcelens-ref REF      SourceLens release tag in vX.Y.Z form
+  --github-download-mirror URL  GitHub Git mirror with official fallback
   --github-token TOKEN GitHub token for private repo clone/fetch (env: GITHUB_TOKEN)
   --apt-mirror URL     Ubuntu/Debian apt mirror (env: APT_MIRROR)
   --pip-index-url URL  Python package index (env: PIP_INDEX_URL)
@@ -73,6 +74,8 @@ force_build=${FORCE_BUILD}
 force_pull=${FORCE_PULL}
 no_cache=${NO_CACHE}
 prebuilt=${PREBUILT}
+github_download_mirror=${GITHUB_DOWNLOAD_MIRROR:-<official>}
+github_fallback_timeout=${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS}
 github_token=$(hfl_redact "${GITHUB_TOKEN:-}")
 apt_mirror=${SOURCELENS_APT_MIRROR:-<official>}
 pip_index_url=${SOURCELENS_PIP_INDEX_URL:-<official>}
@@ -124,6 +127,11 @@ parse_args() {
 		--sourcelens-ref | --git-ref)
 			require_value "$1" "${2:-}"
 			SOURCELENS_GIT_REF="$2"
+			shift 2
+			;;
+		--github-download-mirror)
+			require_value "$1" "${2:-}"
+			GITHUB_DOWNLOAD_MIRROR="${2%/}"
 			shift 2
 			;;
 		--apt-mirror)

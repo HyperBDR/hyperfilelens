@@ -147,7 +147,9 @@ load_repo_env_defaults() {
 		PIP_TIMEOUT NPM_REGISTRY GOPROXY GOSUMDB BUILD_SOURCELENS \
 		DOCKER_PULL_TIMEOUT_SECONDS \
 		KOPIA_ARTIFACT_MODE KOPIA_GIT_URL KOPIA_GIT_REF \
-		SOURCELENS_GIT_REF SOURCELENS_GIT_URL SENTRY_ENABLED SENTRY_DSN \
+		SOURCELENS_GIT_REF SOURCELENS_GIT_URL SOURCELENS_GIT_TIMEOUT_SECONDS \
+		SOURCELENS_GIT_RETRIES SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS \
+		SENTRY_ENABLED SENTRY_DSN \
 		SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE \
 		SENTRY_SEND_DEFAULT_PII VITE_SHOW_EULA; do
 		hfl_env_load_default "${key}"
@@ -224,7 +226,7 @@ Version:
   - Control-plane Docker images + postgres/redis
   - Image-only runtime package: images, payload/media, compose, and deploy config
 
-Mirror options (Kopia fetch + Agent publishing + runtime image pull; env fallback):
+Mirror options (Kopia fetch + Agent publishing + SourceLens Git + runtime image pull; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for ubuntu:24.04, postgres, redis (env: DOCKER_DOWNLOAD_MIRROR)
@@ -289,6 +291,9 @@ with_sourcelens=${BUILD_SOURCELENS:-1}
 sourcelens_ref=${SOURCELENS_GIT_REF}
 sourcelens_version=${sourcelens_version}
 sourcelens_git_url=${SOURCELENS_GIT_URL:-<default>}
+sourcelens_git_timeout=${SOURCELENS_GIT_TIMEOUT_SECONDS:-120}
+sourcelens_git_retries=${SOURCELENS_GIT_RETRIES:-2}
+sourcelens_git_fallback_timeout=${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS:-30}
 sourcelens_upstream_image_prefix=${SOURCELENS_UPSTREAM_IMAGE_PREFIX}
 sourcelens_image_registry=${SOURCELENS_IMAGE_REGISTRY:-<local>}
 ubuntu2404_arch=${UBUNTU2404_ARCH}
@@ -550,11 +555,15 @@ build_sourcelens_bundle() {
 	[[ "${NO_CACHE}" -eq 1 ]] && args+=(--no-cache)
 	[[ "${SOURCELENS_FORCE_BUILD}" -eq 1 ]] && args+=(--force-build)
 	[[ -n "${SOURCELENS_GIT_REF:-}" ]] && args+=(--sourcelens-ref "${SOURCELENS_GIT_REF}")
+	[[ -n "${MIRROR_GITHUB_DOWNLOAD}" ]] && args+=(--github-download-mirror "${MIRROR_GITHUB_DOWNLOAD}")
 	if [[ -n "${SOURCELENS_GIT_URL:-}" ]]; then
 		args+=(--sourcelens-git-url "${SOURCELENS_GIT_URL}")
 	fi
 	APT_MIRROR="${MIRROR_APT:-}" \
 		SOURCELENS_HFL_VERSION="${HFL_VERSION}" \
+		SOURCELENS_GIT_TIMEOUT_SECONDS="${SOURCELENS_GIT_TIMEOUT_SECONDS:-120}" \
+		SOURCELENS_GIT_RETRIES="${SOURCELENS_GIT_RETRIES:-2}" \
+		SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS="${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS:-30}" \
 		GITHUB_TOKEN="${MIRROR_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}" \
 		PIP_INDEX_URL="${PIP_INDEX_URL:-${BUILD_PIP_INDEX_URL:-}}" \
 		PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-${BUILD_PIP_TRUSTED_HOST:-}}" \

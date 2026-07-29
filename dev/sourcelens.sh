@@ -33,6 +33,7 @@ Options:
   --pull-retries COUNT    Docker pull attempts (default: 2)
   --sourcelens-git-url URL  Override SOURCELENS_GIT_URL
   --sourcelens-ref REF      SourceLens release tag in vX.Y.Z form
+  --github-download-mirror URL  GitHub Git mirror with official fallback
   --github-token TOKEN  GitHub token for private repo clone/fetch (env: GITHUB_TOKEN)
   --apt-mirror URL     Ubuntu/Debian apt mirror (env: APT_MIRROR)
   --pip-index-url URL  Python package index (env: PIP_INDEX_URL)
@@ -75,6 +76,8 @@ offline=${SOURCELENS_OFFLINE}
 force_pull=${SOURCELENS_FORCE_PULL}
 docker_pull_timeout=${SOURCELENS_DOCKER_PULL_TIMEOUT}
 docker_pull_retries=${SOURCELENS_DOCKER_PULL_RETRIES}
+github_download_mirror=${GITHUB_DOWNLOAD_MIRROR:-<official>}
+github_fallback_timeout=${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS}
 github_token=$(hfl_redact "${GITHUB_TOKEN:-}")
 apt_mirror=${SOURCELENS_APT_MIRROR:-<official>}
 pip_index_url=${SOURCELENS_PIP_INDEX_URL:-<official>}
@@ -132,6 +135,11 @@ parse_args() {
 		--sourcelens-ref | --git-ref)
 			require_value "$1" "${2:-}"
 			SOURCELENS_GIT_REF="$2"
+			shift 2
+			;;
+		--github-download-mirror)
+			require_value "$1" "${2:-}"
+			GITHUB_DOWNLOAD_MIRROR="${2%/}"
 			shift 2
 			;;
 		--github-token)

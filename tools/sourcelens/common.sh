@@ -68,6 +68,9 @@ sourcelens_load_config() {
 	SOURCELENS_FORCE_PULL="${SOURCELENS_FORCE_PULL:-0}"
 	SOURCELENS_GIT_TIMEOUT_SECONDS="${SOURCELENS_GIT_TIMEOUT_SECONDS:-120}"
 	SOURCELENS_GIT_RETRIES="${SOURCELENS_GIT_RETRIES:-2}"
+	SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS="${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS:-30}"
+	GITHUB_DOWNLOAD_MIRROR="${GITHUB_DOWNLOAD_MIRROR:-}"
+	GITHUB_DOWNLOAD_MIRROR="${GITHUB_DOWNLOAD_MIRROR%/}"
 }
 
 sourcelens_resolve_version() {
@@ -167,24 +170,66 @@ sourcelens_git() {
 	fi
 }
 
+sourcelens_git_mirror_enabled() {
+	[[ -n "${GITHUB_DOWNLOAD_MIRROR:-}" && "${SOURCELENS_GIT_URL}" == https://github.com/* ]]
+}
+
+sourcelens_git_network_once() {
+	local route=$1 timeout_seconds=$2
+	shift 2
+	case "${route}" in
+	mirror)
+		timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+			-c "url.${GITHUB_DOWNLOAD_MIRROR}/https://github.com/.insteadOf=https://github.com/" "$@"
+		;;
+	official)
+		if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+			timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=https://github.com/" \
+				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=git@github.com:" "$@"
+		else
+			timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
+				-c "url.https://github.com/.insteadOf=https://github.com/" "$@"
+		fi
+		;;
+	*) sourcelens_die "invalid SourceLens Git network route: ${route}" 2 ;;
+	esac
+}
+
 sourcelens_git_network() {
 	local attempt timeout_seconds="${SOURCELENS_GIT_TIMEOUT_SECONDS}" retries="${SOURCELENS_GIT_RETRIES}"
+	local fallback_timeout_seconds="${SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS}"
 	local clone_dest=""
 	[[ "${1:-}" != "clone" ]] || clone_dest="${!#}"
-	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ && "${retries}" =~ ^[1-9][0-9]*$ ]] \
+	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ \
+		&& "${retries}" =~ ^[1-9][0-9]*$ \
+		&& "${fallback_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] \
 		|| sourcelens_die "SourceLens Git timeout and retries must be positive integers" 2
+	if sourcelens_git_mirror_enabled; then
+		sourcelens_log "Using SourceLens Git mirror ${GITHUB_DOWNLOAD_MIRROR}"
+		for attempt in $(seq 1 "${retries}"); do
+			if [[ -n "${clone_dest}" && "${attempt}" -gt 1 ]]; then
+				rm -rf "${clone_dest}"
+			fi
+			if sourcelens_git_network_once mirror "${timeout_seconds}" "$@"; then
+				return 0
+			fi
+			sourcelens_log "SourceLens Git mirror command failed or timed out (attempt ${attempt}/${retries})"
+		done
+		[[ -z "${clone_dest}" ]] || rm -rf "${clone_dest}"
+		sourcelens_log "SourceLens Git mirror unavailable; retrying official GitHub once (timeout=${fallback_timeout_seconds}s)"
+		if sourcelens_git_network_once official "${fallback_timeout_seconds}" "$@"; then
+			return 0
+		fi
+		sourcelens_log "SourceLens official GitHub command failed or timed out"
+		[[ -z "${clone_dest}" ]] || rm -rf "${clone_dest}"
+		return 1
+	fi
 	for attempt in $(seq 1 "${retries}"); do
 		if [[ -n "${clone_dest}" && "${attempt}" -gt 1 ]]; then
 			rm -rf "${clone_dest}"
 		fi
-		if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-			if timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
-				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=https://github.com/" \
-				-c "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf=git@github.com:" "$@"; then
-				return 0
-			fi
-		elif timeout --foreground "${timeout_seconds}s" env GIT_TERMINAL_PROMPT=0 git \
-			-c "url.https://github.com/.insteadOf=https://github.com/" "$@"; then
+		if sourcelens_git_network_once official "${timeout_seconds}" "$@"; then
 			return 0
 		fi
 		sourcelens_log "SourceLens Git command failed or timed out (attempt ${attempt}/${retries})"
