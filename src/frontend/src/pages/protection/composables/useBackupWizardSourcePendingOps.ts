@@ -71,6 +71,14 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
     return ops.value.get(sourceId)
   }
 
+  function pendingDeleteTasks() {
+    return [...ops.value.entries()].flatMap(([sourceId, op]) =>
+      op.kind === 'deleting' && op.taskUuid
+        ? [{ sourceId, taskUuid: op.taskUuid, startedAt: op.startedAt }]
+        : [],
+    )
+  }
+
   function rowPendingLabel(sourceId: string) {
     return pendingLabel(getOp(sourceId))
   }
@@ -168,6 +176,7 @@ export function useBackupWizardSourcePendingOps(options: { t: Composer['t'] }) {
   return {
     isPending,
     getOp,
+    pendingDeleteTasks,
     rowPendingLabel,
     rowPendingSpinning,
     isRowSelectable,

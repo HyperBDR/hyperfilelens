@@ -2402,6 +2402,7 @@ onMounted(async () => {
   } finally {
     flowBootstrapping.value = false
   }
+  resumePendingUnregisterMonitors()
   nextTick(() => {
     updateFlowTableMaxHeight()
     const toolbar = flowToolbarRef.value
@@ -4520,12 +4521,16 @@ function stopUnregisterTaskPolls() {
   unregisterTaskPollTimers.clear()
 }
 
-function monitorPendingUnregister(sourceIds: string[], taskUuids: string[]) {
+function monitorPendingUnregister(
+  sourceIds: string[],
+  taskUuids: string[],
+  monitorStartedAt = Date.now(),
+) {
   const pairs = taskUuids
     .map((taskUuid, index) => ({ taskUuid, sourceId: sourceIds[index] || '' }))
     .filter((item) => item.taskUuid && item.sourceId)
   if (!pairs.length) return
-  const startedAt = Date.now()
+  const startedAt = monitorStartedAt
 
   const poll = async () => {
     if (unregisterTaskPollingStopped) return
@@ -4576,6 +4581,12 @@ function monitorPendingUnregister(sourceIds: string[], taskUuids: string[]) {
   }
 
   void poll()
+}
+
+function resumePendingUnregisterMonitors() {
+  for (const { sourceId, taskUuid, startedAt } of sourcePendingOps.pendingDeleteTasks()) {
+    monitorPendingUnregister([sourceId], [taskUuid], startedAt || Date.now())
+  }
 }
 
 function affectedBackupIdsForSources(sourceIds: string[]): Set<string> {
@@ -4775,6 +4786,10 @@ async function onBackupSourcesDeleted(payload: {
   result: string
   warnings: Array<Record<string, unknown>>
   pending_removals?: Array<{ source_id: string; node_id: number }>
+  task_id?: number
+  task_uuid?: string
+  task_ids?: number[]
+  task_uuids?: string[]
   accepted?: boolean
 }) {
   const idSet = new Set(backupSourceDeleteIds.value)
@@ -4796,9 +4811,27 @@ async function onBackupSourcesDeleted(payload: {
         ])
         if (flowMainStep.value === 0) void loadBackupSelectable()
       }
-      const taskUuids = (payload.task_uuids?.length ? payload.task_uuids : [payload.task_uuid || ''])
-        .filter((taskUuid): taskUuid is string => Boolean(taskUuid))
-      monitorPendingUnregister(Array.from(idSet), taskUuids)
+      const taskUuids = payload.task_uuids?.length ? payload.task_uuids : [payload.task_uuid || '']
+      const monitoredSourceIds: string[] = []
+      const monitoredTaskUuids: string[] = []
+      Array.from(idSet).forEach((sourceId, index) => {
+        const taskUuid = taskUuids[index] || ''
+        sourcePendingOps.mark(
+          [sourceId],
+          {
+            kind: taskUuid ? 'deleting' : 'delete_failed',
+            taskId: payload.task_ids?.[index] ?? payload.task_id,
+            taskUuid,
+            startedAt: Date.now(),
+          },
+          flowRowsForSourceIds([sourceId]),
+        )
+        if (taskUuid) {
+          monitoredSourceIds.push(sourceId)
+          monitoredTaskUuids.push(taskUuid)
+        }
+      })
+      monitorPendingUnregister(monitoredSourceIds, monitoredTaskUuids)
       ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
     } catch (err) {
       sourcePendingOps.clear(Array.from(idSet))

@@ -67,6 +67,23 @@ class NodeLifecycleTests(TestCase):
         self.node.refresh_from_db()
         self.assertTrue(self.node.is_deleted)
 
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_offline_force_gateway_records_agent_and_sidecar_residue(self, _routable):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+
+        result = start_node_remove(
+            org=self.org,
+            node=self.node,
+            user=self.user,
+            force=True,
+        )
+
+        self.assertEqual(
+            result["retained_resources"],
+            ["agent_installation", "lensnode_sidecar"],
+        )
+
     @patch("apps.node.services.internal.node_lifecycle.run_agent_task_async")
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_online_remove_dispatches_uninstall(self, _routable, mock_dispatch):
@@ -416,6 +433,32 @@ class NodeLifecycleTests(TestCase):
         self.assertTrue(task.result["completion_timed_out_at"])
         self.assertNotIn("completion_received_at", task.result)
         self.assertTrue(self.node.is_deleted)
+
+    def test_force_gateway_timeout_records_unverified_agent_and_sidecar(self):
+        self.node.role = NodeRole.GATEWAY
+        self.node.save(update_fields=["role", "updated_at"])
+        detached_at = timezone.now() - timezone.timedelta(
+            seconds=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 1
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.RUNNING,
+            payload={"force_cleanup": True},
+            result={"mode": "local_detached", "detached_at": detached_at.isoformat()},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.assertEqual(
+            task.result["retained_resources"],
+            ["unverified_agent_installation", "unverified_lensnode_sidecar"],
+        )
 
     @patch("apps.node.tasks.lifecycle.advance_node_lifecycle_for_node.apply_async")
     def test_detached_remove_queues_callback_timeout_verification(self, apply_async):

@@ -102,7 +102,7 @@ run_worker_dev() {
   require_watchfiles
   echo "[entrypoint] watch backend source and restart celery worker"
   exec watchfiles --filter python \
-    "celery -A common worker --loglevel=INFO -Q backend,node.lifecycle,node.ingest,storage.provider-validation" \
+    "celery -A common worker --loglevel=INFO -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation" \
     /opt/backend
 }
 
@@ -139,8 +139,8 @@ case "${1:-api}" in
     run_migrations_and_register
     echo "[entrypoint] start celery worker"
     exec celery -A common worker --loglevel=INFO \
-      --concurrency="${CELERY_WORKER_CONCURRENCY:-1}" \
-      -Q backend,node.lifecycle,node.ingest,storage.provider-validation
+      --concurrency="${CELERY_WORKER_CONCURRENCY:-2}" \
+      -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation
     ;;
   worker-dev)
     run_worker_dev

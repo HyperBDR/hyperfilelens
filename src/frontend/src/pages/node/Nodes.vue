@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpCircle, Plus, RefreshCw, Pencil, ChevronDown, Trash2, TriangleAlert, Search } from 'lucide-vue-next'
-import { ElMessage, type ElTable } from 'element-plus'
+import { ElCheckbox, ElMessage, type ElTable } from 'element-plus'
 import NodeLifecycleStatusCell from '../../components/node-lifecycle/NodeLifecycleStatusCell.vue'
 import NodeVersionCell from '../../components/node-lifecycle/NodeVersionCell.vue'
 import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBanner.vue'
@@ -446,6 +446,24 @@ const deleteLoading = ref(false)
 const pendingDeleteNodes = ref<ApiNode[]>([])
 const pendingDeleteForce = ref(false)
 
+function nodeDeleteDialogItem(row: ApiNode) {
+  return {
+    key: row.id,
+    name: row.name,
+    status: {
+      label: statusLabel(row.status, row),
+      tone: statusTagType(debouncedNodeStatus(row)),
+    },
+  }
+}
+
+function nodeDeleteCanRetryWithForce() {
+  return lifecycleOps.lastStartErrors.value.some((item) =>
+    ['node_offline', 'agent_uninstall_failed', 'completion_callback_timeout']
+      .includes(String(item.code || '')),
+  )
+}
+
 async function deleteSelectedNodes() {
   if (batchDisabled.value) return
   await afterOverlayDismiss()
@@ -492,6 +510,14 @@ async function executeNodeDelete() {
       deleteOpen.value = false
       pendingDeleteNodes.value = []
       pendingDeleteForce.value = false
+    } else if (lifecycleOps.lastStartErrors.value.length) {
+      const failedIds = new Set(
+        lifecycleOps.lastStartErrors.value.map((item) => Number(item.node_id || 0)),
+      )
+      pendingDeleteNodes.value = targets.filter((node) => failedIds.has(node.id))
+      if (!pendingDeleteForce.value && nodeDeleteCanRetryWithForce()) {
+        pendingDeleteForce.value = true
+      }
     }
   } finally {
     deleteLoading.value = false
@@ -632,7 +658,12 @@ async function submitRename() {
           @scroll="onTableScroll"
           @selection-change="onSelectionChange"
         >
-          <el-table-column type="selection" width="35" :fixed="isProxyNodesPage ? 'left' : undefined" />
+          <el-table-column
+            type="selection"
+            width="35"
+            :fixed="isProxyNodesPage ? 'left' : undefined"
+            :reserve-selection="true"
+          />
           <el-table-column
             :label="isProxyNodesPage ? t('protection.sourceResources.colName') : t('nodesPage.colName')"
             :min-width="isProxyNodesPage ? 200 : 116"
@@ -867,21 +898,42 @@ async function submitRename() {
           : isProxyNodesPage
             ? t('nodesPage.proxyDeleteSelectedConfirm', { n: pendingDeleteNodes.length })
             : t('nodesPage.deleteSelectedConfirm', { n: pendingDeleteNodes.length }))"
-      :items="pendingDeleteNodes.map((row) => ({ key: row.id, name: row.name }))"
+      :items="pendingDeleteNodes.map(nodeDeleteDialogItem)"
       confirm-mode="keyword"
-      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword="pendingDeleteForce ? 'FORCE CLEANUP' : t('common.deleteKeyword')"
       :cancel-text="t('common.cancel')"
       :confirm-text="pendingDeleteForce ? t('nodesPage.proxyDeleteForceAction') : t('common.delete')"
       :loading="deleteLoading"
       @confirm="executeNodeDelete"
       @cancel="cancelNodeDelete"
-    />
+    >
+      <div v-if="isProxyNodesPage" class="node-delete-force-option">
+        <ElCheckbox v-model="pendingDeleteForce">
+          {{ t('nodesPage.proxyDeleteForceAction') }}
+        </ElCheckbox>
+        <p>{{ t('nodesPage.proxyDeleteForceNote') }}</p>
+      </div>
+    </DangerConfirmDialog>
   </ModulePage>
 </template>
 
 <style scoped>
 .nodes-role-tag {
   font-weight: 600;
+}
+
+.node-delete-force-option {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.node-delete-force-option p {
+  margin: 4px 0 0 24px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 </style>

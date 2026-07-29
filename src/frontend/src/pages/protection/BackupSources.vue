@@ -39,6 +39,7 @@ import { formatAppDateTime } from '../../lib/dateTime'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { openErrorDetails } from '../../lib/errors/details'
 import { notifyInfo, notifySuccess } from '../../lib/notify'
+import { getTask } from '../../lib/taskApi'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { hasNasSourceNameConflict, resolveNasSubmitName } from '../../lib/nasSourceNaming'
@@ -486,22 +487,31 @@ function nasShouldRefreshCapacity(row: SourceResource) {
   if (sourceNodeOnlineStatus(row) !== 'online') return false
   if (!row.bound_node && !row.bound_node_name?.trim()) return false
   if (row.id === nasTestingId.value) return false
-  return !row.last_connection_test
+  return row.connection_test_status === 'pending' || row.connection_test_status === 'running'
+}
+
+const NAS_CAPACITY_POLL_MS = 2000
+const NAS_CAPACITY_POLL_TIMEOUT_MS = 3 * 60 * 1000
+
+function waitForNasCapacityPoll(signal?: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    const finish = () => {
+      window.clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, NAS_CAPACITY_POLL_MS)
+    signal?.addEventListener('abort', finish, { once: true })
+  })
 }
 
 async function syncNasCapacities(list: SourceResource[], signal?: AbortSignal) {
   const targets = list.filter(nasShouldRefreshCapacity)
   if (!targets.length || signal?.aborted) return
-  nasCapacitySyncing.value = true
-  try {
-    for (const row of targets) {
-      if (signal?.aborted) return
-      try {
-        await testSourceConnection(row.id, { signal })
-      } catch {
-        /* best-effort per NAS row */
-      }
-    }
+  const targetIds = new Set(targets.map((row) => row.id))
+  const deadline = Date.now() + NAS_CAPACITY_POLL_TIMEOUT_MS
+  while (!signal?.aborted && Date.now() < deadline) {
+    await waitForNasCapacityPoll(signal)
     if (signal?.aborted) return
     const params: Record<string, string | number> = {
       page: pagination.page,
@@ -514,8 +524,13 @@ async function syncNasCapacities(list: SourceResource[], signal?: AbortSignal) {
     const refreshed = await listSourceResources(params, { signal })
     rows.value = refreshed.results
     pagination.count = refreshed.count
-  } finally {
-    if (!signal?.aborted) nasCapacitySyncing.value = false
+    const pending = refreshed.results.some(
+      (row) => targetIds.has(row.id) && nasShouldRefreshCapacity(row),
+    )
+    if (!pending) {
+      stats.value = await sourceStatistics({ signal })
+      return
+    }
   }
 }
 
@@ -552,9 +567,11 @@ async function load() {
       busy.value = false
       if (loadingTab === 'nas' && activeTab.value === 'nas') {
         const capacitySignal = pageRequests.nextSignal('nas-capacity')
-        void syncNasCapacities(rows.value.filter((row) => row.resource_type === 'nas'), capacitySignal).finally(() => {
-          pageRequests.releaseSignal('nas-capacity', capacitySignal)
-        })
+        void syncNasCapacities(rows.value.filter((row) => row.resource_type === 'nas'), capacitySignal)
+          .catch(() => undefined)
+          .finally(() => {
+            pageRequests.releaseSignal('nas-capacity', capacitySignal)
+          })
       }
     }
   }
@@ -889,9 +906,70 @@ const backupSourceDeleteRetryAfterFailure = computed(() =>
   backupSourceDeleteIds.value.some((id) => pendingSourceOps.value.get(id)?.kind === 'delete_failed'),
 )
 const pendingSourceOps = ref(new Map<string, SourcePendingOp>())
+const SOURCE_DELETE_TASK_POLL_MS = 2000
+const SOURCE_DELETE_TASK_TIMEOUT_MS = 15 * 60 * 1000
+let sourceDeleteTaskPollTimer: number | null = null
+let sourceDeleteTaskPollInFlight = false
 
 function refreshPendingSourceOps() {
   pendingSourceOps.value = readWizardPendingSourceOps()
+}
+
+function stopPendingSourceDeletePoll() {
+  if (sourceDeleteTaskPollTimer != null) {
+    window.clearTimeout(sourceDeleteTaskPollTimer)
+    sourceDeleteTaskPollTimer = null
+  }
+}
+
+function schedulePendingSourceDeletePoll(delay = SOURCE_DELETE_TASK_POLL_MS) {
+  stopPendingSourceDeletePoll()
+  const hasPendingTask = [...pendingSourceOps.value.values()].some(
+    (op) => op.kind === 'deleting' && Boolean(op.taskUuid),
+  )
+  if (!hasPendingTask) return
+  sourceDeleteTaskPollTimer = window.setTimeout(() => {
+    sourceDeleteTaskPollTimer = null
+    void reconcilePendingSourceDeleteTasks()
+  }, delay)
+}
+
+async function reconcilePendingSourceDeleteTasks() {
+  if (sourceDeleteTaskPollInFlight) return
+  refreshPendingSourceOps()
+  const pending = [...pendingSourceOps.value.entries()].flatMap(([sourceId, op]) =>
+    op.kind === 'deleting' && op.taskUuid ? [{ sourceId, op }] : [],
+  )
+  if (!pending.length) return
+  sourceDeleteTaskPollInFlight = true
+  let changed = false
+  try {
+    const tasks = await Promise.allSettled(pending.map(({ op }) => getTask(op.taskUuid!)))
+    const now = Date.now()
+    tasks.forEach((settled, index) => {
+      const { sourceId, op } = pending[index]
+      if (settled.status === 'rejected') {
+        if (op.startedAt && now - op.startedAt >= SOURCE_DELETE_TASK_TIMEOUT_MS) {
+          markWizardPendingBySourceIds([sourceId], { ...op, kind: 'delete_failed' })
+          changed = true
+        }
+        return
+      }
+      const status = String(settled.value.status || '').toLowerCase()
+      if (status === 'success') {
+        clearWizardPendingBySourceIds([sourceId])
+        changed = true
+      } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
+        markWizardPendingBySourceIds([sourceId], { ...op, kind: 'delete_failed' })
+        changed = true
+      }
+    })
+    refreshPendingSourceOps()
+    if (changed) await load()
+  } finally {
+    sourceDeleteTaskPollInFlight = false
+    schedulePendingSourceDeletePoll()
+  }
 }
 
 type SourcePendingDisplayStatus = {
@@ -1023,13 +1101,28 @@ async function onBackupSourcesDeleted(payload: {
   result: string
   warnings: Array<Record<string, unknown>>
   pending_removals?: Array<{ source_id: string; node_id: number; task_id?: string | null; state?: string }>
+  task_id?: number
+  task_uuid?: string
+  task_ids?: number[]
+  task_uuids?: string[]
   accepted?: boolean
 }) {
   const deletingIds = new Set(backupSourceDeleteIds.value)
   backupSourceDeleteRows.value = []
   if (payload.accepted && payload.result === 'pending') {
-    markWizardPendingBySourceIds([...deletingIds], { kind: 'deleting' })
+    const sourceIds = [...deletingIds]
+    const taskIds = payload.task_ids?.length ? payload.task_ids : [payload.task_id]
+    const taskUuids = payload.task_uuids?.length ? payload.task_uuids : [payload.task_uuid]
+    sourceIds.forEach((sourceId, index) => {
+      markWizardPendingBySourceIds([sourceId], {
+        kind: 'deleting',
+        taskId: taskIds[index],
+        taskUuid: taskUuids[index],
+        startedAt: Date.now(),
+      })
+    })
     refreshPendingSourceOps()
+    schedulePendingSourceDeletePoll(0)
     backupSourceDeleteIds.value = []
     await load()
     ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
@@ -1310,7 +1403,6 @@ watch(agentDeployOpen, (open) => {
 const nasAddOpen = ref(false)
 const nasAddShellRef = ref<HTMLElement | null>(null)
 const nasAddFormRef = ref<InstanceType<typeof NasAddForm> | null>(null)
-const nasCapacitySyncing = ref(false)
 type NasProtocol = 'smb' | 'nfs'
 const nasProtocol = ref<NasProtocol>('smb')
 const nasBindNodeId = ref<number | undefined>(undefined)
@@ -1646,10 +1738,12 @@ onMounted(async () => {
   await load()
   lifecycleOps.restorePersisted()
   refreshPendingSourceOps()
+  schedulePendingSourceDeletePoll(0)
   tryOpenHostFromQuery()
 })
 
 onUnmounted(() => {
+  stopPendingSourceDeletePoll()
   if (typeof window !== 'undefined') {
     window.removeEventListener('focus', handleProxyDeployReturnFocus)
   }
@@ -2008,7 +2102,7 @@ onUnmounted(() => {
                     variant="compact"
                     :format-bytes="formatBytes"
                   />
-                  <span v-else-if="sourceNodeOnlineStatus(row) === 'online' && nasCapacitySyncing" class="source-capacity-pending">
+                  <span v-else-if="nasShouldRefreshCapacity(row)" class="source-capacity-pending">
                     {{ t('protection.sourceResources.capacitySyncing') }}
                   </span>
                   <span v-else>—</span>

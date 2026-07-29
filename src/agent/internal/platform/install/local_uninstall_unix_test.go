@@ -57,6 +57,18 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	if !strings.Contains(body, `gateway sidecar uninstall failed; keeping the Agent installed for retry`) {
 		t.Fatalf("script should fail closed when LensNode removal fails:\n%s", body)
 	}
+	for _, want := range []string{
+		`gateway_sidecar_uninstall_failed`,
+		`"lensnode_sidecar"`,
+		`managed_mount_cleanup_failed`,
+		`"managed_nas_mounts"`,
+		`agent_uninstall_failed`,
+		`"agent_installation"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("script should report structured cleanup residue %q:\n%s", want, body)
+		}
+	}
 	if strings.Contains(body, `gateway sidecar uninstall reported errors; continuing agent uninstall`) {
 		t.Fatalf("script must not remove the Agent after LensNode removal fails:\n%s", body)
 	}
@@ -90,6 +102,7 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	}
 	if !strings.Contains(body, `if [[ -e "$DATA_DIR" ]]; then
             log "data directory $DATA_DIR remains after removal"
+            AGENT_ARTIFACTS_FAILED=1
             exit 1`) {
 		t.Fatalf("script must verify data directory removal:\n%s", body)
 	}

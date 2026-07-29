@@ -69,6 +69,7 @@ export type SourceResource = {
   status?: string
   status_display?: string
   status_message?: string
+  connection_test_status?: 'idle' | 'pending' | 'running' | 'success' | 'failed'
   connection_summary?: string
   total_size?: number
   used_size?: number

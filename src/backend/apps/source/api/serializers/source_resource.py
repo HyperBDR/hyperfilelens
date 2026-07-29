@@ -43,6 +43,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
             "status_message",
             "last_connection_test",
             "connection_test_result",
+            "connection_test_status",
             "total_size",
             "used_size",
             "free_size",
@@ -61,6 +62,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
             "mount_error",
             "last_connection_test",
             "connection_test_result",
+            "connection_test_status",
             "total_size",
             "used_size",
             "free_size",
@@ -114,6 +116,7 @@ class SourceResourceListSerializer(SourceResourceSerializer):
             "connection_summary",
             "requires_mount",
             "last_connection_test",
+            "connection_test_status",
             "created_at",
             "updated_at",
         ]
