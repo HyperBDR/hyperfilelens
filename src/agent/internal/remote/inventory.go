@@ -43,6 +43,7 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 		"root_path":     dataDir,
 		"install_path":  install.DefaultInstallDir(),
 		"capabilities": []string{
+			"task_command_ack_v1",
 			"repository_operation_v1",
 			"repository_cleanup_v1",
 			"backup_prepared_snapshot_v1",

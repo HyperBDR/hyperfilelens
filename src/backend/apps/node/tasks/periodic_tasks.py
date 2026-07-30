@@ -10,6 +10,7 @@ from apps.node.constants import (
     TASK_ADVANCE_ACTIVE_LIFECYCLE_NODES,
     TASK_INGEST_NODE_UPLINK_STREAMS,
     TASK_RECONCILE_EXECUTION_STATE,
+    TASK_RECONCILE_UNACCEPTED_AGENT_TASKS,
     TASK_RECONCILE_OFFLINE_STALE_NODE_TASKS,
     TASK_RECONCILE_STALE_ONLINE_NODES,
     TASK_SWEEP_NODE_TASK_WATCHDOG,
@@ -18,6 +19,15 @@ from common.scheduling.registry import TASK_REGISTRY
 
 
 def register_periodic_tasks() -> None:
+    TASK_REGISTRY.add(
+        name="node_reconcile_unaccepted_agent_tasks",
+        task=TASK_RECONCILE_UNACCEPTED_AGENT_TASKS,
+        schedule=node_conf.TASK_COMMAND_ACK_RECONCILE_INTERVAL_SECONDS,
+        args=(),
+        kwargs={"limit": 200},
+        queue=None,
+        enabled=True,
+    )
     TASK_REGISTRY.add(
         name="node_sweep_node_task_watchdog",
         task=TASK_SWEEP_NODE_TASK_WATCHDOG,

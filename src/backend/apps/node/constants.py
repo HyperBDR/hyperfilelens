@@ -13,6 +13,9 @@ TASK_SWEEP_NODE_TASK_WATCHDOG = (
 TASK_REDELIVER_AGENT_TASK = (
     "apps.node.tasks.node_task.redeliver_agent_task"
 )
+TASK_RECONCILE_UNACCEPTED_AGENT_TASKS = (
+    "apps.node.tasks.node_task.reconcile_unaccepted_agent_tasks"
+)
 TASK_RECONCILE_STALE_ONLINE_NODES = (
     "apps.node.tasks.node.reconcile_stale_online_nodes"
 )
@@ -43,5 +46,6 @@ __all__ = [
     "TASK_RECONCILE_OFFLINE_STALE_NODE_TASKS",
     "TASK_RECONCILE_STALE_ONLINE_NODES",
     "TASK_REDELIVER_AGENT_TASK",
+    "TASK_RECONCILE_UNACCEPTED_AGENT_TASKS",
     "TASK_SWEEP_NODE_TASK_WATCHDOG",
 ]

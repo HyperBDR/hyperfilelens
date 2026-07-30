@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"hyperfilelens/agent/internal/controller"
 	"hyperfilelens/agent/internal/infra/database"
@@ -82,5 +83,102 @@ func TestFlushUnreportedKeepsLegacyMarkOnWrite(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Fatalf("legacy pending = %d, want 0", len(pending))
+	}
+}
+
+func TestTaskCommandPersistsBeforeAcceptedAndDuplicateOnlyAcks(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := database.NewTaskRepo(db)
+	scheduler := controller.NewScheduler(1)
+	release, ok := scheduler.TryAcquire()
+	if !ok {
+		t.Fatal("failed to occupy scheduler")
+	}
+	defer release()
+	handler := NewHandler(nil, controller.NewTracker(), repo, scheduler)
+	sender := &channelSender{frames: make(chan any, 8)}
+	command := []byte(`{"type":"task.command","task_id":"durable-1","kind":"backup.snapshot.create","node_id":1}`)
+
+	if err := handler.Handle(ctx, command, sender); err != nil {
+		t.Fatal(err)
+	}
+	first := <-sender.frames
+	accepted, ok := first.(TaskAccepted)
+	if !ok || accepted.TaskID != "durable-1" {
+		t.Fatalf("first frame = %#v, want task.accepted", first)
+	}
+	if _, err := repo.Get(ctx, "durable-1"); err != nil {
+		t.Fatalf("ACK was emitted without durable task: %v", err)
+	}
+
+	// The only execution publishes one scheduler-wait progress frame.
+	select {
+	case frame := <-sender.frames:
+		if _, ok := frame.(TaskProgress); !ok {
+			t.Fatalf("execution frame = %T, want TaskProgress", frame)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first execution did not reach scheduler")
+	}
+	if err := handler.Handle(ctx, command, sender); err != nil {
+		t.Fatal(err)
+	}
+	duplicateFrame := <-sender.frames
+	if _, ok := duplicateFrame.(TaskAccepted); !ok {
+		t.Fatalf("duplicate frame = %T, want TaskAccepted", duplicateFrame)
+	}
+	select {
+	case frame := <-sender.frames:
+		t.Fatalf("duplicate started a second execution: %T", frame)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestTerminalDuplicateReplaysStoredResult(t *testing.T) {
+	handler, _ := newFinishedTaskHandler(t)
+	sender := &captureSender{}
+	if err := handler.Handle(
+		t.Context(),
+		[]byte(`{"type":"task.command","task_id":"task-1","kind":"backup.run"}`),
+		sender,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != 1 {
+		t.Fatalf("frames=%d, want stored result replay", len(sender.frames))
+	}
+	result, ok := sender.frames[0].(TaskResult)
+	if !ok || result.TaskID != "task-1" || result.Status != "success" {
+		t.Fatalf("replayed frame = %#v", sender.frames[0])
+	}
+}
+
+func TestPersistenceFailureEmitsNoAcceptance(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := database.NewTaskRepo(db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(nil, controller.NewTracker(), repo)
+	sender := &captureSender{}
+	if err := handler.Handle(
+		ctx,
+		[]byte(`{"type":"task.command","task_id":"not-durable","kind":"backup.run"}`),
+		sender,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.frames) != 0 {
+		t.Fatalf("frames=%d, want no ACK after persistence failure", len(sender.frames))
 	}
 }

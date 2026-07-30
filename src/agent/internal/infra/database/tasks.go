@@ -20,6 +20,71 @@ type TaskRepo struct {
 	db *DB
 }
 
+// AcceptCommand durably records a command once and returns whether its engine
+// execution should be started. Existing task IDs are never reset or rerun.
+func (r *TaskRepo) AcceptCommand(ctx context.Context, cmd RecordInput) (model.Task, bool, error) {
+	if cmd.TaskID == "" {
+		return model.Task{}, false, fmt.Errorf("empty task id")
+	}
+	payload, err := json.Marshal(cmd.Payload)
+	if err != nil {
+		return model.Task{}, false, err
+	}
+	now := time.Now().UTC()
+	started := now
+	if cmd.StartedAt != nil {
+		started = cmd.StartedAt.UTC()
+	}
+	source := strings.TrimSpace(cmd.Source)
+	if source == "" {
+		source = "websocket"
+	}
+
+	var task model.Task
+	inserted := false
+	err = r.db.WithTx(ctx, func(tx *sql.Tx) error {
+		result, execErr := tx.ExecContext(ctx, `
+INSERT OR IGNORE INTO tasks (
+  id, job_id, kind, payload, status, result, error,
+  started_at, finished_at, created_at, updated_at, result_reported, source
+) VALUES (?, ?, ?, ?, ?, '{}', '', ?, NULL, ?, ?, 0, ?)
+`,
+			cmd.TaskID,
+			cmd.JobID,
+			cmd.Kind,
+			string(payload),
+			string(model.TaskStatusRunning),
+			formatTime(started),
+			formatTime(now),
+			formatTime(now),
+			source,
+		)
+		if execErr != nil {
+			return execErr
+		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		inserted = rows == 1
+		row := tx.QueryRowContext(ctx, `
+SELECT id, job_id, kind, payload, status, result, error,
+       started_at, finished_at, result_reported, source
+FROM tasks WHERE id=?
+`, cmd.TaskID)
+		var scanErr error
+		task, scanErr = scanTaskRow(row)
+		return scanErr
+	})
+	if err != nil {
+		return model.Task{}, false, err
+	}
+	if task.Kind != cmd.Kind || task.JobID != cmd.JobID {
+		return task, false, fmt.Errorf("task id %s reused with different command identity", cmd.TaskID)
+	}
+	return task, inserted, nil
+}
+
 // NewTaskRepo returns a task repository backed by db.
 func NewTaskRepo(db *DB) *TaskRepo {
 	return &TaskRepo{db: db}
@@ -197,7 +262,11 @@ FROM tasks WHERE status=?
 				continue
 			}
 		}
-		if model.IsResumableTaskKind(repaired[i].Kind) {
+		// A WebSocket reconnect can reattach an in-process backup, but after an
+		// actual Agent process restart the Kopia child cannot be proven alive.
+		// Report that interruption so the control plane can retry within the same
+		// logical snapshot instead of advertising a zombie running task.
+		if strings.EqualFold(strings.TrimSpace(repaired[i].Kind), "restore.run") {
 			continue
 		}
 		if install.InterruptedLifecycleStillRunning(repaired[i].Kind, opts.DataDir) {

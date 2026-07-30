@@ -2509,6 +2509,7 @@ cmd_start() {
 cmd_stop() {
 	init_install_root
 	require_docker
+	compose_in_root stop scheduler worker || true
 	step "Stopping services (docker compose down) ..."
 	compose_in_root down
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
@@ -3183,6 +3184,7 @@ cmd_upgrade() {
 	fi
 	UPGRADE_RECOVERY_ARMED=1
 	if [[ -f "${ROOT}/.env" ]]; then
+		compose_in_root stop scheduler worker || true
 		compose_in_root down || true
 	fi
 	if should_remove_sourcelens "${remove_sourcelens}" || [[ "${upgrade_sourcelens}" -eq 1 ]]; then

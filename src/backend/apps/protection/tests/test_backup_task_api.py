@@ -21,6 +21,7 @@ from apps.protection.models import (
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.node.services.internal.agent_task import AgentTaskHandle
 from apps.protection.services.backup_orchestrator import (
+    _reconcile_pending_backup_queue,
     _repository_public_host,
     cancel_backup,
     project_backup_node_task_result,
@@ -946,6 +947,126 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertIsNotNone(directory.node_task_id)
         self.assertEqual(snapshot.directories.count(), 1)
         self.assertEqual(mock_run_agent_task_async.call_count, 1)
+
+    @patch("apps.protection.services.backup_orchestrator._requeue_same_backup_task")
+    def test_stale_pending_queue_requeues_original_identity_once(
+        self, mock_requeue
+    ):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-pending-queue-requeue",
+        )
+        Task.objects.filter(pk=task.pk).update(
+            created_at=timezone.now() - timezone.timedelta(minutes=16)
+        )
+        task.refresh_from_db()
+
+        with patch(
+            "apps.node.services.internal.redis_store.ws_recovery_hold_active",
+            return_value=False,
+        ):
+            action = _reconcile_pending_backup_queue(task=task, source_snapshot=snapshot)
+
+        self.assertEqual(action, "requeued")
+        mock_requeue.assert_called_once()
+        requeued_task = mock_requeue.call_args.kwargs["task"]
+        requeued_snapshot = mock_requeue.call_args.kwargs["source_snapshot"]
+        self.assertEqual(requeued_task.task_uuid, task.task_uuid)
+        self.assertEqual(requeued_snapshot.id, snapshot.id)
+        task.refresh_from_db()
+        self.assertEqual(task.result_payload["backup_queue_recovery"]["attempt_count"], 1)
+
+    @patch("apps.protection.services.backup_orchestrator._stop_repository_server_for_task")
+    def test_pending_queue_timeout_fully_seals_snapshot(self, mock_stop):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-pending-queue-timeout",
+        )
+        directory_config = self.config.directories.first()
+        directory = BackupSourceSnapshotDirectory.objects.create(
+            source_snapshot=snapshot,
+            organization_id=self.org.id,
+            backup_config_id=self.config.id,
+            backup_config_dir_id=directory_config.id,
+            source_path=directory_config.path,
+            repository_id=self.repository.id,
+            status=BackupSourceSnapshotDirectory.Status.PENDING,
+        )
+        attempted_at = timezone.now() - timezone.timedelta(minutes=3)
+        task.result_payload = {
+            "source_snapshot_id": snapshot.id,
+            "backup_queue_recovery": {
+                "attempted_at": attempted_at.isoformat(),
+                "attempt_count": 1,
+            },
+        }
+        task.save(update_fields=["result_payload", "updated_at"])
+        Task.objects.filter(pk=task.pk).update(
+            created_at=timezone.now() - timezone.timedelta(minutes=20)
+        )
+        task.refresh_from_db()
+
+        with patch(
+            "apps.node.services.internal.redis_store.ws_recovery_hold_active",
+            return_value=False,
+        ):
+            action = _reconcile_pending_backup_queue(task=task, source_snapshot=snapshot)
+
+        self.assertEqual(action, "timed_out")
+        task.refresh_from_db()
+        snapshot.refresh_from_db()
+        directory.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.TIMEOUT)
+        self.assertEqual(task.error_code, "TASK_QUEUE_TIMEOUT")
+        self.assertTrue(task.result_payload["queue_timeout_sealed"])
+        self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.FAILED)
+        self.assertEqual(snapshot.error_code, "TASK_QUEUE_TIMEOUT")
+        self.assertEqual(directory.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        self.assertEqual(directory.error_code, "TASK_QUEUE_TIMEOUT")
+        mock_stop.assert_called_once()
+
+    @patch(
+        "apps.protection.services.backup_orchestrator.effective_agent_node_status",
+        return_value=Node.Status.ONLINE,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_agent_restart_retries_once_inside_same_logical_snapshot(
+        self, mock_run_agent_task_async, _online
+    ):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="test-agent-restart-same-snapshot",
+        )
+        mock_run_agent_task_async.side_effect = self._mock_run_agent_task_async(
+            [
+                {
+                    "status": NodeTask.Status.FAILED,
+                    "result": {},
+                    "last_error": "agent restarted before task completed",
+                },
+                self._async_outcome(kopia_snapshot_id="restart-recovered-snapshot"),
+            ]
+        )
+
+        result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+        if result["status"] == Task.Status.RUNNING:
+            result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        task.refresh_from_db()
+        snapshot.refresh_from_db()
+        directory = BackupSourceSnapshotDirectory.objects.get(source_snapshot=snapshot)
+        attempts = list(
+            NodeTask.objects.filter(
+                correlation_type=protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE,
+                correlation_id=str(task.task_uuid),
+                kind="backup.run",
+            ).order_by("created_at", "id")
+        )
+        self.assertEqual(result["status"], Task.Status.SUCCESS)
+        self.assertEqual(task.status, Task.Status.SUCCESS)
+        self.assertEqual(snapshot.status, BackupSourceSnapshot.Status.AVAILABLE)
+        self.assertEqual(directory.retry_count, 1)
+        self.assertEqual(directory.kopia_snapshot_id, "restart-recovered-snapshot")
+        self.assertEqual(len(attempts), 2)
+        self.assertNotEqual(attempts[0].id, attempts[1].id)
+        self.assertTrue(all(row.correlation_id == str(task.task_uuid) for row in attempts))
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",

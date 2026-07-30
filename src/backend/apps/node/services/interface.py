@@ -26,6 +26,7 @@ from apps.node.services.internal.agent_task import (
 )
 from apps.node.services.internal.node_registry import reconcile_stale_online_nodes
 from apps.node.services.internal.task import (
+    accept_task,
     DispatchResult,
     cancel_task,
     complete_task,
@@ -33,13 +34,16 @@ from apps.node.services.internal.task import (
     dispatch_task,
     fail_active_tasks_for_node,
     record_task_progress,
+    reconcile_unaccepted_agent_tasks,
     redeliver_pending_agent_task,
+    sweep_cancel_grace_expired,
     sweep_watchdog_timeouts,
 )
 
 __all__ = [
     "AgentTaskHandle",
     "AgentTaskSyncResult",
+    "accept_task",
     "DispatchResult",
     "cancel_agent_task",
     "cancel_task",
@@ -48,12 +52,14 @@ __all__ = [
     "dispatch_task",
     "fail_active_tasks_for_node",
     "record_task_progress",
+    "reconcile_unaccepted_agent_tasks",
     "redeliver_pending_agent_task",
     "reconcile_stale_online_nodes",
     "remove_agent_node",
     "remove_agent_node_for_source_resource",
     "run_agent_task_async",
     "run_agent_task_sync",
+    "sweep_cancel_grace_expired",
     "sweep_watchdog_timeouts",
     "wait_for_agent_task",
 ]

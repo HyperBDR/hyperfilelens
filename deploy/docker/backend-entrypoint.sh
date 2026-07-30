@@ -49,6 +49,7 @@ run_api_stack() {
   GUNICORN_PID=""
 
   api_stack_cleanup() {
+    python manage.py ws_recovery_gate begin >/dev/null 2>&1 || true
     if [ -n "${DAPHNE_PID}" ]; then
       kill -TERM "${DAPHNE_PID}" 2>/dev/null || true
       wait "${DAPHNE_PID}" 2>/dev/null || true
@@ -61,9 +62,20 @@ run_api_stack() {
 
   trap api_stack_cleanup INT TERM
 
+  python manage.py ws_recovery_gate begin
+
   echo "[entrypoint] start daphne on ${WS_BIND_HOST}:${WS_BIND_PORT}"
   daphne -b "${WS_BIND_HOST}" -p "${WS_BIND_PORT}" project.asgi_ws:application &
   DAPHNE_PID=$!
+
+  echo "[entrypoint] wait for websocket delivery route"
+  if ! python manage.py ws_recovery_gate complete \
+    --host 127.0.0.1 \
+    --port "${WS_BIND_PORT}" \
+    --timeout "${WS_READY_TIMEOUT_SECONDS:-60}"; then
+    api_stack_cleanup
+    exit 1
+  fi
 
   echo "[entrypoint] start gunicorn (${API_WORKERS} workers) on 0.0.0.0:8000"
   GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-180}"
@@ -74,8 +86,16 @@ run_api_stack() {
     project.asgi_http:application &
   GUNICORN_PID=$!
 
-  wait "${GUNICORN_PID}"
-  EXIT=$?
+  while kill -0 "${GUNICORN_PID}" 2>/dev/null && kill -0 "${DAPHNE_PID}" 2>/dev/null; do
+    sleep 1
+  done
+  if ! kill -0 "${DAPHNE_PID}" 2>/dev/null; then
+    echo "[entrypoint] daphne exited; closing API stack" >&2
+    EXIT=1
+  else
+    wait "${GUNICORN_PID}" || EXIT=$?
+    EXIT=${EXIT:-0}
+  fi
   api_stack_cleanup
   exit "${EXIT}"
 }

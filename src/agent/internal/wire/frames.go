@@ -66,6 +66,13 @@ type TaskAlive struct {
 	TaskID string `json:"task_id"`
 }
 
+// TaskAccepted confirms that task.command was durably recorded locally.
+type TaskAccepted struct {
+	Type   Type   `json:"type"`
+	TaskID string `json:"task_id"`
+	Status string `json:"status,omitempty"`
+}
+
 // TaskResult completes a runtime task.
 type TaskResult struct {
 	Type   Type           `json:"type"`

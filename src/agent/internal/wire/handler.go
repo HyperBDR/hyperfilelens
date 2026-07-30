@@ -73,7 +73,29 @@ func (h *Handler) Handle(ctx context.Context, raw []byte, sink Sender) error {
 			"trace_id", cmd.TraceID,
 			"correlation_id", cmd.CorrelationID,
 		)
-		go h.runTask(context.WithoutCancel(ctx), sink, cmd)
+		shouldRun := true
+		if h.tasks != nil {
+			now := time.Now().UTC()
+			persisted, inserted, acceptErr := h.tasks.AcceptCommand(ctx, database.RecordInput{
+				TaskID: cmd.TaskID, JobID: cmd.JobID(), Kind: cmd.Kind, Payload: cmd.Payload,
+				Source: string(engine.SourceWebSocket), StartedAt: &now,
+			})
+			if acceptErr != nil {
+				slog.Warn("persist task.command acceptance failed", "task_id", cmd.TaskID, "err", acceptErr)
+				return nil
+			}
+			shouldRun = inserted
+			if !inserted && persisted.Status != model.TaskStatusRunning && persisted.Status != model.TaskStatusPending {
+				_ = SendTaskResult(ctx, sink, persisted.ID, database.WireStatus(persisted.Status), persisted.Result, persisted.Error)
+				return nil
+			}
+		}
+		if err := SendTaskAccepted(ctx, sink, cmd.TaskID, "running"); err != nil {
+			slog.Warn("send task.accepted failed", "task_id", cmd.TaskID, "err", err)
+		}
+		if shouldRun {
+			go h.runTask(context.WithoutCancel(ctx), sink, cmd)
+		}
 		return nil
 	case TypeTaskCancel:
 		if dl.TaskCancel == nil || dl.TaskCancel.TaskID == "" {
@@ -183,18 +205,6 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	eng := engine.New(h.provider)
 
 	now := time.Now().UTC()
-	if h.tasks != nil {
-		if err := h.tasks.RecordCommand(taskCtx, database.RecordInput{
-			TaskID:    cmd.TaskID,
-			JobID:     cmd.JobID(),
-			Kind:      cmd.Kind,
-			Payload:   cmd.Payload,
-			Source:    string(engine.SourceWebSocket),
-			StartedAt: &now,
-		}); err != nil {
-			slog.Warn("persist task.command failed", "task_id", cmd.TaskID, "err", err)
-		}
-	}
 
 	task := model.Task{
 		ID:        cmd.TaskID,

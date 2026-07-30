@@ -1447,6 +1447,51 @@ def _observe_running_directory(
             else:
                 error_code, error_message = _node_task_error_code(node_task)
             if (
+                error_code == "AGENT_RESTARTED"
+                and node_task.status != NodeTask.Status.CANCELED
+                and int(directory_row.retry_count or 0) < 1
+            ):
+                directory_row.status = BackupSourceSnapshotDirectory.Status.PENDING
+                directory_row.node_task_id = None
+                directory_row.retry_count = int(directory_row.retry_count or 0) + 1
+                directory_row.error_code = "AGENT_RESTART_RECOVERY_PENDING"
+                directory_row.error_message = error_message
+                directory_row.dispatched_at = None
+                directory_row.last_substantive_progress_at = None
+                directory_row.last_progress_snapshot = {}
+                directory_row.last_progress_sample = {}
+                directory_row.cancel_requested_at = None
+                directory_row.stall_warned_at = None
+                directory_row.save(
+                    update_fields=[
+                        "status",
+                        "node_task_id",
+                        "retry_count",
+                        "error_code",
+                        "error_message",
+                        "dispatched_at",
+                        "last_substantive_progress_at",
+                        "last_progress_snapshot",
+                        "last_progress_sample",
+                        "cancel_requested_at",
+                        "stall_warned_at",
+                        "updated_at",
+                    ]
+                )
+                append_task_step_event(
+                    task=task,
+                    step_name="kopia_snapshot",
+                    level=TaskEvent.Level.WARN,
+                    message="Backup execution retry queued after Agent restart",
+                    metadata={
+                        "backup_config_dir_id": directory_row.backup_config_dir_id,
+                        "previous_node_task_id": str(node_task.id),
+                        "retry_count": directory_row.retry_count,
+                        "error_code": error_code,
+                    },
+                )
+                return
+            if (
                 error_code == "KOPIA_POLICY_NOT_FOUND"
                 and node_task.status != NodeTask.Status.CANCELED
                 and int(directory_row.retry_count or 0) < 1
@@ -2254,6 +2299,8 @@ def reconcile_backup_tasks(*, limit: int = 100) -> dict[str, int]:
         .order_by("updated_at", "id")[: max(1, int(limit))]
     )
     advanced = 0
+    queue_requeued = 0
+    queue_timed_out = 0
     for task in tasks:
         snapshot = BackupSourceSnapshot.objects.filter(
             organization_id=task.organization_id,
@@ -2266,6 +2313,19 @@ def reconcile_backup_tasks(*, limit: int = 100) -> dict[str, int]:
             ]
         ).first()
         if snapshot is None:
+            continue
+        queue_action = _reconcile_pending_backup_queue(task=task, source_snapshot=snapshot)
+        if queue_action in {
+            "requeued",
+            "already_requeued",
+            "recovery_grace",
+            "recovery_hold",
+        }:
+            if queue_action == "requeued":
+                queue_requeued += 1
+            continue
+        if queue_action == "timed_out":
+            queue_timed_out += 1
             continue
         try:
             advance_backup(
@@ -2284,9 +2344,162 @@ def reconcile_backup_tasks(*, limit: int = 100) -> dict[str, int]:
     return {
         "candidates": len(tasks),
         "advanced": advanced,
+        "queue_requeued": queue_requeued,
+        "queue_timed_out": queue_timed_out,
         "projection_candidates": projected["candidates"],
         "projected": projected["projected"],
     }
+
+
+_QUEUE_RECOVERY_KEY = "backup_queue_recovery"
+
+
+def _queue_recovery_timestamp(task: Task):
+    state = _task_result_payload(task).get(_QUEUE_RECOVERY_KEY)
+    if not isinstance(state, dict):
+        return None
+    raw = str(state.get("attempted_at") or "").strip()
+    parsed = parse_datetime(raw) if raw else None
+    if parsed is not None and timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _requeue_same_backup_task(*, task: Task, source_snapshot: BackupSourceSnapshot) -> None:
+    from apps.protection.tasks.backup import execute_backup_source_task
+
+    execute_backup_source_task.delay(
+        organization_id=task.organization_id,
+        task_uuid=str(task.task_uuid),
+        source_snapshot_id=source_snapshot.id,
+    )
+
+
+def _finalize_pending_backup_queue_timeout(
+    *, task: Task, source_snapshot: BackupSourceSnapshot
+) -> bool:
+    """Seal a never-started backup and release its active snapshot constraint."""
+    with transaction.atomic():
+        locked = (
+            Task.objects.select_for_update()
+            .filter(
+                pk=task.pk,
+                status=Task.Status.PENDING,
+                started_at__isnull=True,
+            )
+            .first()
+        )
+        if locked is None:
+            return False
+        snapshot = (
+            BackupSourceSnapshot.objects.select_for_update()
+            .filter(pk=source_snapshot.pk, task_id=locked.id)
+            .first()
+        )
+        if snapshot is None:
+            return False
+        now = timezone.now()
+        message = "Backup remained queued after one recovery attempt."
+        BackupSourceSnapshotDirectory.objects.filter(
+            source_snapshot_id=snapshot.id,
+            status__in=_DIRECTORY_IN_PROGRESS,
+        ).update(
+            status=BackupSourceSnapshotDirectory.Status.FAILED,
+            error_code="TASK_QUEUE_TIMEOUT",
+            error_message=message,
+            updated_at=now,
+        )
+        mark_source_snapshot_failed(
+            source_snapshot=snapshot,
+            error_code="TASK_QUEUE_TIMEOUT",
+            error_message=message,
+            finished_at=now,
+        )
+        TaskStep.objects.filter(
+            task=locked,
+            status__in=[TaskStep.Status.PENDING, TaskStep.Status.RUNNING],
+        ).update(status=TaskStep.Status.FAILED)
+        payload = _task_result_payload(locked)
+        payload.update(
+            {
+                "source_snapshot_id": snapshot.id,
+                "source_snapshot_status": BackupSourceSnapshot.Status.FAILED,
+                "queue_timeout_sealed": True,
+            }
+        )
+        complete_task(
+            task_uuid=locked.task_uuid,
+            organization_id=locked.organization_id,
+            status=Task.Status.TIMEOUT,
+            progress=float(locked.progress),
+            result_payload=payload,
+            error_code="TASK_QUEUE_TIMEOUT",
+            error_message=message,
+        )
+    _stop_repository_server_for_task(task=locked)
+    return True
+
+
+def _reconcile_pending_backup_queue(
+    *, task: Task, source_snapshot: BackupSourceSnapshot
+) -> str:
+    """Conservative two-stage recovery for platform tasks never claimed by a worker."""
+    if task.status != Task.Status.PENDING or task.started_at is not None:
+        return "not_pending"
+    from apps.node.services.internal import redis_store
+
+    if redis_store.ws_recovery_hold_active():
+        return "recovery_hold"
+    now = timezone.now()
+    stale_after = timezone.timedelta(
+        seconds=max(1, protection_conf.PROTECTION_BACKUP_QUEUE_STALE_SECONDS)
+    )
+    if now - task.created_at < stale_after:
+        return "waiting"
+    attempted_at = _queue_recovery_timestamp(task)
+    if attempted_at is None:
+        with transaction.atomic():
+            locked = (
+                Task.objects.select_for_update()
+                .filter(pk=task.pk, status=Task.Status.PENDING, started_at__isnull=True)
+                .first()
+            )
+            if locked is None:
+                return "claimed"
+            if _queue_recovery_timestamp(locked) is not None:
+                return "already_requeued"
+            payload = _task_result_payload(locked)
+            payload[_QUEUE_RECOVERY_KEY] = {
+                "attempted_at": now.isoformat(),
+                "attempt_count": 1,
+            }
+            _save_task_result_payload(locked, payload)
+            append_task_step_event(
+                task=locked,
+                step_name=locked.current_step or "queued",
+                level=TaskEvent.Level.WARN,
+                message="Backup queue recovery re-enqueued the original task",
+                metadata={"source_snapshot_id": source_snapshot.id, "attempt_count": 1},
+            )
+        try:
+            _requeue_same_backup_task(task=locked, source_snapshot=source_snapshot)
+        except Exception:
+            logger.exception(
+                "backup queue recovery enqueue failed task_uuid=%s snapshot_id=%s",
+                locked.task_uuid,
+                source_snapshot.id,
+            )
+        return "requeued"
+    grace = timezone.timedelta(
+        seconds=max(1, protection_conf.PROTECTION_BACKUP_QUEUE_RECOVERY_GRACE_SECONDS)
+    )
+    if now - attempted_at < grace:
+        return "recovery_grace"
+    return (
+        "timed_out"
+        if _finalize_pending_backup_queue_timeout(task=task, source_snapshot=source_snapshot)
+        else "claimed"
+    )
 
 
 _LATE_RESULT_DIRECTORY_ACTIVE = frozenset(

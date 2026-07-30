@@ -8,6 +8,7 @@ type Type string
 const (
 	TypeHeartbeat     Type = "heartbeat"
 	TypeTaskCommand   Type = "task.command"
+	TypeTaskAccepted  Type = "task.accepted"
 	TypeTaskCancel    Type = "task.cancel"
 	TypeTaskProgress  Type = "task.progress"
 	TypeTaskAlive     Type = "task.alive"
@@ -29,7 +30,7 @@ func (t Type) String() string { return string(t) }
 
 func parseType(raw string) (Type, bool) {
 	switch Type(raw) {
-	case TypeHeartbeat, TypeTaskCommand, TypeTaskCancel, TypeTaskProgress, TypeTaskAlive, TypeTaskResult, TypeTaskResultAck:
+	case TypeHeartbeat, TypeTaskCommand, TypeTaskAccepted, TypeTaskCancel, TypeTaskProgress, TypeTaskAlive, TypeTaskResult, TypeTaskResultAck:
 		return Type(raw), true
 	default:
 		return "", false

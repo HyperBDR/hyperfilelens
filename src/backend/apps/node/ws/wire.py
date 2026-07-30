@@ -19,6 +19,7 @@ class WireType(StrEnum):
     HEARTBEAT = "heartbeat"
     HEARTBEAT_ACK = "heartbeat.ack"
     TASK_COMMAND = "task.command"
+    TASK_ACCEPTED = "task.accepted"
     TASK_CANCEL = "task.cancel"
     TASK_PROGRESS = "task.progress"
     TASK_ALIVE = "task.alive"
@@ -79,9 +80,21 @@ def parse_uplink(data: dict[str, Any]) -> ParsedUplink | None:
         return ParsedUplink(msg_type=kind, heartbeat_payload=hb_payload)
 
     task_id = data.get("task_id")
-    if kind in (WireType.TASK_PROGRESS, WireType.TASK_ALIVE, WireType.TASK_RESULT):
+    if kind in (
+        WireType.TASK_ACCEPTED,
+        WireType.TASK_PROGRESS,
+        WireType.TASK_ALIVE,
+        WireType.TASK_RESULT,
+    ):
         if not task_id:
             return None
+
+    if kind == WireType.TASK_ACCEPTED:
+        return ParsedUplink(
+            msg_type=kind,
+            task_id=str(task_id),
+            status=str(data.get("status") or "running"),
+        )
 
     if kind == WireType.TASK_PROGRESS:
         progress = data.get("progress")

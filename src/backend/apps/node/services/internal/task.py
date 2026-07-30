@@ -12,7 +12,7 @@ from enum import StrEnum
 from typing import Any
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from django.utils import timezone
 
 from apps.iam.models import Organization
@@ -32,6 +32,14 @@ _TERMINAL_STATUSES = frozenset(
         NodeTask.Status.TIMEOUT,
         NodeTask.Status.CANCELED,
     },
+)
+_TASK_COMMAND_ACK_CAPABILITY = "task_command_ack_v1"
+_ACK_BACKUP_TASKS = frozenset(
+    {
+        ("protection.backup", "backup.run"),
+        ("protection.backup", "backup.snapshot.create"),
+        ("protection.backup.policy_prepare", "repository.policy.apply"),
+    }
 )
 
 
@@ -71,6 +79,24 @@ def _is_protection_backup_task(task: NodeTask) -> bool:
     return (
         task.correlation_type == protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE
         and task.kind in protection_conf.PROTECTION_BACKUP_NODE_TASK_KINDS
+    )
+
+
+def _node_capabilities(node: Node) -> set[str]:
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    inventory = metadata.get("inventory")
+    inventory = inventory if isinstance(inventory, dict) else {}
+    values = inventory.get("capabilities", metadata.get("capabilities", []))
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {str(value or "").strip() for value in values if str(value or "").strip()}
+
+
+def task_uses_command_ack(task: NodeTask) -> bool:
+    """Gate the new delivery protocol to backup work on capable Agents."""
+    return (
+        (task.correlation_type, task.kind) in _ACK_BACKUP_TASKS
+        and _TASK_COMMAND_ACK_CAPABILITY in _node_capabilities(task.node)
     )
 
 
@@ -221,6 +247,8 @@ def _node_route_state(*, task: NodeTask) -> _RouteState:
     node = task.node
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY):
         return _RouteState.ONLINE
+    if redis_store.ws_recovery_hold_active():
+        return _RouteState.RECONNECTING
     if _node_ws_routable(node_id=node.id):
         return _RouteState.ONLINE
     if (
@@ -245,6 +273,11 @@ def _sync_task_info(task: NodeTask) -> None:
             "last_progress_at": (
                 task.last_progress_at.isoformat() if task.last_progress_at else None
             ),
+            "accepted_at": task.accepted_at.isoformat() if task.accepted_at else None,
+            "last_delivery_at": (
+                task.last_delivery_at.isoformat() if task.last_delivery_at else None
+            ),
+            "delivery_attempt_count": task.delivery_attempt_count,
             "watchdog_deadline_at": task.watchdog_deadline_at.isoformat(),
             "result": task.result,
             "last_error": task.last_error,
@@ -348,7 +381,7 @@ def create_agent_task(
 
 
 def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) -> NodeTask:
-    """Send ``task.command`` to Agent and mark task running (or failed)."""
+    """Send ``task.command``; ACK-capable backup tasks remain pending until accepted."""
     if task.status != NodeTask.Status.PENDING:
         return task
     ctx = task_log_context(
@@ -358,6 +391,7 @@ def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) 
         correlation_type=task.correlation_type,
         correlation_id=task.correlation_id,
     )
+    uses_ack = task_uses_command_ack(task)
     try:
         route_state = _node_route_state(task=task)
         if route_state == _RouteState.RECONNECTING:
@@ -371,6 +405,18 @@ def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) 
             redis_store.clear_agent_location(agent_id=task.node_id)
             raise RuntimeError("agent websocket is not routable")
         logger.info("agent task dispatching %s", ctx)
+        dispatched_at = timezone.now()
+        if uses_ack:
+            delivery_updates: dict[str, Any] = {
+                "last_delivery_at": dispatched_at,
+                "delivery_attempt_count": F("delivery_attempt_count") + 1,
+                "last_error": "",
+            }
+            if task.dispatched_at is None:
+                delivery_updates["dispatched_at"] = dispatched_at
+            NodeTask.objects.filter(
+                pk=task.pk, status=NodeTask.Status.PENDING
+            ).update(**delivery_updates)
         if delivery_payload is None:
             _send_task_command(task=task)
         else:
@@ -380,17 +426,19 @@ def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) 
                 _send_task_command(task=task)
             finally:
                 task.payload = persisted_payload
-        dispatched_at = timezone.now()
-        NodeTask.objects.filter(pk=task.pk).update(
-            status=NodeTask.Status.RUNNING,
-            dispatched_at=dispatched_at,
-            last_progress_at=dispatched_at,
-            watchdog_deadline_at=_initial_watchdog_deadline(
-                correlation_type=task.correlation_type,
-                from_time=dispatched_at,
-                kind=task.kind,
-            ),
-        )
+        if not uses_ack:
+            NodeTask.objects.filter(pk=task.pk).update(
+                status=NodeTask.Status.RUNNING,
+                dispatched_at=dispatched_at,
+                last_delivery_at=dispatched_at,
+                delivery_attempt_count=F("delivery_attempt_count") + 1,
+                last_progress_at=dispatched_at,
+                watchdog_deadline_at=_initial_watchdog_deadline(
+                    correlation_type=task.correlation_type,
+                    from_time=dispatched_at,
+                    kind=task.kind,
+                ),
+            )
         task.refresh_from_db()
         _sync_task_info(task)
         logger.info("agent task dispatched %s status=%s", ctx, task.status)
@@ -400,7 +448,55 @@ def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) 
             ctx,
             str(exc)[:500],
         )
-        task = _fail_task_delivery(task=task, reason=str(exc))
+        if uses_ack:
+            NodeTask.objects.filter(pk=task.pk, status=NodeTask.Status.PENDING).update(
+                last_error=str(exc)[:2000],
+                updated_at=timezone.now(),
+            )
+            task.refresh_from_db()
+            _sync_task_info(task)
+        else:
+            task = _fail_task_delivery(task=task, reason=str(exc))
+    return task
+
+
+@transaction.atomic
+def accept_task(*, task_id: uuid.UUID | str, node_id: int) -> NodeTask:
+    """Persist Agent's durable command acceptance without reviving terminal work."""
+    task = (
+        NodeTask.objects.select_for_update()
+        .filter(pk=task_id, node_id=node_id)
+        .first()
+    )
+    if task is None:
+        raise LookupError("task not found")
+    if task.status in _TERMINAL_STATUSES:
+        return task
+    now = timezone.now()
+    task.status = NodeTask.Status.RUNNING
+    task.accepted_at = task.accepted_at or now
+    task.last_progress_at = task.last_progress_at or now
+    task.watchdog_deadline_at = _initial_watchdog_deadline(
+        correlation_type=task.correlation_type,
+        from_time=now,
+        kind=task.kind,
+    )
+    task.last_error = ""
+    task.save(
+        update_fields=[
+            "status",
+            "accepted_at",
+            "last_progress_at",
+            "watchdog_deadline_at",
+            "last_error",
+            "updated_at",
+        ]
+    )
+    _sync_task_info(task)
+    redis_store.push_task_stream(
+        task_id=str(task.id),
+        message={"task_id": str(task.id), "status": task.status, "accepted": True},
+    )
     return task
 
 
@@ -431,6 +527,95 @@ def redeliver_pending_agent_task(*, task_id: uuid.UUID | str) -> NodeTask | None
             delivered.last_error,
         )
     return delivered
+
+
+def _timeout_unaccepted_task(*, task_id: uuid.UUID | str) -> bool:
+    with transaction.atomic():
+        task = (
+            NodeTask.objects.select_for_update()
+            .filter(pk=task_id, status=NodeTask.Status.PENDING, accepted_at__isnull=True)
+            .first()
+        )
+        if task is None:
+            return False
+        task.status = NodeTask.Status.TIMEOUT
+        task.last_error = "AGENT_ACK_TIMEOUT: Agent did not durably accept task.command"
+        result = dict(task.result or {})
+        result["delivery_timeout_sealed"] = True
+        result["delivery_attempt_count"] = task.delivery_attempt_count
+        task.result = result
+        task.save(update_fields=["status", "last_error", "result", "updated_at"])
+        _send_cancel_command(task=task)
+        _sync_task_info(task)
+        redis_store.push_task_stream(
+            task_id=str(task.id),
+            message=_terminal_stream_message(task),
+        )
+    from apps.node.services.internal.task_offline_reconcile import (
+        sync_platform_tasks_for_node_task,
+    )
+
+    if task.correlation_type == "protection.backup.policy_prepare":
+        from apps.protection.services.backup_orchestrator import (
+            queue_backup_result_projection,
+        )
+
+        queue_backup_result_projection(node_task=task)
+    else:
+        sync_platform_tasks_for_node_task(node_task=task)
+    return True
+
+
+def reconcile_unaccepted_agent_tasks(*, limit: int = 200) -> dict[str, int | bool]:
+    """Retry ACK-capable backup commands with the original NodeTask identity."""
+    if redis_store.ws_recovery_hold_active():
+        return {"candidates": 0, "redelivered": 0, "timed_out": 0, "recovery_hold": True}
+
+    now = timezone.now()
+    ack_wait = timezone.timedelta(seconds=max(1, node_conf.TASK_COMMAND_ACK_TIMEOUT_SECONDS))
+    max_age = timezone.timedelta(seconds=max(1, node_conf.TASK_COMMAND_ACK_MAX_AGE_SECONDS))
+    max_attempts = 1 + max(0, node_conf.TASK_COMMAND_ACK_MAX_RETRIES)
+    candidates = list(
+        NodeTask.objects.select_related("node")
+        .filter(
+            status=NodeTask.Status.PENDING,
+            accepted_at__isnull=True,
+            kind__in=["repository.policy.apply", "backup.snapshot.create", "backup.run"],
+        )
+        .order_by("created_at", "id")[: max(1, int(limit))]
+    )
+    redelivered = 0
+    timed_out = 0
+    considered = 0
+    for task in candidates:
+        if not task_uses_command_ack(task):
+            continue
+        considered += 1
+        if _node_route_state(task=task) != _RouteState.ONLINE:
+            continue
+        age = now - (task.dispatched_at or task.created_at)
+        since_delivery = now - (task.last_delivery_at or task.created_at)
+        if since_delivery < ack_wait:
+            continue
+        # Recovery/offline holds do not consume the delivery lifetime. The
+        # hard-age guard therefore only seals after all delivery attempts were
+        # actually consumed.
+        if task.delivery_attempt_count >= max_attempts and (
+            since_delivery >= ack_wait or age >= max_age
+        ):
+            if _timeout_unaccepted_task(task_id=task.id):
+                timed_out += 1
+            continue
+        previous_attempts = task.delivery_attempt_count
+        delivered = deliver_agent_task(task=task)
+        if delivered.delivery_attempt_count > previous_attempts:
+            redelivered += 1
+    return {
+        "candidates": considered,
+        "redelivered": redelivered,
+        "timed_out": timed_out,
+        "recovery_hold": False,
+    }
 
 
 @transaction.atomic
@@ -478,6 +663,7 @@ def record_task_progress(
 
     now = timezone.now()
     task.status = NodeTask.Status.RUNNING
+    task.accepted_at = task.accepted_at or now
     task.last_progress_at = now
     from apps.protection import conf as protection_conf
 
@@ -487,12 +673,12 @@ def record_task_progress(
     ):
         if _substantive_backup_progress(progress):
             task.watchdog_deadline_at = _protection_backup_watchdog_deadline(from_time=now)
-        update_fields = ["status", "last_progress_at", "result", "updated_at"]
+        update_fields = ["status", "accepted_at", "last_progress_at", "result", "updated_at"]
         if _substantive_backup_progress(progress):
             update_fields.append("watchdog_deadline_at")
     else:
         task.watchdog_deadline_at = _watchdog_deadline(from_time=now)
-        update_fields = ["status", "last_progress_at", "watchdog_deadline_at", "result", "updated_at"]
+        update_fields = ["status", "accepted_at", "last_progress_at", "watchdog_deadline_at", "result", "updated_at"]
     if progress:
         merged = dict(task.result or {})
         _merge_progress_into_result(task=task, progress=progress, merged=merged, now=now)
@@ -533,6 +719,8 @@ def complete_task(
         raise LookupError("task not found")
 
     if task.status in _TERMINAL_STATUSES:
+        if isinstance(task.result, dict) and task.result.get("delivery_timeout_sealed"):
+            return task
         incoming = status.lower()
         if task.status == NodeTask.Status.SUCCESS and incoming not in (
             "success",
@@ -558,6 +746,7 @@ def complete_task(
     if terminal == "running":
         now = timezone.now()
         task.status = NodeTask.Status.RUNNING
+        task.accepted_at = task.accepted_at or now
         if replace_result:
             merged = dict(result or {})
         else:
@@ -567,7 +756,7 @@ def complete_task(
         task.result = merged
         if error:
             task.last_error = error[:2000]
-        update_fields = ["status", "result", "last_error", "updated_at"]
+        update_fields = ["status", "accepted_at", "result", "last_error", "updated_at"]
         if _task_has_detached_marker(task):
             update_fields = list(
                 dict.fromkeys(update_fields + _apply_detached_running_state(task=task, merged=merged, now=now))
@@ -585,6 +774,7 @@ def complete_task(
             },
         )
         return task
+    task.accepted_at = task.accepted_at or timezone.now()
     if terminal in ("success", "succeeded", "ok"):
         task.status = NodeTask.Status.SUCCESS
         task.last_error = ""
@@ -596,7 +786,7 @@ def complete_task(
 
     if result:
         task.result = result
-    task.save(update_fields=["status", "result", "last_error", "updated_at"])
+    task.save(update_fields=["status", "accepted_at", "result", "last_error", "updated_at"])
     _sync_task_info(task)
     redis_store.push_task_stream(
         task_id=str(task.id),
@@ -640,11 +830,14 @@ def cancel_task(
         )
         return task
 
+    now = timezone.now()
     merged = dict(task.result or {})
     merged["cancel_requested"] = True
-    merged["cancel_requested_at"] = timezone.now().isoformat()
+    if task.cancel_requested_at is None:
+        task.cancel_requested_at = now
+    merged["cancel_requested_at"] = task.cancel_requested_at.isoformat()
     task.result = merged
-    task.save(update_fields=["result", "last_error", "updated_at"])
+    task.save(update_fields=["result", "last_error", "cancel_requested_at", "updated_at"])
     _send_cancel_command(task=task)
     _sync_task_info(task)
     redis_store.push_task_stream(
@@ -659,6 +852,83 @@ def cancel_task(
         },
     )
     return task
+
+
+def _project_terminal_node_task(*, task: NodeTask) -> None:
+    if task.correlation_type == "protection.backup.policy_prepare":
+        from apps.protection.services.backup_orchestrator import (
+            queue_backup_result_projection,
+        )
+
+        queue_backup_result_projection(node_task=task)
+        return
+
+    from apps.node.services.internal.task_offline_reconcile import (
+        sync_platform_tasks_for_node_task,
+    )
+
+    sync_platform_tasks_for_node_task(node_task=task)
+
+
+def sweep_cancel_grace_expired(*, limit: int = 500) -> int:
+    """Seal cancel requests that an Agent did not acknowledge within the grace window."""
+    now = timezone.now()
+    cutoff = now - timezone.timedelta(
+        seconds=max(1, int(node_conf.TASK_CANCEL_GRACE_SECONDS))
+    )
+    ids = list(
+        NodeTask.objects.filter(
+            status__in=_ACTIVE_STATUSES,
+            cancel_requested_at__isnull=False,
+            cancel_requested_at__lte=cutoff,
+        )
+        .order_by("cancel_requested_at", "pk")
+        .values_list("pk", flat=True)[: max(1, int(limit))]
+    )
+
+    marked = 0
+    for pk in ids:
+        with transaction.atomic():
+            task = (
+                NodeTask.objects.select_for_update()
+                .filter(
+                    pk=pk,
+                    status__in=_ACTIVE_STATUSES,
+                    cancel_requested_at__isnull=False,
+                    cancel_requested_at__lte=cutoff,
+                )
+                .first()
+            )
+            if task is None:
+                continue
+            finalized_at = timezone.now()
+            merged = dict(task.result or {})
+            merged["cancel_requested"] = True
+            merged["cancel_requested_at"] = task.cancel_requested_at.isoformat()
+            merged["cancel_finalized_by"] = "grace_timeout"
+            merged["cancel_finalized_at"] = finalized_at.isoformat()
+            task.status = NodeTask.Status.CANCELED
+            task.result = merged
+            task.save(update_fields=["status", "result", "updated_at"])
+            logger.warning(
+                "agent task cancellation grace expired %s grace_seconds=%s",
+                task_log_context(
+                    node_id=task.node_id,
+                    task_id=str(task.id),
+                    kind=task.kind,
+                    correlation_type=task.correlation_type,
+                    correlation_id=task.correlation_id,
+                ),
+                node_conf.TASK_CANCEL_GRACE_SECONDS,
+            )
+            _sync_task_info(task)
+            redis_store.push_task_stream(
+                task_id=str(task.id),
+                message=_terminal_stream_message(task),
+            )
+            _project_terminal_node_task(task=task)
+            marked += 1
+    return marked
 
 
 def _send_cancel_command(*, task: NodeTask) -> None:

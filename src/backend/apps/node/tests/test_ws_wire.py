@@ -32,6 +32,18 @@ class WireParseTests(SimpleTestCase):
         self.assertEqual(msg.msg_type, WireType.TASK_PROGRESS)
         self.assertEqual(msg.progress, {"pct": 50})
 
+    def test_task_accepted(self):
+        msg = parse_uplink(
+            {
+                "type": "task.accepted",
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "status": "running",
+            }
+        )
+        self.assertIsInstance(msg, ParsedUplink)
+        self.assertEqual(msg.msg_type, WireType.TASK_ACCEPTED)
+        self.assertEqual(msg.status, "running")
+
     def test_invalid_json(self):
         self.assertIsNone(loads_json("not-json"))
 
