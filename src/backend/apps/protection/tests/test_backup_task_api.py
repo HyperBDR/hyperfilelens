@@ -1109,6 +1109,8 @@ class ProtectionBackupTaskApiTests(TestCase):
             [call.kwargs["kind"] for call in mock_run_agent_task_async.call_args_list],
             ["repository.policy.apply"],
         )
+        policy_event = task.events.get(message="Preparing directory policy")
+        self.assertEqual(policy_event.metadata["source_path"], "/data/projects")
 
         second = self._run_orchestrated_backup(task=task, snapshot=snapshot)
         self.assertEqual(second["orchestrator"], "policy_prepare")

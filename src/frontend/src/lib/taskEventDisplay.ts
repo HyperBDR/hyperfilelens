@@ -5,6 +5,8 @@ const taskEventMessageKeys: Record<string, string> = {
   'task queued for retry': 'ops.task.eventMessage.taskQueuedForRetry',
   'logical snapshot created': 'ops.task.eventMessage.logicalSnapshotCreated',
   'starting directory snapshot': 'ops.task.eventMessage.startingDirectorySnapshot',
+  'preparing directory policy': 'ops.task.eventMessage.preparingDirectoryPolicy',
+  'dispatching prepared directory snapshot to agent': 'ops.task.eventMessage.dispatchingPreparedDirectorySnapshot',
   'dispatching directory backup to agent': 'ops.task.eventMessage.dispatchingDirectoryBackup',
   'directory backup agent task finished': 'ops.task.eventMessage.directoryBackupFinished',
   'directory snapshot created': 'ops.task.eventMessage.directorySnapshotCreated',
