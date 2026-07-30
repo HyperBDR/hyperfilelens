@@ -10,8 +10,6 @@ import {
   CircleStop,
   Clock3,
   Copy,
-  FileInput,
-  FileOutput,
   Globe,
   Link2,
   RefreshCw,
@@ -79,7 +77,7 @@ const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
 const actionBusy = ref(false)
 const taskOwner = ref('')
-const activeDetailTab = ref<'steps' | 'resources' | 'payload'>('steps')
+const activeDetailTab = ref<'steps' | 'resources'>('steps')
 const selectedResourceType = ref('')
 const backupSourceRows = ref<Array<{
   id: number
@@ -517,29 +515,11 @@ function onDetailTabChange(name: string | number) {
   }
 }
 
-function formatJson(value: unknown) {
-  if (value == null) return t('ops.task.emptyMark')
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
 async function copyTaskUuid() {
   if (!activeTask.value?.task_uuid) return
   try {
     await copyTextToClipboard(activeTask.value.task_uuid)
     ElMessage.success(t('ops.task.msgCopied'))
-  } catch {
-    ElMessage.error(t('ops.task.msgCopyFailed'))
-  }
-}
-
-async function copyPayload(value: unknown) {
-  try {
-    await copyTextToClipboard(formatJson(value))
-    ElMessage.success(t('ops.task.msgCopiedPayload'))
   } catch {
     ElMessage.error(t('ops.task.msgCopyFailed'))
   }
@@ -995,28 +975,6 @@ watch(
           </section>
         </ElTabPane>
 
-        <ElTabPane :label="t('ops.task.payloads')" name="payload">
-          <section class="hfl-task-drawer__tab-panel hfl-task-drawer__payload-grid">
-        <div class="hfl-task-drawer__terminal">
-          <div class="hfl-task-drawer__terminal-head">
-            <div class="hfl-task-drawer__terminal-title"><FileInput :size="14" />{{ t('ops.task.requestPayload') }}</div>
-            <ElButton class="hfl-task-drawer__terminal-copy" text :title="t('ops.task.copyPayload')" @click="copyPayload(activeTask.request_payload)">
-              <Copy :size="14" />
-            </ElButton>
-          </div>
-          <pre class="hfl-task-drawer__payload hfl-task-drawer__payload--terminal">{{ formatJson(activeTask.request_payload) }}</pre>
-        </div>
-        <div class="hfl-task-drawer__terminal">
-          <div class="hfl-task-drawer__terminal-head">
-            <div class="hfl-task-drawer__terminal-title"><FileOutput :size="14" />{{ t('ops.task.resultPayload') }}</div>
-            <ElButton class="hfl-task-drawer__terminal-copy" text :title="t('ops.task.copyPayload')" @click="copyPayload(activeTask.result_payload)">
-              <Copy :size="14" />
-            </ElButton>
-          </div>
-          <pre class="hfl-task-drawer__payload hfl-task-drawer__payload--terminal">{{ formatJson(activeTask.result_payload) }}</pre>
-        </div>
-          </section>
-        </ElTabPane>
       </ElTabs>
     </div>
     <div v-else ref="drawerScrollAnchorRef" class="hfl-task-drawer__body">
@@ -1072,9 +1030,7 @@ watch(
 .hfl-task-drawer__steps-head,
 .hfl-task-drawer__step-card-head,
 .hfl-task-drawer__step-duration,
-.hfl-task-drawer__event-object,
-.hfl-task-drawer__terminal-head,
-.hfl-task-drawer__terminal-title {
+.hfl-task-drawer__event-object {
   display: flex;
   align-items: center;
 }
@@ -1554,68 +1510,6 @@ watch(
 
 .hfl-task-drawer__resource-table {
   width: 100%;
-}
-
-.hfl-task-drawer__payload-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-}
-
-.hfl-task-drawer__terminal {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid rgb(30 41 59);
-  border-radius: 12px;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(59, 130, 246, 0.18), transparent 34%),
-    linear-gradient(180deg, rgb(15 23 42), rgb(2 6 23));
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
-}
-
-.hfl-task-drawer__terminal-head {
-  gap: 12px;
-  justify-content: space-between;
-  padding: 11px 14px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(15, 23, 42, 0.72);
-}
-
-.hfl-task-drawer__terminal-title {
-  gap: 7px;
-  min-width: 0;
-  color: rgb(203 213 225);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.hfl-task-drawer__terminal-copy {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 7px;
-  color: rgb(203 213 225);
-}
-
-.hfl-task-drawer__terminal-copy:hover {
-  background: rgba(148, 163, 184, 0.16);
-  color: #fff;
-}
-
-.hfl-task-drawer__payload {
-  max-height: 360px;
-  margin: 0;
-  overflow: auto;
-  padding: 12px 14px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: rgb(226 232 240);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  tab-size: 2;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 @media (max-width: 760px) {
