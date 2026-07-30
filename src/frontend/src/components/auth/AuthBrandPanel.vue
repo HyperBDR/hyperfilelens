@@ -101,7 +101,6 @@ defineProps<{
   font-size: 48px;
   font-weight: 850;
   letter-spacing: -1.6px;
-  line-height: 1;
 }
 
 .auth-logo-text > span {
