@@ -299,8 +299,8 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         >
                           <template #default="{ data }">
                             <div class="hfl-dir-tree-node">
-                              <FolderOpen v-if="data.type === 'dir'" :size="15" class="hfl-dir-tree-node__icon" />
-                              <File v-else :size="15" class="hfl-dir-tree-node__icon" />
+                              <FolderOpen v-if="data.type === 'dir'" :size="15" class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--dir" />
+                              <File v-else :size="15" class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file" />
                               <div class="hfl-dir-tree-node__text"><span class="hfl-dir-tree-node__label">{{ data.label }}</span><span v-if="data.path" class="hfl-dir-tree-node__path">{{ data.path }}</span></div>
                             </div>
                           </template>
