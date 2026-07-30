@@ -995,6 +995,7 @@ export const enProtectionPages = {
     snapshotBrowserDirectories: 'Directory Snapshot Points',
     snapshotBrowserBackToSnapshots: 'Back to Directories',
     snapshotBrowserDirectorySnapshotId: 'Directory Snapshot ID',
+    snapshotViewAction: 'View',
     snapshotBrowserBrowse: 'Browse',
     snapshotBrowserFileDirCount: 'Files/Dirs',
     snapshotBrowserEmptyDirectories: 'No browsable directories for this snapshot',
