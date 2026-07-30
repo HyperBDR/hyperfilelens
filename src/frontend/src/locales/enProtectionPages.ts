@@ -968,7 +968,7 @@ export const enProtectionPages = {
     flowSourceDetailStepsHint: 'All execution steps are expanded by default',
     flowSourceDetailExpandAll: 'Expand All',
     flowSourceDetailCollapseAll: 'Collapse All',
-    flowSourceDetailEmptyEvents: 'No Events',
+    flowSourceDetailEmptyEvents: 'No events are available for this step.',
     flowSourceDetailEmptySteps: 'No Execution Steps',
     flowSourceDetailEvents: 'Events',
     flowSourceDetailEmptyResources: 'No Related Resources',
