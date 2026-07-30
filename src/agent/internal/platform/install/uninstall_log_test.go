@@ -2,6 +2,7 @@ package install
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,7 +27,7 @@ func TestAppendUninstallLogCreatesFile(t *testing.T) {
 
 func TestUninstallLogPath(t *testing.T) {
 	got := UninstallLogPath("/var/lib/hyperfilelens-agent/logs")
-	want := "/var/lib/hyperfilelens-agent/logs/uninstall.log"
+	want := filepath.Join("/var/lib/hyperfilelens-agent/logs", UninstallLogFileName)
 	if got != want {
 		t.Fatalf("UninstallLogPath() = %q, want %q", got, want)
 	}
