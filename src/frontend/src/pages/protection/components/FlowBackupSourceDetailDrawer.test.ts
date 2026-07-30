@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { enProtectionPages } from '../../../locales/enProtectionPages'
 
 const drawer = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue'), 'utf8')
+const protectionMessages = readFileSync(resolve(process.cwd(), 'src/locales/enProtectionPages.ts'), 'utf8')
 
 function sourceBetween(start: string, end: string) {
   const startIndex = drawer.indexOf(start)
@@ -10,6 +12,20 @@ function sourceBetween(start: string, end: string) {
   expect(startIndex).toBeGreaterThanOrEqual(0)
   expect(endIndex).toBeGreaterThan(startIndex)
   return drawer.slice(startIndex, endIndex)
+}
+
+function buttonWithHandler(source: string, handler: string, marker: string) {
+  let handlerIndex = source.indexOf(handler)
+  while (handlerIndex >= 0) {
+    const startIndex = source.lastIndexOf('<button', handlerIndex)
+    const endIndex = source.indexOf('</button>', handlerIndex)
+    expect(startIndex).toBeGreaterThanOrEqual(0)
+    expect(endIndex).toBeGreaterThan(handlerIndex)
+    const button = source.slice(startIndex, endIndex)
+    if (button.includes(marker)) return button
+    handlerIndex = source.indexOf(handler, handlerIndex + handler.length)
+  }
+  throw new Error(`Unable to find button containing ${handler} and ${marker}`)
 }
 
 describe('FlowBackupSourceDetailDrawer task columns', () => {
@@ -32,6 +48,30 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
+  it('distinguishes viewing a snapshot from browsing a directory', () => {
+    const snapshotTab = sourceBetween(
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
+    )
+    const snapshotAction = buttonWithHandler(
+      snapshotTab,
+      '@click.stop="toggleSnapshot(row)"',
+      'snapshot-point-actions__button',
+    )
+    const directoryAction = buttonWithHandler(
+      snapshotTab,
+      '@click.stop="openSnapshotDirectory(dir)"',
+      'snapshot-point-actions__button',
+    )
+
+    expect(snapshotAction).toContain("t('protection.backupsPage.snapshotViewAction')")
+    expect(snapshotAction).not.toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
+    expect(directoryAction).toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
+    expect(directoryAction).not.toContain("t('protection.backupsPage.snapshotViewAction')")
+    expect(enProtectionPages.backupsPage.snapshotViewAction).toBe('View')
+    expect(enProtectionPages.backupsPage.snapshotBrowserBrowse).toBe('Browse')
+  })
+
   it('allocates enough width for both snapshot timestamps', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
@@ -63,5 +103,26 @@ describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
     expect(paginationWatcher).toContain('selectedSnapshotId.value = null')
     expect(paginationWatcher).toContain('expandedSnapshotRowKeys.value = []')
     expect(paginationWatcher).toContain('snapshotDetails.value = new Map()')
+  })
+})
+
+describe('FlowBackupSourceDetailDrawer task step expansion feedback', () => {
+  it('notifies without expanding when a task step has no events', () => {
+    const toggleStep = sourceBetween(
+      'function toggleStep(stepId: number | string, eventCount: number)',
+      'function setAllStepsExpanded',
+    )
+    const taskSteps = sourceBetween(
+      '<div v-if="stepsWithEvents.length" class="dp-task-detail__step-list">',
+      '<div v-if="unlinkedTaskEvents.length > 0"',
+    )
+
+    expect(toggleStep).toContain('if (eventCount === 0)')
+    expect(toggleStep).toContain("ElMessage.info({ message: t('protection.backupsPage.flowSourceDetailEmptyEvents'), grouping: true })")
+    expect(toggleStep.indexOf('return')).toBeLessThan(toggleStep.indexOf('expandedTaskSteps[key]'))
+    expect(taskSteps).toContain(':aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"')
+    expect(taskSteps).toContain('@click="toggleStep(step.id, step.events.length)"')
+    expect(taskSteps).toContain('v-if="step.events.length > 0 && isStepExpanded(step.id)"')
+    expect(protectionMessages).toContain("flowSourceDetailEmptyEvents: 'No events are available for this step.'")
   })
 })

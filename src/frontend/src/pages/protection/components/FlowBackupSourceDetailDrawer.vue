@@ -1266,7 +1266,11 @@ function isStepExpanded(stepId: number | string) {
   return expandedTaskSteps[stepKey(stepId)] !== false
 }
 
-function toggleStep(stepId: number | string) {
+function toggleStep(stepId: number | string, eventCount: number) {
+  if (eventCount === 0) {
+    ElMessage.info({ message: t('protection.backupsPage.flowSourceDetailEmptyEvents'), grouping: true })
+    return
+  }
   const key = stepKey(stepId)
   expandedTaskSteps[key] = !isStepExpanded(key)
 }
@@ -2961,11 +2965,11 @@ function onClosed() {
                     <button
                       type="button"
                       class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                      :title="t('protection.backupsPage.snapshotBrowserBrowse')"
+                      :title="t('protection.backupsPage.snapshotViewAction')"
                       @click.stop="toggleSnapshot(row)"
                     >
                       <FolderOpen :size="14" class="snapshot-point-actions__icon" aria-hidden="true" />
-                      <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
+                      <span>{{ t('protection.backupsPage.snapshotViewAction') }}</span>
                     </button>
                   </div>
                 </template>
@@ -3841,7 +3845,12 @@ function onClosed() {
             </div>
 
             <article class="dp-task-detail__step-card">
-              <button type="button" class="dp-task-detail__step-card-head" @click="toggleStep(step.id)">
+              <button
+                type="button"
+                class="dp-task-detail__step-card-head"
+                :aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"
+                @click="toggleStep(step.id, step.events.length)"
+              >
                 <span class="dp-task-detail__step-title">
                   {{ stepDisplayName(step.step_name, activeTask.task_type) }}
                   <span class="dp-task-detail__step-executed-at">{{ formatNullableTime(step.created_at || activeTask.created_at) }}</span>
@@ -3851,11 +3860,11 @@ function onClosed() {
                   <Clock3 :size="12" />
                   {{ stepDuration(si) }}
                 </span>
-                <ChevronDown v-if="isStepExpanded(step.id)" :size="16" class="hfl-task-step-chevron" />
+                <ChevronDown v-if="step.events.length > 0 && isStepExpanded(step.id)" :size="16" class="hfl-task-step-chevron" />
                 <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
               </button>
 
-              <div v-if="isStepExpanded(step.id) && step.events.length > 0" class="dp-task-detail__event-list">
+              <div v-if="step.events.length > 0 && isStepExpanded(step.id)" class="dp-task-detail__event-list">
                 <div v-for="event in step.events" :key="event.id" class="dp-task-detail__event-row">
                   <span class="dp-task-detail__event-dot" :class="`dp-task-detail__event-dot--${eventTone(event)}`">
                     <X v-if="eventTone(event) === 'danger'" :size="9" />

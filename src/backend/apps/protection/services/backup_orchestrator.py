@@ -784,6 +784,7 @@ def _ensure_directory_policy_prepared(
         message="Preparing directory policy",
         metadata={
             "backup_config_dir_id": directory_row.backup_config_dir_id,
+            "source_path": directory_row.source_path,
             "node_task_id": str(handle.task.id),
             "attempt": len(attempts) + 1,
         },

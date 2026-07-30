@@ -26,6 +26,25 @@ describe('task event internationalization', () => {
       .toBe('ops.task.eventMessage.directNasRepositoryCleanupCompleted')
   })
 
+  it('clarifies the prepared snapshot event sequence', () => {
+    const messages = [
+      ['Logical snapshot created', 'logicalSnapshotCreated', 'Backup snapshot initialized'],
+      ['Starting directory snapshot', 'startingDirectorySnapshot', 'Preparing directory snapshot'],
+      ['Preparing directory policy', 'preparingDirectoryPolicy', 'Applying backup policy to directory'],
+      [
+        'Dispatching prepared directory snapshot to agent',
+        'dispatchingPreparedDirectorySnapshot',
+        'Directory snapshot creation sent to Agent',
+      ],
+    ] as const
+    const translations = en.ops.task.eventMessage as Record<string, string>
+
+    for (const [message, key, label] of messages) {
+      expect(taskEventMessageKey(message)).toBe(`ops.task.eventMessage.${key}`)
+      expect(translations[key]).toBe(label)
+    }
+  })
+
   it('normalizes known messages and preserves unknown messages for callers', () => {
     expect(taskEventMessageKey('  TASK STARTED  ')).toBe('ops.task.eventMessage.taskStarted')
     expect(taskEventMessageKey('Task finished after worker reconciliation'))
