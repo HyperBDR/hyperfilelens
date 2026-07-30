@@ -3,7 +3,9 @@
 package install
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -35,7 +37,7 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 	}
 	body := string(raw)
 	for _, want := range []string{
-		UninstallLogPath(logDir),
+		`$logFile = ` + fmt.Sprintf("%q", UninstallLogPath(logDir)),
 		`install.cmd uninstall`,
 		`-PurgeAll`,
 		`Stop-HflProcessesForUninstall`,
@@ -43,6 +45,7 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 		`Remove-InstallDirectoryResidue`,
 		`removed residual install.cmd`,
 		`Confirm-UninstallArtifacts`,
+		`Confirm-UninstallArtifacts -InstallDir $install`,
 		`Get-Service -Name HyperFileLensAgent`,
 		`post-uninstall verify:`,
 		`install.cmd uninstall succeeded`,
@@ -56,6 +59,17 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 		`cleanup_failures = @($cleanupFailures)`,
 		`retained_resources = @($retainedResources)`,
 		`foreach ($attempt in 1..6)`,
+		`$logEnabled = $true`,
+		`if (-not $script:logEnabled)`,
+		`Test-SafeAgentDataPath`,
+		`$allowedRoot.TrimEnd('\') + '\'`,
+		`agent_data_cleanup_refused`,
+		`outside ProgramData\HyperFileLens`,
+		`Remove-AgentDataDirectory`,
+		`physical cleanup finished; removing data directory`,
+		`$script:logEnabled = $false`,
+		`Remove-Item -LiteralPath $DataDir -Recurse -Force -ErrorAction Stop`,
+		`Add-CleanupFailure -code 'agent_data_cleanup_failed'`,
 		`Remove-Item -LiteralPath $PSCommandPath`,
 		`"signed-test-token"`,
 	} {
@@ -66,6 +80,31 @@ func TestWriteWindowsUninstallScriptUsesUninstallLogAndInstallPs1(t *testing.T) 
 	if strings.Contains(body, ".install.out") {
 		t.Fatalf("script must not reference separate install output log:\n%s", body)
 	}
+	if strings.Contains(body, `$KeepFlag -eq '0'`) {
+		t.Fatalf("general artifact verification must run before final data cleanup:\n%s", body)
+	}
+	if count := strings.Count(body, `Remove-InstallDirectoryResidue -InstallDir $install`); count != 2 {
+		t.Fatalf("install.cmd and install.ps1 must share residue cleanup; got %d calls:\n%s", count, body)
+	}
+	dataCleanup := substringBetween(
+		t,
+		body,
+		"function Remove-AgentDataDirectory",
+		"Log \"detached uninstall script started",
+	)
+	assertOrdered(t, dataCleanup,
+		`Test-SafeAgentDataPath -DataDir $DataDir`,
+		`Log "physical cleanup finished; removing data directory $DataDir"`,
+		`$script:logEnabled = $false`,
+		`Remove-Item -LiteralPath $DataDir -Recurse -Force -ErrorAction Stop`,
+	)
+	assertOrdered(t, body,
+		`Confirm-UninstallArtifacts -InstallDir $install`,
+		`Remove-AgentDataDirectory -DataDir $data`,
+		`Report-UninstallCompletion`,
+	)
+	assertPowerShellParses(t, path)
+	assertPowerShellDataPathSafety(t, dir, body)
 }
 
 func TestWriteWindowsForceCleanupScriptContinuesAfterInstallerFailure(t *testing.T) {
@@ -97,8 +136,8 @@ func TestWriteWindowsForceCleanupScriptContinuesAfterInstallerFailure(t *testing
 		`install_cmd_uninstall_failed`,
 		`Stop-Or-ContinueAfterFailure`,
 		`Remove-InstallDirectoryResidue -InstallDir $install`,
-		`$forceCleanup -and -not $installerSucceeded`,
 		`Confirm-UninstallArtifacts`,
+		`Remove-AgentDataDirectory -DataDir $data`,
 		`Force Cleanup accepted the recorded uninstall residue`,
 	} {
 		if !strings.Contains(text, want) {
@@ -130,10 +169,105 @@ func TestWriteWindowsUninstallScriptKeepDataSkipsPurgeAll(t *testing.T) {
 		t.Fatalf("read script: %v", err)
 	}
 	text := string(body)
-	if strings.Contains(text, "-PurgeAll") {
-		t.Fatalf("keep_data script must not pass -PurgeAll:\n%s", text)
+	if !strings.Contains(text, `$keep = 1`) {
+		t.Fatalf("keep_data script missing keep flag:\n%s", text)
 	}
 	if !strings.Contains(text, "keep_data=1; preserved data directory") {
 		t.Fatalf("keep_data script missing preserve log line:\n%s", text)
+	}
+	assertOrdered(t, text,
+		`if ($keep -eq '0') {`,
+		`Remove-AgentDataDirectory -DataDir $data`,
+		`keep_data=1; preserved data directory`,
+	)
+}
+
+func assertOrdered(t *testing.T, body string, values ...string) {
+	t.Helper()
+	previous := -1
+	for _, value := range values {
+		index := strings.LastIndex(body, value)
+		if index < 0 {
+			t.Fatalf("script missing %q:\n%s", value, body)
+		}
+		if index <= previous {
+			t.Fatalf("script value %q is out of order:\n%s", value, body)
+		}
+		previous = index
+	}
+}
+
+func substringBetween(t *testing.T, body, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(body, startMarker)
+	if start < 0 {
+		t.Fatalf("script missing start marker %q:\n%s", startMarker, body)
+	}
+	end := strings.Index(body[start:], endMarker)
+	if end < 0 {
+		t.Fatalf("script missing end marker %q:\n%s", endMarker, body)
+	}
+	return body[start : start+end]
+}
+
+func assertPowerShellParses(t *testing.T, path string) {
+	t.Helper()
+	command := fmt.Sprintf(`
+$tokens = $null
+$errors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(%s, [ref]$tokens, [ref]$errors) | Out-Null
+if ($errors.Count -gt 0) {
+  $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }
+  exit 1
+}
+`, psSingleQuote(path))
+	output, err := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		command,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated uninstall script does not parse: %v\n%s", err, output)
+	}
+}
+
+func assertPowerShellDataPathSafety(t *testing.T, dir, body string) {
+	t.Helper()
+	safetyFunction := substringBetween(
+		t,
+		body,
+		"function Test-SafeAgentDataPath",
+		"function Remove-AgentDataDirectory",
+	)
+	testBody := safetyFunction + `
+$allowed = Join-Path $env:ProgramData 'HyperFileLens\Agent'
+$allowedChild = Join-Path $allowed 'custom'
+$vendorRoot = Join-Path $env:ProgramData 'HyperFileLens'
+$prefixCollision = Join-Path $env:ProgramData 'HyperFileLens-Other\Agent'
+$outside = Join-Path $env:SystemDrive 'Users'
+if (-not (Test-SafeAgentDataPath -DataDir $allowed)) { throw 'default Agent data path was rejected' }
+if (-not (Test-SafeAgentDataPath -DataDir $allowedChild)) { throw 'Agent data descendant was rejected' }
+if (Test-SafeAgentDataPath -DataDir $vendorRoot) { throw 'vendor root was accepted' }
+if (Test-SafeAgentDataPath -DataDir $prefixCollision) { throw 'prefix collision was accepted' }
+if (Test-SafeAgentDataPath -DataDir $outside) { throw 'outside path was accepted' }
+if (Test-SafeAgentDataPath -DataDir '') { throw 'empty path was accepted' }
+`
+	path := dir + "/test-data-path-safety.ps1"
+	if err := os.WriteFile(path, []byte(testBody), 0o644); err != nil {
+		t.Fatalf("write data path safety test: %v", err)
+	}
+	output, err := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		path,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("PowerShell data path safety test failed: %v\n%s", err, output)
 	}
 }

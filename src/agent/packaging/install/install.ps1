@@ -588,7 +588,11 @@ function Test-SafeDataPath([string]$path) {
   if ([string]::IsNullOrWhiteSpace($path)) { return $false }
   $full = try { [System.IO.Path]::GetFullPath($path) } catch { return $false }
   $pd = [System.IO.Path]::GetFullPath($env:ProgramData)
-  return $full.StartsWith($pd.TrimEnd('\') + '\HyperFileLens', [System.StringComparison]::OrdinalIgnoreCase)
+  $allowedRoot = Join-Path $pd "HyperFileLens"
+  return $full.TrimEnd('\').StartsWith(
+    $allowedRoot.TrimEnd('\') + '\',
+    [System.StringComparison]::OrdinalIgnoreCase
+  )
 }
 
 function Wait-HflServiceStopped {
@@ -689,7 +693,7 @@ function Schedule-InstallRootRemoval {
 function Write-Trace([string]`$msg) {
   if (-not `$logFile) { return }
   `$dir = Split-Path -Parent `$logFile
-  if (`$dir) { New-Item -ItemType Directory -Force -Path `$dir | Out-Null }
+  if (-not `$dir -or -not (Test-Path -LiteralPath `$dir)) { return }
   `$ts = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
   Add-Content -LiteralPath `$logFile -Value "`$ts `$msg" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
@@ -1154,7 +1158,9 @@ function Invoke-Uninstall {
     Write-HflSkip "remove data directory (none resolved)"
   }
 
-  $uninstallLog = if ($uninstallLogPath) { $uninstallLogPath } else { "" }
+  # PurgeAll removes the data directory that owns uninstall.log. The detached
+  # install-root remover must never recreate that directory after cleanup.
+  $uninstallLog = if (-not $PurgeAll -and $uninstallLogPath) { $uninstallLogPath } else { "" }
   Schedule-InstallRootRemoval -InstallRoot $InstallRoot -LogFile $uninstallLog
   }
   catch {

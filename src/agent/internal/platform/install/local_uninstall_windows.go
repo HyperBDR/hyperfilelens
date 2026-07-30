@@ -106,11 +106,20 @@ $callbackInsecureTls = %s
 $forceCleanup = %s
 $cleanupFailures = @()
 $retainedResources = @()
+$logEnabled = $true
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logFile) | Out-Null
 function Log([string]$msg) {
+  if (-not $script:logEnabled) {
+    return
+  }
   $ts = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
-  Add-Content -LiteralPath $logFile -Value "$ts $msg" -Encoding UTF8
+  try {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logFile) | Out-Null
+    Add-Content -LiteralPath $logFile -Value "$ts $msg" -Encoding UTF8
+  } catch {
+    # Logging is best-effort and must not interrupt physical cleanup.
+  }
 }
 
 function Add-CleanupFailure(
@@ -210,11 +219,7 @@ function Remove-InstallDirectoryResidue {
 }
 
 function Confirm-UninstallArtifacts {
-  param(
-    [string]$InstallDir,
-    [string]$DataDir,
-    [string]$KeepFlag
-  )
+  param([string]$InstallDir)
   # Allow Schedule-InstallRootRemoval deferred cleanup to run first.
   Start-Sleep -Seconds 6
   $issues = @()
@@ -224,10 +229,66 @@ function Confirm-UninstallArtifacts {
   if (Test-Path -LiteralPath $InstallDir) {
     $issues += "install directory still present: $InstallDir"
   }
-  if ($KeepFlag -eq '0' -and (Test-Path -LiteralPath $DataDir)) {
-    $issues += "data directory still present: $DataDir"
-  }
   return $issues
+}
+
+function Test-SafeAgentDataPath {
+  param([string]$DataDir)
+  if ([string]::IsNullOrWhiteSpace($DataDir)) {
+    return $false
+  }
+  try {
+    $full = [System.IO.Path]::GetFullPath($DataDir).TrimEnd('\')
+    $programData = [System.IO.Path]::GetFullPath($env:ProgramData).TrimEnd('\')
+    $allowedRoot = Join-Path $programData 'HyperFileLens'
+    return $full.StartsWith(
+      $allowedRoot.TrimEnd('\') + '\',
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  } catch {
+    return $false
+  }
+}
+
+function Remove-AgentDataDirectory {
+  param([string]$DataDir)
+
+  if (-not [string]::IsNullOrWhiteSpace($DataDir) -and -not (Test-Path -LiteralPath $DataDir)) {
+    $script:logEnabled = $false
+    return
+  }
+  if (-not (Test-SafeAgentDataPath -DataDir $DataDir)) {
+    Add-CleanupFailure -code 'agent_data_cleanup_refused' -detail "refused to remove data directory outside ProgramData\HyperFileLens: $DataDir" -retained @($DataDir)
+    return
+  }
+
+  # This is the final file log entry. Logging must remain disabled after a
+  # successful removal so the completion callback cannot recreate DataDir.
+  Log "physical cleanup finished; removing data directory $DataDir"
+  $script:logEnabled = $false
+  $lastError = $null
+  foreach ($attempt in 1..3) {
+    try {
+      if (Test-Path -LiteralPath $DataDir) {
+        Remove-Item -LiteralPath $DataDir -Recurse -Force -ErrorAction Stop
+      }
+      if (-not (Test-Path -LiteralPath $DataDir)) {
+        return
+      }
+      $lastError = "data directory still present after remove attempt $attempt"
+    } catch {
+      $lastError = $_.Exception.Message
+    }
+    if ($attempt -lt 3) {
+      Start-Sleep -Seconds 2
+    }
+  }
+
+  # Retain the approved uninstall log only when cleanup itself failed so
+  # Strict Cleanup can report the residue and an idempotent retry can remove it.
+  $script:logEnabled = $true
+  $detail = if ($lastError) { $lastError } else { "data directory still present: $DataDir" }
+  Add-CleanupFailure -code 'agent_data_cleanup_failed' -detail $detail -retained @($DataDir)
 }
 
 Log "detached uninstall script started install_dir=$install data_dir=$data keep_data=$keep"
@@ -244,12 +305,9 @@ try {
 
   $installCmd = Join-Path $install "install.cmd"
   $installPs1 = Join-Path $install "install.ps1"
-  $usedInstallCmd = $false
-  $installerSucceeded = $false
   $failureCountBefore = $cleanupFailures.Count
   try {
     if (Test-Path -LiteralPath $installCmd) {
-      $usedInstallCmd = $true
       Log "running install.cmd uninstall"
       $cmdLine = '"' + $installCmd + '" uninstall'
       if ($keep -eq '0') {
@@ -268,7 +326,6 @@ try {
         Stop-Or-ContinueAfterFailure
       } else {
         Log "install.cmd uninstall succeeded"
-        $installerSucceeded = $true
       }
       Remove-InstallDirectoryResidue -InstallDir $install
     } elseif (Test-Path -LiteralPath $installPs1) {
@@ -290,13 +347,12 @@ try {
         Stop-Or-ContinueAfterFailure
       } else {
         Log "install.ps1 uninstall succeeded"
-        $installerSucceeded = $true
       }
+      Remove-InstallDirectoryResidue -InstallDir $install
     } else {
       Log "install.cmd and install.ps1 missing; running fallback cleanup"
       sc.exe delete HyperFileLensAgent 2>$null | Out-Null
       Start-DeferredRemove $install
-      $installerSucceeded = $true
     }
   } catch {
     if ($cleanupFailures.Count -eq $failureCountBefore) {
@@ -306,18 +362,7 @@ try {
   }
 
   try {
-    if ($keep -eq '0' -and (-not $usedInstallCmd -or ($forceCleanup -and -not $installerSucceeded))) {
-      Start-DeferredRemove $data
-    } elseif ($keep -eq '1') {
-      Log "keep_data=1; preserved data directory $data"
-    }
-  } catch {
-    Add-CleanupFailure -code 'agent_data_cleanup_failed' -detail $_.Exception.Message -retained @('agent_data')
-    Stop-Or-ContinueAfterFailure
-  }
-
-  try {
-    $issues = @(Confirm-UninstallArtifacts -InstallDir $install -DataDir $data -KeepFlag $keep)
+    $issues = @(Confirm-UninstallArtifacts -InstallDir $install)
     if ($issues.Count -gt 0) {
       foreach ($issue in $issues) {
         Log "post-uninstall verify: $issue"
@@ -329,10 +374,18 @@ try {
     Stop-Or-ContinueAfterFailure
   }
 
-  if ($cleanupFailures.Count -gt 0) {
-    Log "detached uninstall script finished with cleanup residue"
+  if ($keep -eq '0') {
+    if ($cleanupFailures.Count -gt 0) {
+      Log "physical cleanup reached final data removal with recorded residue"
+    }
+    Remove-AgentDataDirectory -DataDir $data
   } else {
-    Log "detached uninstall script finished"
+    Log "keep_data=1; preserved data directory $data"
+    if ($cleanupFailures.Count -gt 0) {
+      Log "detached uninstall script finished with cleanup residue"
+    } else {
+      Log "detached uninstall script finished"
+    }
   }
 } catch {
   Log "detached uninstall script failed: $($_.Exception.Message)"
