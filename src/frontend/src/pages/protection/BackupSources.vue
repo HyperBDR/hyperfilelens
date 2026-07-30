@@ -63,7 +63,13 @@ import {
   type SourceResource,
   type SourceStats,
 } from '../../lib/sourceApi'
-import { nasMountProtocol, nasProxyMountPoint, nasServerAddress, nasShareOrExport } from '../../lib/sourceNasDisplay'
+import {
+  nasMountProtocol,
+  nasProxyMountPoint,
+  nasServerAddress,
+  nasShareOrExport,
+  sourceNasStatusPresentation,
+} from '../../lib/sourceNasDisplay'
 import {
   nodeCpuCores,
   nodeDiskCount,
@@ -775,27 +781,14 @@ function sourceNodeOnlineStatus(row: SourceResource): 'online' | 'reconnecting' 
 function sourceNodeOnlineLabel(row: SourceResource) {
   const pending = resolveSourcePendingStatus(nasSelectableId(row))
   if (pending) return pending.label
-  if (row.effective_status === 'remove_failed') return t('protection.backupsPage.sourcePendingDeleteFailed')
-  if (row.effective_status === 'error') return t('protection.sourceResources.mountStatusError')
-  if (row.effective_status === 'probing') return t('protection.sourceResources.capacitySyncing')
-  if (row.effective_status === 'online') return t('protection.sourceResources.nodeStatusOnline')
-  if (row.effective_status === 'unverified') return t('protection.sourceResources.mountStatusUnmounted')
-  const status = sourceNodeOnlineStatus(row)
-  if (status === 'online') return t('protection.sourceResources.nodeStatusOnline')
-  if (status === 'reconnecting') return t('protection.sourceResources.nodeStatusReconnecting')
-  return t('protection.sourceResources.nodeStatusOffline')
+  const presentation = sourceNasStatusPresentation(row, sourceNodeOnlineStatus(row))
+  return t(presentation.labelKey)
 }
 
 function sourceNodeOnlineTagType(row: SourceResource): 'success' | 'warning' | 'info' | 'danger' {
   const pending = resolveSourcePendingStatus(nasSelectableId(row))
   if (pending) return pending.tag
-  if (row.effective_status === 'remove_failed' || row.effective_status === 'error') return 'danger'
-  if (row.effective_status === 'probing' || row.effective_status === 'unverified') return 'warning'
-  if (row.effective_status === 'online') return 'success'
-  const status = sourceNodeOnlineStatus(row)
-  if (status === 'online') return 'success'
-  if (status === 'reconnecting') return 'info'
-  return 'danger'
+  return sourceNasStatusPresentation(row, sourceNodeOnlineStatus(row)).tone
 }
 
 function sourceProxyStatusLabel(row: SourceResource) {

@@ -10,6 +10,7 @@ import {
   nasMountProtocol,
   nasMountSourceUri,
   nasProxyMountPoint,
+  sourceNasStatusPresentation,
   sourceExternalId,
 } from '../../../lib/sourceNasDisplay'
 import { formatAppTime } from '../../../lib/dateTime'
@@ -27,7 +28,7 @@ import { useResponsiveDrawerWidth } from '../../../composables/useResponsiveDraw
 import { debouncedNodeStatus } from '../../../composables/useNodeConnectionDisplay'
 import type { ApiNode } from '../../../types/node'
 import HflCapacityCell from '../../../components/HflCapacityCell.vue'
-import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
+import { statusTagAttrs } from '../../../lib/statusTag'
 
 type NasProtocol = 'smb' | 'nfs'
 
@@ -160,7 +161,7 @@ const capacityParts = computed(() => {
   return { used, total, pct }
 })
 
-const connectionStatus = computed((): 'online' | 'reconnecting' | 'offline' => {
+const proxyConnectionStatus = computed((): 'online' | 'reconnecting' | 'offline' => {
   const explicit = (row.value?.bound_node_status || '').trim().toLowerCase()
   if (explicit === 'online' || explicit === 'reconnecting' || explicit === 'offline') return explicit
   const status = proxyNode.value ? debouncedNodeStatus(proxyNode.value) : undefined
@@ -168,13 +169,11 @@ const connectionStatus = computed((): 'online' | 'reconnecting' | 'offline' => {
   return 'offline'
 })
 
-const connectionStatusLabel = computed(() => {
-  if (connectionStatus.value === 'online') return t('protection.sourceResources.nodeStatusOnline')
-  if (connectionStatus.value === 'reconnecting') return t('protection.sourceResources.nodeStatusReconnecting')
-  return t('protection.sourceResources.nodeStatusOffline')
-})
-
-const connectionStatusTagAttrs = computed(() => lifecycleStatusTagAttrs(connectionStatus.value))
+const runtimeStatus = computed(() =>
+  sourceNasStatusPresentation(row.value || {}, proxyConnectionStatus.value),
+)
+const connectionStatusLabel = computed(() => t(runtimeStatus.value.labelKey))
+const connectionStatusTagAttrs = computed(() => statusTagAttrs(runtimeStatus.value.tone))
 
 const lastHeartbeatText = computed(() => formatLastHeartbeat(proxyNode.value?.last_seen_at))
 
