@@ -1989,6 +1989,7 @@ sourceResources: {
     nodeStatusOnline: 'Online',
     nodeStatusReconnecting: 'Reconnecting',
     nodeStatusOffline: 'Offline',
+    proxyStatus: 'Proxy: {status}',
     mountStatus: {
       mounted: 'Mounted',
       unmounted: 'Unmounted',

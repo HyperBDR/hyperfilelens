@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { enProtectionPages } from '../locales/enProtectionPages'
 import { customMountPath } from './nasMountPath'
 import {
   nasMountProtocol,
@@ -7,6 +8,7 @@ import {
   nasProxyMountPoint,
   nasServerAddress,
   nasShareOrExport,
+  sourceNasStatusPresentation,
 } from './sourceNasDisplay'
 
 describe('nasMountSourceUri', () => {
@@ -100,5 +102,52 @@ describe('nas list column helpers', () => {
         config: {},
       }),
     ).toBe(smbMount)
+  })
+})
+
+describe('sourceNasStatusPresentation', () => {
+  it('defines NAS error and Proxy labels in the active locale namespace', () => {
+    expect(enProtectionPages.sourceResources.mountStatus.error).toBe('Mount Error')
+    expect(enProtectionPages.sourceResources.proxyStatus).toBe('Proxy: {status}')
+  })
+
+  it('prioritizes a NAS error over an online Proxy', () => {
+    expect(
+      sourceNasStatusPresentation(
+        {
+          effective_status: 'error',
+          mount_status: 'unmounted',
+          connection_test_status: 'failed',
+        },
+        'online',
+      ),
+    ).toEqual({
+      status: 'error',
+      labelKey: 'protection.sourceResources.mountStatus.error',
+      tone: 'danger',
+    })
+  })
+
+  it('keeps unmounted and probing NAS states distinct from Proxy health', () => {
+    expect(
+      sourceNasStatusPresentation({ effective_status: 'unverified' }, 'online'),
+    ).toMatchObject({
+      status: 'unverified',
+      tone: 'warning',
+    })
+    expect(
+      sourceNasStatusPresentation({ connection_test_status: 'running' }, 'online'),
+    ).toMatchObject({
+      status: 'probing',
+      tone: 'warning',
+    })
+  })
+
+  it('falls back to the Proxy connection only when NAS health is unavailable', () => {
+    expect(sourceNasStatusPresentation({}, 'reconnecting')).toEqual({
+      status: 'reconnecting',
+      labelKey: 'protection.sourceResources.nodeStatusReconnecting',
+      tone: 'info',
+    })
   })
 })

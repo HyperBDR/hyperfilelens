@@ -514,6 +514,52 @@ class NodeLifecycleTests(TestCase):
             countdown=node_conf.LIFECYCLE_DETACHED_TIMEOUT_SECONDS + 1,
         )
 
+    @patch("apps.source.tasks.source_unregister.queue_source_unregister_task")
+    def test_failed_remove_immediately_queues_source_unregister_parent(
+        self,
+        queue_parent,
+    ):
+        for status in (
+            NodeTask.Status.FAILED,
+            NodeTask.Status.TIMEOUT,
+            NodeTask.Status.CANCELED,
+        ):
+            with self.subTest(status=status):
+                task = NodeTask.objects.create(
+                    organization=self.org,
+                    node=self.node,
+                    kind="agent.uninstall",
+                    status=status,
+                    payload={"source_unregister_task_id": 42},
+                    watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+                    correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+                    correlation_id=f"remove:{self.node.id}",
+                )
+
+                queued = queue_detached_remove_verification(node_task=task)
+
+                self.assertTrue(queued)
+                queue_parent.assert_called_once_with(task_id=42)
+                queue_parent.reset_mock()
+
+    @patch("apps.source.tasks.source_unregister.queue_source_unregister_task")
+    def test_successful_remove_waits_for_signed_completion_callback(self, queue_parent):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            status=NodeTask.Status.SUCCESS,
+            payload={"source_unregister_task_id": 42},
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        queued = queue_detached_remove_verification(node_task=task)
+
+        self.assertFalse(queued)
+        queue_parent.assert_not_called()
+
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_pending_remove_does_not_finalize_when_ws_gone(self, _routable):
         task = NodeTask.objects.create(

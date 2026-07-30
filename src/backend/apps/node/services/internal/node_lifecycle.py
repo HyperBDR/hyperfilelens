@@ -552,12 +552,39 @@ def _fail_stale_remove_task(*, node: Node, task: NodeTask) -> bool:
 
 
 def queue_detached_remove_verification(*, node_task: NodeTask) -> bool:
-    """Schedule remove verification without relying exclusively on Celery Beat."""
+    """Queue the next remove step without relying exclusively on Celery Beat."""
     if node_task.kind != _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_REMOVE]:
         return False
-    if node_task.status != NodeTask.Status.RUNNING:
-        return False
     if node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE:
+        return False
+
+    task_payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+    try:
+        source_unregister_task_id = int(
+            task_payload.get("source_unregister_task_id") or 0
+        )
+    except (TypeError, ValueError):
+        source_unregister_task_id = 0
+
+    if source_unregister_task_id > 0 and node_task.status in {
+        NodeTask.Status.FAILED,
+        NodeTask.Status.TIMEOUT,
+        NodeTask.Status.CANCELED,
+    }:
+        from apps.source.tasks.source_unregister import queue_source_unregister_task
+
+        queue_source_unregister_task(task_id=source_unregister_task_id)
+        logger.info(
+            "source unregister parent queued after Agent uninstall terminal failure "
+            "node_id=%s node_task_id=%s source_unregister_task_id=%s status=%s",
+            node_task.node_id,
+            node_task.id,
+            source_unregister_task_id,
+            node_task.status,
+        )
+        return True
+
+    if node_task.status != NodeTask.Status.RUNNING:
         return False
     if not _is_detached_lifecycle_task(node_task):
         return False

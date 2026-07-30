@@ -5,6 +5,99 @@ export type NasLikeResource = {
   config?: Record<string, unknown>
   connection_summary?: string
   mount_point?: string
+  mount_status?: string
+  status?: string
+  effective_status?: string
+  connection_test_status?: string
+}
+
+export type SourceNasProxyStatus = 'online' | 'reconnecting' | 'offline'
+export type SourceNasRuntimeStatus =
+  | 'removing'
+  | 'remove_failed'
+  | 'error'
+  | 'probing'
+  | 'online'
+  | 'unverified'
+  | SourceNasProxyStatus
+
+export type SourceNasStatusPresentation = {
+  status: SourceNasRuntimeStatus
+  labelKey: string
+  tone: 'success' | 'warning' | 'danger' | 'info'
+}
+
+const SOURCE_NAS_STATUS_PRESENTATIONS: Record<
+  SourceNasRuntimeStatus,
+  Omit<SourceNasStatusPresentation, 'status'>
+> = {
+  removing: {
+    labelKey: 'protection.backupsPage.sourcePendingDeleting',
+    tone: 'info',
+  },
+  remove_failed: {
+    labelKey: 'protection.backupsPage.sourcePendingDeleteFailed',
+    tone: 'danger',
+  },
+  error: {
+    labelKey: 'protection.sourceResources.mountStatus.error',
+    tone: 'danger',
+  },
+  probing: {
+    labelKey: 'protection.sourceResources.capacitySyncing',
+    tone: 'warning',
+  },
+  online: {
+    labelKey: 'protection.sourceResources.nodeStatusOnline',
+    tone: 'success',
+  },
+  unverified: {
+    labelKey: 'protection.sourceResources.mountStatus.unmounted',
+    tone: 'warning',
+  },
+  reconnecting: {
+    labelKey: 'protection.sourceResources.nodeStatusReconnecting',
+    tone: 'info',
+  },
+  offline: {
+    labelKey: 'protection.sourceResources.nodeStatusOffline',
+    tone: 'danger',
+  },
+}
+
+function normalizedStatus(value?: string | null): string {
+  return String(value || '').trim().toLowerCase()
+}
+
+/** Resolve NAS health before falling back to the bound Proxy connection state. */
+export function sourceNasStatusPresentation(
+  row: NasLikeResource,
+  proxyStatus: SourceNasProxyStatus,
+): SourceNasStatusPresentation {
+  const effectiveStatus = normalizedStatus(row.effective_status)
+  if (effectiveStatus in SOURCE_NAS_STATUS_PRESENTATIONS) {
+    const status = effectiveStatus as SourceNasRuntimeStatus
+    return { status, ...SOURCE_NAS_STATUS_PRESENTATIONS[status] }
+  }
+
+  const connectionTestStatus = normalizedStatus(row.connection_test_status)
+  const mountStatus = normalizedStatus(row.mount_status)
+  const resourceStatus = normalizedStatus(row.status)
+  let status: SourceNasRuntimeStatus = proxyStatus
+  if (
+    connectionTestStatus === 'failed'
+    || mountStatus === 'error'
+    || resourceStatus === 'error'
+  ) {
+    status = 'error'
+  } else if (connectionTestStatus === 'pending' || connectionTestStatus === 'running') {
+    status = 'probing'
+  } else if (mountStatus === 'mounted' || connectionTestStatus === 'success') {
+    status = 'online'
+  } else if (mountStatus === 'unmounted') {
+    status = 'unverified'
+  }
+  return { status, ...SOURCE_NAS_STATUS_PRESENTATIONS[status] }
 }
 
 function configString(config: Record<string, unknown> | undefined, key: string): string {
