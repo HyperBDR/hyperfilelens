@@ -192,6 +192,8 @@ apply_mirror_env_defaults() {
 	OPT_PIP_INDEX_URL="${OPT_PIP_INDEX_URL:-${PIP_INDEX_URL:-}}"
 	OPT_PIP_TRUSTED_HOST="${OPT_PIP_TRUSTED_HOST:-${PIP_TRUSTED_HOST:-}}"
 	OPT_NPM_REGISTRY="${OPT_NPM_REGISTRY:-${NPM_REGISTRY:-}}"
+	[[ -z "${OPT_GO_PROXY}" ]] || export GOPROXY="${OPT_GO_PROXY}"
+	[[ -z "${OPT_GO_SUMDB}" ]] || export GOSUMDB="${OPT_GO_SUMDB}"
 }
 
 print_config() {
@@ -234,8 +236,8 @@ github_download_mirror=${MIRROR_GITHUB_DOWNLOAD:-<official>}
 github_token=$(hfl_redact "${MIRROR_GITHUB_TOKEN}")
 docker_download_mirror=${MIRROR_DOCKER_DOWNLOAD:-<official>}
 apt_mirror=${MIRROR_APT:-<official>}
-go_proxy=${OPT_GO_PROXY:-<official>}
-go_sumdb=${OPT_GO_SUMDB:-<official>}
+go_proxy=${GOPROXY:-<official>}
+go_sumdb=${GOSUMDB:-<official>}
 pip_index_url=${OPT_PIP_INDEX_URL:-<official>}
 pip_trusted_host=${OPT_PIP_TRUSTED_HOST:-<unset>}
 npm_registry=${OPT_NPM_REGISTRY:-<official>}
@@ -282,6 +284,11 @@ def parts(value):
 
 raise SystemExit(0 if parts(sys.argv[1]) >= parts(sys.argv[2]) else 1)
 PY
+}
+
+require_dev_build_tools() {
+	command -v python3 >/dev/null 2>&1 || die "python3 not found in PATH" 2
+	command -v go >/dev/null 2>&1 || die "go not found in PATH (required for Kopia and Agent builds)" 2
 }
 
 require_docker() {
@@ -651,7 +658,6 @@ prepare_dev() {
 	local force=$1
 	apply_mirror_env_defaults
 	apply_ubuntu2404_arch_default
-	command -v python3 >/dev/null 2>&1 || die "python3 not found"
 	log "Checking English-only public source trees"
 	python3 "${ROOT}/tools/quality/check-english-source.py"
 	require_docker
@@ -852,6 +858,7 @@ sync_optional_identity_settings() {
 
 cmd_up() {
 	apply_mirror_env_defaults
+	require_dev_build_tools
 	ensure_env_file
 	require_docker
 	ensure_runtime_images
@@ -878,6 +885,7 @@ cmd_restart() {
 	local force=$1
 
 	apply_mirror_env_defaults
+	require_dev_build_tools
 	ensure_env_file
 	require_docker
 	ensure_runtime_images
@@ -924,7 +932,7 @@ cmd_doctor() {
 	local failures=0 command image mode
 	ensure_env_file
 	apply_mirror_env_defaults
-	for command in docker python3 openssl timeout flock gzip sha256sum realpath; do
+	for command in docker go python3 openssl timeout flock gzip sha256sum realpath; do
 		if command -v "${command}" >/dev/null 2>&1; then
 			printf 'ok      command %s\n' "${command}"
 		else
