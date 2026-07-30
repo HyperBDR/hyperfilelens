@@ -238,6 +238,16 @@ sourcelens_git_network() {
 	return 1
 }
 
+sourcelens_sync_submodules() {
+	sourcelens_log "Synchronizing SourceLens submodules with forced worktree recovery"
+	sourcelens_git submodule sync --recursive
+	if [[ "${SOURCELENS_OFFLINE}" -eq 1 ]]; then
+		sourcelens_git submodule update --init --recursive --force --no-fetch
+	else
+		sourcelens_git_network submodule update --init --recursive --force
+	fi
+}
+
 sourcelens_image_exists() {
 	docker image inspect "$1" >/dev/null 2>&1
 }
@@ -380,11 +390,7 @@ sourcelens_sync_source() {
 		else
 			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		fi
-		if [[ "${SOURCELENS_OFFLINE}" -eq 1 ]]; then
-			sourcelens_git submodule update --init --recursive --no-fetch
-		else
-			sourcelens_git_network submodule update --init --recursive
-		fi
+		sourcelens_sync_submodules
 	)
 	# shellcheck source=sourcelens-lensnode-patch.sh
 	source "${HFL_ROOT}/tools/sourcelens/lensnode-patch.sh"

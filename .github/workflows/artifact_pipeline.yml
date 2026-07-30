@@ -228,6 +228,7 @@ jobs:
           HFL_TEST_VERSION=main-0123456 ./tools/quality/test-ci-release-assembly.sh
           ./tools/quality/test-kopia-build-config.sh
           ./tools/quality/test-sourcelens-git-mirror.sh
+          ./tools/quality/test-sourcelens-submodule-recovery.sh
           git diff --check
           while IFS= read -r script; do bash -n "$script"; done < <(find . -path './build' -prune -o -path './data' -prune -o -type f -name '*.sh' -print)
 
