@@ -220,6 +220,7 @@ def run_agent_task_sync(
     node_id: int,
     kind: str,
     payload: dict | None = None,
+    persisted_payload: dict | None = None,
     correlation_type: str = "",
     correlation_id: str = "",
     wait_timeout_seconds: int | None = None,
@@ -246,13 +247,16 @@ def run_agent_task_sync(
             org=org,
             node=node,
             kind=kind,
-            payload=payload,
+            payload=persisted_payload if persisted_payload is not None else payload,
             correlation_type=correlation_type,
             correlation_id=correlation_id,
         )
         task_id = task.id
 
-    task = deliver_agent_task(task=task)
+    task = deliver_agent_task(
+        task=task,
+        delivery_payload=payload if persisted_payload is not None else None,
+    )
     outcome = wait_for_agent_task(
         task_id=task_id,
         timeout_seconds=wait_timeout_seconds,

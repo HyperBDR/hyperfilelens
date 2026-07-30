@@ -34,6 +34,12 @@ from apps.source.services.internal.source_pipeline import (
     ensure_pipeline_entry,
     purge_pipeline_entry,
 )
+from apps.source.services.internal.source_credentials import (
+    merge_source_credentials,
+    protect_source_credentials,
+    resolve_source_credentials,
+    scrub_source_secrets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +98,7 @@ def create_source_resource(
     description: str = "",
     status: str | None = None,
 ) -> SourceResource:
-    config = normalize_resource_config(resource_type, config or {})
+    config = scrub_source_secrets(normalize_resource_config(resource_type, config or {}))
     credentials = credentials or {}
     validate_resource_payload(
         resource_type=resource_type,
@@ -126,7 +132,7 @@ def create_source_resource(
             description=description or "",
             resource_type=resource_type,
             config=config or {},
-            credentials=credentials or {},
+            credentials=protect_source_credentials(credentials),
             bound_node=node,
             status=status or ResourceStatus.ACTIVE,
             connection_test_status=(
@@ -206,15 +212,15 @@ def update_source_resource(
     if "resource_type" in fields and fields["resource_type"]:
         resource.resource_type = fields["resource_type"]
     if "config" in fields:
-        resource.config = {**(resource.config or {}), **(fields["config"] or {})}
+        resource.config = scrub_source_secrets(
+            {**(resource.config or {}), **(fields["config"] or {})}
+        )
         resource.config = normalize_resource_config(resource.resource_type, resource.config)
     if "credentials" in fields:
         incoming = fields["credentials"] or {}
-        merged = {**(resource.credentials or {})}
-        for key, val in incoming.items():
-            if val not in (None, ""):
-                merged[key] = val
-        resource.credentials = merged
+        resource.credentials = protect_source_credentials(
+            merge_source_credentials(resource.credentials, incoming)
+        )
     if "bound_node" in fields or "bound_node_id" in fields:
         node_id = fields.get("bound_node_id") or fields.get("bound_node")
         old_bound_node_id = resource.bound_node_id
@@ -251,7 +257,7 @@ def update_source_resource(
     validate_resource_payload(
         resource_type=resource.resource_type,
         config=resource.config,
-        credentials=resource.credentials,
+        credentials=resolve_source_credentials(resource.credentials),
     )
     resource.save()
     if bound_node_changed and resource.resource_type in ResourceType.REQUIRES_MOUNT and resource.bound_node:

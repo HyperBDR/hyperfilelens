@@ -132,6 +132,10 @@ import {
 } from '../../lib/protectionStopConfirm'
 import { getTask, listTasks, type TaskRow } from '../../lib/taskApi'
 import {
+  sourceUnregisterTaskBindings,
+  sourceUnregisterTaskOutcome,
+} from '../../lib/sourceUnregisterMonitor'
+import {
   createRestoreRecord,
   browseRestoreSnapshotDirectory,
   getRestoreSnapshotPathInfo,
@@ -4491,20 +4495,6 @@ const UNREGISTER_TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000
 const unregisterTaskPollTimers = new Set<number>()
 let unregisterTaskPollingStopped = false
 
-function unregisterTaskPendingRemovals(task: TaskRow) {
-  const payload = task.result_payload && typeof task.result_payload === 'object'
-    ? task.result_payload as Record<string, unknown>
-    : {}
-  const raw = Array.isArray(payload.pending_removals) ? payload.pending_removals : []
-  return raw.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const entry = item as Record<string, unknown>
-    const sourceId = String(entry.source_id || '')
-    const nodeId = Number(entry.node_id || 0)
-    return sourceId && nodeId > 0 ? [{ source_id: sourceId, node_id: nodeId }] : []
-  })
-}
-
 function scheduleUnregisterTaskPoll(callback: () => void) {
   if (unregisterTaskPollingStopped) return
   const timer = window.setTimeout(() => {
@@ -4558,17 +4548,29 @@ function monitorPendingUnregister(
       }
     }
 
+    const outcomes = tasks.map(sourceUnregisterTaskOutcome)
     const failedSourceIds = pairs.flatMap((pair, index) =>
-      String(tasks[index]?.status || '').toLowerCase() === 'success' ? [] : [pair.sourceId],
+      outcomes[index]?.success ? [] : [pair.sourceId],
     )
-    const pendingRemovals = tasks.flatMap(unregisterTaskPendingRemovals)
+    const pendingRemovals = outcomes.flatMap((outcome) => outcome.pendingRemovals)
     const pendingRemovalIds = new Set(pendingRemovals.map((item) => item.source_id))
     const completedSourceIds = sourceIds.filter((id) => !failedSourceIds.includes(id))
     sourcePendingOps.clear(completedSourceIds.filter((id) => !pendingRemovalIds.has(id)))
     sourcePendingOps.transitionToRemoving(pendingRemovals)
     if (failedSourceIds.length) {
-      sourcePendingOps.mark(failedSourceIds, { kind: 'delete_failed' }, flowRowsForSourceIds(failedSourceIds))
-      ElMessage.error({ message: t('protection.backupsPage.msgDeleteSourceFailed'), grouping: true })
+      failedSourceIds.forEach((sourceId) => {
+        const index = pairs.findIndex((pair) => pair.sourceId === sourceId)
+        sourcePendingOps.mark(
+          [sourceId],
+          { kind: 'delete_failed', errorMessage: outcomes[index]?.errorMessage },
+          flowRowsForSourceIds([sourceId]),
+        )
+      })
+      const detail = outcomes.find((outcome) => !outcome.success)?.errorMessage
+      ElMessage.error({
+        message: detail || t('protection.backupsPage.msgDeleteSourceFailed'),
+        grouping: true,
+      })
     }
     try {
       await Promise.all([
@@ -4790,6 +4792,7 @@ async function onBackupSourcesDeleted(payload: {
   task_uuid?: string
   task_ids?: number[]
   task_uuids?: string[]
+  tasks?: Array<{ source_id: string; task_id: number; task_uuid: string }>
   accepted?: boolean
 }) {
   const idSet = new Set(backupSourceDeleteIds.value)
@@ -4811,25 +4814,23 @@ async function onBackupSourcesDeleted(payload: {
         ])
         if (flowMainStep.value === 0) void loadBackupSelectable()
       }
-      const taskUuids = payload.task_uuids?.length ? payload.task_uuids : [payload.task_uuid || '']
-      const monitoredSourceIds: string[] = []
-      const monitoredTaskUuids: string[] = []
-      Array.from(idSet).forEach((sourceId, index) => {
-        const taskUuid = taskUuids[index] || ''
+      const sourceIds = Array.from(idSet)
+      const bindings = sourceUnregisterTaskBindings(sourceIds, payload)
+      const monitoredSourceIds = bindings.map((binding) => binding.sourceId)
+      const monitoredTaskUuids = bindings.map((binding) => binding.taskUuid)
+      const bySourceId = new Map(bindings.map((binding) => [binding.sourceId, binding]))
+      sourceIds.forEach((sourceId) => {
+        const binding = bySourceId.get(sourceId)
         sourcePendingOps.mark(
           [sourceId],
           {
-            kind: taskUuid ? 'deleting' : 'delete_failed',
-            taskId: payload.task_ids?.[index] ?? payload.task_id,
-            taskUuid,
+            kind: binding ? 'deleting' : 'delete_failed',
+            taskId: binding?.taskId,
+            taskUuid: binding?.taskUuid,
             startedAt: Date.now(),
           },
           flowRowsForSourceIds([sourceId]),
         )
-        if (taskUuid) {
-          monitoredSourceIds.push(sourceId)
-          monitoredTaskUuids.push(taskUuid)
-        }
       })
       monitorPendingUnregister(monitoredSourceIds, monitoredTaskUuids)
       ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })

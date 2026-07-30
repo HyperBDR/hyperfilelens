@@ -189,12 +189,17 @@ class BackupSelectableBulkDeleteView(APIView):
         ids = _parse_id_list(request.data.get("ids"))
         if ids is None:
             return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
-        if request.data.get("confirmation") != "UNREGISTER":
+        force = bool(request.data.get("force"))
+        confirmation_keyword = "FORCE UNREGISTER" if force else "UNREGISTER"
+        if request.data.get("confirmation") != confirmation_keyword:
             return Response(
-                {"confirmation": "Type UNREGISTER exactly to confirm unregister."},
+                {
+                    "confirmation": (
+                        f"Type {confirmation_keyword} exactly to confirm unregister."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        force = bool(request.data.get("force"))
         try:
             result = queue_delete_backup_sources(org=org, ids=ids, force=force, user=request.user)
         except BackupSourceDeleteFailed as exc:

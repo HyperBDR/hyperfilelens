@@ -5,7 +5,8 @@ from rest_framework import serializers
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection import conf as protection_conf
-from apps.storage.repositories.models import Repository
+from apps.storage.repositories.models import Repository, RepositoryTask
+from apps.task.models import Task
 from apps.storage.selectors.interface import get_effective_storage_provider
 from apps.storage.services.interface import create_repository, update_repository
 from apps.storage.services.internal.repository_access import (
@@ -89,6 +90,7 @@ class RepositorySerializer(serializers.ModelSerializer):
     bind_node_display_name = serializers.SerializerMethodField()
     bind_node_ip = serializers.SerializerMethodField()
     cross_proxy_access = serializers.SerializerMethodField()
+    active_cleanup_task = serializers.SerializerMethodField()
 
     class Meta:
         model = Repository
@@ -120,6 +122,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "bind_node_display_name",
             "bind_node_ip",
             "cross_proxy_access",
+            "active_cleanup_task",
         ]
         read_only_fields = fields
 
@@ -160,6 +163,28 @@ class RepositorySerializer(serializers.ModelSerializer):
         if not host:
             return {"enabled": True, "ready": False, "host": None, "reason": "host_missing"}
         return {"enabled": True, "ready": True, "host": host, "reason": "ready"}
+
+    def get_active_cleanup_task(self, obj: Repository) -> dict | None:
+        operation = (
+            RepositoryTask.objects.filter(
+                repository=obj,
+                operation_type=RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+                task__status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+            )
+            .select_related("task")
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        if operation is None:
+            return None
+        task = operation.task
+        return {
+            "task_uuid": str(task.task_uuid),
+            "status": task.status,
+            "error_code": task.error_code,
+            "error_message": task.error_message,
+            "created_at": task.created_at,
+        }
 
 
 class RepositoryWriteSerializer(serializers.ModelSerializer):

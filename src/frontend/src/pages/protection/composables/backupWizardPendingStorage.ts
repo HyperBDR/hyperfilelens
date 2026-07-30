@@ -9,6 +9,7 @@ export type SourcePendingOp = {
   taskId?: number
   taskUuid?: string
   startedAt?: number
+  errorMessage?: string
 }
 
 export const WIZARD_PENDING_STORAGE_KEY = 'hfl-backup-wizard-source-pending'

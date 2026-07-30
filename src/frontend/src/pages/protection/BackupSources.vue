@@ -40,6 +40,10 @@ import { copyTextToClipboard } from '../../lib/clipboard'
 import { openErrorDetails } from '../../lib/errors/details'
 import { notifyInfo, notifySuccess } from '../../lib/notify'
 import { getTask } from '../../lib/taskApi'
+import {
+  sourceUnregisterTaskBindings,
+  sourceUnregisterTaskOutcome,
+} from '../../lib/sourceUnregisterMonitor'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { hasNasSourceNameConflict, resolveNasSubmitName } from '../../lib/nasSourceNaming'
@@ -771,6 +775,11 @@ function sourceNodeOnlineStatus(row: SourceResource): 'online' | 'reconnecting' 
 function sourceNodeOnlineLabel(row: SourceResource) {
   const pending = resolveSourcePendingStatus(nasSelectableId(row))
   if (pending) return pending.label
+  if (row.effective_status === 'remove_failed') return t('protection.backupsPage.sourcePendingDeleteFailed')
+  if (row.effective_status === 'error') return t('protection.sourceResources.mountStatusError')
+  if (row.effective_status === 'probing') return t('protection.sourceResources.capacitySyncing')
+  if (row.effective_status === 'online') return t('protection.sourceResources.nodeStatusOnline')
+  if (row.effective_status === 'unverified') return t('protection.sourceResources.mountStatusUnmounted')
   const status = sourceNodeOnlineStatus(row)
   if (status === 'online') return t('protection.sourceResources.nodeStatusOnline')
   if (status === 'reconnecting') return t('protection.sourceResources.nodeStatusReconnecting')
@@ -780,10 +789,23 @@ function sourceNodeOnlineLabel(row: SourceResource) {
 function sourceNodeOnlineTagType(row: SourceResource): 'success' | 'warning' | 'info' | 'danger' {
   const pending = resolveSourcePendingStatus(nasSelectableId(row))
   if (pending) return pending.tag
+  if (row.effective_status === 'remove_failed' || row.effective_status === 'error') return 'danger'
+  if (row.effective_status === 'probing' || row.effective_status === 'unverified') return 'warning'
+  if (row.effective_status === 'online') return 'success'
   const status = sourceNodeOnlineStatus(row)
   if (status === 'online') return 'success'
   if (status === 'reconnecting') return 'info'
   return 'danger'
+}
+
+function sourceProxyStatusLabel(row: SourceResource) {
+  const status = sourceNodeOnlineStatus(row)
+  const label = status === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : status === 'reconnecting'
+      ? t('protection.sourceResources.nodeStatusReconnecting')
+      : t('protection.sourceResources.nodeStatusOffline')
+  return t('protection.sourceResources.proxyStatus', { status: label })
 }
 
 
@@ -955,12 +977,20 @@ async function reconcilePendingSourceDeleteTasks() {
         }
         return
       }
-      const status = String(settled.value.status || '').toLowerCase()
-      if (status === 'success') {
+      const outcome = sourceUnregisterTaskOutcome(settled.value)
+      if (outcome.success) {
         clearWizardPendingBySourceIds([sourceId])
         changed = true
-      } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
-        markWizardPendingBySourceIds([sourceId], { ...op, kind: 'delete_failed' })
+      } else if (outcome.terminal) {
+        markWizardPendingBySourceIds([sourceId], {
+          ...op,
+          kind: 'delete_failed',
+          errorMessage: outcome.errorMessage,
+        })
+        ElMessage.error({
+          message: outcome.errorMessage || t('protection.backupsPage.msgDeleteSourceFailed'),
+          grouping: true,
+        })
         changed = true
       }
     })
@@ -1105,22 +1135,31 @@ async function onBackupSourcesDeleted(payload: {
   task_uuid?: string
   task_ids?: number[]
   task_uuids?: string[]
+  tasks?: Array<{ source_id: string; task_id: number; task_uuid: string }>
   accepted?: boolean
 }) {
   const deletingIds = new Set(backupSourceDeleteIds.value)
   backupSourceDeleteRows.value = []
   if (payload.accepted && payload.result === 'pending') {
     const sourceIds = [...deletingIds]
-    const taskIds = payload.task_ids?.length ? payload.task_ids : [payload.task_id]
-    const taskUuids = payload.task_uuids?.length ? payload.task_uuids : [payload.task_uuid]
-    sourceIds.forEach((sourceId, index) => {
-      markWizardPendingBySourceIds([sourceId], {
+    const bindings = sourceUnregisterTaskBindings(sourceIds, payload)
+    const boundSourceIds = new Set(bindings.map((binding) => binding.sourceId))
+    bindings.forEach((binding) => {
+      markWizardPendingBySourceIds([binding.sourceId], {
         kind: 'deleting',
-        taskId: taskIds[index],
-        taskUuid: taskUuids[index],
+        taskId: binding.taskId,
+        taskUuid: binding.taskUuid,
         startedAt: Date.now(),
       })
     })
+    sourceIds
+      .filter((sourceId) => !boundSourceIds.has(sourceId))
+      .forEach((sourceId) => {
+        markWizardPendingBySourceIds([sourceId], {
+          kind: 'delete_failed',
+          errorMessage: t('protection.backupsPage.msgDeleteSourceFailed'),
+        })
+      })
     refreshPendingSourceOps()
     schedulePendingSourceDeletePoll(0)
     backupSourceDeleteIds.value = []
@@ -2115,9 +2154,12 @@ onUnmounted(() => {
                       v-if="resolveSourcePendingStatus(nasSelectableId(row))"
                       v-bind="resolveSourcePendingStatus(nasSelectableId(row))!"
                     />
-                    <el-tag v-else :type="sourceNodeOnlineTagType(row)" size="small">
-                      {{ sourceNodeOnlineLabel(row) }}
-                    </el-tag>
+                    <div v-else class="source-nas-status-stack">
+                      <el-tag :type="sourceNodeOnlineTagType(row)" size="small">
+                        {{ sourceNodeOnlineLabel(row) }}
+                      </el-tag>
+                      <span class="source-nas-status-stack__proxy">{{ sourceProxyStatusLabel(row) }}</span>
+                    </div>
                   </div>
                 </template>
               </el-table-column>
@@ -2512,6 +2554,19 @@ onUnmounted(() => {
 <style src="../../styles/source-deploy-ui.css"></style>
 <style src="../../styles/agent-install-wizard.css"></style>
 <style scoped>
+.source-nas-status-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.source-nas-status-stack__proxy {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
 .hfl-table-header-with-tip {
   display: inline-flex;
   align-items: center;

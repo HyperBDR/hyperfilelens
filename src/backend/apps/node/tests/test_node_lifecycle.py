@@ -40,7 +40,37 @@ class NodeLifecycleTests(TestCase):
             role=NodeRole.AGENT,
             status=Node.Status.ONLINE,
             version="1.0.0",
+            metadata={"capabilities": ["detached_uninstall_v2"]},
         )
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_strict_remove_requires_reliable_uninstall_capability(self, _routable):
+        self.node.metadata = {"capabilities": ["repository_cleanup_v1"]}
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(org=self.org, node=self.node, user=self.user)
+
+        self.assertEqual(raised.exception.code, "agent_upgrade_required")
+        self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    def test_force_remove_old_agent_purges_control_plane_and_records_residue(self, _routable):
+        self.node.metadata = {"capabilities": []}
+        self.node.save(update_fields=["metadata", "updated_at"])
+
+        result = start_node_remove(
+            org=self.org,
+            node=self.node,
+            user=self.user,
+            force=True,
+        )
+
+        self.assertEqual(result["state"], "completed")
+        self.assertFalse(result["cleanup_complete"])
+        self.assertEqual(result["retained_resources"], ["agent_installation"])
+        self.assertEqual(result["cleanup_failures"][0]["code"], "agent_upgrade_required")
+        self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_offline_strict_remove_is_blocked_before_task_creation(self, _routable):

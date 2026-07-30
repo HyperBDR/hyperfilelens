@@ -25,7 +25,7 @@ import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { apiErrorMessage } from '../../lib/api'
 import { afterOverlayDismiss } from '../../lib/uiDefer'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
-import { listNodesPaged, listAllNodes, updateNode, fetchLatestAgentVersion, getNodeBindings, type NodeBindings } from '../../lib/nodeApi'
+import { listNodesPaged, listAllNodes, updateNode, fetchLatestAgentVersion, getNodeBindings, previewNodeOperationsBatch, type NodeBindings } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade, needsAgentUpgrade } from '../../lib/agentVersion'
 import {
   formatNodeBytes,
@@ -445,23 +445,32 @@ const deleteOpen = ref(false)
 const deleteLoading = ref(false)
 const pendingDeleteNodes = ref<ApiNode[]>([])
 const pendingDeleteForce = ref(false)
+const pendingDeleteAuthoritativeOffline = ref(new Map<number, boolean>())
+const pendingDeleteUpgradeRequired = ref(new Set<number>())
 
 function nodeDeleteDialogItem(row: ApiNode) {
+  const authoritativeOffline = pendingDeleteAuthoritativeOffline.value.get(row.id)
+  const status = authoritativeOffline == null
+    ? debouncedNodeStatus(row)
+    : authoritativeOffline ? 'offline' : 'online'
+  const label = status === 'online'
+    ? t('nodesPage.statusOnline')
+    : status === 'reconnecting'
+      ? t('nodesPage.statusReconnecting')
+      : row.last_seen_at
+        ? t('nodesPage.statusOfflineWithLastSeen', { time: formatNodeDate(row.last_seen_at) })
+        : t('nodesPage.statusOffline')
   return {
     key: row.id,
     name: row.name,
     status: {
-      label: statusLabel(row.status, row),
-      tone: statusTagType(debouncedNodeStatus(row)),
+      label,
+      tone: statusTagType(status),
     },
+    description: pendingDeleteUpgradeRequired.value.has(row.id)
+      ? t('nodesPage.deleteUpgradeRequired')
+      : undefined,
   }
-}
-
-function nodeDeleteCanRetryWithForce() {
-  return lifecycleOps.lastStartErrors.value.some((item) =>
-    ['node_offline', 'agent_uninstall_failed', 'completion_callback_timeout']
-      .includes(String(item.code || '')),
-  )
 }
 
 async function deleteSelectedNodes() {
@@ -491,6 +500,26 @@ async function deleteSelectedNodes() {
     }
   }
 
+  try {
+    const preview = await previewNodeOperationsBatch({
+      kind: 'remove',
+      nodeIds: targets.map((node) => node.id),
+    })
+    if (preview.eligible.length !== targets.length) {
+      ElMessage.error({ message: t('nodesPage.deletePreflightBlocked'), grouping: true })
+      return
+    }
+    pendingDeleteAuthoritativeOffline.value = new Map(
+      preview.eligible.map((item) => [item.node_id, Boolean(item.offline)]),
+    )
+    pendingDeleteUpgradeRequired.value = new Set(
+      preview.eligible.filter((item) => item.upgrade_required).map((item) => item.node_id),
+    )
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
+    return
+  }
+
   pendingDeleteNodes.value = [...targets]
   pendingDeleteForce.value = false
   deleteOpen.value = true
@@ -510,14 +539,13 @@ async function executeNodeDelete() {
       deleteOpen.value = false
       pendingDeleteNodes.value = []
       pendingDeleteForce.value = false
+      pendingDeleteAuthoritativeOffline.value = new Map()
+      pendingDeleteUpgradeRequired.value = new Set()
     } else if (lifecycleOps.lastStartErrors.value.length) {
       const failedIds = new Set(
         lifecycleOps.lastStartErrors.value.map((item) => Number(item.node_id || 0)),
       )
       pendingDeleteNodes.value = targets.filter((node) => failedIds.has(node.id))
-      if (!pendingDeleteForce.value && nodeDeleteCanRetryWithForce()) {
-        pendingDeleteForce.value = true
-      }
     }
   } finally {
     deleteLoading.value = false
@@ -527,6 +555,8 @@ async function executeNodeDelete() {
 function cancelNodeDelete() {
   pendingDeleteNodes.value = []
   pendingDeleteForce.value = false
+  pendingDeleteAuthoritativeOffline.value = new Map()
+  pendingDeleteUpgradeRequired.value = new Set()
 }
 
 async function submitRename() {
