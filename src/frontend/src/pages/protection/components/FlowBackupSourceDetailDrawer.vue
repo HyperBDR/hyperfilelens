@@ -2961,11 +2961,11 @@ function onClosed() {
                     <button
                       type="button"
                       class="snapshot-point-actions__button snapshot-point-actions__button--browse"
-                      :title="t('protection.backupsPage.snapshotBrowserBrowse')"
+                      :title="t('protection.backupsPage.snapshotViewAction')"
                       @click.stop="toggleSnapshot(row)"
                     >
                       <FolderOpen :size="14" class="snapshot-point-actions__icon" aria-hidden="true" />
-                      <span>{{ t('protection.backupsPage.snapshotBrowserBrowse') }}</span>
+                      <span>{{ t('protection.backupsPage.snapshotViewAction') }}</span>
                     </button>
                   </div>
                 </template>

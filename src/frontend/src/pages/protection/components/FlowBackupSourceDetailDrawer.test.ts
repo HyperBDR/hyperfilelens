@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { enProtectionPages } from '../../../locales/enProtectionPages'
 
 const drawer = readFileSync(resolve(process.cwd(), 'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue'), 'utf8')
 
@@ -10,6 +11,20 @@ function sourceBetween(start: string, end: string) {
   expect(startIndex).toBeGreaterThanOrEqual(0)
   expect(endIndex).toBeGreaterThan(startIndex)
   return drawer.slice(startIndex, endIndex)
+}
+
+function buttonWithHandler(source: string, handler: string, marker: string) {
+  let handlerIndex = source.indexOf(handler)
+  while (handlerIndex >= 0) {
+    const startIndex = source.lastIndexOf('<button', handlerIndex)
+    const endIndex = source.indexOf('</button>', handlerIndex)
+    expect(startIndex).toBeGreaterThanOrEqual(0)
+    expect(endIndex).toBeGreaterThan(handlerIndex)
+    const button = source.slice(startIndex, endIndex)
+    if (button.includes(marker)) return button
+    handlerIndex = source.indexOf(handler, handlerIndex + handler.length)
+  }
+  throw new Error(`Unable to find button containing ${handler} and ${marker}`)
 }
 
 describe('FlowBackupSourceDetailDrawer task columns', () => {
@@ -32,6 +47,30 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
 })
 
 describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
+  it('distinguishes viewing a snapshot from browsing a directory', () => {
+    const snapshotTab = sourceBetween(
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
+      '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabRestoreRecords\')" name="restoreRecords">',
+    )
+    const snapshotAction = buttonWithHandler(
+      snapshotTab,
+      '@click.stop="toggleSnapshot(row)"',
+      'snapshot-point-actions__button',
+    )
+    const directoryAction = buttonWithHandler(
+      snapshotTab,
+      '@click.stop="openSnapshotDirectory(dir)"',
+      'snapshot-point-actions__button',
+    )
+
+    expect(snapshotAction).toContain("t('protection.backupsPage.snapshotViewAction')")
+    expect(snapshotAction).not.toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
+    expect(directoryAction).toContain("t('protection.backupsPage.snapshotBrowserBrowse')")
+    expect(directoryAction).not.toContain("t('protection.backupsPage.snapshotViewAction')")
+    expect(enProtectionPages.backupsPage.snapshotViewAction).toBe('View')
+    expect(enProtectionPages.backupsPage.snapshotBrowserBrowse).toBe('Browse')
+  })
+
   it('allocates enough width for both snapshot timestamps', () => {
     const snapshotTab = sourceBetween(
       '<el-tab-pane :label="t(\'protection.backupsPage.flowSourceDetailTabSnapshots\')" name="snapshots">',
