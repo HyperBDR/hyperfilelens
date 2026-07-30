@@ -15,8 +15,6 @@ import {
   Copy,
   Download,
   File,
-  FileInput,
-  FileOutput,
   Filter,
   Folder,
   FolderOpen,
@@ -313,7 +311,7 @@ const activeTaskLoading = ref(false)
 const activeBackupSnapshot = ref<BackupSourceSnapshot | null>(null)
 const backupTaskActionBusy = ref(false)
 const taskDetailEvents = ref<TaskEventRow[]>([])
-const activeTaskDetailTab = ref<'steps' | 'resources' | 'payload'>('steps')
+const activeTaskDetailTab = ref<'steps' | 'resources'>('steps')
 const allTaskStepsExpanded = computed(() => {
   const steps = activeTask.value?.steps || []
   return steps.length > 0 && steps.every((step) => isStepExpanded(step.id))
@@ -1283,26 +1281,13 @@ function toggleAllTaskStepsExpanded() {
   setAllStepsExpanded(!allTaskStepsExpanded.value)
 }
 
-function formatJson(value: unknown) {
-  if (value == null) return t('protection.backupDetail.durationDash')
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
-async function copyText(value: string, copiedKey = 'protection.backupsPage.flowSourceDetailCopied') {
+async function copyText(value: string) {
   try {
     await copyTextToClipboard(value)
-    ElMessage.success({ message: t(copiedKey), grouping: true })
+    ElMessage.success({ message: t('protection.backupsPage.flowSourceDetailCopied'), grouping: true })
   } catch {
     ElMessage.error({ message: t('protection.backupsPage.flowSourceDetailCopyFailed'), grouping: true })
   }
-}
-
-function copyPayload(value: unknown) {
-  void copyText(formatJson(value), 'protection.backupsPage.flowSourceDetailPayloadCopied')
 }
 
 function syncSourceTask(task: TaskRow) {
@@ -4031,35 +4016,6 @@ function onClosed() {
           </section>
         </ElTabPane>
 
-        <ElTabPane :label="t('protection.backupsPage.flowSourceDetailPayloads')" name="payload">
-          <section class="dp-task-detail__tab-panel dp-task-detail__payload-grid">
-        <div class="dp-task-detail__terminal">
-          <div class="dp-task-detail__terminal-head">
-            <div class="dp-task-detail__terminal-title">
-              <FileInput :size="14" />
-              {{ t('protection.backupsPage.flowSourceDetailRequestPayload') }}
-            </div>
-            <ElButton class="dp-task-detail__terminal-copy" text :title="t('protection.backupsPage.flowSourceDetailCopyPayload')" @click="copyPayload(activeTask.request_payload)">
-              <Copy :size="14" />
-            </ElButton>
-          </div>
-          <pre class="dp-task-detail__payload dp-task-detail__payload--terminal">{{ formatJson(activeTask.request_payload) }}</pre>
-        </div>
-
-        <div class="dp-task-detail__terminal">
-          <div class="dp-task-detail__terminal-head">
-            <div class="dp-task-detail__terminal-title">
-              <FileOutput :size="14" />
-              {{ t('protection.backupsPage.flowSourceDetailResultPayload') }}
-            </div>
-            <ElButton class="dp-task-detail__terminal-copy" text :title="t('protection.backupsPage.flowSourceDetailCopyPayload')" @click="copyPayload(activeTask.result_payload)">
-              <Copy :size="14" />
-            </ElButton>
-          </div>
-          <pre class="dp-task-detail__payload dp-task-detail__payload--terminal">{{ formatJson(activeTask.result_payload) }}</pre>
-        </div>
-          </section>
-        </ElTabPane>
       </ElTabs>
     </div>
   </ElDrawer>
@@ -5831,72 +5787,6 @@ function onClosed() {
   margin-top: 2px;
   color: rgb(100 116 139);
   font-size: 11px;
-}
-
-.dp-task-detail__payload-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-}
-
-.dp-task-detail__terminal {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid rgb(30 41 59);
-  border-radius: 12px;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(59, 130, 246, 0.18), transparent 34%),
-    linear-gradient(180deg, rgb(15 23 42), rgb(2 6 23));
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
-}
-
-.dp-task-detail__terminal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 11px 14px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(15, 23, 42, 0.72);
-}
-
-.dp-task-detail__terminal-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  color: rgb(203 213 225);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.dp-task-detail__terminal-copy {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 7px;
-  color: rgb(203 213 225);
-}
-
-.dp-task-detail__terminal-copy:hover {
-  background: rgba(148, 163, 184, 0.16);
-  color: #fff;
-}
-
-.dp-task-detail__payload {
-  max-height: 360px;
-  overflow: auto;
-  margin: 0;
-  padding: 12px 14px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: rgb(226 232 240);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  tab-size: 2;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .dp-snapshot-file-browser-shell {
