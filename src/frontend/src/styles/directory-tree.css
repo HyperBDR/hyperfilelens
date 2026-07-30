@@ -57,6 +57,10 @@
   border-radius: 4px;
 }
 
+.create-recovery-popover-tree > .el-tree-node + .el-tree-node {
+  margin-top: 4px;
+}
+
 .hfl-dir-tree .el-tree-node__content:hover {
   background: rgba(226, 232, 240, 0.5);
 }
