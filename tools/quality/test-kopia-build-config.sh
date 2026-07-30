@@ -29,6 +29,31 @@ mirror_config="$(
 grep -F 'git_url=https://github.com/kopia/kopia.git' <<<"${mirror_config}" >/dev/null
 grep -F 'github_download_mirror=https://ghfast.top' <<<"${mirror_config}" >/dev/null
 
+dev_environment_config="$(
+	GOPROXY=https://env-proxy.example.test,direct \
+		GOSUMDB=env-sumdb.example.test \
+		"${ROOT}/dev/stack.sh" up --print-config
+)"
+grep -F 'go_proxy=https://env-proxy.example.test,direct' <<<"${dev_environment_config}" >/dev/null
+grep -F 'go_sumdb=env-sumdb.example.test' <<<"${dev_environment_config}" >/dev/null
+
+dev_cli_config="$(
+	GOPROXY=https://env-proxy.example.test,direct \
+		GOSUMDB=env-sumdb.example.test \
+		"${ROOT}/dev/stack.sh" up \
+		--go-proxy https://cli-proxy.example.test,direct \
+		--go-sumdb cli-sumdb.example.test \
+		--print-config
+)"
+grep -F 'go_proxy=https://cli-proxy.example.test,direct' <<<"${dev_cli_config}" >/dev/null
+grep -F 'go_sumdb=cli-sumdb.example.test' <<<"${dev_cli_config}" >/dev/null
+
+dev_up_body="$(sed -n '/^cmd_up()/,/^}/p' "${ROOT}/dev/stack.sh")"
+[[ "${dev_up_body}" == *'require_dev_build_tools'*'prepare_sourcelens_dev'* ]]
+dev_restart_body="$(sed -n '/^cmd_restart()/,/^}/p' "${ROOT}/dev/stack.sh")"
+[[ "${dev_restart_body}" == *'require_dev_build_tools'*'prepare_sourcelens_dev'* ]]
+grep -F 'for command in docker go python3' "${ROOT}/dev/stack.sh" >/dev/null
+
 # shellcheck source=../kopia/prepare.sh
 source "${ROOT}/tools/kopia/prepare.sh"
 
