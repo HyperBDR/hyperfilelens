@@ -13,6 +13,8 @@ grep -F './tools/quality/test-language-pack-runtime-index.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-sourcelens-git-mirror.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-sourcelens-submodule-recovery.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
@@ -726,6 +728,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}/tools/quality/test-release-download-proxy.sh" \
 	"${ROOT}/tools/quality/test-sourcelens-git-mirror.sh" \
+	"${ROOT}/tools/quality/test-sourcelens-submodule-recovery.sh" \
 	"${ROOT}"/release/ci/*.sh \
 	"${ROOT}/release/ci/write-sbom.py"; do
 	[[ -x "${executable}" ]] || {
