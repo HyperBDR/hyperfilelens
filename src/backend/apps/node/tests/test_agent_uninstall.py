@@ -30,6 +30,7 @@ class AgentUninstallTests(TestCase):
             name="agent-uninstall",
             role=NodeRole.AGENT,
             status=Node.Status.OFFLINE,
+            metadata={"capabilities": ["detached_uninstall_v2"]},
         )
         self.resource = SourceResource.objects.create(
             organization=self.org,
