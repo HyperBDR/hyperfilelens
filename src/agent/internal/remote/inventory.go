@@ -47,6 +47,7 @@ func SendInventory(ctx context.Context, sink wire.Sender, provider config.Provid
 			"repository_cleanup_v1",
 			"backup_prepared_snapshot_v1",
 			"network_inventory_v1",
+			"detached_uninstall_v2",
 		},
 	} {
 		payload[key] = value

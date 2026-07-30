@@ -1567,6 +1567,14 @@ def queue_delete_backup_sources(
         "task_uuid": str(first_task.task_uuid),
         "task_ids": [task.id for task in unregister_tasks],
         "task_uuids": [str(task.task_uuid) for task in unregister_tasks],
+        "tasks": [
+            {
+                "source_id": selectable_id,
+                "task_id": task.id,
+                "task_uuid": str(task.task_uuid),
+            }
+            for selectable_id, task in zip(normalized, unregister_tasks, strict=True)
+        ],
         "status": Task.Status.RUNNING if accepted else Task.Status.SUCCESS,
         "source_ids": normalized,
     }
@@ -2089,10 +2097,15 @@ def _strict_nas_umount(
     if result.get("success"):
         return {"success": True}
     message = str(result.get("message") or "NAS unmount failed.")
+    failure_code = (
+        "mount_directory_cleanup_failed"
+        if "cleanup mount directory" in message.lower()
+        else "nas_umount_failed"
+    )
     if force:
         warnings.append(
             DeleteWarning(
-                code="nas_umount_failed",
+                code=failure_code,
                 detail=f"{message} Check the proxy host manually.",
                 source_id=ctx.selectable_id,
                 source_name=ctx.display_name,
@@ -2101,7 +2114,7 @@ def _strict_nas_umount(
         return {"skipped": True}
     reasons.append(
         DeleteReason(
-            code="nas_umount_failed",
+            code=failure_code,
             detail=message,
             source_id=ctx.selectable_id,
             source_name=ctx.display_name,
@@ -2433,7 +2446,8 @@ def _finalize_single_source_delete(
     _soft_delete_identity(org=org, ctx=ctx, user=user)
 
     nas_unmount_failed = any(
-        warning.code == "nas_umount_failed" for warning in warnings
+        warning.code in {"nas_umount_failed", "mount_directory_cleanup_failed"}
+        for warning in warnings
     )
     retained_resources = (
         [ctx.nas_resource.effective_mount_point()]
@@ -2449,7 +2463,7 @@ def _finalize_single_source_delete(
         "cleanup_failures": [
             warning.as_dict()
             for warning in warnings
-            if warning.code == "nas_umount_failed"
+            if warning.code in {"nas_umount_failed", "mount_directory_cleanup_failed"}
         ],
         "retained_resources": retained_resources,
         "warnings": warning_payload,

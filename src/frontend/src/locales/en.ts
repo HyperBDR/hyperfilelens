@@ -1178,6 +1178,10 @@ export const en = {
     proxyDeleteBlockedGoNas: 'Source NAS',
     proxyDeleteBlockedGoRepos: 'Repositories',
     proxyDeleteBindingsFailed: 'Could not check proxy bindings.',
+    deletePreflightBlocked:
+      'This host cannot be deleted while work is running, a lifecycle operation is active, or required bindings remain.',
+    deleteUpgradeRequired:
+      'Upgrade the Agent before Strict Cleanup. Force Cleanup removes only control-plane records and reports the Agent installation as retained.',
     versionUpgradeAvailable: 'New version',
     latestVersionTip: 'Latest version: {version}',
     proxyDetailTitle: 'Proxy · {name}',
@@ -1545,6 +1549,11 @@ export const en = {
       'Delete the selected {n} object storage repositories? This cannot be undone. Ensure data in these repositories has been handled or is no longer needed.',
     batchDeleteDone: 'Selected repository cleanup accepted',
     cleanupBlocked: 'Repository cleanup is blocked.',
+    cleanupBlockedTitle: 'Repository cannot be deleted',
+    cleanupBlockedForceHint:
+      'This repository is linked to backup configuration. Force Cleanup cannot bypass this relationship. Remove the configuration first.',
+    cleanupBlockedAssociations: '{n} linked backup configuration(s):',
+    cleanupFailed: 'Repository cleanup failed. Review the task details and retry.',
     cleanupAcceptedCount: '{accepted} cleanup task(s) accepted; {failed} failed.',
     cleanupForcePrompt:
       'Every physical cleanup step will be attempted. Failures are recorded as residue while repository removal continues. Type FORCE CLEANUP to confirm.',

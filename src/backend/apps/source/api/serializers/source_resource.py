@@ -2,7 +2,12 @@ from rest_framework import serializers
 
 from apps.node.services.internal.node_registry import agent_connection_status
 from apps.source.models import SourceResource
+from apps.source.constants import ConnectionTestStatus, MountStatus, ResourceStatus
 from apps.source.services.internal.nas_display import connection_summary_for_resource
+from apps.source.services.internal.source_credentials import (
+    scrub_source_secrets,
+    source_credential_hint,
+)
 from apps.source.services.internal.validators import validate_resource_payload
 
 
@@ -19,6 +24,10 @@ class SourceResourceSerializer(serializers.ModelSerializer):
     requires_mount = serializers.SerializerMethodField()
     usage_percentage = serializers.SerializerMethodField()
     connection_summary = serializers.SerializerMethodField()
+    credentials = serializers.SerializerMethodField()
+    config = serializers.SerializerMethodField()
+    effective_status = serializers.SerializerMethodField()
+    effective_status_message = serializers.SerializerMethodField()
 
     class Meta:
         model = SourceResource
@@ -41,6 +50,8 @@ class SourceResourceSerializer(serializers.ModelSerializer):
             "status",
             "status_display",
             "status_message",
+            "effective_status",
+            "effective_status_message",
             "last_connection_test",
             "connection_test_result",
             "connection_test_status",
@@ -91,6 +102,46 @@ class SourceResourceSerializer(serializers.ModelSerializer):
             config=obj.config or {},
         )
 
+    def get_credentials(self, obj):
+        return source_credential_hint(obj.credentials)
+
+    def get_config(self, obj):
+        return scrub_source_secrets(obj.config or {})
+
+    def get_effective_status(self, obj):
+        if obj.status == ResourceStatus.REMOVING:
+            return "removing"
+        if obj.status == ResourceStatus.REMOVE_FAILED:
+            return "remove_failed"
+        if obj.status == ResourceStatus.ERROR:
+            return "error"
+        if obj.connection_test_status in ConnectionTestStatus.ACTIVE:
+            return "probing"
+        if obj.connection_test_status == ConnectionTestStatus.FAILED:
+            return "error"
+        if obj.mount_status == MountStatus.ERROR:
+            return "error"
+        if (
+            obj.mount_status == MountStatus.MOUNTED
+            or obj.connection_test_status == ConnectionTestStatus.SUCCESS
+        ):
+            return "online"
+        return "unverified"
+
+    def get_effective_status_message(self, obj):
+        status = self.get_effective_status(obj)
+        if status == "remove_failed":
+            return "Unregister failed"
+        if status == "error":
+            return "NAS connection error"
+        if status == "probing":
+            return "Checking NAS connection"
+        if status == "online":
+            return "NAS online"
+        if status == "removing":
+            return "Unregistering"
+        return "NAS connection not verified"
+
 
 class SourceResourceListSerializer(SourceResourceSerializer):
     class Meta(SourceResourceSerializer.Meta):
@@ -108,6 +159,9 @@ class SourceResourceListSerializer(SourceResourceSerializer):
             "mount_point",
             "status",
             "status_display",
+            "status_message",
+            "effective_status",
+            "effective_status_message",
             "total_size",
             "used_size",
             "free_size",

@@ -38,6 +38,7 @@ const emit = defineEmits<{
     task_uuid?: string
     task_ids?: number[]
     task_uuids?: string[]
+    tasks?: BackupSourceDeleteResult['tasks']
     accepted?: boolean
   }): void
 }>()
@@ -50,6 +51,7 @@ const preflight = ref<BackupSourceDeletePreflight | null>(null)
 const submitErrorReasons = ref<BackupSourceDeleteReason[]>([])
 const submitFailed = ref(false)
 const confirmText = ref('')
+const confirmationKeyword = computed(() => force.value ? 'FORCE UNREGISTER' : 'UNREGISTER')
 
 const visible = computed({
   get: () => props.modelValue,
@@ -73,15 +75,10 @@ const showForceOption = computed(() =>
   }),
 )
 
-const strictMayFail = computed(() =>
-  Boolean(preflight.value?.strict_may_fail || submitErrorReasons.value.length),
-)
-
 const deleteDisabled = computed(() => {
   if (loading.value || preflightLoading.value) return true
   if (preflight.value?.delete_disabled) return true
-  if (showForceOption.value && strictMayFail.value && !force.value) return true
-  if (confirmText.value !== 'UNREGISTER') return true
+  if (confirmText.value !== confirmationKeyword.value) return true
   return false
 })
 
@@ -114,7 +111,7 @@ watch(
     confirmText.value = ''
     submitErrorReasons.value = []
     submitFailed.value = false
-    force.value = props.retryAfterFailure
+    force.value = false
     void loadPreflight()
   },
 )
@@ -143,15 +140,13 @@ async function confirmDelete() {
       task_uuid: result.task_uuid,
       task_ids: result.task_ids,
       task_uuids: result.task_uuids,
+      tasks: result.tasks,
       accepted: Boolean(result.accepted),
     })
   } catch (err: unknown) {
     const parsed = parseBackupSourceDeleteError(err)
     submitErrorReasons.value = parsed.reasons
     submitFailed.value = true
-    if (shouldOfferForceUnregister({ submitErrorReasons: parsed.reasons, retryAfterFailure: true })) {
-      force.value = true
-    }
     emit('failed', { sourceIds })
     const lines = parsed.reasons.length
       ? parsed.reasons.map((reason) => unregisterReasonLabel(reason, t)).join('\n')

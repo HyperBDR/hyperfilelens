@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 LIFECYCLE_KIND_UPGRADE = "upgrade"
 LIFECYCLE_KIND_REMOVE = "remove"
+REQUIRED_UNINSTALL_CAPABILITY = "detached_uninstall_v2"
 _LIFECYCLE_TASK_KINDS = {
     LIFECYCLE_KIND_UPGRADE: "agent.upgrade",
     LIFECYCLE_KIND_REMOVE: "agent.uninstall",
@@ -109,6 +110,43 @@ def _node_installed_version(node: Node) -> str:
     if isinstance(inv, dict):
         return str(inv.get("agent_version") or "").strip()
     return str(meta.get("agent_version") or "").strip()
+
+
+def _node_capabilities(node: Node) -> set[str]:
+    meta = node.metadata if isinstance(node.metadata, dict) else {}
+    inv = meta.get("inventory") if isinstance(meta.get("inventory"), dict) else meta
+    raw = inv.get("capabilities") if isinstance(inv, dict) else []
+    if not isinstance(raw, (list, tuple, set)):
+        return set()
+    return {str(item).strip() for item in raw if str(item).strip()}
+
+
+def _supports_reliable_uninstall(node: Node) -> bool:
+    return REQUIRED_UNINSTALL_CAPABILITY in _node_capabilities(node)
+
+
+def _force_purge_without_remote_uninstall(
+    *, org: Organization, node: Node, user=None, reason_code: str, reason_detail: str
+) -> dict[str, Any]:
+    retained_resources = ["agent_installation"]
+    if node.role == NodeRole.GATEWAY:
+        retained_resources.append("lensnode_sidecar")
+    summary = _purge_agent_server_records(org=org, node=node, user=user)
+    return {
+        "operation_id": f"force-remove:{node.id}",
+        "task_id": None,
+        "node_id": node.id,
+        "kind": LIFECYCLE_KIND_REMOVE,
+        "state": "completed",
+        "phase": "control_plane_purged",
+        "purged": True,
+        "force": True,
+        "outcome": "force_cleanup_success",
+        "cleanup_complete": False,
+        "cleanup_failures": [{"code": reason_code, "detail": reason_detail}],
+        "retained_resources": retained_resources,
+        "summary": summary,
+    }
 
 
 def _version_matches_target(*, node: Node, target_version: str) -> bool:
@@ -726,37 +764,36 @@ def _start_node_remove_locked(
                 ],
             )
 
+    if not _supports_reliable_uninstall(node):
+        detail = (
+            f"Agent does not report required capability "
+            f'"{REQUIRED_UNINSTALL_CAPABILITY}". Upgrade the Agent before Strict Cleanup.'
+        )
+        if not force:
+            raise NodeLifecycleError(detail, code="agent_upgrade_required")
+        return _force_purge_without_remote_uninstall(
+            org=org,
+            node=node,
+            user=user,
+            reason_code="agent_upgrade_required",
+            reason_detail=f"{detail} Remote uninstall was not attempted.",
+        )
+
     if not agent_ws_routable(agent_id=node.id):
         if not force:
             raise NodeLifecycleError(
                 "Node is offline. Strict Cleanup requires the Agent to be reachable.",
                 code="node_offline",
             )
-        retained_resources = ["agent_installation"]
-        if node.role == NodeRole.GATEWAY:
-            retained_resources.append("lensnode_sidecar")
-        summary = _purge_agent_server_records(org=org, node=node, user=user)
-        return {
-            "operation_id": f"offline-remove:{node.id}",
-            "task_id": None,
-            "node_id": node.id,
-            "kind": LIFECYCLE_KIND_REMOVE,
-            "state": "completed",
-            "phase": "offline_purged",
-            "offline": True,
-            "purged": True,
-            "force": True,
-            "outcome": "force_cleanup_success",
-            "cleanup_complete": False,
-            "cleanup_failures": [
-                {
-                    "code": "agent_offline",
-                    "detail": "Remote uninstall was not executed because the Agent was offline.",
-                }
-            ],
-            "retained_resources": retained_resources,
-            "summary": summary,
-        }
+        result = _force_purge_without_remote_uninstall(
+            org=org,
+            node=node,
+            user=user,
+            reason_code="agent_offline",
+            reason_detail="Remote uninstall was not executed because the Agent was offline.",
+        )
+        result.update({"operation_id": f"offline-remove:{node.id}", "phase": "offline_purged", "offline": True})
+        return result
 
     uninstall_payload: dict[str, Any] = {
         "keep_data": bool(keep_data),
@@ -868,6 +905,18 @@ def preview_batch_operations(
             continue
 
         if kind == LIFECYCLE_KIND_REMOVE:
+            item.update(
+                {
+                    "agent_version": _node_installed_version(node),
+                    "required_capabilities": [REQUIRED_UNINSTALL_CAPABILITY],
+                    "missing_capabilities": (
+                        []
+                        if _supports_reliable_uninstall(node)
+                        else [REQUIRED_UNINSTALL_CAPABILITY]
+                    ),
+                    "upgrade_required": not _supports_reliable_uninstall(node),
+                }
+            )
             if node.role == NodeRole.PROXY:
                 from apps.node.services.internal.bindings import collect_proxy_bindings
 

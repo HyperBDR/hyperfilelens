@@ -63,7 +63,16 @@ export type NodeOperationStartResult = {
 export type NodeOperationBatchPreview = {
   kind: NodeLifecycleKind
   requested: number
-  eligible: Array<{ node_id: number; name: string; target_version?: string; offline?: boolean }>
+  eligible: Array<{
+    node_id: number
+    name: string
+    target_version?: string
+    offline?: boolean
+    agent_version?: string
+    required_capabilities?: string[]
+    missing_capabilities?: string[]
+    upgrade_required?: boolean
+  }>
   skipped_offline: Array<{ node_id: number; name: string; reason: string }>
   skipped_workload: Array<{ node_id: number; name: string; reason: string; blockers?: NodeWorkloadReason[] }>
   skipped_in_progress: Array<{ node_id: number; name: string; reason: string }>

@@ -347,7 +347,7 @@ def create_agent_task(
     return task
 
 
-def deliver_agent_task(*, task: NodeTask) -> NodeTask:
+def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) -> NodeTask:
     """Send ``task.command`` to Agent and mark task running (or failed)."""
     if task.status != NodeTask.Status.PENDING:
         return task
@@ -361,12 +361,25 @@ def deliver_agent_task(*, task: NodeTask) -> NodeTask:
     try:
         route_state = _node_route_state(task=task)
         if route_state == _RouteState.RECONNECTING:
+            if delivery_payload is not None:
+                return _fail_task_delivery(
+                    task=task,
+                    reason="agent websocket is reconnecting; retry the credential-bearing task",
+                )
             return _mark_task_reconnecting(task=task)
         if route_state == _RouteState.OFFLINE:
             redis_store.clear_agent_location(agent_id=task.node_id)
             raise RuntimeError("agent websocket is not routable")
         logger.info("agent task dispatching %s", ctx)
-        _send_task_command(task=task)
+        if delivery_payload is None:
+            _send_task_command(task=task)
+        else:
+            persisted_payload = task.payload
+            task.payload = delivery_payload
+            try:
+                _send_task_command(task=task)
+            finally:
+                task.payload = persisted_payload
         dispatched_at = timezone.now()
         NodeTask.objects.filter(pk=task.pk).update(
             status=NodeTask.Status.RUNNING,

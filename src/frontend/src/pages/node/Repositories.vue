@@ -37,7 +37,7 @@ import {
   type StorageRepositoryCleanupPreflight,
   type StorageRepositoryAssociatedSource,
 } from '../../lib/storageRepositoryApi'
-import type { TaskRow } from '../../lib/taskApi'
+import { getTask, type TaskRow } from '../../lib/taskApi'
 import type { ApiNode } from '../../types/node'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
@@ -164,6 +164,7 @@ type ApiRepository = {
   nfs_host?: string
   nfs_export?: string
   nfs_options?: string
+  active_cleanup_task?: Pick<TaskRow, 'task_uuid' | 'status' | 'error_code' | 'error_message' | 'created_at'> | null
 }
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
@@ -529,6 +530,13 @@ const selectedRows = ref<RepositoryRow[]>([])
 const repositoryTotal = ref(0)
 const deleteRepositoriesDialogOpen = ref(false)
 const pendingDeleteRepositories = ref<RepositoryRow[]>([])
+const repositoryCleanupBlockedDialogOpen = ref(false)
+const repositoryCleanupBlockedRows = ref<Array<{
+  repository: RepositoryRow
+  blockers: string[]
+  associations: StorageRepositoryAssociatedSource[]
+  associationCount: number
+}>>([])
 const forceDeleteRepository = ref(false)
 const normalDeletePreflight = ref<StorageRepositoryCleanupPreflight | null>(null)
 const forceDeletePreflight = ref<StorageRepositoryCleanupPreflight | null>(null)
@@ -736,6 +744,117 @@ const deletePreflightMessages = computed(() => {
 const deleteConfirmDisabled = computed(() => (
   Boolean(activeDeletePreflight.value) && !activeDeletePreflight.value?.allowed
 ))
+
+const REPOSITORY_CLEANUP_PENDING_KEY = 'hfl-repository-cleanup-pending-v1'
+const REPOSITORY_CLEANUP_POLL_MS = 2000
+const REPOSITORY_CLEANUP_TIMEOUT_MS = 15 * 60 * 1000
+const repositoryCleanupPending = ref(new Map<number, {
+  taskUuid: string
+  repositoryName: string
+  startedAt: number
+}>())
+let repositoryCleanupPollTimer: number | null = null
+let repositoryCleanupPollInFlight = false
+
+function persistRepositoryCleanupPending() {
+  if (!repositoryCleanupPending.value.size) {
+    sessionStorage.removeItem(REPOSITORY_CLEANUP_PENDING_KEY)
+    return
+  }
+  sessionStorage.setItem(
+    REPOSITORY_CLEANUP_PENDING_KEY,
+    JSON.stringify([...repositoryCleanupPending.value.entries()]),
+  )
+}
+
+function restoreRepositoryCleanupPending() {
+  try {
+    const raw = sessionStorage.getItem(REPOSITORY_CLEANUP_PENDING_KEY)
+    repositoryCleanupPending.value = raw
+      ? new Map(JSON.parse(raw) as Array<[number, { taskUuid: string; repositoryName: string; startedAt: number }]>)
+      : new Map()
+  } catch {
+    repositoryCleanupPending.value = new Map()
+    sessionStorage.removeItem(REPOSITORY_CLEANUP_PENDING_KEY)
+  }
+}
+
+function scheduleRepositoryCleanupPoll(delay = REPOSITORY_CLEANUP_POLL_MS) {
+  if (repositoryCleanupPollTimer != null) window.clearTimeout(repositoryCleanupPollTimer)
+  repositoryCleanupPollTimer = null
+  if (!mounted || !repositoryCleanupPending.value.size) return
+  repositoryCleanupPollTimer = window.setTimeout(() => {
+    repositoryCleanupPollTimer = null
+    void reconcileRepositoryCleanupTasks()
+  }, delay)
+}
+
+async function reconcileRepositoryCleanupTasks() {
+  if (repositoryCleanupPollInFlight || !repositoryCleanupPending.value.size) return
+  repositoryCleanupPollInFlight = true
+  let terminal = false
+  try {
+    const entries = [...repositoryCleanupPending.value.entries()]
+    const tasks = await Promise.allSettled(entries.map(([, pending]) => getTask(pending.taskUuid)))
+    tasks.forEach((result, index) => {
+      const [repositoryId, pending] = entries[index]
+      if (result.status === 'rejected') {
+        if (Date.now() - pending.startedAt >= REPOSITORY_CLEANUP_TIMEOUT_MS) {
+          repositoryCleanupPending.value.delete(repositoryId)
+          ElMessage.error({
+            message: `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
+            grouping: true,
+          })
+          terminal = true
+        }
+        return
+      }
+      const status = String(result.value.status || '').toLowerCase()
+      if (status === 'success') {
+        repositoryCleanupPending.value.delete(repositoryId)
+        terminal = true
+      } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
+        repositoryCleanupPending.value.delete(repositoryId)
+        ElMessage.error({
+          message: result.value.error_message || `${pending.repositoryName}: ${t('repositoriesPage.cleanupFailed')}`,
+          grouping: true,
+        })
+        terminal = true
+      }
+    })
+    persistRepositoryCleanupPending()
+    if (terminal) await load()
+  } finally {
+    repositoryCleanupPollInFlight = false
+    scheduleRepositoryCleanupPoll()
+  }
+}
+
+async function showRepositoryCleanupBlocked(
+  blocked: Array<{ row: RepositoryRow; preflight: StorageRepositoryCleanupPreflight }>,
+) {
+  const rowsWithAssociations = await Promise.all(blocked.map(async ({ row, preflight }) => {
+    let associations: StorageRepositoryAssociatedSource[] = []
+    let associationCount = preflight.associated_source_count
+    if (associationCount > 0) {
+      try {
+        const result = await listStorageRepositoryAssociatedSources(row.id, { page: 1, page_size: 50 })
+        associations = result.results
+        associationCount = result.count
+      } catch {
+        // The authoritative preflight blockers still make the dialog useful.
+      }
+    }
+    return {
+      repository: row,
+      blockers: preflight.blockers.map((item) => item.detail),
+      associations,
+      associationCount,
+    }
+  }))
+  repositoryCleanupBlockedRows.value = rowsWithAssociations
+  repositoryCleanupBlockedDialogOpen.value = true
+}
 
 function s3UrlStyleLabel(style: S3UrlStyle | string | undefined) {
   const normalized = normalizeS3UrlStyle(style ?? undefined)
@@ -1691,13 +1810,7 @@ async function batchDeleteSelected() {
         preflightStorageRepositoryCleanup(row.id, true),
       ])
       if (!normalPreflight.allowed && !forcePreflight.allowed) {
-        const reasons = normalPreflight.blockers.map(item => item.detail).join('; ')
-        ElMessage.error({
-          message: `${row.name}: ${reasons || t('repositoriesPage.cleanupBlocked')}`,
-          grouping: true,
-          duration: 8000,
-          showClose: true,
-        })
+        await showRepositoryCleanupBlocked([{ row, preflight: normalPreflight }])
         return
       }
       normalDeletePreflight.value = normalPreflight
@@ -1715,13 +1828,7 @@ async function batchDeleteSelected() {
     )
     const blocked = preflights.filter(({ preflight }) => !preflight.allowed)
     if (blocked.length) {
-      const detail = blocked
-        .map(({ row, preflight }) => {
-          const reasons = preflight.blockers.map((item) => item.detail).join('; ')
-          return `${row.name}: ${reasons || t('repositoriesPage.cleanupBlocked')}`
-        })
-        .join('\n')
-      ElMessage.error({ message: detail, grouping: true, duration: 8000, showClose: true })
+      await showRepositoryCleanupBlocked(blocked)
       return
     }
     pendingDeleteRepositories.value = preflights.map(({ row }) => row)
@@ -1757,11 +1864,23 @@ async function confirmDeleteRepositories() {
         grouping: true,
       })
     }
-    for (const result of results) {
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        const taskUuid = String(result.value.task_uuid || '')
+        if (taskUuid) {
+          repositoryCleanupPending.value.set(sel[index].id, {
+            taskUuid,
+            repositoryName: sel[index].name,
+            startedAt: Date.now(),
+          })
+        }
+      }
       if (result.status === 'rejected') {
         ElMessage.error({ message: apiErrorMessage(result.reason), grouping: true })
       }
-    }
+    })
+    persistRepositoryCleanupPending()
+    scheduleRepositoryCleanupPoll(0)
     await load()
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
@@ -1829,6 +1948,17 @@ async function load() {
     }, {
       signal,
     })
+    for (const repository of list.results) {
+      const activeTask = repository.active_cleanup_task
+      if (!activeTask?.task_uuid) continue
+      repositoryCleanupPending.value.set(repository.id, {
+        taskUuid: activeTask.task_uuid,
+        repositoryName: repository.name,
+        startedAt: activeTask.created_at ? Date.parse(activeTask.created_at) || Date.now() : Date.now(),
+      })
+    }
+    persistRepositoryCleanupPending()
+    scheduleRepositoryCleanupPoll()
     const mappedRows = list.results.map(mapApiToRow)
     rows.value = mappedRows
     repositoryTotal.value = list.count
@@ -1851,11 +1981,15 @@ async function load() {
 
 onMounted(() => {
   mounted = true
-  load()
+  restoreRepositoryCleanupPending()
+  void load()
+  scheduleRepositoryCleanupPoll(0)
 })
 
 onBeforeUnmount(() => {
   mounted = false
+  if (repositoryCleanupPollTimer != null) window.clearTimeout(repositoryCleanupPollTimer)
+  repositoryCleanupPollTimer = null
   unbindDrawerResize()
   stopRepositoryTasksPolling()
 })
@@ -3144,6 +3278,44 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
         </div>
       </template>
     </Modal>
+    <ElDialog
+      v-model="repositoryCleanupBlockedDialogOpen"
+      :title="t('repositoriesPage.cleanupBlockedTitle')"
+      width="680px"
+      destroy-on-close
+    >
+      <ElAlert
+        type="error"
+        :title="t('repositoriesPage.cleanupBlockedForceHint')"
+        :closable="false"
+        show-icon
+      />
+      <div class="repo-cleanup-blocked-list">
+        <section
+          v-for="entry in repositoryCleanupBlockedRows"
+          :key="entry.repository.id"
+          class="repo-cleanup-blocked-item"
+        >
+          <strong>{{ entry.repository.name }}</strong>
+          <ul>
+            <li v-for="reason in entry.blockers" :key="reason">{{ reason }}</li>
+          </ul>
+          <div v-if="entry.associationCount" class="repo-cleanup-blocked-associations">
+            <span>{{ t('repositoriesPage.cleanupBlockedAssociations', { n: entry.associationCount }) }}</span>
+            <ul>
+              <li v-for="association in entry.associations" :key="association.backup_config_id">
+                {{ association.backup_config_name }} — {{ association.source_name }}
+              </li>
+            </ul>
+          </div>
+        </section>
+      </div>
+      <template #footer>
+        <ElButton type="primary" @click="repositoryCleanupBlockedDialogOpen = false">
+          {{ t('common.close') }}
+        </ElButton>
+      </template>
+    </ElDialog>
     <DangerConfirmDialog
       v-model="deleteRepositoriesDialogOpen"
       :title="deleteRepositoriesTitle"
@@ -3184,6 +3356,28 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 </template>
 
 <style scoped>
+.repo-cleanup-blocked-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.repo-cleanup-blocked-item {
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+}
+
+.repo-cleanup-blocked-item ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.repo-cleanup-blocked-associations {
+  margin-top: 10px;
+  color: var(--el-text-color-regular);
+}
+
 .repo-delete-force-option {
   display: grid;
   gap: 4px;

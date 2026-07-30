@@ -15,7 +15,10 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
-from apps.source.services.internal.nas_agent import build_nas_agent_payload
+from apps.source.services.internal.nas_agent import (
+    build_nas_agent_payload,
+    dispatch_nas_agent_task,
+)
 
 MOUNTS_ROOT = agent_paths.agent_mounts_dir()
 
@@ -93,6 +96,36 @@ class ExplainNasMountPointErrorTests(SimpleTestCase):
         )
         self.assertIn("/mnt/hf1/nfs/host_export", message)
         self.assertIn("/var/lib/hyperfilelens-agent/mounts/", message)
+
+    @mock.patch("apps.source.services.internal.nas_agent.run_agent_task_sync")
+    def test_nas_password_is_delivery_only_and_not_persisted_in_task_payload(self, run_sync):
+        run_sync.return_value = SimpleNamespace(
+            ok=True,
+            timed_out=False,
+            task=SimpleNamespace(id="task-1", status="success"),
+        )
+        payload = {
+            "resource_id": 7,
+            "protocol": "smb",
+            "server": "192.0.2.10",
+            "share": "backup",
+            "mount_point": custom_mount("secure"),
+            "username": "nas-user",
+            "password": "must-not-persist",
+        }
+
+        dispatch_nas_agent_task(
+            node=SimpleNamespace(id=9, organization_id=3),
+            kind="nas.mount",
+            payload=payload,
+            correlation_type="source.mount",
+            correlation_id="7",
+        )
+
+        kwargs = run_sync.call_args.kwargs
+        self.assertEqual(kwargs["payload"]["password"], "must-not-persist")
+        self.assertNotIn("password", kwargs["persisted_payload"])
+        self.assertNotIn("password", kwargs["persisted_payload"]["nas"])
 
 
 class SourceMountPointAfterProxyChangeTests(TestCase):

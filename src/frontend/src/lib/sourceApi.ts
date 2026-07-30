@@ -69,6 +69,8 @@ export type SourceResource = {
   status?: string
   status_display?: string
   status_message?: string
+  effective_status?: 'removing' | 'remove_failed' | 'error' | 'probing' | 'online' | 'unverified'
+  effective_status_message?: string
   connection_test_status?: 'idle' | 'pending' | 'running' | 'success' | 'failed'
   connection_summary?: string
   total_size?: number
@@ -360,6 +362,7 @@ export type BackupSourceDeleteResult = {
   task_uuid?: string
   task_ids?: number[]
   task_uuids?: string[]
+  tasks?: Array<{ source_id: string; task_id: number; task_uuid: string }>
 }
 
 export async function preflightDeleteBackupSources(ids: string[]) {
@@ -451,7 +454,11 @@ export async function bulkDeleteBackupSources(ids: string[], force = false, conf
 
 export async function deleteSourceResource(id: number, force = false): Promise<SourceDeleteResult> {
   const selectableId = `nas:${id}`
-  const result = await bulkDeleteBackupSources([selectableId], force, 'UNREGISTER')
+  const result = await bulkDeleteBackupSources(
+    [selectableId],
+    force,
+    force ? 'FORCE UNREGISTER' : 'UNREGISTER',
+  )
   return {
     deleted: result.deleted.includes(selectableId),
     agent_removal: null,

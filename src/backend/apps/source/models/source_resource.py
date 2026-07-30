@@ -122,3 +122,17 @@ class SourceResource(OrganizationScopedModel):
             except ValueError:
                 pass
         return agent_paths.source_mount_point(self.id)
+
+    def resolved_credentials(self) -> dict:
+        from apps.source.services.internal.source_credentials import (
+            resolve_source_credentials,
+        )
+
+        return resolve_source_credentials(self.credentials)
+
+    def set_credentials(self, credentials: dict | None) -> None:
+        from apps.source.services.internal.source_credentials import (
+            protect_source_credentials,
+        )
+
+        self.credentials = protect_source_credentials(credentials)

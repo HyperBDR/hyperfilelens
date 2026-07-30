@@ -22,6 +22,7 @@ from apps.protection.models import (
 from apps.restore.models import RestorePlan
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
+from apps.source.services.internal.source_credentials import resolve_source_credentials
 from apps.source.tasks.connection_probe import run_source_resource_capacity_probe
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskResource
@@ -249,6 +250,69 @@ class SourceResourceApiTests(TestCase):
         )
         self.assertEqual(nfs.status_code, status.HTTP_201_CREATED)
         self.assertEqual(nfs.data["mount_point"], custom_mount("nfs-export"))
+
+    def test_source_credentials_are_encrypted_and_never_serialized(self):
+        created = self.client.post(
+            "/api/v1/source/resources/",
+            {
+                "name": "nas-smb-secret-safe",
+                "resource_type": "nas",
+                "config": {
+                    "protocol": "smb",
+                    "server": "192.168.1.100",
+                    "share": "secure",
+                    "path": custom_mount("smb-secure"),
+                    "connection": {"password": "nested-must-not-persist"},
+                },
+                "credentials": {
+                    "username": "nas_user",
+                    "password": "plaintext-must-not-leak",
+                    "domain": "EXAMPLE",
+                },
+                "bound_node_id": self.node.id,
+            },
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            created.data["credentials"],
+            {
+                "username": "nas_user",
+                "domain": "EXAMPLE",
+                "has_password": True,
+                "has_secret_key": False,
+            },
+        )
+        self.assertNotIn("plaintext-must-not-leak", str(created.data))
+        self.assertNotIn("nested-must-not-persist", str(created.data))
+
+        resource = SourceResource.objects.get(pk=created.data["id"])
+        self.assertNotIn("plaintext-must-not-leak", str(resource.credentials))
+        self.assertNotIn("nested-must-not-persist", str(resource.config))
+        self.assertEqual(
+            resolve_source_credentials(resource.credentials)["password"],
+            "plaintext-must-not-leak",
+        )
+
+        detail = self.client.get(
+            f"/api/v1/source/resources/{resource.id}/",
+            **self._headers(),
+        )
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertNotIn("plaintext-must-not-leak", str(detail.data))
+
+        updated = self.client.patch(
+            f"/api/v1/source/resources/{resource.id}/",
+            {"credentials": {"username": "new_user", "password": ""}},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(updated.status_code, status.HTTP_200_OK)
+        resource.refresh_from_db()
+        resolved = resolve_source_credentials(resource.credentials)
+        self.assertEqual(resolved["username"], "new_user")
+        self.assertEqual(resolved["password"], "plaintext-must-not-leak")
 
     def test_create_nas_normalizes_share_and_export_paths(self):
         smb = self.client.post(
@@ -1587,7 +1651,7 @@ class BackupSourceBulkDeleteTests(TestCase):
 
     def test_bulk_delete_requires_exact_unregister_confirmation(self):
         agent_key = f"agent:{self.agent.id}"
-        for confirmation in ("unregister", "UNREGISTER ", " UNREGISTER"):
+        for confirmation in ("unregister", "UNREGISTER", "UNREGISTER ", " UNREGISTER"):
             with self.subTest(confirmation=confirmation):
                 response = self.client.post(
                     "/api/v1/source/backup-selectable/bulk-delete/",
@@ -1646,7 +1710,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"agent:{self.agent.id}"],
                 "force": True,
-                "confirmation": "UNREGISTER",
+                "confirmation": "FORCE UNREGISTER",
             },
             format="json",
             **self._headers(),
@@ -1703,7 +1767,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"nas:{resource.id}"],
                 "force": True,
-                "confirmation": "UNREGISTER",
+                "confirmation": "FORCE UNREGISTER",
             },
             format="json",
             **self._headers(),
@@ -1761,7 +1825,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [agent_key], "force": True, "confirmation": "UNREGISTER"},
+            {"ids": [agent_key], "force": True, "confirmation": "FORCE UNREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -1769,6 +1833,16 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertTrue(response.data["ok"])
         self.assertEqual(response.data["task_uuid"], str(Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER).task_uuid))
         self.assertEqual(response.data["task_uuids"], [response.data["task_uuid"]])
+        self.assertEqual(
+            response.data["tasks"],
+            [
+                {
+                    "source_id": agent_key,
+                    "task_id": response.data["task_id"],
+                    "task_uuid": response.data["task_uuid"],
+                }
+            ],
+        )
         task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
         self.assertTrue(task.resources.get().is_primary)
         self.agent.refresh_from_db()
@@ -1807,7 +1881,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"agent:{self.agent.id}", f"agent:{second_agent.id}"],
                 "force": True,
-                "confirmation": "UNREGISTER",
+                "confirmation": "FORCE UNREGISTER",
             },
             format="json",
             **self._headers(),
@@ -1815,6 +1889,10 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         self.assertEqual(len(response.data["task_uuids"]), 2)
+        self.assertEqual(
+            [item["source_id"] for item in response.data["tasks"]],
+            [f"agent:{self.agent.id}", f"agent:{second_agent.id}"],
+        )
         tasks = Task.objects.filter(task_type=Task.Type.SOURCE_UNREGISTER).order_by("id")
         self.assertEqual(tasks.count(), 2)
         self.assertTrue(all(task.resources.count() == 1 and task.resources.get().is_primary for task in tasks))

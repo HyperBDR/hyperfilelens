@@ -16,6 +16,10 @@ from apps.source.services.internal.nas_path_normalize import (
     normalize_nfs_export_path,
     normalize_smb_share,
 )
+from apps.source.services.internal.source_credentials import (
+    resolve_source_credentials,
+    scrub_source_secrets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,11 @@ def build_nas_agent_payload(
     mount_point: str = "",
 ) -> dict[str, Any]:
     cfg = dict(config or (resource.config if resource else {}) or {})
-    creds = dict(credentials or (resource.credentials if resource else {}) or {})
+    creds = dict(
+        credentials
+        or (resolve_source_credentials(resource.credentials) if resource else {})
+        or {}
+    )
     protocol = nas_protocol(cfg)
     resolved_mount_point = _resolve_nas_agent_mount_point(
         resource=resource,
@@ -186,11 +194,14 @@ def dispatch_nas_agent_task(
         nas.get("resource_id") if isinstance(nas, dict) else "-",
         wait_timeout_seconds,
     )
+    task_payload = {"nas": payload, **payload}
+    persisted_nas = _scrub_nas_task_payload(payload)
     outcome = run_agent_task_sync(
         organization_id=node.organization_id,
         node_id=node.id,
         kind=kind,
-        payload={"nas": payload, **payload},
+        payload=task_payload,
+        persisted_payload={"nas": persisted_nas, **persisted_nas},
         correlation_type=correlation_type,
         correlation_id=correlation_id,
         wait_timeout_seconds=wait_timeout_seconds,
@@ -214,6 +225,10 @@ def dispatch_nas_agent_task(
             _task_error_message(outcome)[:500],
         )
     return outcome
+
+
+def _scrub_nas_task_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return scrub_source_secrets(payload)
 
 
 def apply_mount_success(resource: SourceResource, result: dict[str, Any]) -> None:
