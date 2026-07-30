@@ -78,6 +78,14 @@
   color: #d97706;
 }
 
+.hfl-dir-tree-node__icon--dir {
+  color: #d97706;
+}
+
+.hfl-dir-tree-node__icon--file {
+  color: #2563eb;
+}
+
 .hfl-dir-tree-node__text {
   display: flex;
   flex: 1 1 auto;

@@ -529,12 +529,12 @@ onMounted(() => {
                                     <FolderOpen
                                       v-if="data.type === 'dir'"
                                       :size="15"
-                                      class="hfl-dir-tree-node__icon"
+                                      class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--dir"
                                     />
                                     <File
                                       v-else
                                       :size="15"
-                                      class="hfl-dir-tree-node__icon"
+                                      class="hfl-dir-tree-node__icon hfl-dir-tree-node__icon--file"
                                     />
                                     <div class="hfl-dir-tree-node__text">
                                       <span class="hfl-dir-tree-node__label">{{ data.label }}</span>
