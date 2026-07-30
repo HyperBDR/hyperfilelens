@@ -10,6 +10,7 @@ from typing import Any
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.node import conf as node_conf
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.protection.models import (
@@ -631,10 +632,14 @@ def _restore_record_status(record: RestoreRecord, task: Task | None) -> str:
 def _product_task_is_stopping(*, organization_id: int, task: Task | None) -> bool:
     if task is None or task.status != Task.Status.CANCELLED:
         return False
+    cutoff = timezone.now() - timedelta(
+        seconds=max(1, int(node_conf.TASK_CANCEL_GRACE_SECONDS))
+    )
     return NodeTask.objects.filter(
         organization_id=organization_id,
         correlation_id=str(task.task_uuid),
         status__in=(NodeTask.Status.PENDING, NodeTask.Status.RUNNING),
+        cancel_requested_at__gt=cutoff,
     ).exists()
 
 

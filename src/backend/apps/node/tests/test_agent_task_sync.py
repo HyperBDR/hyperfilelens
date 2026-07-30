@@ -9,6 +9,7 @@ from django.utils import timezone
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from apps.iam.models import Organization
+from apps.node import conf as node_conf
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
@@ -157,7 +158,8 @@ class AgentTaskSyncWaitTests(TestCase):
                 return False
 
         NodeTask.objects.filter(pk=self.task.pk).update(
-            created_at=timezone.now() - timezone.timedelta(seconds=10),
+            created_at=timezone.now()
+            - timezone.timedelta(seconds=node_conf.TASK_ROUTE_RECONNECT_GRACE_SECONDS + 1),
             status=NodeTask.Status.PENDING,
         )
         self.task.refresh_from_db()
@@ -214,7 +216,7 @@ class AgentTaskSyncWaitTests(TestCase):
     ):
         class RedisClient:
             def exists(self, key):
-                return True
+                return key != redis_store.ws_recovery_hold_key()
 
             def set(self, *args, **kwargs):
                 return True

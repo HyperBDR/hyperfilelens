@@ -1,4 +1,4 @@
-"""Runtime task dispatched to an Agent (watchdog + progress; no HTTP ACK)."""
+"""Runtime task dispatched to an Agent (durable command ACK + watchdog)."""
 
 from __future__ import annotations
 
@@ -57,7 +57,11 @@ class NodeTask(OrganizationScopedModel):
         db_index=True,
     )
     dispatched_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    accepted_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    last_delivery_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    delivery_attempt_count = models.PositiveIntegerField(default=0)
     last_progress_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    cancel_requested_at = models.DateTimeField(blank=True, null=True, db_index=True)
     watchdog_deadline_at = models.DateTimeField(db_index=True)
 
     last_error = models.TextField(blank=True, default="")

@@ -22,6 +22,7 @@ from apps.node.services.internal.network_inventory import (
     same_network_inventory,
 )
 from apps.node.services.interface import (
+    accept_task,
     complete_task,
     record_task_progress,
 )
@@ -92,6 +93,9 @@ def handle_uplink(*, node_id: int, message: ParsedUplink) -> NodeTask | None:
     if message.msg_type in (WireType.TASK_PROGRESS, WireType.TASK_ALIVE):
         _handle_task_progress(node_id=node_id, message=message)
         return None
+
+    if message.msg_type == WireType.TASK_ACCEPTED:
+        return accept_task(task_id=message.task_id or "", node_id=node_id)
 
     if message.msg_type == WireType.TASK_RESULT:
         return _handle_task_result(node_id=node_id, message=message)

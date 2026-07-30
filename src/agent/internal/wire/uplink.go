@@ -34,6 +34,11 @@ func NewTaskAlive(taskID string) TaskAlive {
 	return TaskAlive{Type: TypeTaskAlive, TaskID: taskID}
 }
 
+// NewTaskAccepted builds a durable task.command acknowledgement.
+func NewTaskAccepted(taskID, status string) TaskAccepted {
+	return TaskAccepted{Type: TypeTaskAccepted, TaskID: taskID, Status: status}
+}
+
 // NewTaskResult builds a task.result uplink frame.
 func NewTaskResult(taskID, status string, result map[string]any, errMsg string) TaskResult {
 	if result == nil {
@@ -78,6 +83,14 @@ func SendTaskAlive(ctx context.Context, sink Sender, taskID string) error {
 		return nil
 	}
 	return sink.SendJSON(ctx, NewTaskAlive(taskID))
+}
+
+// SendTaskAccepted confirms durable local acceptance of task.command.
+func SendTaskAccepted(ctx context.Context, sink Sender, taskID, status string) error {
+	if sink == nil || taskID == "" {
+		return nil
+	}
+	return sink.SendJSON(ctx, NewTaskAccepted(taskID, status))
 }
 
 // SendTaskResult emits task.result on sink.

@@ -210,6 +210,14 @@ def ws_recovery_hold_active() -> bool:
     return bool(r.exists(ws_recovery_hold_key()))
 
 
+def clear_ws_recovery_hold() -> bool:
+    r = get_redis()
+    if r is None:
+        return False
+    r.delete(ws_recovery_hold_key())
+    return True
+
+
 def has_live_ws_instance() -> bool:
     r = get_redis()
     if r is None:

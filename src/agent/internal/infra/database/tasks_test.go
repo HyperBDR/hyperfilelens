@@ -10,6 +10,44 @@ import (
 	"hyperfilelens/agent/internal/platform/install"
 )
 
+func TestTaskRepoAcceptCommandIsIdempotentAndRejectsIdentityConflict(t *testing.T) {
+	ctx := t.Context()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewTaskRepo(db)
+
+	first, shouldRun, err := repo.AcceptCommand(ctx, RecordInput{
+		TaskID: "backup-command-1", JobID: "snapshot-64", Kind: "backup.run",
+		Payload: map[string]any{"snapshot_id": 64},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !shouldRun || first.ID != "backup-command-1" {
+		t.Fatalf("first acceptance = (%q, %v), want inserted", first.ID, shouldRun)
+	}
+
+	duplicate, shouldRun, err := repo.AcceptCommand(ctx, RecordInput{
+		TaskID: "backup-command-1", JobID: "snapshot-64", Kind: "backup.run",
+		Payload: map[string]any{"snapshot_id": 64},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shouldRun || duplicate.Status != model.TaskStatusRunning {
+		t.Fatalf("duplicate shouldRun=%v status=%q", shouldRun, duplicate.Status)
+	}
+
+	if _, _, err := repo.AcceptCommand(ctx, RecordInput{
+		TaskID: "backup-command-1", JobID: "snapshot-65", Kind: "backup.run",
+	}); err == nil {
+		t.Fatal("expected reused task id with different identity to fail")
+	}
+}
+
 func TestTaskRepoRepairLifecycleUpgrade(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -236,7 +274,7 @@ func TestTaskRepoRepairAndFlush(t *testing.T) {
 	}
 }
 
-func TestTaskRepoRepairSkipsBackupRun(t *testing.T) {
+func TestTaskRepoRepairFailsInterruptedBackupsButKeepsRestoreResumable(t *testing.T) {
 	ctx := t.Context()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
@@ -260,8 +298,20 @@ func TestTaskRepoRepairSkipsBackupRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(repaired) != 0 {
-		t.Fatalf("expected backup/restore tasks to be skipped, repaired = %d", len(repaired))
+	if len(repaired) != 3 {
+		t.Fatalf("expected three backup tasks repaired, got %d", len(repaired))
+	}
+	for _, task := range repaired {
+		if task.Status != model.TaskStatusFailed || task.Error != repairError {
+			t.Fatalf("repaired task = (%q, %q), want restart failure", task.Status, task.Error)
+		}
+	}
+	restore, err := repo.Get(ctx, "task-restore.run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restore.Status != model.TaskStatusRunning {
+		t.Fatalf("restore status = %q, want running", restore.Status)
 	}
 }
 
