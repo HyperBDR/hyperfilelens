@@ -1,0 +1,23 @@
+/*
+ * Keep browser-managed credentials readable without replacing the browser's
+ * autofill behavior. Chrome applies a light user-agent background to filled
+ * inputs, so cover it with the same surface used by the dark auth controls.
+ */
+:is(.login-container, .register-container) .input-row input:-webkit-autofill,
+:is(.login-container, .register-container) .input-row input:-webkit-autofill:hover,
+:is(.login-container, .register-container) .input-row input:-webkit-autofill:focus,
+:is(.login-container, .register-container) .input-row input:-webkit-autofill:active {
+  caret-color: #fff;
+  -webkit-text-fill-color: #fff;
+  -webkit-box-shadow: 0 0 0 1000px #313131 inset;
+  box-shadow: 0 0 0 1000px #313131 inset;
+}
+
+:is(.login-container, .register-container) .input-row input:autofill,
+:is(.login-container, .register-container) .input-row input:autofill:hover,
+:is(.login-container, .register-container) .input-row input:autofill:focus,
+:is(.login-container, .register-container) .input-row input:autofill:active {
+  caret-color: #fff;
+  -webkit-text-fill-color: #fff;
+  box-shadow: 0 0 0 1000px #313131 inset;
+}
