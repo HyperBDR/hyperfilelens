@@ -11,6 +11,7 @@ import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
 import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
 import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import { appConfig } from '../../lib/appConfig'
+import { trackAppEvent } from '../../lib/analytics'
 
 const { t, locale } = useI18n()
 const {
@@ -388,6 +389,7 @@ async function handleSubmit() {
     })
 
     if (res.code === '0000') {
+      trackAppEvent('sign_up', { method: 'email' })
       registerSuccess.value = true
     } else if (res.error?.fields) {
       applyRegisterFieldsError(res.error.fields as Record<string, string[]>)
@@ -416,6 +418,7 @@ function toggleLocale() {
 }
 
 onMounted(async () => {
+  trackAppEvent('sign_up_started', { method: 'email' })
   turnstileToken.value = ''
   restoreCooldown()
   await loadTurnstileConfig()

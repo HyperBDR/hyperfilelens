@@ -64,10 +64,11 @@ COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/nginx/snippets /etc/nginx/snippets
 COPY deploy/logrotate/hyperfilelens.conf /etc/logrotate.d/hyperfilelens
 COPY deploy/docker/frontend-logrotate-loop.sh /usr/local/bin/logrotate-loop.sh
-COPY build/website/runtime-config.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh
+COPY deploy/docker/frontend-runtime-config.sh /docker-entrypoint.d/20-hfl-frontend-runtime-config.sh
 
-RUN chmod 0644 /etc/logrotate.d/hyperfilelens \
- && chmod 0755 /usr/local/bin/logrotate-loop.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh \
+RUN mkdir -p /usr/share/nginx/runtime \
+ && chmod 0644 /etc/logrotate.d/hyperfilelens \
+ && chmod 0755 /usr/local/bin/logrotate-loop.sh /docker-entrypoint.d/20-hfl-frontend-runtime-config.sh \
  && printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/logrotate-loop.sh --daemon' \
     > /docker-entrypoint.d/99-logrotate-loop.sh \
  && chmod 0755 /docker-entrypoint.d/99-logrotate-loop.sh

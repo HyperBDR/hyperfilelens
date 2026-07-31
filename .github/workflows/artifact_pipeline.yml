@@ -223,6 +223,7 @@ jobs:
           ./tools/quality/test-release-download-proxy.sh
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-website-runtime-config.sh
+          ./tools/quality/test-ga-runtime-config.sh
           ./tools/quality/test-payload-tree-hash.sh
           ./tools/quality/test-ci-release-assembly.sh
           HFL_TEST_VERSION=main-0123456 ./tools/quality/test-ci-release-assembly.sh
