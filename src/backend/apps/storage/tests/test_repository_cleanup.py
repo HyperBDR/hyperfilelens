@@ -466,6 +466,9 @@ class RepositoryCleanupTests(TestCase):
         restore_task.save(update_fields=["status", "updated_at"])
         record = RestoreRecord.objects.create(
             organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=102,
             restore_uid="restore-bound-record",
             source_mode=RestoreRecord.SourceMode.MANUAL,
             task_id=restore_task.id,

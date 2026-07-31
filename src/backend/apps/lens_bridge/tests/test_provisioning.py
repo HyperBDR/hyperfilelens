@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
+from rest_framework.exceptions import ValidationError
 
 from apps.lens_bridge.services import sl_client
 from apps.lens_bridge.services.provisioning import _lensnode_dir_paths
@@ -117,30 +118,123 @@ class SlLensnodeSnapshotTests(SimpleTestCase):
 
 
 class EnsureKsWorkspaceTests(SimpleTestCase):
+    @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
     @patch("apps.lens_bridge.services.provisioning.wait_for_lensnode_dir")
     @patch("apps.node.services.internal.agent_task.run_agent_task_sync")
-    def test_dispatches_prepare_task(self, mock_sync, mock_wait):
+    def test_dispatches_prepare_task(self, mock_sync, mock_wait, mock_context):
         from apps.lens_bridge.services import provisioning
 
         task = MagicMock()
         task.last_error = ""
         mock_sync.return_value = MagicMock(ok=True, task=task)
 
-        org = MagicMock()
+        org = MagicMock(id=1)
         gateway = MagicMock(id=134)
-        link = MagicMock()
+        link = MagicMock(id=7)
         link.sl_lensnode_uuid = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
         link.resolved_workspace_root.return_value = "/workspace/org-1"
+        mock_context.return_value = MagicMock(
+            gateway=gateway,
+            execution_organization=MagicMock(id=99),
+        )
+        workspace_binding = MagicMock(
+            gateway_link_id=7,
+            execution_node_id=134,
+            execution_organization_id=99,
+            workspace_root="/workspace/org-1",
+            workspace_uid="workspace-9",
+            knowledge_source_id=9,
+            workspace_kind="managed_restore",
+        )
+        workspace_binding.resolved_path.return_value = "/workspace/org-1/ks-9"
 
         provisioning.ensure_ks_workspace_on_gateway(
             org=org,
             gateway=gateway,
             gateway_link=link,
-            workspace_path="/workspace/org-1/ks-9",
+            workspace_binding=workspace_binding,
         )
 
         mock_sync.assert_called_once()
         kwargs = mock_sync.call_args.kwargs
         self.assertEqual(kwargs["kind"], "lens.ks.prepare")
         self.assertEqual(kwargs["payload"]["path"], "/workspace/org-1/ks-9")
+        self.assertEqual(kwargs["payload"]["workspace_uid"], "workspace-9")
+        self.assertEqual(kwargs["requesting_organization_id"], 1)
         mock_wait.assert_called_once()
+
+
+class BrowseGatewayDirectoryTests(SimpleTestCase):
+    @patch("apps.node.services.interface.run_agent_task_sync")
+    @patch("apps.lens_bridge.services.provisioning.get_gateway_link")
+    @patch("apps.lens_bridge.services.provisioning.require_gateway_node")
+    def test_dispatches_restricted_gateway_browse(
+        self,
+        require_gateway,
+        get_gateway_link,
+        run_agent_task,
+    ):
+        from apps.lens_bridge.services.provisioning import browse_gateway_directory
+
+        gateway = MagicMock(id=7, status="online")
+        require_gateway.return_value = gateway
+        link = MagicMock()
+        link.resolved_workspace_root.return_value = "/workspace/org-1/data"
+        get_gateway_link.return_value = link
+        run_agent_task.return_value = MagicMock(
+            ok=True,
+            timed_out=False,
+            result={
+                "path": "/workspace/org-1/data/documents",
+                "entries": [
+                    {
+                        "name": "reports",
+                        "path": "/workspace/org-1/data/documents/reports",
+                        "is_dir": True,
+                    },
+                    {
+                        "name": "escape",
+                        "path": "/etc",
+                        "is_dir": True,
+                    },
+                ],
+            },
+        )
+
+        result = browse_gateway_directory(
+            org=MagicMock(id=1),
+            gateway_id=7,
+            path="/workspace/org-1/data/documents",
+        )
+
+        kwargs = run_agent_task.call_args.kwargs
+        self.assertEqual(kwargs["kind"], "lens.gateway.browse")
+        self.assertEqual(
+            kwargs["payload"]["allowed_root"],
+            "/workspace/org-1/data",
+        )
+        self.assertEqual(
+            [entry["path"] for entry in result["entries"]],
+            ["/workspace/org-1/data/documents/reports"],
+        )
+
+    @patch("apps.lens_bridge.services.provisioning.get_gateway_link")
+    @patch("apps.lens_bridge.services.provisioning.require_gateway_node")
+    def test_rejects_traversal_without_dispatching(
+        self,
+        require_gateway,
+        get_gateway_link,
+    ):
+        from apps.lens_bridge.services.provisioning import browse_gateway_directory
+
+        require_gateway.return_value = MagicMock(id=7, status="online")
+        link = MagicMock()
+        link.resolved_workspace_root.return_value = "/workspace/org-1/data"
+        get_gateway_link.return_value = link
+
+        with self.assertRaises(ValidationError):
+            browse_gateway_directory(
+                org=MagicMock(id=1),
+                gateway_id=7,
+                path="/workspace/org-1/data/../../etc",
+            )

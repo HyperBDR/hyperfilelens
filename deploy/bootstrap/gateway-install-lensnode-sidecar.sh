@@ -84,8 +84,14 @@ hfl_step "Verifying SourceLens connectivity at ${LENS_HOST_URL}."
 curl "${CURL_TLS[@]}" -fsSL "${LENS_HOST_URL%/}/health" >/dev/null
 hfl_ok "SourceLens health check passed."
 
-hfl_step "Creating workspace ${HFL_WORKSPACE_ROOT}."
+hfl_step "Creating protected Gateway filesystem boundary."
 mkdir -p "${HFL_WORKSPACE_ROOT}"
+HFL_GATEWAY_STATE_ROOT="$(dirname "${HFL_WORKSPACE_ROOT}")/.hyperfilelens"
+HFL_GATEWAY_TRASH_ROOT="${HFL_WORKSPACE_ROOT}/.hyperfilelens-trash"
+mkdir -p "${HFL_GATEWAY_STATE_ROOT}/identities" "${HFL_GATEWAY_TRASH_ROOT}"
+chmod 0700 "${HFL_GATEWAY_STATE_ROOT}" \
+	"${HFL_GATEWAY_STATE_ROOT}/identities" \
+	"${HFL_GATEWAY_TRASH_ROOT}"
 
 mkdir -p "${COMPOSE_DIR}"
 
@@ -170,7 +176,12 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_INSECURE_TLS: "${HFL_INSECURE_TLS}"
       LENSNODE_SSL_VERIFY: "${ssl_verify}"
     volumes:
-      - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}
+      # LensNode only indexes managed data. The host Agent is the sole writer
+      # and lifecycle owner for this filesystem boundary.
+      - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro
+    tmpfs:
+      # Hide the host Agent's same-filesystem deletion quarantine from LensNode.
+      - ${HFL_GATEWAY_TRASH_ROOT}:mode=0700
     mem_limit: 512m
     cpus: 0.50
 EOF

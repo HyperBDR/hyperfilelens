@@ -26,11 +26,22 @@ def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTas
         return
     if instance.correlation_type != "restore.record" or not instance.correlation_id:
         return
-    record = RestoreRecord.objects.filter(
-        organization_id=instance.organization_id,
-        task_uuid=instance.correlation_id,
-    ).first()
+    item_id = _payload_int(instance.payload, "restore_record_item_id")
+    item = (
+        RestoreRecordItem.objects.select_related("restore_record")
+        .filter(id=item_id)
+        .first()
+        if item_id
+        else None
+    )
+    record = item.restore_record if item is not None else None
     if record is None:
+        return
+    if (
+        str(record.task_uuid) != str(instance.correlation_id)
+        or record.target_execution_organization_id != instance.organization_id
+        or record.target_execution_node_id != instance.node_id
+    ):
         return
     product_task = Task.objects.filter(
         organization_id=record.organization_id,
@@ -52,7 +63,6 @@ def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTas
         return
     if instance.status not in _TERMINAL_NODE_STATUSES:
         return
-    item_id = _payload_int(instance.payload, "restore_record_item_id")
     if item_id:
         _sync_restore_item(record=record, item_id=item_id, node_task=instance)
     from apps.restore.services.restore_progress import sync_restore_record_progress

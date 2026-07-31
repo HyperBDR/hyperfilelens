@@ -166,10 +166,9 @@ def get_node_remove_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
     if node.role != NodeRole.GATEWAY:
         return blockers
 
-    from apps.lens_bridge.models import LensKnowledgeSource
+    from apps.lens_bridge.models import LensKnowledgeSource, LensWorkspaceBinding
 
     knowledge_sources = LensKnowledgeSource.objects.filter(
-        organization_id=node.organization_id,
         gateway_id=node.id,
         is_deleted=False,
     ).order_by("id")
@@ -181,6 +180,19 @@ def get_node_remove_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
             label=f'Knowledge Source · {source.name}',
         )
         for source in knowledge_sources
+    )
+    active_bindings = LensWorkspaceBinding.objects.filter(
+        execution_node_id=node.id,
+        is_deleted=False,
+    ).exclude(state=LensWorkspaceBinding.State.DELETED)
+    blockers.extend(
+        NodeWorkloadBlocker(
+            code="workspace_cleanup_pending",
+            task_uuid=f"workspace_binding:{binding.id}",
+            task_type="lens_workspace_binding",
+            label=f"Managed Workspace · {binding.workspace_uid}",
+        )
+        for binding in active_bindings.order_by("id")
     )
     return blockers
 

@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from celery import shared_task
-from django.conf import settings
+from django.db.models import Q
+from django.utils import timezone
 
+from apps.lens_bridge.services.teardown_claims import (
+    PROVISION_CLAIM_TTL_SECONDS,
+    PROVISION_TASK_HARD_LIMIT_SECONDS,
+    TEARDOWN_CLAIM_TTL_SECONDS,
+    TEARDOWN_TASK_HARD_LIMIT_SECONDS,
+)
 from common.observability.celery_context import celery_trace
 
 logger = logging.getLogger(__name__)
 
-_SOFT_LIMIT = int(getattr(settings, "LENS_KS_SYNC_SOFT_TIME_LIMIT", 3600))
-_TIME_LIMIT = int(getattr(settings, "LENS_KS_SYNC_TIME_LIMIT", 7200))
+_PROVISION_TIME_LIMIT = PROVISION_TASK_HARD_LIMIT_SECONDS
+_PROVISION_SOFT_LIMIT = max(60, _PROVISION_TIME_LIMIT - 300)
+_TEARDOWN_TIME_LIMIT = TEARDOWN_TASK_HARD_LIMIT_SECONDS
+_TEARDOWN_SOFT_LIMIT = max(60, _TEARDOWN_TIME_LIMIT - 300)
 
 
 @shared_task(
@@ -19,8 +29,8 @@ _TIME_LIMIT = int(getattr(settings, "LENS_KS_SYNC_TIME_LIMIT", 7200))
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 1},
-    soft_time_limit=_SOFT_LIMIT,
-    time_limit=_TIME_LIMIT,
+    soft_time_limit=_PROVISION_SOFT_LIMIT,
+    time_limit=_PROVISION_TIME_LIMIT,
 )
 def execute_copilot_chat_provision_task(self, *, session_link_id: int) -> dict:
     with celery_trace(
@@ -45,8 +55,8 @@ def execute_copilot_chat_provision_task(self, *, session_link_id: int) -> dict:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 2},
-    soft_time_limit=_SOFT_LIMIT,
-    time_limit=_TIME_LIMIT,
+    soft_time_limit=_TEARDOWN_SOFT_LIMIT,
+    time_limit=_TEARDOWN_TIME_LIMIT,
 )
 def execute_copilot_chat_teardown_task(self, *, session_link_id: int) -> dict:
     with celery_trace(
@@ -63,3 +73,131 @@ def execute_copilot_chat_teardown_task(self, *, session_link_id: int) -> dict:
             result.get("status"),
         )
         return result
+
+
+@shared_task(
+    name=(
+        "apps.lens_bridge.tasks.chat_lifecycle."
+        "reconcile_copilot_chat_provisions_task"
+    ),
+)
+def reconcile_copilot_chat_provisions_task(*, limit: int = 100) -> dict:
+    """Requeue Chat provisioning work whose durable lease is absent or stale."""
+    from apps.lens_bridge.models import LensSessionLink
+
+    now = timezone.now()
+    stale_claim = now - timedelta(seconds=PROVISION_CLAIM_TTL_SECONDS)
+    session_ids = list(
+        LensSessionLink.objects.filter(
+            lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        )
+        .filter(
+            Q(provision_next_retry_at__isnull=True)
+            | Q(provision_next_retry_at__lte=now)
+        )
+        .filter(
+            Q(provision_claimed_at__isnull=True)
+            | Q(provision_claimed_at__lte=stale_claim)
+        )
+        .order_by("provision_next_retry_at", "id")
+        .values_list("id", flat=True)[: max(1, min(int(limit), 500))]
+    )
+    queued_session_ids: list[int] = []
+    failures: list[dict[str, str | int]] = []
+    for session_id in session_ids:
+        try:
+            execute_copilot_chat_provision_task.delay(session_link_id=session_id)
+            queued_session_ids.append(session_id)
+        except Exception as exc:
+            logger.exception(
+                "copilot provision reconcile dispatch failed session_link_id=%s",
+                session_id,
+            )
+            failures.append(
+                {
+                    "resource": "session",
+                    "id": session_id,
+                    "error": str(exc)[:1000],
+                }
+            )
+    return {
+        "queued": len(queued_session_ids),
+        "session_ids": queued_session_ids,
+        "failed": failures,
+    }
+
+
+@shared_task(
+    name="apps.lens_bridge.tasks.chat_lifecycle.reconcile_lens_resource_teardowns_task",
+)
+def reconcile_lens_resource_teardowns_task(*, limit: int = 100) -> dict:
+    """Requeue durable Chat and Knowledge Source teardowns that are due."""
+
+    from apps.lens_bridge.models import LensSessionLink
+
+    now = timezone.now()
+    stale_claim = now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
+    session_ids = list(
+        LensSessionLink.objects.filter(
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        )
+        .filter(
+            Q(teardown_next_retry_at__isnull=True)
+            | Q(teardown_next_retry_at__lte=now)
+        )
+        .filter(Q(teardown_claimed_at__isnull=True) | Q(teardown_claimed_at__lte=stale_claim))
+        .order_by("teardown_next_retry_at", "id")
+        .values_list("id", flat=True)[: max(1, min(int(limit), 500))]
+    )
+    queued_session_ids: list[int] = []
+    failures: list[dict[str, str | int]] = []
+    for session_id in session_ids:
+        try:
+            execute_copilot_chat_teardown_task.delay(session_link_id=session_id)
+            queued_session_ids.append(session_id)
+        except Exception as exc:
+            logger.exception(
+                "copilot teardown reconcile dispatch failed session_link_id=%s",
+                session_id,
+            )
+            failures.append(
+                {
+                    "resource": "session",
+                    "id": session_id,
+                    "error": str(exc)[:1000],
+                }
+            )
+    from apps.lens_bridge.tasks.knowledge_source_teardown import (
+        due_knowledge_source_teardown_ids,
+        execute_knowledge_source_teardown_task,
+    )
+
+    knowledge_source_ids = due_knowledge_source_teardown_ids(
+        limit=limit,
+        now=now,
+    )
+    queued_knowledge_source_ids: list[int] = []
+    for knowledge_source_id in knowledge_source_ids:
+        try:
+            execute_knowledge_source_teardown_task.delay(
+                knowledge_source_id=knowledge_source_id
+            )
+            queued_knowledge_source_ids.append(knowledge_source_id)
+        except Exception as exc:
+            logger.exception(
+                "knowledge source teardown reconcile dispatch failed knowledge_source_id=%s",
+                knowledge_source_id,
+            )
+            failures.append(
+                {
+                    "resource": "knowledge_source",
+                    "id": knowledge_source_id,
+                    "error": str(exc)[:1000],
+                }
+            )
+    return {
+        "queued": len(queued_session_ids) + len(queued_knowledge_source_ids),
+        "session_ids": queued_session_ids,
+        "knowledge_source_ids": queued_knowledge_source_ids,
+        "failed": failures,
+    }

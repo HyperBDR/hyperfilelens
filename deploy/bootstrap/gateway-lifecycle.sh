@@ -243,22 +243,35 @@ remove_lensnode_images() {
 	done
 }
 
+validate_gateway_workspace_path() {
+	local candidate=${1:-} canonical normalized
+	[[ -n "${candidate}" ]] || return 1
+	canonical="$(readlink -m -- "${candidate}")" || return 1
+	normalized="${candidate%/}"
+	[[ "${normalized}" == "${canonical}" ]] || return 1
+	[[ "${canonical}" =~ ^/workspace/org-[1-9][0-9]*/data$ ]] || return 1
+	printf '%s\n' "${canonical}"
+}
+
 purge_sidecar_artifacts() {
-	local workspace=""
+	local workspace="" state_root=""
 	if [[ -f "${LENS_ENV_FILE}" ]]; then
-		# shellcheck disable=SC1090
-		set -a
-		source "${LENS_ENV_FILE}"
-		set +a
-		workspace="${HFL_WORKSPACE_ROOT:-}"
+		workspace="$(read_env_value "${LENS_ENV_FILE}" HFL_WORKSPACE_ROOT)"
+	fi
+	if [[ -n "${workspace}" ]]; then
+		workspace="$(validate_gateway_workspace_path "${workspace}")" \
+			|| hfl_fail "refusing to purge unsafe Gateway workspace path from ${LENS_ENV_FILE}" 6
 	fi
 	compose_down_sidecar
 	remove_lensnode_images
 	rm -f "${LENS_ENV_FILE}"
 	rm -rf "${COMPOSE_DIR}"
-	if [[ -n "${workspace}" && "${workspace}" == /workspace/* ]]; then
+	if [[ -n "${workspace}" ]]; then
 		hfl_log "Removing gateway workspace ${workspace}."
 		rm -rf "${workspace}"
+		state_root="$(dirname "${workspace}")/.hyperfilelens"
+		hfl_log "Removing protected gateway state ${state_root}."
+		rm -rf "${state_root}"
 	fi
 }
 
@@ -295,4 +308,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

@@ -59,6 +59,10 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 	switch kind {
 	case "browse":
 		status, result, errMsg = e.runBrowse(ctx, rep, cmd.ID, p)
+	case "lens.gateway.browse":
+		status, result, errMsg = e.runLensGatewayBrowse(ctx, p)
+	case "lens.workspace.validate-local":
+		status, result, errMsg = e.runLensWorkspaceValidateLocal(ctx, p)
 	case "backup":
 		if _, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
 			status, result, errMsg = "failed", nil, parseErr.Error()
@@ -172,6 +176,8 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		status, result, errMsg = e.runPathSize(ctx, p)
 	case "lens.ks.prepare", "lens.workspace.prepare":
 		status, result, errMsg = e.runLensKsPrepare(ctx, p)
+	case "lens.ks.cleanup", "lens.workspace.cleanup":
+		status, result, errMsg = e.runLensKsCleanup(ctx, p)
 	case "maintenance.gc":
 		status, result, errMsg = e.runKopia(ctx, rep, cmd.ID, p, []string{"maintenance", "run", "--full"})
 	case "repository.operation":

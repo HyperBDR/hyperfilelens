@@ -1,7 +1,10 @@
+import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
@@ -14,16 +17,32 @@ from apps.lens_bridge.services import chat_lifecycle
 
 
 class CopilotLifecycleQueueTests(SimpleTestCase):
+    @patch("apps.lens_bridge.services.chat_lifecycle.LensSessionLink.objects.filter")
     @patch("apps.lens_bridge.services.chat_lifecycle._mark_provision_failed_by_id")
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle._claim_copilot_chat_provision",
+        return_value=("claim-token", "claimed"),
+    )
     @patch(
         "apps.lens_bridge.services.chat_lifecycle._run_copilot_chat_provision",
         side_effect=RuntimeError("database schema mismatch"),
     )
-    def test_provision_records_failures_before_pipeline_starts(self, _run, mark_failed):
+    def test_provision_records_failures_before_pipeline_starts(
+        self,
+        _run,
+        _claim,
+        mark_failed,
+        filter_sessions,
+    ):
+        filter_sessions.return_value.first.return_value = None
         with self.assertRaisesRegex(RuntimeError, "database schema mismatch"):
             chat_lifecycle.run_copilot_chat_provision(session_link_id=42)
 
-        mark_failed.assert_called_once_with(42, "database schema mismatch")
+        mark_failed.assert_called_once_with(
+            42,
+            "claim-token",
+            "database schema mismatch",
+        )
 
     @patch("apps.lens_bridge.tasks.chat_lifecycle.execute_copilot_chat_provision_task.delay")
     def test_provision_dispatches_to_celery(self, delay):
@@ -116,12 +135,36 @@ class CopilotRetryTests(TestCase):
         queue_provision.assert_called_once_with(session.id)
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
-    def test_provisioning_session_retry_is_idempotent(self, queue_provision):
+    def test_unclaimed_provisioning_session_retry_is_requeued(self, queue_provision):
         session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = chat_lifecycle.retry_copilot_chat_provision(session)
+
+        self.assertEqual(updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING)
+        queue_provision.assert_called_once_with(session.id)
+
+    @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")
+    def test_live_provisioning_session_retry_is_idempotent(self, queue_provision):
+        session = self.create_session(LensSessionLink.LifecycleStatus.PROVISIONING)
+        session.provision_claim_token = uuid.uuid4()
+        session.provision_claimed_at = timezone.now()
+        session.provision_next_retry_at = timezone.now() + timedelta(minutes=1)
+        session.save(
+            update_fields=[
+                "provision_claim_token",
+                "provision_claimed_at",
+                "provision_next_retry_at",
+                "updated_at",
+            ]
+        )
 
         updated = chat_lifecycle.retry_copilot_chat_provision(session)
 
-        self.assertEqual(updated.lifecycle_status, LensSessionLink.LifecycleStatus.PROVISIONING)
+        self.assertEqual(
+            updated.lifecycle_status,
+            LensSessionLink.LifecycleStatus.PROVISIONING,
+        )
         queue_provision.assert_not_called()
 
     @patch("apps.lens_bridge.services.chat_lifecycle._queue_provision_or_mark_failed")

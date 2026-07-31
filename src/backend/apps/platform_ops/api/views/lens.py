@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -591,16 +592,25 @@ class PlatformOpsLensAssistantView(APIView):
                 org,
                 uuid.UUID(str(assistant_uuid)),
                 user=request.user,
-                manage=True,
+                can_manage_all=True,
             )
             return Response(data)
-        rows = list_org_assistants(org, user=request.user, manage=True)
+        rows = list_org_assistants(
+            org,
+            user=request.user,
+            can_manage_all=True,
+        )
         return Response(rows)
 
     def post(self, request):
         org = _platform_org()
         try:
-            data = create_org_assistant(org, dict(request.data), user=request.user)
+            data = create_org_assistant(
+                org,
+                dict(request.data),
+                user=request.user,
+                platform_passthrough=True,
+            )
         except ValidationError:
             raise
         except sl_client.LensBridgeError as exc:
@@ -615,6 +625,8 @@ class PlatformOpsLensAssistantView(APIView):
                 uuid.UUID(str(assistant_uuid)),
                 dict(request.data),
                 user=request.user,
+                can_manage_all=True,
+                platform_passthrough=True,
             )
         except ValidationError:
             raise
@@ -624,7 +636,12 @@ class PlatformOpsLensAssistantView(APIView):
 
     def delete(self, request, assistant_uuid):
         org = _platform_org()
-        delete_org_assistant(org, uuid.UUID(str(assistant_uuid)))
+        delete_org_assistant(
+            org,
+            uuid.UUID(str(assistant_uuid)),
+            user=request.user,
+            can_manage_all=True,
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -709,24 +726,57 @@ class PlatformOpsLensKnowledgeSourceView(APIView):
 
     def post(self, request):
         org = _platform_org()
-        body = LensKnowledgeSourceCreateSerializer(data=request.data, context={"org": org})
+        body = LensKnowledgeSourceCreateSerializer(
+            data=request.data,
+            context={
+                "org": org,
+                "gateway_scope": LensGatewayLink.GatewayScope.PLATFORM,
+            },
+        )
         body.is_valid(raise_exception=True)
-        gateway = provisioning.require_gateway_node(org, body.validated_data["gateway"].id)
-        gateway_link = provisioning.get_gateway_link(org, gateway.id)
-        if gateway_link.scope != LensGatewayLink.GatewayScope.PLATFORM:
-            gateway_link.scope = LensGatewayLink.GatewayScope.PLATFORM
-            gateway_link.save(update_fields=["scope", "updated_at"])
-        ks = body.save(
-            organization=org,
-            created_by=request.user,
-            sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
-        )
-        ks = knowledge_source_sync.prepare_new_knowledge_source(org=org, ks=ks)
-        knowledge_source_sync.enqueue_knowledge_source_sync(
-            organization_id=org.id,
-            knowledge_source_id=ks.id,
-            mode="full",
-        )
+        with transaction.atomic():
+            gateway = provisioning.require_gateway_node(
+                org,
+                body.validated_data["gateway"].id,
+            )
+            gateway_link = (
+                LensGatewayLink.objects.select_for_update()
+                .filter(
+                    organization=org,
+                    gateway=gateway,
+                    scope=LensGatewayLink.GatewayScope.PLATFORM,
+                    is_deleted=False,
+                )
+                .first()
+            )
+            if gateway_link is None:
+                raise ValidationError(
+                    {
+                        "gateway_id": (
+                            "Platform knowledge sources require a platform "
+                            "data gateway."
+                        )
+                    }
+                )
+            ks = body.save(
+                organization=org,
+                created_by=request.user,
+                gateway_link=gateway_link,
+                sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
+            )
+            ks = knowledge_source_sync.prepare_new_knowledge_source(
+                org=org,
+                ks=ks,
+            )
+            transaction.on_commit(
+                lambda organization_id=org.id, knowledge_source_id=ks.id: (
+                    knowledge_source_sync.enqueue_knowledge_source_sync(
+                        organization_id=organization_id,
+                        knowledge_source_id=knowledge_source_id,
+                        mode="full",
+                    )
+                )
+            )
         return Response(
             LensKnowledgeSourceSerializer(ks, context={"org": org}).data,
             status=status.HTTP_201_CREATED,
@@ -737,6 +787,10 @@ class PlatformOpsLensKnowledgeSourceView(APIView):
         ks = LensKnowledgeSource.objects.filter(organization=org, pk=ks_id).first()
         if ks is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
+            raise ValidationError(
+                {"lifecycle_status": "Knowledge source is being deleted."}
+            )
         body = LensKnowledgeSourceUpdateSerializer(ks, data=request.data, partial=True, context={"org": org})
         body.is_valid(raise_exception=True)
         scan_changed = "scan_enabled" in body.validated_data
@@ -747,12 +801,19 @@ class PlatformOpsLensKnowledgeSourceView(APIView):
         return Response(LensKnowledgeSourceSerializer(ks, context={"org": org}).data)
 
     def delete(self, request, ks_id: int):
+        from apps.lens_bridge.services.knowledge_source_teardown import (
+            request_knowledge_source_teardown,
+        )
+
         org = _platform_org()
         ks = LensKnowledgeSource.objects.filter(organization=org, pk=ks_id).first()
         if ks is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        ks.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        request_knowledge_source_teardown(ks)
+        return Response(
+            {"id": ks.id, "lifecycle_status": "deleting"},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class PlatformOpsLensKnowledgeSourceSyncView(APIView):
@@ -790,6 +851,7 @@ class PlatformOpsLensGatewayBrowseView(APIView):
                 org=org,
                 gateway_id=int(gateway_id),
                 path=path,
+                expected_scope=LensGatewayLink.GatewayScope.PLATFORM,
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
