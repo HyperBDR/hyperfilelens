@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../lib/api'
@@ -48,6 +48,7 @@ export type BackupScopeEntry = {
   path: string
   directoryId: number | null
   pathType: 'dir' | 'file' | 'unknown'
+  revision: number
 }
 
 export type KnowledgeSourceType = 'backup_source' | 'gateway_local'
@@ -76,6 +77,7 @@ function createBackupScopeEntry(): BackupScopeEntry {
     path: '',
     directoryId: null,
     pathType: 'unknown',
+    revision: 0,
   }
 }
 
@@ -98,6 +100,11 @@ export function useKnowledgeSourceForm(
   const snapshotPickerValue = ref<SnapshotPickerValue>(SNAPSHOT_PICKER_LATEST)
   const snapshotDetail = ref<BackupSourceSnapshot | null>(null)
   const backupScopeEntries = ref<BackupScopeEntry[]>([createBackupScopeEntry()])
+  const latestBackupScopeValidation = new Map<string, number>()
+  const pendingBackupScopeBlurValidation = new Map<string, number>()
+  let backupScopeValidationSequence = 0
+  let backupScopeBlurSequence = 0
+  let scopeDisposed = false
   const openBackupScopePickerId = ref<string | null>(null)
   const backupScopeTreeRevision = ref(0)
   const backupScopeBrowseLoading = ref(false)
@@ -241,6 +248,8 @@ export function useKnowledgeSourceForm(
   const canSubmitCreate = computed(() => canSubmit.value)
 
   function resetBackupScopeState() {
+    latestBackupScopeValidation.clear()
+    pendingBackupScopeBlurValidation.clear()
     backupScopeEntries.value = [createBackupScopeEntry()]
     openBackupScopePickerId.value = null
     backupScopeTreeRevision.value += 1
@@ -417,6 +426,12 @@ export function useKnowledgeSourceForm(
 
   function setBackupScopePickerOpen(entryId: string | null, open: boolean) {
     openBackupScopePickerId.value = open ? entryId : null
+    if (!open && entryId) {
+      const entry = backupScopeEntries.value.find((row) => row.id === entryId)
+      if (entry?.path.trim() && entry.directoryId == null) {
+        void scheduleBackupScopeEntryValidation(entryId)
+      }
+    }
   }
 
   function addBackupScopeEntry() {
@@ -425,6 +440,8 @@ export function useKnowledgeSourceForm(
 
   function removeBackupScopeEntry(entryId: string) {
     if (backupScopeEntries.value.length <= 1) return
+    latestBackupScopeValidation.delete(entryId)
+    pendingBackupScopeBlurValidation.delete(entryId)
     backupScopeEntries.value = backupScopeEntries.value.filter((row) => row.id !== entryId)
     if (openBackupScopePickerId.value === entryId) {
       openBackupScopePickerId.value = null
@@ -433,7 +450,15 @@ export function useKnowledgeSourceForm(
 
   function updateBackupScopeEntryInput(entryId: string, value: string) {
     backupScopeEntries.value = backupScopeEntries.value.map((row) =>
-      row.id === entryId ? { ...row, path: value, directoryId: null, pathType: 'unknown' } : row,
+      row.id === entryId
+        ? {
+            ...row,
+            path: value,
+            directoryId: null,
+            pathType: 'unknown',
+            revision: row.revision + 1,
+          }
+        : row,
     )
   }
 
@@ -441,13 +466,36 @@ export function useKnowledgeSourceForm(
     if (!node.directoryId || !node.path) return
     backupScopeEntries.value = backupScopeEntries.value.map((row) =>
       row.id === entryId
-        ? { ...row, path: node.path, directoryId: node.directoryId ?? null, pathType: node.type }
+        ? {
+            ...row,
+            path: node.path,
+            directoryId: node.directoryId ?? null,
+            pathType: node.type,
+            revision: row.revision + 1,
+          }
         : row,
     )
     openBackupScopePickerId.value = null
   }
 
+  function isCurrentBackupScopeValidation(
+    entryId: string,
+    revision: number,
+    snapshotId: number,
+    requestId: number,
+  ): boolean {
+    const current = backupScopeEntries.value.find((row) => row.id === entryId)
+    return Boolean(
+      !scopeDisposed
+      && current
+      && current.revision === revision
+      && effectiveSnapshotId.value === snapshotId
+      && latestBackupScopeValidation.get(entryId) === requestId
+    )
+  }
+
   async function validateBackupScopeEntry(entryId: string, showMessage = true): Promise<boolean> {
+    if (scopeDisposed) return false
     const entry = backupScopeEntries.value.find((row) => row.id === entryId)
     if (!entry) return false
     const rawPath = entry.path.trim()
@@ -455,10 +503,16 @@ export function useKnowledgeSourceForm(
       if (showMessage) ElMessage.warning({ message: t('protection.backupsPage.msgManualPathRequired'), grouping: true })
       return false
     }
+    if (entry.directoryId != null) return true
     if (!effectiveSnapshotId.value) {
       if (showMessage) ElMessage.warning({ message: t('insight.kb.backupScopePickSnapshotFirst'), grouping: true })
       return false
     }
+    const validationRevision = entry.revision
+    const validationSnapshotId = effectiveSnapshotId.value
+    backupScopeValidationSequence += 1
+    const validationRequestId = backupScopeValidationSequence
+    latestBackupScopeValidation.set(entryId, validationRequestId)
     const directory = findSnapshotDirectoryForPath(rawPath)
     if (!directory?.id) {
       if (showMessage) ElMessage.warning({ message: t('protection.backupsPage.msgRestoreScopeOutsideSnapshot'), grouping: true })
@@ -468,6 +522,14 @@ export function useKnowledgeSourceForm(
     try {
       if (relativePath) {
         await browseBackupSnapshotDirectory(directory.id, { path: relativePath, limit: 1 })
+      }
+      if (!isCurrentBackupScopeValidation(
+        entryId,
+        validationRevision,
+        validationSnapshotId,
+        validationRequestId,
+      )) {
+        return false
       }
       backupScopeEntries.value = backupScopeEntries.value.map((row) =>
         row.id === entryId
@@ -484,11 +546,54 @@ export function useKnowledgeSourceForm(
       openBackupScopePickerId.value = null
       return true
     } catch (err) {
-      if (showMessage) {
+      if (
+        showMessage
+        && isCurrentBackupScopeValidation(
+          entryId,
+          validationRevision,
+          validationSnapshotId,
+          validationRequestId,
+        )
+      ) {
         ElMessage.error({ message: apiErrorMessage(err, t('protection.backupsPage.msgRestoreScopeVerifyFailed')), grouping: true })
       }
       return false
     }
+  }
+
+  async function scheduleBackupScopeEntryValidation(entryId: string): Promise<boolean> {
+    // Popover close and input blur can arrive in either order. Coalesce both
+    // events after the current interaction and keep only the latest schedule.
+    if (scopeDisposed) return false
+    backupScopeBlurSequence += 1
+    const blurRequestId = backupScopeBlurSequence
+    pendingBackupScopeBlurValidation.set(entryId, blurRequestId)
+    try {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+      if (
+        scopeDisposed
+        || pendingBackupScopeBlurValidation.get(entryId) !== blurRequestId
+      ) {
+        return false
+      }
+      const entry = backupScopeEntries.value.find((row) => row.id === entryId)
+      if (
+        !entry?.path.trim()
+        || entry.directoryId != null
+        || openBackupScopePickerId.value === entryId
+      ) {
+        return Boolean(entry?.directoryId)
+      }
+      return validateBackupScopeEntry(entryId)
+    } finally {
+      if (pendingBackupScopeBlurValidation.get(entryId) === blurRequestId) {
+        pendingBackupScopeBlurValidation.delete(entryId)
+      }
+    }
+  }
+
+  function validateBackupScopeEntryOnBlur(entryId: string): Promise<boolean> {
+    return scheduleBackupScopeEntryValidation(entryId)
   }
 
   async function validateAllBackupScopeEntries(showMessage = true): Promise<boolean> {
@@ -771,6 +876,12 @@ export function useKnowledgeSourceForm(
     if (id) void loadGatewayBrowse('')
   })
 
+  onScopeDispose(() => {
+    scopeDisposed = true
+    latestBackupScopeValidation.clear()
+    pendingBackupScopeBlurValidation.clear()
+  })
+
   return {
     loading,
     saving,
@@ -824,6 +935,7 @@ export function useKnowledgeSourceForm(
     removeBackupScopeEntry,
     updateBackupScopeEntryInput,
     validateBackupScopeEntry,
+    validateBackupScopeEntryOnBlur,
     validateAllBackupScopeEntries,
     pickBackupScopeForEntry,
     loadGatewayDirTreeNode,
