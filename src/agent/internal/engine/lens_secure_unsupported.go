@@ -9,6 +9,10 @@ import (
 
 var errRestrictedGatewayUnsupported = errors.New("restricted Data Gateway filesystem operations require Linux")
 
+func secureRelativePath(path, allowedRoot string, allowRoot bool) (string, string, error) {
+	return "", "", errRestrictedGatewayUnsupported
+}
+
 func secureOpenDirectory(path, allowedRoot string, allowRoot bool, flags uint64) (int, string, error) {
 	return -1, "", errRestrictedGatewayUnsupported
 }
