@@ -43,9 +43,11 @@ html {
   --color-success-light: #E9F8F0;
   --color-success-border: #BEE9D0;
   --color-warning: #E08B0B;
+  --color-warning-text: #925400;
   --color-warning-light: #FCF3E1;
   --color-warning-border: #F2DBA8;
   --color-error: #E0413E;
+  --color-error-text: #B42318;
   --color-error-light: #FDEDEC;
   --color-error-border: #F6C9C7;
   --color-info: #6D5EF6;
@@ -137,9 +139,16 @@ html {
   --radius-full: 9999px;
 }
 
-html[data-theme='dark'],
-html[data-theme='hybrid'] {
+html[data-theme='dark'] {
   --color-success-text: #4ADE80;
+  --color-warning-text: #F6B84A;
+  --color-error-text: #FF8581;
+}
+
+html[data-theme='hybrid'] {
+  --color-success-text: #0E7A43;
+  --color-warning-text: #925400;
+  --color-error-text: #B42318;
 }
 
 /* Override Element Plus primary color to match brand */

@@ -58,6 +58,7 @@ import FlowSourceSummaryCell from './components/FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './components/FlowSourceConnectionCell.vue'
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
 import TaskProgressCell from './components/TaskProgressCell.vue'
+import TaskTerminalOutcomeCell from './components/TaskTerminalOutcomeCell.vue'
 import TaskStatusTag from '../../components/TaskStatusTag.vue'
 import TaskDetailDrawer from './components/TaskDetailDrawer.vue'
 import { isTransferProgress, type TransferProgress, formatTaskProgressPercent } from '../../lib/kopiaProgress'
@@ -2814,12 +2815,6 @@ function openResetTaskDetail(row: FlowSourceRow) {
   })
 }
 
-function sourceLastBackupTimeText(sourceId: string) {
-  const task = latestBackupTaskForSource(sourceId)
-  const latest = task?.finished_at || latestSnapshotTimeForSource(sourceId) || aggregateForSource(sourceId).lastBackupAt
-  return latest ? fmtLocalTime(latest) : ''
-}
-
 function latestBackupTaskForSource(sourceId: string) {
   const tasks = tasksForBackupConfigIds(sourceBackupConfigIds(sourceId))
   const active = tasks
@@ -2859,19 +2854,6 @@ function latestRestoreTaskForSource(sourceId: string) {
   return taskSortTime(runtimeTask as TaskRow) >= taskSortTime(recordTask)
     ? runtimeTask as TaskRow
     : recordTask
-}
-
-function latestRestoreTimeForSource(sourceId: string) {
-  const runtime = runtimeSection(sourceId, 'restore')
-  const runtimeTime = String(runtime.last_restore_at || '')
-  const latestTask = latestRestoreTaskForSource(sourceId)
-  const record = latestRestoreRecordForSource(sourceId)
-  return latestTask?.finished_at || runtimeTime || record?.updated_at || record?.created_at || ''
-}
-
-function sourceLastRestoreTimeText(sourceId: string) {
-  const latest = latestRestoreTimeForSource(sourceId)
-  return latest ? fmtLocalTime(latest) : ''
 }
 
 function sourceRestoreRuntime(sourceId: string) {
@@ -2965,11 +2947,6 @@ function runtimeStopping(sourceId: string, kind: SourceStopKind) {
   return readSourceStopOptimistic(sourceId, kind)?.phase === 'stopping'
 }
 
-function runtimeCancelled(sourceId: string, kind: SourceStopKind) {
-  const runtime = runtimeSection(sourceId, kind)
-  return runtimeBool(runtime.cancelled)
-}
-
 function syncSourceStopOptimisticFromRuntime(sourceId: string, kind: SourceStopKind) {
   const runtime = runtimeSection(sourceId, kind)
   if (runtimeBool(runtime.running) || runtimeBool(runtime.cancelled)) {
@@ -2996,43 +2973,16 @@ function runningRestoreTaskForSource(sourceId: string) {
   return null
 }
 
-function sourceBackupCellPhase(sourceId: string): 'running' | 'stopping' | 'stopped' | 'failed' | 'idle' {
+function sourceBackupCellPhase(sourceId: string): 'running' | 'stopping' | 'terminal' {
   if (sourceBackupRuntime(sourceId).running) return 'running'
   if (runtimeStopping(sourceId, 'backup')) return 'stopping'
-  if (runtimeCancelled(sourceId, 'backup')) return 'stopped'
-  if (sourceLatestBackupFailure(sourceId)) return 'failed'
-  return 'idle'
+  return 'terminal'
 }
 
-function sourceRestoreCellPhase(sourceId: string): 'running' | 'stopping' | 'stopped' | 'failed' | 'idle' {
+function sourceRestoreCellPhase(sourceId: string): 'running' | 'stopping' | 'terminal' {
   if (sourceRestoreRuntime(sourceId).running) return 'running'
   if (runtimeStopping(sourceId, 'restore')) return 'stopping'
-  if (runtimeCancelled(sourceId, 'restore')) return 'stopped'
-  if (sourceRestoreRuntime(sourceId).failed) return 'failed'
-  return 'idle'
-}
-
-function sourceStoppedBackupSummary(sourceId: string) {
-  const snapshot = recordValue(runtimeSection(sourceId, 'backup').latest_snapshot)
-  const done = Number(snapshot.successful_directory_count || 0)
-  const total = Number(snapshot.directory_count || 0)
-  if (total > 0 && done > 0 && done < total) {
-    return t('protection.backupsPage.flowTaskStoppedPartialBackup', { done, total })
-  }
-  return t('protection.backupsPage.flowTaskStoppedBackup')
-}
-
-function sourceStoppedRestoreSummary() {
-  return t('protection.backupsPage.flowTaskStoppedRestore')
-}
-
-function sourceStoppedTimeText(sourceId: string, kind: SourceStopKind) {
-  const runtime = runtimeSection(sourceId, kind)
-  const latest = recordValue(runtime.latest_task)
-  const raw = String(latest.finished_at || latest.updated_at || latest.created_at || '')
-  if (raw) return fmtLocalTime(raw)
-  if (kind === 'backup') return sourceLastBackupTimeText(sourceId)
-  return sourceLastRestoreTimeText(sourceId)
+  return 'terminal'
 }
 
 function configRepositoryParts(config: BackupConfig | BackupConfigDetail) {
@@ -3107,58 +3057,8 @@ function snapshotStatusLabel(status?: string) {
   return status || t('protection.backupDetail.durationDash')
 }
 
-function failureReasonText(code?: string | null, message?: string | null) {
-  const cleanCode = String(code || '').trim()
-  const cleanMessage = String(message || '').trim()
-  if (cleanCode && cleanMessage) return `[${cleanCode}] ${cleanMessage}`
-  return cleanMessage || cleanCode
-}
-
 function taskSortTime(task: TaskRow) {
   return new Date(task.updated_at || task.finished_at || task.started_at || task.created_at || '').getTime() || 0
-}
-
-function latestFailedBackupTaskForSource(sourceId: string, taskUuid?: string | null) {
-  const tasks = tasksForBackupConfigIds(sourceBackupConfigIds(sourceId))
-  const uuid = String(taskUuid || '').trim()
-  if (uuid) {
-    const matchingTask = tasks.find((task) => task.task_uuid === uuid)
-    if (matchingTask) return matchingTask
-  }
-  return tasks
-    .filter((task) => task.status === 'failed' || task.status === 'timeout')
-    .sort((a, b) => taskSortTime(b) - taskSortTime(a))[0] || null
-}
-
-function sourceLatestBackupFailure(sourceId: string) {
-  const snapshot = latestSnapshotForSource(sourceId)
-  const task = latestBackupTaskForSource(sourceId)
-  const snapshotFailed = String(snapshot?.status || '').toLowerCase() === 'failed'
-  const taskFailed = task?.status === 'failed' || task?.status === 'timeout'
-  if (!snapshotFailed && !taskFailed) return null
-  const failedTask = taskFailed ? task : latestFailedBackupTaskForSource(sourceId, snapshot?.task_uuid)
-  const text = failureReasonText(
-    failedTask?.error_code || snapshot?.error_code,
-    failedTask?.error_message || snapshot?.error_message,
-  ) || snapshotStatusLabel('failed')
-  return {
-    text,
-    taskUuid: failedTask?.task_uuid || snapshot?.task_uuid || '',
-  }
-}
-
-function sourceLatestRestoreFailure(sourceId: string) {
-  const record = latestRestoreRecordForSource(sourceId)
-  const task = latestRestoreTaskForSource(sourceId)
-  const taskFailed = task?.status === 'failed' || task?.status === 'timeout'
-  const recordFailed = record
-    ? restoreRecordFlowStatus(record, restoreRecordTaskRow(record, restoreTaskRows.value)) === 'failed'
-    : false
-  if (!taskFailed && !recordFailed) return null
-  return {
-    text: failureReasonText(task?.error_code, task?.error_message) || t('protection.backupsPage.snapshotStatusFailed'),
-    taskUuid: task?.task_uuid || record?.task_uuid || '',
-  }
 }
 
 function flowBindingStateLabel(active: boolean) {
@@ -9520,9 +9420,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             <button
               type="button"
               class="backup-task-trigger"
-              :class="{ 'backup-task-trigger--failed': sourceBackupCellPhase(row.id) === 'failed' }"
               :disabled="!latestBackupTaskUuidForSource(row.id)"
-              :title="sourceBackupCellPhase(row.id) === 'failed' && sourceLatestBackupFailure(row.id) ? sourceLatestBackupFailure(row.id)?.text : t('protection.backupsPage.backupTaskStatusClickHint')"
+              :title="t('protection.backupsPage.backupTaskStatusClickHint')"
               @click.stop="openLatestBackupTask(row)"
             >
               <TaskProgressCell
@@ -9537,29 +9436,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 :transfer-progress="sourceBackupRuntime(row.id).transferProgress"
                 stopping
               />
-              <span
-                v-else-if="sourceBackupCellPhase(row.id) === 'stopped'"
-                class="table-stack-cell"
-              >
-                <span class="table-stack-cell__secondary">{{ t('protection.backupsPage.flowBackupColLastBackupStopped') }}</span>
-                <span class="table-stack-cell__primary">{{ sourceStoppedBackupSummary(row.id) }}</span>
-                <span class="table-stack-cell__secondary">{{ sourceStoppedTimeText(row.id, 'backup') }}</span>
-              </span>
-              <span
-                v-else-if="sourceLatestBackupFailure(row.id)"
-                class="table-stack-cell"
-              >
-                <span class="table-stack-cell__secondary">{{ t('protection.backupsPage.snapshotStatusFailed') }}</span>
-                <span class="table-stack-cell__primary backup-task-failure-reason">
-                  {{ sourceLatestBackupFailure(row.id)?.text }}
-                </span>
-              </span>
-              <span v-else class="table-stack-cell">
-                <span class="table-stack-cell__secondary">{{ t('protection.backupsPage.flowBackupColLastBackup') }}</span>
-                <span class="table-stack-cell__primary">
-                  {{ sourceLastBackupTimeText(row.id) || t('protection.backupDetail.durationDash') }}
-                </span>
-              </span>
+              <TaskTerminalOutcomeCell
+                v-else
+                :task="latestBackupTaskForSource(row.id)"
+                :fallback="latestSnapshotForSource(row.id)"
+              />
             </button>
           </template>
         </el-table-column>
@@ -9568,9 +9449,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             <button
               type="button"
               class="backup-task-trigger"
-              :class="{ 'backup-task-trigger--failed': sourceRestoreCellPhase(row.id) === 'failed' }"
               :disabled="!latestRestoreTaskForSource(row.id)?.task_uuid && !latestRestoreRecordForSource(row.id)?.task_uuid"
-              :title="sourceRestoreCellPhase(row.id) === 'failed' && sourceLatestRestoreFailure(row.id) ? sourceLatestRestoreFailure(row.id)?.text : t('protection.backupsPage.restoreTaskStatusClickHint')"
+              :title="t('protection.backupsPage.restoreTaskStatusClickHint')"
               @click.stop="openLatestRestoreTask(row)"
             >
               <TaskProgressCell
@@ -9585,29 +9465,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 :transfer-progress="sourceRestoreRuntime(row.id).transferProgress"
                 stopping
               />
-              <span
-                v-else-if="sourceRestoreCellPhase(row.id) === 'stopped'"
-                class="table-stack-cell"
-              >
-                <span class="table-stack-cell__secondary">{{ t('protection.backupsPage.flowBackupColLastRestoreStopped') }}</span>
-                <span class="table-stack-cell__primary">{{ sourceStoppedRestoreSummary() }}</span>
-                <span class="table-stack-cell__secondary">{{ sourceStoppedTimeText(row.id, 'restore') }}</span>
-              </span>
-              <span
-                v-else-if="sourceLatestRestoreFailure(row.id)"
-                class="table-stack-cell"
-              >
-                <span class="table-stack-cell__secondary">{{ t('protection.backupsPage.snapshotStatusFailed') }}</span>
-                <span class="table-stack-cell__primary backup-task-failure-reason">
-                  {{ sourceLatestRestoreFailure(row.id)?.text }}
-                </span>
-              </span>
-              <span v-else class="table-stack-cell">
-                <span class="table-stack-cell__secondary">{{ t('protection.backupsPage.flowBackupColLastRestore') }}</span>
-                <span class="table-stack-cell__primary">
-                  {{ sourceLastRestoreTimeText(row.id) || t('protection.backupDetail.durationDash') }}
-                </span>
-              </span>
+              <TaskTerminalOutcomeCell
+                v-else
+                :task="latestRestoreTaskForSource(row.id)"
+                :fallback="latestRestoreRecordForSource(row.id)?.task_summary"
+              />
             </button>
           </template>
         </el-table-column>
@@ -16916,22 +16778,9 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   background: rgb(248 250 252);
 }
 
-.backup-task-trigger--failed {
-  color: rgb(185 28 28);
-}
-
-.backup-task-trigger--failed:hover {
-  background: rgb(254 242 242);
-}
-
 .backup-task-trigger:disabled {
   cursor: not-allowed;
   opacity: 0.48;
-}
-
-.backup-task-failure-reason {
-  color: rgb(185 28 28);
-  overflow-wrap: anywhere;
 }
 
 .flow-dir-preview-list__row {
