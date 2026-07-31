@@ -266,6 +266,30 @@ describe('Login Turnstile lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('rejects an invalid email format before password login', async () => {
+    const wrapper = await mountLogin(1440)
+    const inputs = wrapper.findAll('input')
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    const submit = wrapper.get('button.submit-btn')
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await inputs[0].setValue('invalid-email')
+    await inputs[1].setValue('ValidPass123')
+
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Invalid email format')
+    expect(submit.attributes('disabled')).toBeDefined()
+
+    await inputs[1].trigger('keyup.enter')
+    await flushPromises()
+    expect(emailLoginCalls()).toHaveLength(0)
+
+    await inputs[0].setValue('person@example.com')
+    expect(wrapper.find('.input-wrapper.has-error').exists()).toBe(false)
+    expect(submit.attributes('disabled')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
   it.each([
     ['short credential', 'short'],
     ['credential longer than the creation limit', 'This-credential-is-longer-than-twenty-characters'],

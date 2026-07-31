@@ -114,10 +114,14 @@ const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
 const authMode = ref<'password' | 'email-code'>('password')
 const resetStep = ref<'request' | 'reset'>('request')
+const regEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 
 function checkMail(value: string) {
   if (!value.trim()) {
     return t('login.emailErrRequired')
+  }
+  if (!regEmail.test(value)) {
+    return t('login.emailErrFormat')
   }
   return ''
 }
