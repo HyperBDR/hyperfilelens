@@ -245,7 +245,7 @@ if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
 	printf 'ERROR: AI model API key must not be persisted in the runtime .env\n' >&2
 	exit 1
 fi
-for variable in EMAIL_SIGNUP_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
+for variable in EMAIL_SIGNUP_ENABLED EMAIL_CODE_LOGIN_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
 	grep -F "vars.TEST_${variable}" "${workflow}" >/dev/null
 	grep -F "vars.PREPROD_${variable}" "${workflow}" >/dev/null
 	grep -F "vars.PROD_${variable}" "${production_workflow}" >/dev/null
@@ -254,7 +254,7 @@ grep -F 'secrets.TEST_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
 grep -F 'secrets.PREPROD_GOOGLE_CLIENT_SECRET' "${workflow}" "${release_workflow}" >/dev/null
 grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${production_workflow}" >/dev/null
 for runtime_key in \
-	HFL_EMAIL_SIGNUP_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
+	HFL_EMAIL_SIGNUP_ENABLED HFL_EMAIL_CODE_LOGIN_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
 	GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SMTP_PASSWORD; do
 	grep -F "\"${runtime_key}\"" "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 done

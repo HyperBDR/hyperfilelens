@@ -38,3 +38,12 @@ def get_password_reset_verification_code_minutes(*, tenant_key: str | None = Non
         default=conf.DEFAULT_PASSWORD_RESET_VERIFICATION_CODE_MINUTES,
     )
     return int(value)
+
+
+def get_login_verification_code_minutes(*, tenant_key: str | None = None) -> int:
+    value = get_config(
+        conf.CONFIG_KEY_LOGIN_CODE_MINUTES,
+        tenant_key=tenant_key,
+        default=conf.DEFAULT_LOGIN_VERIFICATION_CODE_MINUTES,
+    )
+    return int(value)

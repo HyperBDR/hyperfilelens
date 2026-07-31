@@ -28,6 +28,7 @@ KEY_EMAIL_HOST_USER = "email.host_user"
 KEY_EMAIL_FROM = "email.from_email"
 
 KEY_IDENTITY_EMAIL_SIGNUP = "identity.email_signup_enabled"
+KEY_IDENTITY_EMAIL_CODE_LOGIN = "identity.email_code_login_enabled"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
 KEY_IDENTITY_TURNSTILE_SITE = "identity.turnstile_site_key"
@@ -295,6 +296,16 @@ def email_signup_enabled() -> bool:
         env_name="HFL_EMAIL_SIGNUP_ENABLED",
         settings_attr="HFL_EMAIL_SIGNUP_ENABLED",
         default=False,
+    )
+
+
+def email_code_login_enabled() -> bool:
+    """Return whether tenant users may sign in with an emailed code."""
+    return get_bool(
+        KEY_IDENTITY_EMAIL_CODE_LOGIN,
+        env_name="HFL_EMAIL_CODE_LOGIN_ENABLED",
+        settings_attr="HFL_EMAIL_CODE_LOGIN_ENABLED",
+        default=True,
     )
 
 

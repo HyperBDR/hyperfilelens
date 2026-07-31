@@ -29,6 +29,7 @@ class DeployProfileView(APIView):
 
     def get(self, request):
         from apps.platform_ops.services.internal.runtime_settings import (
+            email_code_login_enabled,
             email_delivery_configured,
             email_signup_enabled,
             platform_ops_enabled,
@@ -40,6 +41,11 @@ class DeployProfileView(APIView):
             "email_signup_enabled": email_signup_enabled() if site_role == "tenant" else False,
             "platform_ops_enabled": platform_ops_enabled(),
             "password_reset_available": email_delivery_configured(),
+            "email_code_login_available": bool(
+                site_role == "tenant"
+                and email_code_login_enabled()
+                and email_delivery_configured()
+            ),
             "tenant_public_url": tenant_public_url(),
             "admin_console_url": admin_console_public_url(request),
             "landing_path": default_landing_path(request),

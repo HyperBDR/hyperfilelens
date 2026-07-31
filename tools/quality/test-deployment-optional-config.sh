@@ -33,6 +33,7 @@ TURNSTILE_SECRET_KEY=old-secret
 ENV
 cat >"${runtime_file}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=true
+HFL_EMAIL_CODE_LOGIN_ENABLED=true
 HFL_GOOGLE_OAUTH_ENABLED=true
 HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF
 HFL_INSECURE_TLS=0
@@ -72,6 +73,7 @@ grep -Fx 'TURNSTILE_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${env_file}" >/dev/null
 grep -Fx 'HFL_EMAIL_SIGNUP_ENABLED=true' "${env_file}" >/dev/null
+grep -Fx 'HFL_EMAIL_CODE_LOGIN_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_GOOGLE_OAUTH_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${env_file}" >/dev/null
 grep -Fx 'GOOGLE_CLIENT_ID=123-new.apps.googleusercontent.com' "${env_file}" >/dev/null

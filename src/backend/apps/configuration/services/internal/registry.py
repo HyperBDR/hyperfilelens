@@ -90,6 +90,13 @@ def all_key_specs() -> tuple[ConfigKeySpec, ...]:
             owning_app="iam",
         ),
         _spec(
+            key=iam_conf.CONFIG_KEY_LOGIN_CODE_MINUTES,
+            category="iam",
+            value_type=GlobalConfig.ValueType.NUMBER,
+            description="Email login verification code TTL (minutes)",
+            owning_app="iam",
+        ),
+        _spec(
             key=insight_conf.CONFIG_KEY_LLM_PROVIDER,
             category="insight",
             value_type=GlobalConfig.ValueType.STRING,

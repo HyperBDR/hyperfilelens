@@ -505,6 +505,7 @@ export interface PlatformEmailSettings {
 
 export interface PlatformIdentitySettings {
   email_signup_enabled: boolean
+  email_code_login_enabled: boolean
   platform_ops_enabled: boolean
   platform_ops_allowed_cidrs: string[]
   platform_ops_source?: 'deployment' | 'runtime' | 'default'
@@ -520,6 +521,7 @@ export interface PlatformIdentitySettings {
     registration_token_expiry_hours: number
     password_reset_verification_code_minutes: number
     password_reset_timeout_seconds: number
+    login_verification_code_minutes: number
   }
 }
 

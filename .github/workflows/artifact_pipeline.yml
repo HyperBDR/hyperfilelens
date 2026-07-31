@@ -881,6 +881,7 @@ jobs:
       turnstile_site_key: ${{ vars.TEST_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.TEST_TURNSTILE_ENABLED == 'true' }}
       email_signup_enabled: ${{ vars.TEST_EMAIL_SIGNUP_ENABLED == 'true' }}
+      email_code_login_enabled: ${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
       google_oauth_enabled: ${{ vars.TEST_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.TEST_GOOGLE_CLIENT_ID }}
       platform_gateway_auto_deploy: ${{ vars.TEST_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
@@ -927,6 +928,7 @@ jobs:
       turnstile_site_key: ${{ vars.PREPROD_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.PREPROD_TURNSTILE_ENABLED == 'true' }}
       email_signup_enabled: ${{ vars.PREPROD_EMAIL_SIGNUP_ENABLED == 'true' }}
+      email_code_login_enabled: ${{ vars.PREPROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
       google_oauth_enabled: ${{ vars.PREPROD_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.PREPROD_GOOGLE_CLIENT_ID }}
       platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}

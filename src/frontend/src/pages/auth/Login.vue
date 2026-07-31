@@ -11,6 +11,8 @@ import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
 import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
 import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
 import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
+import EmailCodeLoginForm from '../../components/auth/EmailCodeLoginForm.vue'
+import type { EmailCodeLoginData } from '../../lib/emailCodeLoginApi'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
@@ -23,6 +25,7 @@ import {
 
 const emailSignupEnabled = ref(false)
 const passwordResetAvailable = ref(false)
+const emailCodeLoginAvailable = ref(false)
 const showEula = appConfig.showEula
 const { t, locale } = useI18n()
 const {
@@ -109,6 +112,7 @@ formItems.password.placeholder = t('login.passwordPh')
 const submitLoading = ref(false)
 const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
+const authMode = ref<'password' | 'email-code'>('password')
 const resetStep = ref<'request' | 'reset'>('request')
 
 function checkMail(value: string) {
@@ -401,6 +405,15 @@ async function completeLoginWithOrg(orgKey: string) {
   }
 }
 
+async function handleEmailCodeVerified(data: EmailCodeLoginData) {
+  const orgs = data.available_orgs || []
+  if (orgs.length === 0) {
+    ElMessage.error({ message: t('login.emailCodeNoOrganization'), grouping: true })
+    return
+  }
+  await completeLoginWithOrg(orgs[0].org_key)
+}
+
 function handleFieldsError(fields?: Record<string, string[]>) {
   if (!fields) return
 
@@ -519,6 +532,7 @@ onMounted(async () => {
   const profile = await fetchDeployProfile()
   emailSignupEnabled.value = !!profile?.email_signup_enabled
   passwordResetAvailable.value = !!profile?.password_reset_available
+  emailCodeLoginAvailable.value = !!profile?.email_code_login_available
   await loadTurnstileConfig()
 })
 </script>
@@ -575,8 +589,36 @@ onMounted(async () => {
           @close="dismissSessionNotice"
         />
 
+        <div
+          v-if="emailCodeLoginAvailable"
+          class="login-method-tabs"
+          role="tablist"
+          :aria-label="t('login.methodLabel')"
+        >
+          <button
+            type="button"
+            class="login-method-tabs__tab"
+            :class="{ 'is-active': authMode === 'password' }"
+            role="tab"
+            :aria-selected="authMode === 'password'"
+            @click="authMode = 'password'"
+          >
+            {{ t('login.passwordMethod') }}
+          </button>
+          <button
+            type="button"
+            class="login-method-tabs__tab"
+            :class="{ 'is-active': authMode === 'email-code' }"
+            role="tab"
+            :aria-selected="authMode === 'email-code'"
+            @click="authMode = 'email-code'"
+          >
+            {{ t('login.emailCodeMethod') }}
+          </button>
+        </div>
+
         <!-- Email -->
-        <div class="input-wrapper" :class="{ 'has-error': formItems.email.showError }">
+        <div v-if="authMode === 'password'" class="input-wrapper" :class="{ 'has-error': formItems.email.showError }">
           <div class="input-row">
             <Mail class="input-icon" :size="18" />
             <input
@@ -593,7 +635,7 @@ onMounted(async () => {
         </div>
 
         <!-- Password -->
-        <div class="input-wrapper" :class="{ 'has-error': formItems.password.showError }">
+        <div v-if="authMode === 'password'" class="input-wrapper" :class="{ 'has-error': formItems.password.showError }">
           <div class="input-row">
             <Lock class="input-icon" :size="18" />
             <input
@@ -621,6 +663,7 @@ onMounted(async () => {
         </div>
 
         <AuthTurnstileField
+          v-if="authMode === 'password'"
           :key="authTurnstileMountGeneration"
           ref="turnstileFieldRef"
           :pending="isTurnstilePending"
@@ -643,17 +686,25 @@ onMounted(async () => {
           @load-failed="onTurnstileLoadFailed"
         />
 
-        <div>
-          <!-- Submit Button -->
-          <ElButton
-            type="primary"
-            class="submit-btn"
-            :disabled="submitLoading || !canSubmitLogin"
-            :loading="submitLoading"
-            @click="handleSubmit"
-          >
-            {{ submitLoading ? t('login.btnSubmitLoading') : t('login.btnSubmit') }}
-          </ElButton>
+        <div class="login-actions">
+          <div v-if="authMode === 'password'">
+            <!-- Submit Button -->
+            <ElButton
+              type="primary"
+              class="submit-btn"
+              :disabled="submitLoading || !canSubmitLogin"
+              :loading="submitLoading"
+              @click="handleSubmit"
+            >
+              {{ submitLoading ? t('login.btnSubmitLoading') : t('login.btnSubmit') }}
+            </ElButton>
+          </div>
+
+          <EmailCodeLoginForm
+            v-if="authMode === 'email-code'"
+            v-model:email="formItems.email.value"
+            @verified="handleEmailCodeVerified"
+          />
 
           <!-- Forgot Password -->
           <div v-if="passwordResetAvailable" class="forgot-row">
@@ -789,6 +840,51 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.login-actions {
+  display: flex;
+  flex-direction: column;
+}
+
+.login-method-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+}
+
+.login-method-tabs__tab {
+  min-height: 44px;
+  padding: 0 10px;
+  color: rgba(255, 255, 255, 0.58);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.2s, background-color 0.2s;
+}
+
+.login-method-tabs__tab:hover {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.login-method-tabs__tab:active {
+  background: rgba(109, 40, 217, 0.22);
+}
+
+.login-method-tabs__tab.is-active {
+  color: #fff;
+  background: rgba(109, 40, 217, 0.32);
+}
+
+.login-method-tabs__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .session-alert {

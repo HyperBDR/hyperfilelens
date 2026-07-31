@@ -714,7 +714,13 @@ class ForgotPasswordConfirmView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        is_valid, error_reason = verify_email_verification_code(user, code)
+        from apps.iam.email_verification_models import EmailVerificationCode
+
+        is_valid, error_reason = verify_email_verification_code(
+            user,
+            code,
+            purpose=EmailVerificationCode.Purpose.PASSWORD_RESET,
+        )
 
         if not is_valid:
             return Response(

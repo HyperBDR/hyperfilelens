@@ -61,6 +61,11 @@ on:
         required: false
         default: false
         type: boolean
+      email_code_login_enabled:
+        description: Allow tenant email verification-code sign-in
+        required: false
+        default: true
+        type: boolean
       google_oauth_enabled:
         description: Allow Google OAuth sign-in when credentials are valid
         required: false
@@ -177,6 +182,7 @@ jobs:
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
           EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
+          EMAIL_CODE_LOGIN_ENABLED: ${{ inputs.email_code_login_enabled }}
           GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
@@ -264,6 +270,9 @@ jobs:
           if [[ "$EMAIL_SIGNUP_ENABLED" == "true" && "$smtp_configured" -ne "${#smtp_values[@]}" ]]; then
             echo '::warning title=Email sign-up::Email sign-up is enabled without a complete staged SMTP configuration; deployment will continue.'
           fi
+          if [[ "$EMAIL_CODE_LOGIN_ENABLED" == "true" && "$smtp_configured" -ne "${#smtp_values[@]}" ]]; then
+            echo '::warning title=Email-code sign-in::Email-code sign-in is enabled without a complete staged SMTP configuration; deployment will continue.'
+          fi
 
           if [[ "$GOOGLE_OAUTH_ENABLED" == "true" ]]; then
             if [[ ! "$GOOGLE_CLIENT_ID" =~ ^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]] \
@@ -327,6 +336,7 @@ jobs:
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
           HFL_EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
+          HFL_EMAIL_CODE_LOGIN_ENABLED: ${{ inputs.email_code_login_enabled }}
           HFL_GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
           HFL_GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
@@ -346,6 +356,7 @@ jobs:
           ga4_measurement_id_pattern = re.compile(r"^G-[A-Z0-9]+$")
           names = (
               "HFL_EMAIL_SIGNUP_ENABLED",
+              "HFL_EMAIL_CODE_LOGIN_ENABLED",
               "HFL_GOOGLE_OAUTH_ENABLED",
               "HFL_GA_MEASUREMENT_ID",
               "HFL_INSECURE_TLS",
