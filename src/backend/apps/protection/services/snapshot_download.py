@@ -80,6 +80,7 @@ def create_snapshot_download_task(
             "source_snapshot_uid": source_snapshot.snapshot_uid,
             "repository_id": directory.repository_id,
             "kopia_snapshot_id": directory.kopia_snapshot_id,
+            "source_path": directory.source_path,
             "path": clean_path,
         },
         resources=[
@@ -147,6 +148,7 @@ def create_snapshot_batch_download_task(
             "source_snapshot_uid": source_snapshot.snapshot_uid,
             "repository_id": directory.repository_id,
             "kopia_snapshot_id": directory.kopia_snapshot_id,
+            "source_path": directory.source_path,
             "paths": clean_paths,
         },
         resources=[
@@ -240,6 +242,14 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
     paths = payload.get("paths")
     try:
         task = start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
+        directory = _get_directory(organization_id=task.organization_id, directory_id=directory_id)
+        kopia_snapshot_id = str(payload.get("kopia_snapshot_id") or directory.kopia_snapshot_id or "").strip()
+        selected_names = (
+            [str(item or "").strip() for item in paths if str(item or "").strip()]
+            if isinstance(paths, list) and paths
+            else [path or str(payload.get("source_path") or directory.source_path or "").strip()]
+        )
+        selected_names = [item for item in selected_names if item]
         _set_download_step_status(
             task=task,
             step_name="snapshot_download_restore",
@@ -252,7 +262,14 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
             task=task,
             step_name="snapshot_download_restore",
             message="Starting snapshot download",
-            metadata={"directory_id": directory_id, "path": path, "paths": paths if isinstance(paths, list) else None},
+            metadata={
+                "directory_id": directory_id,
+                "path": path,
+                "paths": paths if isinstance(paths, list) else None,
+                "kopia_snapshot_id": kopia_snapshot_id,
+                "object_id": kopia_snapshot_id,
+                "object_names": selected_names,
+            },
         )
         if isinstance(paths, list) and paths:
             download = _download_batch_as_zip(
@@ -304,6 +321,7 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
             "content_type": artifact.content_type,
             "size_bytes": artifact.size_bytes,
             "expires_at": artifact.expires_at.isoformat(),
+            "object_name": artifact.filename,
         }
         append_task_step_event(
             task=task,

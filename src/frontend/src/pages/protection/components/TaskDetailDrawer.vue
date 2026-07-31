@@ -41,7 +41,8 @@ import {
 } from '../../../lib/repositoryTaskCancellation'
 import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
 import { resolveTaskBackupSourceResource } from '../../../lib/taskBackupSourceResource'
-import { parseTaskStepStatusEvent, taskEventMessageKey } from '../../../lib/taskEventDisplay'
+import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
+import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
@@ -103,10 +104,6 @@ const repositoryResourceLoading = ref(false)
 const repositoryResourceLoadError = ref('')
 let repositoryResourceController: AbortController | null = null
 const expandedSteps = reactive<Record<string, boolean>>({})
-const allStepsExpanded = computed(() => {
-  const steps = activeTask.value?.steps || []
-  return steps.length > 0 && steps.every((step) => isStepExpanded(step.id))
-})
 
 const drawerOpen = computed({
   get: () => props.modelValue,
@@ -132,6 +129,8 @@ const stepsWithEvents = computed(() => {
     events: grouped[step.id] || [],
   }))
 })
+const hasExpandableSteps = computed(() => hasExpandableTaskStep(stepsWithEvents.value))
+const hasAnyExpandedStep = computed(() => hasExpandedTaskStep(stepsWithEvents.value, isStepExpanded))
 
 const unlinkedEvents = computed(() => {
   const stepIds = new Set((activeTask.value?.steps || []).map((step) => step.id))
@@ -307,6 +306,8 @@ function eventErrorText(event: TaskEventRow) {
 }
 
 function eventObjectText(event: TaskEventRow) {
+  const canonicalValue = taskEventObjectText(event)
+  if (canonicalValue) return canonicalValue
   return taskEventMetadataText(event, [
     'kopia_snapshot_display',
     'source_path',
@@ -383,7 +384,8 @@ function isStepExpanded(stepId: number | string) {
   return expandedSteps[stepKey(stepId)] !== false
 }
 
-function toggleStep(stepId: number | string) {
+function toggleStep(stepId: number | string, eventCount: number) {
+  if (eventCount === 0) return
   const key = stepKey(stepId)
   expandedSteps[key] = !isStepExpanded(key)
 }
@@ -393,7 +395,7 @@ function setAllStepsExpanded(expanded: boolean) {
 }
 
 function toggleAllStepsExpanded() {
-  setAllStepsExpanded(!allStepsExpanded.value)
+  setAllStepsExpanded(!hasAnyExpandedStep.value)
 }
 
 function selectResourceType(type: string) {
@@ -783,13 +785,13 @@ watch(
         <div class="hfl-task-drawer__steps-head">
           <span>{{ t('ops.task.stepsHealthy') }}</span>
           <ElButton
-            v-if="(activeTask.steps?.length || 0) > 0"
+            v-if="hasExpandableSteps"
             size="small"
             class="hfl-btn-with-icon"
             @click="toggleAllStepsExpanded"
           >
-            {{ allStepsExpanded ? t('ops.task.collapseAll') : t('ops.task.expandAll') }}
-            <ChevronDown v-if="allStepsExpanded" :size="16" class="hfl-task-step-chevron" />
+            {{ hasAnyExpandedStep ? t('ops.task.collapseAll') : t('ops.task.expandAll') }}
+            <ChevronDown v-if="hasAnyExpandedStep" :size="16" class="hfl-task-step-chevron" />
             <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
           </ElButton>
         </div>
@@ -807,14 +809,35 @@ watch(
               <Circle v-else :size="9" />
             </div>
             <article class="hfl-task-drawer__step-card">
-              <button type="button" class="hfl-task-drawer__step-card-head" @click="toggleStep(step.id)">
+              <button
+                type="button"
+                class="hfl-task-drawer__step-card-head"
+                :class="{ 'hfl-task-drawer__step-card-head--disabled': step.events.length === 0 }"
+                :aria-expanded="step.events.length > 0 && isStepExpanded(step.id)"
+                :aria-disabled="step.events.length === 0"
+                :aria-description="step.events.length === 0 ? t('ops.task.emptyEvents') : undefined"
+                @click="toggleStep(step.id, step.events.length)"
+              >
                 <span class="hfl-task-drawer__step-title">
                   {{ stepDisplayName(step.step_name) }}
                   <span class="hfl-task-drawer__step-executed-at">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
                 </span>
                 <TaskStatusTag :status="step.status" />
                 <span class="hfl-task-drawer__step-duration"><Clock3 :size="12" /> {{ stepDuration(index) }}</span>
-                <ChevronDown v-if="isStepExpanded(step.id)" :size="16" class="hfl-task-step-chevron" />
+                <ElTooltip
+                  v-if="step.events.length === 0"
+                  :content="t('ops.task.emptyEvents')"
+                  teleported
+                  append-to="body"
+                  :z-index="3600"
+                  placement="top"
+                  :show-after="200"
+                >
+                  <span class="hfl-task-step-chevron hfl-task-step-chevron--disabled">
+                    <ChevronRight :size="16" aria-hidden="true" />
+                  </span>
+                </ElTooltip>
+                <ChevronDown v-else-if="isStepExpanded(step.id)" :size="16" class="hfl-task-step-chevron" />
                 <ChevronRight v-else :size="16" class="hfl-task-step-chevron" />
               </button>
               <div v-if="isStepExpanded(step.id) && step.events.length > 0" class="hfl-task-drawer__event-list">

@@ -1,3 +1,5 @@
+import type { TaskEventRow } from './taskApi'
+
 const taskEventMessageKeys: Record<string, string> = {
   'task created': 'ops.task.eventMessage.taskCreated',
   'task started': 'ops.task.eventMessage.taskStarted',
@@ -33,6 +35,10 @@ const taskEventMessageKeys: Record<string, string> = {
   'restore dispatch failed': 'ops.task.eventMessage.restoreDispatchFailed',
   'restore repository server started': 'ops.task.eventMessage.restoreRepositoryServerStarted',
   'restore repository server failed': 'ops.task.eventMessage.restoreRepositoryServerFailed',
+  'restore execution started': 'ops.task.eventMessage.restoreExecutionStarted',
+  'restore item completed': 'ops.task.eventMessage.restoreItemCompleted',
+  'restore item failed': 'ops.task.eventMessage.restoreItemFailed',
+  'restore item cancelled': 'ops.task.eventMessage.restoreItemCancelled',
   'restore stopped by user': 'ops.task.eventMessage.restoreStoppedByUser',
   'restore finished with failed items': 'ops.task.eventMessage.restoreFinishedWithFailedItems',
   'restore finished successfully': 'ops.task.eventMessage.restoreFinishedSuccessfully',
@@ -48,6 +54,43 @@ const taskEventMessageKeys: Record<string, string> = {
   'task finished with status failed': 'ops.task.eventMessage.taskFinishedFailed',
   'task finished with status cancelled': 'ops.task.eventMessage.taskFinishedCancelled',
   'task finished with status timeout': 'ops.task.eventMessage.taskFinishedTimeout',
+}
+
+function metadataRecord(event: TaskEventRow): Record<string, unknown> {
+  const metadata = event.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {}
+  return metadata as Record<string, unknown>
+}
+
+function metadataText(metadata: Record<string, unknown>, key: string): string {
+  const value = metadata[key]
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+function metadataList(metadata: Record<string, unknown>, key: string): string {
+  const value = metadata[key]
+  if (!Array.isArray(value)) return ''
+  const items = value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+  if (items.length === 0) return ''
+  if (items.length <= 2) return items.join(', ')
+  return `${items.slice(0, 2).join(', ')} +${items.length - 2}`
+}
+
+/**
+ * Formats the canonical user-facing object attached to a task event.
+ * Internal database and Agent task IDs remain in metadata for diagnostics,
+ * but producers only set object_id when the identifier is useful to users.
+ */
+export function taskEventObjectText(event: TaskEventRow): string {
+  const metadata = metadataRecord(event)
+  const objectId = metadataText(metadata, 'object_id')
+  const objectName = metadataText(metadata, 'object_name') || metadataList(metadata, 'object_names')
+  if (objectId && objectName) return `${objectId} (${objectName})`
+  return objectName || objectId
 }
 
 export function taskEventMessageKey(message?: unknown): string | null {

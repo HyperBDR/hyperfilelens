@@ -501,6 +501,8 @@ def _run_snapshot_delete_task_locked(
                 "kopia_snapshot_display": _kopia_snapshot_display(snapshot_id, directories),
                 "source_path": directories[0] if directories else "",
                 "paths": directories,
+                "object_id": snapshot_id,
+                "object_names": directories,
             },
         )
     outcome = run_agent_task_sync(

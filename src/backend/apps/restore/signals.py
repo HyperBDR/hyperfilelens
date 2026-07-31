@@ -7,7 +7,9 @@ from django.dispatch import receiver
 
 from apps.node.models import NodeTask
 from apps.restore.models import RestoreRecord, RestoreRecordItem
+from apps.restore.services.task_events import append_restore_item_terminal_event
 from apps.protection.services.progress.orchestrated_progress import RESTORE_FINALIZE_START
+from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import append_task_step_event, complete_task, start_task
 
@@ -64,7 +66,12 @@ def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTas
     if instance.status not in _TERMINAL_NODE_STATUSES:
         return
     if item_id:
-        _sync_restore_item(record=record, item_id=item_id, node_task=instance)
+        _sync_restore_item(
+            record=record,
+            item_id=item_id,
+            node_task=instance,
+            product_task=product_task,
+        )
     from apps.restore.services.restore_progress import sync_restore_record_progress
 
     sync_restore_record_progress(record=record)
@@ -101,6 +108,24 @@ def _handle_restore_repository_server_task(*, node_task: NodeTask) -> None:
     if not message and isinstance(node_task.result, dict):
         message = str(node_task.result.get("error") or "").strip()
     message = (message or "Restore repository server failed.")[:2000]
+    repository_id = (
+        RestoreRecordItem.objects.filter(
+            organization_id=record.organization_id,
+            restore_record=record,
+        )
+        .values_list("repository_id", flat=True)
+        .first()
+    )
+    repository_name = (
+        Repository.objects.filter(
+            organization_id=record.organization_id,
+            id=repository_id,
+        )
+        .values_list("name", flat=True)
+        .first()
+        if repository_id
+        else ""
+    )
     RestoreRecordItem.objects.filter(
         organization_id=record.organization_id,
         restore_record=record,
@@ -116,7 +141,11 @@ def _handle_restore_repository_server_task(*, node_task: NodeTask) -> None:
         step_name="dispatch_agent",
         level=TaskEvent.Level.ERROR,
         message="Restore repository server failed",
-        metadata={"node_task_id": str(node_task.id), "error_message": message},
+        metadata={
+            "node_task_id": str(node_task.id),
+            "error_message": message,
+            "object_name": repository_name,
+        },
     )
     _finalize_record_if_done(record=record, product_task=product_task)
 
@@ -126,7 +155,13 @@ def _ensure_product_task_running(task: Task) -> None:
         start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
 
 
-def _sync_restore_item(*, record: RestoreRecord, item_id: int, node_task: NodeTask) -> None:
+def _sync_restore_item(
+    *,
+    record: RestoreRecord,
+    item_id: int,
+    node_task: NodeTask,
+    product_task: Task,
+) -> None:
     item = RestoreRecordItem.objects.filter(
         organization_id=record.organization_id,
         restore_record=record,
@@ -134,6 +169,7 @@ def _sync_restore_item(*, record: RestoreRecord, item_id: int, node_task: NodeTa
     ).first()
     if item is None:
         return
+    previous_status = item.status
     if node_task.status == NodeTask.Status.SUCCESS:
         item.status = RestoreRecordItem.Status.SUCCESS
         item.result_payload = node_task.result or {}
@@ -157,6 +193,12 @@ def _sync_restore_item(*, record: RestoreRecord, item_id: int, node_task: NodeTa
             "error_message",
             "updated_at",
         ]
+    )
+    append_restore_item_terminal_event(
+        task=product_task,
+        item=item,
+        node_task_id=node_task.id,
+        previous_status=previous_status,
     )
 
 
@@ -202,7 +244,11 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             step_name="finalize",
             level=TaskEvent.Level.ERROR,
             message="Restore finished with failed items",
-            metadata={**result_payload, "error_message": error_message},
+            metadata={
+                **result_payload,
+                "error_message": error_message,
+                "object_name": record.restore_uid,
+            },
         )
         complete_task(
             task_uuid=product_task.task_uuid,
@@ -234,7 +280,7 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
         task=product_task,
         step_name="finalize",
         message="Restore finished successfully",
-        metadata=result_payload,
+        metadata={**result_payload, "object_name": record.restore_uid},
     )
     complete_task(
         task_uuid=product_task.task_uuid,

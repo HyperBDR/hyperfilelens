@@ -1213,6 +1213,7 @@ def _agent_task_result(
                 "node_task_id": str(existing_node_task.id),
                 "node_task_status": existing_node_task.status,
                 "wait_timeout_seconds": wait_timeout_seconds,
+                "object_name": source_path,
             },
         )
         return wait_for_agent_task(
