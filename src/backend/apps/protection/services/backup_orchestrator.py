@@ -548,6 +548,7 @@ def _ensure_repository_server_payload(
             "session_id": session_id,
             "public_host": public_host,
             "public_host_source": public_host_source,
+            "object_name": repository.name,
         },
     )
     return None
@@ -649,6 +650,7 @@ def _ensure_source_repository_probe(
             "source_node_id": execution_target.node.id,
             "node_task_id": str(handle.task.id),
             "server_url": str(repository_payload.get("url") or ""),
+            "object_name": repository.name,
         },
     )
     return False
@@ -692,6 +694,8 @@ def _mark_policy_prepare_failed(
             ),
             "error_code": error_code,
             "error_message": error_message,
+            "source_path": directory_row.source_path,
+            "object_name": directory_row.source_path,
         },
     )
 
@@ -787,6 +791,7 @@ def _ensure_directory_policy_prepared(
             "source_path": directory_row.source_path,
             "node_task_id": str(handle.task.id),
             "attempt": len(attempts) + 1,
+            "object_name": directory_row.source_path,
         },
     )
     return "waiting"
@@ -834,6 +839,7 @@ def _prepare_directory_policies(
                 metadata={
                     "backup_config_dir_id": directory.id,
                     "source_path": source_path,
+                    "object_name": source_path,
                 },
             )
         if directory_row.status in _DIRECTORY_TERMINAL:
@@ -920,6 +926,8 @@ def _dispatch_directory_backup(
                     "source_path": directory_row.source_path or source_path,
                     "node_task_id": str(existing.id),
                     "kopia_snapshot_id": snapshot_id,
+                    "object_id": snapshot_id,
+                    "object_name": directory_row.source_path or source_path,
                 },
             )
             return
@@ -990,6 +998,7 @@ def _dispatch_directory_backup(
             "repository_type": repository.repo_type,
             "orchestrator": True,
             "task_kind": task_kind,
+            "object_name": source_path,
         },
     )
 
@@ -1029,6 +1038,8 @@ def _maybe_adopt_late_success(
             metadata={
                 "backup_config_dir_id": directory_row.backup_config_dir_id,
                 "node_task_id": str(node_task.id),
+                "source_path": directory_row.source_path,
+                "object_name": directory_row.source_path,
             },
         )
         return False
@@ -1063,6 +1074,9 @@ def _maybe_adopt_late_success(
             "node_task_id": str(node_task.id),
             "kopia_snapshot_id": snapshot_id,
             "previous_error_code": previous_error_code,
+            "source_path": directory_row.source_path,
+            "object_id": snapshot_id,
+            "object_name": directory_row.source_path,
         },
     )
     return True
@@ -1097,6 +1111,7 @@ def _handle_directory_stall(
                 "backup_config_dir_id": directory_row.backup_config_dir_id,
                 "source_path": directory_row.source_path,
                 "elapsed_seconds": int(elapsed),
+                "object_name": directory_row.source_path,
             },
         )
     if elapsed < fail_seconds:
@@ -1133,6 +1148,7 @@ def _handle_directory_stall(
             "node_task_id": str(node_task.id),
             "error_code": error_code,
             "error_message": error_message,
+            "object_name": directory_row.source_path,
         },
     )
     return True
@@ -1208,6 +1224,7 @@ def _patch_latest_directory_failure_event(
             **metadata,
             "error_code": error_code,
             "error_message": error_message,
+            "object_name": directory_row.source_path,
         }
         event.save(update_fields=["metadata"])
         return
@@ -1333,6 +1350,7 @@ def _fail_directory_due_to_offline(
             "node_task_status": node_task.status,
             "error_code": error_code,
             "error_message": error_message,
+            "object_name": directory_row.source_path,
         },
     )
 
@@ -1436,6 +1454,8 @@ def _observe_running_directory(
                         "source_path": directory_row.source_path,
                         "node_task_id": str(node_task.id),
                         "kopia_snapshot_id": snapshot_id,
+                        "object_id": snapshot_id,
+                        "object_name": directory_row.source_path,
                     },
                 )
         else:
@@ -1489,6 +1509,8 @@ def _observe_running_directory(
                         "previous_node_task_id": str(node_task.id),
                         "retry_count": directory_row.retry_count,
                         "error_code": error_code,
+                        "source_path": directory_row.source_path,
+                        "object_name": directory_row.source_path,
                     },
                 )
                 return
@@ -1523,6 +1545,8 @@ def _observe_running_directory(
                         "backup_config_dir_id": directory_row.backup_config_dir_id,
                         "node_task_id": str(node_task.id),
                         "error_code": error_code,
+                        "source_path": directory_row.source_path,
+                        "object_name": directory_row.source_path,
                     },
                 )
                 return
@@ -1551,6 +1575,7 @@ def _observe_running_directory(
                     "node_task_status": node_task.status,
                     "error_code": error_code,
                     "error_message": error_message,
+                    "object_name": directory_row.source_path,
                 },
             )
         return
@@ -1632,6 +1657,7 @@ def _finalize_backup_task(
                     "queued": bool(refresh.get("queued")),
                     "deduplicated": bool(refresh.get("deduplicated")),
                     "celery_task_id": refresh.get("task_id"),
+                    "object_name": repository.name,
                 },
             )
         except Exception as exc:
@@ -1647,6 +1673,7 @@ def _finalize_backup_task(
                 metadata={
                     "repository_id": repository.id,
                     "error_message": str(exc)[:1000],
+                    "object_name": repository.name,
                 },
             )
 
@@ -1724,6 +1751,7 @@ def _finalize_backup_task(
                 "source_snapshot_status": source_snapshot.status,
                 "successful_directory_count": source_snapshot.successful_directory_count,
                 "failed_directory_count": source_snapshot.failed_directory_count,
+                "object_name": source_snapshot.snapshot_uid,
             },
         )
         complete_task(
@@ -1864,7 +1892,10 @@ def advance_backup(
             task=task,
             step_name="create_logic_snapshot",
             message="Logical snapshot created",
-            metadata={"source_snapshot_id": source_snapshot.id},
+            metadata={
+                "source_snapshot_id": source_snapshot.id,
+                "object_name": source_snapshot.snapshot_uid,
+            },
         )
         bt._set_step_status(
             task=task,
@@ -2146,6 +2177,7 @@ def advance_backup(
                 metadata={
                     "backup_config_dir_id": directory.id,
                     "source_path": source_path,
+                    "object_name": source_path,
                 },
             )
 
@@ -2480,7 +2512,11 @@ def _reconcile_pending_backup_queue(
                 step_name=locked.current_step or "queued",
                 level=TaskEvent.Level.WARN,
                 message="Backup queue recovery re-enqueued the original task",
-                metadata={"source_snapshot_id": source_snapshot.id, "attempt_count": 1},
+                metadata={
+                    "source_snapshot_id": source_snapshot.id,
+                    "attempt_count": 1,
+                    "object_name": source_snapshot.snapshot_uid,
+                },
             )
         try:
             _requeue_same_backup_task(task=locked, source_snapshot=source_snapshot)
@@ -2588,6 +2624,7 @@ def _correct_terminal_backup_task_success(
             "previous_status": previous_status,
             "source_snapshot_id": source_snapshot.id,
             "node_task_id": str(node_task.id),
+            "object_name": source_snapshot.snapshot_uid,
         },
     )
     task_updated.send(
@@ -2709,6 +2746,9 @@ def project_backup_node_task_result(*, node_task_id) -> dict[str, Any]:
             "node_task_id": str(node_task.id),
             "kopia_snapshot_id": snapshot_id,
             "previous_error_code": previous_error_code,
+            "source_path": projected_directory.source_path,
+            "object_id": snapshot_id,
+            "object_name": projected_directory.source_path,
         },
     )
 
@@ -2907,6 +2947,7 @@ def _finalize_cancelled_backup_snapshot(
                 "node_task_id": str(directory_row.node_task_id or ""),
                 "error_code": "TASK_CANCELLED",
                 "error_message": message,
+                "object_name": directory_row.source_path,
             },
         )
 

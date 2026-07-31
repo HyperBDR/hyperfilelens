@@ -23,6 +23,12 @@ from apps.protection.models import (
 )
 from apps.restore.models import RestorePlan, RestoreRecord, RestoreRecordItem
 from apps.restore.services import interface as restore_service
+from apps.restore.services.task_events import (
+    RESTORE_EVENT_SCHEMA_KEY,
+    RESTORE_EVENT_SCHEMA_VERSION,
+    append_restore_execution_started_event,
+    append_restore_item_terminal_event,
+)
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskResource
 
@@ -882,6 +888,10 @@ class RestoreApiTests(TestCase):
         record = RestoreRecord.objects.get(id=run.data["restore_record_id"])
         task = Task.objects.get(id=record.task_id)
         self.assertEqual(task.trigger_type, Task.TriggerType.MANUAL)
+        self.assertEqual(
+            task.request_payload[RESTORE_EVENT_SCHEMA_KEY],
+            RESTORE_EVENT_SCHEMA_VERSION,
+        )
         self.assertEqual(record.items.count(), 2)
         self.assertEqual(record.request_payload["plan_ids"], list(RestorePlan.objects.values_list("id", flat=True)))
         self.assertEqual(
@@ -898,6 +908,38 @@ class RestoreApiTests(TestCase):
         self.assertEqual(node_tasks.count(), 2)
         self.assertEqual(set(node_tasks.values_list("payload__source_path_type", flat=True)), {"directory", "file"})
         self.assertEqual(set(node_tasks.values_list("payload__target_path_semantics", flat=True)), {"final"})
+        start_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore execution started",
+        )
+        self.assertEqual(start_event.metadata["item_count"], 2)
+        self.assertEqual(
+            set(start_event.metadata["object_names"]),
+            {"/data", "/data/readme.txt"},
+        )
+
+        for node_task in node_tasks:
+            node_task.status = NodeTask.Status.SUCCESS
+            node_task.result = {"restored": True}
+            node_task.save(update_fields=["status", "result", "updated_at"])
+
+        completed_events = TaskEvent.objects.filter(
+            task=task,
+            step__step_name="restore",
+            message="Restore item completed",
+        )
+        self.assertEqual(completed_events.count(), 2)
+        self.assertEqual(
+            {
+                (event.metadata["object_id"], event.metadata["object_name"])
+                for event in completed_events
+            },
+            {
+                ("kopia-snapshot-1", "/data"),
+                ("kopia-file-1", "/data/readme.txt"),
+            },
+        )
 
     def test_run_restore_plans_for_source_suffixes_same_named_directories(self):
         first_dir = BackupConfigDirectory.objects.create(
@@ -1398,6 +1440,17 @@ class RestoreApiTests(TestCase):
         task = Task.objects.get(id=record.task_id)
         self.assertEqual(task.task_type, Task.Type.RESTORE)
         self.assertEqual(task.status, Task.Status.RUNNING)
+        self.assertEqual(
+            task.request_payload[RESTORE_EVENT_SCHEMA_KEY],
+            RESTORE_EVENT_SCHEMA_VERSION,
+        )
+        start_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore execution started",
+        )
+        self.assertEqual(start_event.metadata["item_count"], 1)
+        self.assertEqual(start_event.metadata["object_names"], ["/data"])
         source_resource = task.resources.get(resource_type=TaskResource.Type.BACKUP_SOURCE)
         self.assertEqual(source_resource.resource_subtype, "agent")
         self.assertEqual(source_resource.resource_id, self.agent.id)
@@ -1412,19 +1465,41 @@ class RestoreApiTests(TestCase):
         self.assertEqual(item.status, item.Status.SUCCESS)
         self.assertEqual(task.status, Task.Status.SUCCESS)
         self.assertEqual(task.steps.get(step_name="restore").status, "success")
-        self.assertTrue(
-            TaskEvent.objects.filter(
-                task=task,
-                step__step_name="dispatch_agent",
-                message="Restore item dispatched to agent",
-            ).exists()
+        completed_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore item completed",
         )
-        self.assertTrue(
+        self.assertEqual(completed_event.level, TaskEvent.Level.INFO)
+        self.assertEqual(completed_event.metadata["object_id"], item.kopia_snapshot_id)
+        self.assertEqual(completed_event.metadata["object_name"], "/data")
+        self.assertEqual(completed_event.metadata["source_path"], "/data")
+        self.assertEqual(completed_event.metadata["target_path"], item.target_path)
+        self.assertEqual(completed_event.metadata["node_task_id"], str(node_task.id))
+        dispatch_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="dispatch_agent",
+            message="Restore item dispatched to agent",
+        )
+        self.assertEqual(dispatch_event.metadata["object_id"], item.kopia_snapshot_id)
+        self.assertEqual(dispatch_event.metadata["object_name"], "/data")
+        self.assertEqual(dispatch_event.metadata["source_path"], "/data")
+        self.assertEqual(dispatch_event.metadata["target_path"], item.target_path)
+        finalize_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="finalize",
+            message="Restore finished successfully",
+        )
+        self.assertEqual(finalize_event.metadata["object_name"], record.restore_uid)
+
+        node_task.save(update_fields=["updated_at"])
+        self.assertEqual(
             TaskEvent.objects.filter(
                 task=task,
-                step__step_name="finalize",
-                message="Restore finished successfully",
-            ).exists()
+                step__step_name="restore",
+                message="Restore item completed",
+            ).count(),
+            1,
         )
 
     def test_restore_record_list_and_detail_include_task_summary(self):
@@ -1747,6 +1822,16 @@ class RestoreApiTests(TestCase):
         self.assertIn("repository is not connected", task.error_message)
         self.assertEqual(task.steps.get(step_name="restore").status, "failed")
         self.assertEqual(task.steps.get(step_name="finalize").status, "failed")
+        failed_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore item failed",
+        )
+        self.assertEqual(failed_event.level, TaskEvent.Level.ERROR)
+        self.assertEqual(failed_event.metadata["object_id"], item.kopia_snapshot_id)
+        self.assertEqual(failed_event.metadata["object_name"], item.source_path)
+        self.assertEqual(failed_event.metadata["error_code"], "RESTORE_AGENT_FAILED")
+        self.assertIn("repository is not connected", failed_event.metadata["error_message"])
         self.assertTrue(
             TaskEvent.objects.filter(
                 task=task,
@@ -1908,7 +1993,10 @@ class RestoreApiTests(TestCase):
             task_type=Task.Type.RESTORE,
             display_name="Running restore",
             trigger_type=Task.TriggerType.MANUAL,
-            request_payload={"restore_uid": "rst-cancel-test"},
+            request_payload={
+                "restore_uid": "rst-cancel-test",
+                RESTORE_EVENT_SCHEMA_KEY: RESTORE_EVENT_SCHEMA_VERSION,
+            },
             resources=[
                 {
                     "resource_type": TaskResource.Type.BACKUP_SOURCE,
@@ -1966,6 +2054,66 @@ class RestoreApiTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(task.status, Task.Status.CANCELLED)
         self.assertEqual(item.status, RestoreRecordItem.Status.CANCELLED)
+        cancelled_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="restore",
+            message="Restore item cancelled",
+        )
+        self.assertEqual(cancelled_event.level, TaskEvent.Level.WARN)
+        self.assertEqual(cancelled_event.metadata["object_id"], "kopia-snapshot-1")
+        self.assertEqual(cancelled_event.metadata["object_name"], "/data")
+        self.assertEqual(cancelled_event.metadata["error_code"], "TASK_CANCELLED")
+        self.assertEqual(cancelled_event.metadata["error_message"], "Stopped from console")
+
+    def test_legacy_restore_task_does_not_receive_new_restore_step_events(self):
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        record = RestoreRecord.objects.get(id=create.data["restore_record_id"])
+        task = Task.objects.get(id=record.task_id)
+        item = record.items.get()
+        node_task = NodeTask.objects.get(
+            correlation_type="restore.record",
+            correlation_id=str(record.task_uuid),
+        )
+        request_payload = dict(task.request_payload)
+        request_payload.pop(RESTORE_EVENT_SCHEMA_KEY)
+        task.request_payload = request_payload
+        task.save(update_fields=["request_payload", "updated_at"])
+
+        new_messages = [
+            "Restore execution started",
+            "Restore item completed",
+            "Restore item failed",
+            "Restore item cancelled",
+        ]
+        TaskEvent.objects.filter(task=task, message__in=new_messages).delete()
+
+        self.assertIsNone(
+            append_restore_execution_started_event(
+                task=task,
+                record=record,
+                items=[item],
+            )
+        )
+        previous_status = item.status
+        item.status = RestoreRecordItem.Status.CANCELLED
+        item.error_code = "TASK_CANCELLED"
+        item.error_message = "Legacy task stopped"
+        item.save(update_fields=["status", "error_code", "error_message", "updated_at"])
+        self.assertIsNone(
+            append_restore_item_terminal_event(
+                task=task,
+                item=item,
+                node_task_id=node_task.id,
+                previous_status=previous_status,
+            )
+        )
+        self.assertFalse(TaskEvent.objects.filter(task=task, message__in=new_messages).exists())
 
     def test_run_restore_plan_rejects_when_restore_already_running(self):
         plan = RestorePlan.objects.create(organization_id=self.org.id, **self._plan_payload())

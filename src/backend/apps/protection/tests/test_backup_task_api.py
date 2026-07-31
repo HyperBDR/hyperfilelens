@@ -748,23 +748,24 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(fallback_response.data["results"][0]["file_count"], 32)
         self.assertEqual(fallback_response.data["results"][0]["dir_count"], 4)
         self.assertEqual(result["source_snapshot_status"], BackupSourceSnapshot.Status.AVAILABLE)
-        self.assertTrue(
-            TaskEvent.objects.filter(
-                task=task,
-                step__step_name="kopia_snapshot",
-                message="Dispatching directory backup to agent",
-                metadata__node_id=self.agent.id,
-                metadata__repository_id=self.repository.id,
-            ).exists()
+        dispatch_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="kopia_snapshot",
+            message="Dispatching directory backup to agent",
+            metadata__node_id=self.agent.id,
+            metadata__repository_id=self.repository.id,
         )
-        self.assertTrue(
-            TaskEvent.objects.filter(
-                task=task,
-                step__step_name="kopia_snapshot",
-                message="Directory snapshot created",
-                metadata__kopia_snapshot_id="kopia-policy-1",
-            ).exists()
+        self.assertEqual(dispatch_event.metadata["object_name"], "/data/projects")
+        snapshot_event = TaskEvent.objects.get(
+            task=task,
+            step__step_name="kopia_snapshot",
+            message="Directory snapshot created",
+            metadata__kopia_snapshot_id="kopia-policy-1",
         )
+        self.assertEqual(snapshot_event.metadata["object_id"], "kopia-policy-1")
+        self.assertEqual(snapshot_event.metadata["object_name"], "/data/projects")
+        logical_event = TaskEvent.objects.get(task=task, message="Logical snapshot created")
+        self.assertEqual(logical_event.metadata["object_name"], snapshot.snapshot_uid)
 
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")

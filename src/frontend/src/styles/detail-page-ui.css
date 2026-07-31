@@ -969,6 +969,23 @@
   color: rgb(148 163 184);
 }
 
+.hfl-task-drawer__step-card-head--disabled,
+.dp-task-detail__step-card-head--disabled {
+  cursor: default;
+}
+
+.hfl-task-step-chevron--disabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--el-disabled-text-color);
+  cursor: not-allowed;
+}
+
+.hfl-task-step-chevron--disabled svg {
+  display: block;
+}
+
 .hfl-task-drawer__resource-switch-count {
   display: inline-flex;
   box-sizing: border-box;

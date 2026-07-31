@@ -167,6 +167,10 @@ class SnapshotDeleteTaskTests(TestCase):
         self.assertEqual(events.count(), 2)
         self.assertEqual(events[0].metadata["kopia_snapshot_display"], "kopia-a (/data/a)")
         self.assertEqual(events[1].metadata["kopia_snapshot_display"], "kopia-b (/data/b)")
+        self.assertEqual(events[0].metadata["object_id"], "kopia-a")
+        self.assertEqual(events[0].metadata["object_names"], ["/data/a"])
+        self.assertEqual(events[1].metadata["object_id"], "kopia-b")
+        self.assertEqual(events[1].metadata["object_names"], ["/data/b"])
 
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_run_snapshot_delete_task_keeps_logical_snapshot_when_partial_delete_fails(self, mock_run_agent_task_sync):
