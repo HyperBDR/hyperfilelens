@@ -15,6 +15,7 @@ import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile, resolvePostLoginPath } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
 import { resolveSafeLoginRedirect } from '../../lib/loginNavigation'
+import { trackAppEvent } from '../../lib/analytics'
 import {
   consumeSessionNotice,
   sessionNoticeMessageKey,
@@ -326,6 +327,7 @@ async function handleSubmit() {
     if (res.data.user) {
       setUser(res.data.user)
     }
+    trackAppEvent('login', { method: 'email' })
     router.push(await resolveLoginTargetPath())
   } catch (err: unknown) {
     const errObj = err as { status?: number; message?: string; errorCode?: string; code?: string; fields?: Record<string, string[]> }
@@ -385,6 +387,7 @@ async function completeLoginWithOrg(orgKey: string) {
     setStoredOrgKey(orgKey)
     await fetchCurrentUser()
 
+    trackAppEvent('login', { method: 'email' })
     router.push(await resolveLoginTargetPath())
   } catch (err: unknown) {
     const errObj = err as { message?: string; status?: number }

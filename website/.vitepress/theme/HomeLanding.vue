@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-
-declare global {
-  interface Window {
-    __HFL_WEBSITE_CONFIG__?: { appUrl?: string }
-  }
-}
+import {
+  trackWebsiteOpenApp,
+  type WebsiteOpenAppPlacement,
+} from './analytics'
 
 const appOrigin = ref('')
 
@@ -33,6 +31,23 @@ onMounted(() => {
 const loginUrl = computed(() => `${appOrigin.value || '#'}${appOrigin.value ? '/login' : ''}`)
 
 const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
+
+function openApp(event: MouseEvent, placement: WebsiteOpenAppPlacement) {
+  const target = loginUrl.value
+  if (!target || target === '#') return
+  if (
+    event.button !== 0
+    || event.metaKey
+    || event.ctrlKey
+    || event.shiftKey
+    || event.altKey
+  ) {
+    trackWebsiteOpenApp(placement)
+    return
+  }
+  event.preventDefault()
+  trackWebsiteOpenApp(placement, () => window.location.assign(target))
+}
 </script>
 
 <template>
@@ -90,7 +105,7 @@ const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
             <svg aria-hidden="true"><use href="#icon-github" /></svg>
             <span>GitHub</span>
           </a>
-          <a class="header-cta" :href="loginUrl">Open app</a>
+          <a class="header-cta" :href="loginUrl" @click="openApp($event, 'header')">Open app</a>
         </div>
       </div>
     </header>
@@ -110,7 +125,7 @@ const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
             recover it with confidence, and turn trusted snapshots into useful AI knowledge.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" :href="loginUrl">
+            <a class="button button-primary" :href="loginUrl" @click="openApp($event, 'hero')">
               Open HyperFileLens
               <svg aria-hidden="true"><use href="#icon-arrow" /></svg>
             </a>
@@ -319,7 +334,7 @@ const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
             <span>Fastest start</span>
             <h3>Hosted service</h3>
             <p>Use the managed HyperFileLens control plane and connect your environments through Data Gateways.</p>
-            <a :href="loginUrl">Open the app <svg><use href="#icon-arrow" /></svg></a>
+            <a :href="loginUrl" @click="openApp($event, 'hosted_service')">Open the app <svg><use href="#icon-arrow" /></svg></a>
           </article>
           <article class="featured-deployment">
             <div class="deployment-icon"><svg><use href="#icon-server" /></svg></div>
@@ -345,7 +360,7 @@ const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
           <h2 id="cta-title">Protect the files you rely on.<br />Put their knowledge to work.</h2>
         </div>
         <div class="cta-actions">
-          <a class="button button-light" :href="loginUrl">Open HyperFileLens <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
+          <a class="button button-light" :href="loginUrl" @click="openApp($event, 'cta')">Open HyperFileLens <svg aria-hidden="true"><use href="#icon-arrow" /></svg></a>
           <a class="button button-dark-outline" :href="githubUrl"><svg aria-hidden="true"><use href="#icon-github" /></svg>Explore GitHub</a>
         </div>
       </section>
@@ -359,7 +374,7 @@ const githubUrl = 'https://github.com/HyperBDR/hyperfilelens'
       <div class="footer-links">
         <div><strong>Product</strong><a href="#platform">Platform</a><a href="#how-it-works">How it works</a><a href="#deploy">Deployment</a></div>
         <div><strong>Open source</strong><a :href="githubUrl">GitHub</a><a :href="`${githubUrl}/releases`">Releases</a><a :href="`${githubUrl}/issues`">Issues</a></div>
-        <div><strong>Access</strong><a :href="loginUrl">Open app</a><a href="/en/">English</a></div>
+        <div><strong>Access</strong><a :href="loginUrl" @click="openApp($event, 'footer')">Open app</a><a href="/en/">English</a></div>
       </div>
       <div class="footer-bottom"><span>© 2026 HyperFileLens contributors</span><span>Public beta · Built in the open</span></div>
     </footer>

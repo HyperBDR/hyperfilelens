@@ -609,6 +609,7 @@ grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/nu
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-ga-runtime-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
@@ -766,7 +767,7 @@ for listener in 11442 11443 11444; do
 done
 grep -F 'COPY build/website/public /usr/share/nginx/website' \
 	"${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
-grep -F 'COPY build/website/runtime-config.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh' \
+grep -F 'COPY deploy/docker/frontend-runtime-config.sh /docker-entrypoint.d/20-hfl-frontend-runtime-config.sh' \
 	"${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
 if grep -F 'COPY website/' "${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null; then
 	printf 'ERROR: HFL frontend image must consume the standalone Website artifact only\n' >&2

@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 
 import { fetchCurrentUser, setStoredOrgKey } from '../../composables/useAuth'
 import { resolvePostLoginPath } from '../../composables/useDeployProfile'
+import { trackAppEvent } from '../../lib/analytics'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -22,6 +23,7 @@ onMounted(async () => {
   loading.value = false
 
   if (user) {
+    trackAppEvent('login', { method: 'google' })
     router.replace(await resolvePostLoginPath())
     return
   }
