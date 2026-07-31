@@ -429,14 +429,13 @@ class SnapshotBrowserApiTests(TestCase):
         )
         restore_step = task.steps.get(step_name="snapshot_download_restore")
         transfer_step = task.steps.get(step_name="snapshot_download_transfer")
-        self.assertEqual(
-            TaskEvent.objects.get(task=task, message="Starting snapshot download").step_id,
-            restore_step.id,
-        )
-        self.assertEqual(
-            TaskEvent.objects.get(task=task, message="Snapshot download artifact is ready").step_id,
-            transfer_step.id,
-        )
+        starting_event = TaskEvent.objects.get(task=task, message="Starting snapshot download")
+        self.assertEqual(starting_event.step_id, restore_step.id)
+        self.assertEqual(starting_event.metadata["object_id"], self.directory.kopia_snapshot_id)
+        self.assertEqual(starting_event.metadata["object_names"], ["docs", "readme.txt"])
+        ready_event = TaskEvent.objects.get(task=task, message="Snapshot download artifact is ready")
+        self.assertEqual(ready_event.step_id, transfer_step.id)
+        self.assertEqual(ready_event.metadata["object_name"], ready_event.metadata["filename"])
         artifact = task.snapshot_download_artifact
         self.assertEqual(artifact.content_type, "application/zip")
         with zipfile.ZipFile(artifact.storage_path, "r") as archive:

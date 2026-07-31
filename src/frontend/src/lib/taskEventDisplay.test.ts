@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { en } from '../locales/en'
-import { parseTaskStepStatusEvent, taskEventMessageKey } from './taskEventDisplay'
+import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from './taskEventDisplay'
 
 describe('task event internationalization', () => {
   it('covers every repository cleanup step exposed by the backend', () => {
@@ -24,6 +24,21 @@ describe('task event internationalization', () => {
       .toBe('ops.task.eventMessage.cleaningDirectNasPhysicalRepositories')
     expect(taskEventMessageKey('Direct NAS repository cleanup completed'))
       .toBe('ops.task.eventMessage.directNasRepositoryCleanupCompleted')
+  })
+
+  it('maps Restore execution events to translation keys', () => {
+    const messages = [
+      ['Restore execution started', 'restoreExecutionStarted'],
+      ['Restore item completed', 'restoreItemCompleted'],
+      ['Restore item failed', 'restoreItemFailed'],
+      ['Restore item cancelled', 'restoreItemCancelled'],
+    ] as const
+    const translations = en.ops.task.eventMessage as Record<string, string>
+
+    for (const [message, key] of messages) {
+      expect(taskEventMessageKey(message)).toBe(`ops.task.eventMessage.${key}`)
+      expect(translations[key]).toBe(message)
+    }
   })
 
   it('clarifies the prepared snapshot event sequence', () => {
@@ -58,5 +73,44 @@ describe('task event internationalization', () => {
       status: 'running',
     })
     expect(parseTaskStepStatusEvent('Physical repository deleted')).toBeNull()
+  })
+
+  it('combines a meaningful object ID with its name', () => {
+    expect(taskEventObjectText({
+      id: 1,
+      seq: 1,
+      level: 'info',
+      message: 'Directory snapshot created',
+      metadata: {
+        object_id: 'kopia-123',
+        object_name: '/data/projects',
+      },
+    })).toBe('kopia-123 (/data/projects)')
+  })
+
+  it('shows only the name when an internal ID is not user-facing', () => {
+    expect(taskEventObjectText({
+      id: 2,
+      seq: 2,
+      level: 'info',
+      message: 'Snapshot download artifact is ready',
+      metadata: {
+        artifact_id: 42,
+        object_name: 'snapshot-download.zip',
+      },
+    })).toBe('snapshot-download.zip')
+  })
+
+  it('summarizes multiple object names', () => {
+    expect(taskEventObjectText({
+      id: 3,
+      seq: 3,
+      level: 'info',
+      message: 'Starting snapshot download',
+      metadata: {
+        object_id: 'kopia-456',
+        object_names: ['one.txt', 'two.txt', 'three.txt'],
+      },
+    })).toBe('kopia-456 (one.txt, two.txt +1)')
   })
 })

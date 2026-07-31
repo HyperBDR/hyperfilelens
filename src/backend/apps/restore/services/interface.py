@@ -31,6 +31,12 @@ from apps.protection.models import (
     BackupSourceSnapshotDirectory,
 )
 from apps.restore.models import RestorePlan, RestoreRecord, RestoreRecordItem
+from apps.restore.services.task_events import (
+    RESTORE_EVENT_SCHEMA_KEY,
+    RESTORE_EVENT_SCHEMA_VERSION,
+    append_restore_execution_started_event,
+    append_restore_item_terminal_event,
+)
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
@@ -762,6 +768,7 @@ def _create_restore_record(
     record.expanded_payload = {"items": expanded_items}
     record.save(update_fields=["expanded_payload", "updated_at"])
     task.request_payload = {
+        RESTORE_EVENT_SCHEMA_KEY: RESTORE_EVENT_SCHEMA_VERSION,
         "restore_record_id": record.id,
         "restore_uid": record.restore_uid,
         "source_mode": source_mode,
@@ -1574,6 +1581,10 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
                     "repository_reader_node_id": repository_access.node.id,
                     "restore_transfer_mode": payload["restore_transfer_mode"],
                     "kopia_snapshot_id": item.kopia_snapshot_id,
+                    "source_path": item.source_path,
+                    "target_path": item.target_path,
+                    "object_id": item.kopia_snapshot_id,
+                    "object_name": item.source_path,
                 },
             )
         _set_step_status(
@@ -1590,6 +1601,11 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             status=TaskStep.Status.RUNNING,
             progress=10,
             task_progress=RESTORE_ESTIMATE_END,
+        )
+        append_restore_execution_started_event(
+            task=task,
+            record=record,
+            items=items,
         )
         logger.info(
             "restore dispatch ok restore_record_id=%s task_uuid=%s item_count=%s target_node_id=%s",
@@ -1619,7 +1635,11 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             step_name="dispatch_agent",
             level=TaskEvent.Level.ERROR,
             message="Restore dispatch failed",
-            metadata={"error_code": "RESTORE_DISPATCH_FAILED", "error_message": error_message},
+            metadata={
+                "error_code": "RESTORE_DISPATCH_FAILED",
+                "error_message": error_message,
+                "object_name": record.restore_uid,
+            },
         )
         _set_step_status(
             task=task,
@@ -1878,6 +1898,7 @@ def _ensure_restore_repository_server_payload(
             "server_username": server_username,
             "public_host": public_host,
             "public_host_source": public_host_source,
+            "object_name": repository.name,
         },
     )
     return None
@@ -1946,6 +1967,7 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
                 RestoreRecordItem.Status.CANCELLED,
             }:
                 continue
+            previous_status = item.status
             if item.node_task_id:
                 try:
                     cancel_agent_task(task_id=item.node_task_id, reason=message)
@@ -1965,6 +1987,12 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
                     "error_message",
                     "updated_at",
                 ]
+            )
+            append_restore_item_terminal_event(
+                task=task,
+                item=item,
+                node_task_id=item.node_task_id,
+                previous_status=previous_status,
             )
 
     execution_org_ids = {organization_id}
@@ -1992,7 +2020,11 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
         step_name="restore",
         level=TaskEvent.Level.WARN,
         message="Restore stopped by user",
-        metadata={"reason": message, "restore_record_id": record.id if record else None},
+        metadata={
+            "reason": message,
+            "restore_record_id": record.id if record else None,
+            "object_name": record.restore_uid if record else task.display_name,
+        },
     )
     for step_name in ("restore", "finalize"):
         _set_step_status(
