@@ -182,11 +182,14 @@ def _purge_agent_server_records(
 
 
 def _purge_gateway_lens_records(*, org: Organization, gateway: Node, user) -> None:
-    from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+    from apps.lens_bridge.models import (
+        LensGatewayLink,
+        LensKnowledgeSource,
+        LensWorkspaceBinding,
+    )
     from apps.node.exceptions import NodeLifecycleError
 
     knowledge_sources = LensKnowledgeSource.objects.filter(
-        organization_id=org.id,
         gateway=gateway,
         is_deleted=False,
     )
@@ -201,6 +204,24 @@ def _purge_gateway_lens_records(*, org: Organization, gateway: Node, user) -> No
                     "detail": f'Knowledge Source "{source.name}" is still bound.',
                 }
                 for source in knowledge_sources.order_by("id")
+            ],
+        )
+
+    pending_bindings = LensWorkspaceBinding.objects.filter(
+        execution_node_id=gateway.id,
+        is_deleted=False,
+    ).exclude(state=LensWorkspaceBinding.State.DELETED)
+    if pending_bindings.exists():
+        raise NodeLifecycleError(
+            "Data Gateway still has managed workspaces awaiting cleanup.",
+            code="node_remove_blocked",
+            blockers=[
+                {
+                    "code": "workspace_cleanup_pending",
+                    "workspace_binding_id": binding.id,
+                    "detail": f"Managed workspace {binding.workspace_uid} is not deleted.",
+                }
+                for binding in pending_bindings.order_by("id")
             ],
         )
 

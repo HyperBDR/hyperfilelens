@@ -194,6 +194,10 @@ func NormalizeKind(kind string) string {
 		return "nas.test"
 	case "lens.workspace.prepare":
 		return "lens.ks.prepare"
+	case "lens.workspace.cleanup":
+		return "lens.ks.cleanup"
+	case "lens.gateway.browse", "lens.workspace.validate-local":
+		return k
 	default:
 		return k
 	}

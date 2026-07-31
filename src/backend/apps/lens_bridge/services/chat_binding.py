@@ -173,7 +173,10 @@ def list_gateway_options(org: Organization, *, user) -> list[dict[str, Any]]:
         )
         seen.add(link.id)
 
-    for link in platform_lens.user_gateway_links(user=user).select_related("gateway"):
+    for link in platform_lens.user_gateway_links(
+        user=user,
+        organization=org,
+    ).select_related("gateway"):
         if not link.sl_lensnode_uuid or link.id in seen:
             continue
         provisioning.sync_gateway_lensnode_status(link)

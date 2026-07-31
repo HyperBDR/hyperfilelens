@@ -2,6 +2,8 @@
 import type {
   BackupPolicy,
   BackupPolicyRetention,
+  BackupPolicySchedule,
+  BackupPolicyScheduleMode,
   BackupPolicyWritePayload,
   FileFilterRule,
   FileFilterRuleWritePayload,
@@ -11,7 +13,36 @@ export type MessageLocale = 'en'
 
 export type FreqMode = 'simple' | 'advanced'
 
+export type QuickScheduleType = Exclude<BackupPolicyScheduleMode, 'advanced'>
+
 export type SimpleIntervalUnit = 'minute' | 'hour' | 'day'
+
+export type ScheduleWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
+
+const SCHEDULE_TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/
+const SCHEDULE_START_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):([0-5]\d)$/
+
+export function getScheduleTimezoneOptions(): string[] {
+  const supportedValuesOf = (
+    Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] }
+  ).supportedValuesOf
+  const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const values = supportedValuesOf ? supportedValuesOf('timeZone') : []
+  return [...new Set(['UTC', browserTimezone, ...values])]
+}
+
+function defaultScheduleTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+}
+
+function formatScheduleStart(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}:${minute}`
+}
 
 export interface SimpleIntervalUnitMeta {
   value: SimpleIntervalUnit
@@ -76,6 +107,13 @@ export interface BackupPolicyForm {
   simpleIntervalUnit: SimpleIntervalUnit
   simpleIntervalValue: number
   cronExpr: string
+  quickScheduleType: QuickScheduleType
+  scheduleTimezone: string
+  scheduleStartsAt: string
+  scheduleTime: string
+  scheduleWeekdays: ScheduleWeekday[]
+  scheduleMonthDays: number[]
+  scheduleMonthEnd: boolean
   retentionRecentPoints: number
   retentionHourlyEnabled: boolean
   retentionHourlyHours: number
@@ -142,6 +180,13 @@ export function createEmptyPolicyForm(): BackupPolicyForm {
     simpleIntervalUnit: 'hour',
     simpleIntervalValue: 1,
     cronExpr: '0 2 * * *',
+    quickScheduleType: 'interval',
+    scheduleTimezone: defaultScheduleTimezone(),
+    scheduleStartsAt: formatScheduleStart(),
+    scheduleTime: '02:00',
+    scheduleWeekdays: [1],
+    scheduleMonthDays: [1],
+    scheduleMonthEnd: false,
     retentionRecentPoints: 10,
     retentionHourlyEnabled: true,
     retentionHourlyHours: 48,
@@ -263,11 +308,32 @@ export function summarizeSchedule(f: BackupPolicyForm, locale: MessageLocale = '
   if (!f.sectionScheduleEnabled) {
     return 'Not configured'
   }
+  let summary: string
   if (f.freqMode === 'simple') {
-    const unitText = formatSimpleIntervalUnitText(f.simpleIntervalUnit, f.simpleIntervalValue, locale)
-    return `Every ${f.simpleIntervalValue} ${unitText}`
+    if (f.quickScheduleType === 'interval') {
+      const unitText = formatSimpleIntervalUnitText(f.simpleIntervalUnit, f.simpleIntervalValue, locale)
+      summary = `Every ${f.simpleIntervalValue} ${unitText}`
+    } else if (f.quickScheduleType === 'daily') {
+      summary = `Daily at ${f.scheduleTime}`
+    } else if (f.quickScheduleType === 'weekly') {
+      const weekdayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+      const weekdays = [...new Set(f.scheduleWeekdays)]
+        .sort((a, b) => a - b)
+        .map((day) => weekdayNames[day - 1])
+      summary = `Weekly on ${weekdays.join(', ')} at ${f.scheduleTime}`
+    } else {
+      const dates = [...new Set(f.scheduleMonthDays)]
+        .sort((a, b) => a - b)
+        .map(String)
+      if (f.scheduleMonthEnd) dates.push('end of month')
+      summary = `Monthly on ${dates.join(', ')} at ${f.scheduleTime}`
+    }
+  } else {
+    summary = humanizeCronExpression(f.cronExpr, locale)
   }
-  return humanizeCronExpression(f.cronExpr, locale)
+  summary = `${summary} (${f.scheduleTimezone || 'UTC'})`
+  if (f.scheduleStartsAt) summary = `${summary}, starts ${f.scheduleStartsAt}`
+  return summary
 }
 
 function resolveHourlyHours(raw: Partial<BackupPolicyRetention>, fallback: number): number {
@@ -859,6 +925,80 @@ export function simpleIntervalToCron(policyForm: BackupPolicyForm): string {
   return `0 0 */${value} * *`
 }
 
+function scheduleTimeParts(value: string): { hour: number; minute: number } | null {
+  const match = SCHEDULE_TIME_RE.exec(value.trim())
+  if (!match) return null
+  return { hour: Number(match[1]), minute: Number(match[2]) }
+}
+
+function isValidScheduleStart(value: string): boolean {
+  const text = value.trim()
+  if (!SCHEDULE_START_RE.test(text)) return false
+  const [datePart, timePart] = text.split('T')
+  const [year, month, day] = datePart!.split('-').map(Number)
+  const [hour, minute] = timePart!.split(':').map(Number)
+  const parsed = new Date(year!, month! - 1, day!, hour!, minute!)
+  return parsed.getFullYear() === year
+    && parsed.getMonth() === month! - 1
+    && parsed.getDate() === day
+    && parsed.getHours() === hour
+    && parsed.getMinutes() === minute
+}
+
+export function quickScheduleToCron(policyForm: BackupPolicyForm): string {
+  if (policyForm.quickScheduleType === 'interval') return simpleIntervalToCron(policyForm)
+  const time = scheduleTimeParts(policyForm.scheduleTime) || { hour: 0, minute: 0 }
+  if (policyForm.quickScheduleType === 'daily') {
+    return `${time.minute} ${time.hour} * * *`
+  }
+  if (policyForm.quickScheduleType === 'weekly') {
+    const weekdays = [...new Set(policyForm.scheduleWeekdays)]
+      .sort((a, b) => a - b)
+      .map((day) => day === 7 ? 0 : day)
+    return `${time.minute} ${time.hour} * * ${weekdays.join(',') || 1}`
+  }
+  const monthDays = [...new Set([
+    ...policyForm.scheduleMonthDays,
+    ...(policyForm.scheduleMonthEnd ? [31] : []),
+  ])].sort((a, b) => a - b)
+  return `${time.minute} ${time.hour} ${monthDays.join(',') || 31} * *`
+}
+
+export function validateScheduleForm(policyForm: BackupPolicyForm): string {
+  if (!policyForm.sectionScheduleEnabled) return ''
+  if (!policyForm.scheduleTimezone.trim()) return 'Select a time zone.'
+  if (policyForm.scheduleStartsAt && !isValidScheduleStart(policyForm.scheduleStartsAt)) {
+    return 'Start time must be a valid date and time.'
+  }
+  if (policyForm.freqMode === 'advanced') {
+    const cron = validateCronExpression(policyForm.cronExpr)
+    if (!cron.ok) return cron.reason === 'empty' ? 'Enter a cron expression.' : 'Invalid cron expression.'
+    return ''
+  }
+  if (policyForm.quickScheduleType === 'interval') {
+    const meta = getSimpleIntervalUnitMeta(policyForm.simpleIntervalUnit)
+    const value = Number(policyForm.simpleIntervalValue)
+    if (!Number.isInteger(value) || value < meta.min || value > meta.max) {
+      return `${meta.valueLabel} must be between ${meta.min} and ${meta.max}.`
+    }
+    return ''
+  }
+  if (!scheduleTimeParts(policyForm.scheduleTime)) return 'Select a valid schedule time.'
+  if (policyForm.quickScheduleType === 'weekly' && policyForm.scheduleWeekdays.length === 0) {
+    return 'Select at least one weekday.'
+  }
+  if (policyForm.quickScheduleType === 'monthly') {
+    const invalidDay = policyForm.scheduleMonthDays.some(
+      (day) => !Number.isInteger(day) || day < 1 || day > 31,
+    )
+    if (invalidDay) return 'Month days must be between 1 and 31.'
+    if (policyForm.scheduleMonthDays.length === 0 && !policyForm.scheduleMonthEnd) {
+      return 'Select at least one month day or end of month.'
+    }
+  }
+  return ''
+}
+
 export function parseSimpleIntervalFromCron(raw: string): {
   unit: SimpleIntervalUnit
   value: number
@@ -883,24 +1023,71 @@ export function parseSimpleIntervalFromCron(raw: string): {
 }
 
 function applyScheduleFromApi(
-  cronExpr: string | undefined,
+  schedule: BackupPolicySchedule | undefined,
   base: BackupPolicyForm,
-): Pick<BackupPolicyForm, 'freqMode' | 'simpleIntervalUnit' | 'simpleIntervalValue' | 'cronExpr'> {
-  const expr = (cronExpr || base.cronExpr).trim()
+): Pick<
+  BackupPolicyForm,
+  | 'freqMode'
+  | 'simpleIntervalUnit'
+  | 'simpleIntervalValue'
+  | 'cronExpr'
+  | 'quickScheduleType'
+  | 'scheduleTimezone'
+  | 'scheduleStartsAt'
+  | 'scheduleTime'
+  | 'scheduleWeekdays'
+  | 'scheduleMonthDays'
+  | 'scheduleMonthEnd'
+> {
+  const expr = (schedule?.cron_expr || base.cronExpr).trim()
+  if (schedule?.mode) {
+    const mode = schedule.mode
+    const weekdays = (schedule.weekdays || base.scheduleWeekdays)
+      .filter((day): day is ScheduleWeekday => Number.isInteger(day) && day >= 1 && day <= 7)
+    const monthDays = (schedule.month_days || base.scheduleMonthDays)
+      .filter((day) => Number.isInteger(day) && day >= 1 && day <= 31)
+    return {
+      freqMode: mode === 'advanced' ? 'advanced' : 'simple',
+      quickScheduleType: mode === 'advanced' ? base.quickScheduleType : mode,
+      simpleIntervalUnit: schedule.interval_unit || base.simpleIntervalUnit,
+      simpleIntervalValue: Number(schedule.interval_value) || base.simpleIntervalValue,
+      cronExpr: expr || base.cronExpr,
+      scheduleTimezone: schedule.timezone || 'UTC',
+      scheduleStartsAt: schedule.starts_at || '',
+      scheduleTime: schedule.time || base.scheduleTime,
+      scheduleWeekdays: weekdays.length ? weekdays : base.scheduleWeekdays,
+      scheduleMonthDays: monthDays,
+      scheduleMonthEnd: Boolean(schedule.month_end),
+    }
+  }
   const parsed = parseSimpleIntervalFromCron(expr)
   if (parsed) {
     return {
       freqMode: 'simple',
+      quickScheduleType: 'interval',
       simpleIntervalUnit: parsed.unit,
       simpleIntervalValue: parsed.value,
       cronExpr: expr,
+      scheduleTimezone: 'UTC',
+      scheduleStartsAt: '',
+      scheduleTime: base.scheduleTime,
+      scheduleWeekdays: base.scheduleWeekdays,
+      scheduleMonthDays: base.scheduleMonthDays,
+      scheduleMonthEnd: false,
     }
   }
   return {
     freqMode: 'advanced',
+    quickScheduleType: base.quickScheduleType,
     simpleIntervalUnit: base.simpleIntervalUnit,
     simpleIntervalValue: base.simpleIntervalValue,
     cronExpr: expr || base.cronExpr,
+    scheduleTimezone: 'UTC',
+    scheduleStartsAt: '',
+    scheduleTime: base.scheduleTime,
+    scheduleWeekdays: base.scheduleWeekdays,
+    scheduleMonthDays: base.scheduleMonthDays,
+    scheduleMonthEnd: false,
   }
 }
 
@@ -911,7 +1098,7 @@ export function backupPolicyToForm(policy: BackupPolicy): BackupPolicyForm {
     name: policy.name,
     policyActive: policy.is_active,
     sectionScheduleEnabled: Boolean(policy.schedule?.enabled),
-    ...applyScheduleFromApi(policy.schedule?.cron_expr, base),
+    ...applyScheduleFromApi(policy.schedule, base),
     ...applyRetentionFromApi(policy.retention, base),
     sectionRateLimitEnabled: Boolean(policy.throttling?.enabled),
     rateLimitUnlimited: Boolean(policy.throttling?.unlimited),
@@ -923,7 +1110,7 @@ export function backupPolicyToForm(policy: BackupPolicy): BackupPolicyForm {
   }
 }
 
-/** Keep the schedule mode the user chose after save; API only stores cron. */
+/** Keep the schedule controls exactly as the user chose them after save. */
 export function preserveScheduleFormMode(
   form: BackupPolicyForm,
   saved: BackupPolicyForm,
@@ -932,28 +1119,76 @@ export function preserveScheduleFormMode(
     return {
       ...form,
       freqMode: 'simple',
+      quickScheduleType: saved.quickScheduleType,
       simpleIntervalUnit: saved.simpleIntervalUnit,
       simpleIntervalValue: saved.simpleIntervalValue,
+      scheduleTimezone: saved.scheduleTimezone,
+      scheduleStartsAt: saved.scheduleStartsAt,
+      scheduleTime: saved.scheduleTime,
+      scheduleWeekdays: saved.scheduleWeekdays,
+      scheduleMonthDays: saved.scheduleMonthDays,
+      scheduleMonthEnd: saved.scheduleMonthEnd,
     }
   }
   return {
     ...form,
     freqMode: 'advanced',
     cronExpr: saved.cronExpr.trim() || form.cronExpr,
+    scheduleTimezone: saved.scheduleTimezone,
+    scheduleStartsAt: saved.scheduleStartsAt,
   }
 }
 
 export function policyFormToWritePayload(policyForm: BackupPolicyForm): BackupPolicyWritePayload {
-  const cronExpr = policyForm.freqMode === 'advanced'
-    ? policyForm.cronExpr.trim()
-    : simpleIntervalToCron(policyForm)
+  const scheduleBase = {
+    enabled: policyForm.sectionScheduleEnabled,
+    timezone: policyForm.scheduleTimezone.trim() || 'UTC',
+    starts_at: policyForm.scheduleStartsAt.trim() || null,
+  }
+  let schedule: BackupPolicySchedule
+  if (policyForm.freqMode === 'advanced') {
+    schedule = {
+      ...scheduleBase,
+      mode: 'advanced',
+      cron_expr: policyForm.cronExpr.trim() || '0 0 * * *',
+    }
+  } else if (policyForm.quickScheduleType === 'interval') {
+    schedule = {
+      ...scheduleBase,
+      mode: 'interval',
+      interval_unit: policyForm.simpleIntervalUnit,
+      interval_value: Math.max(1, Number(policyForm.simpleIntervalValue) || 1),
+      cron_expr: quickScheduleToCron(policyForm),
+    }
+  } else if (policyForm.quickScheduleType === 'daily') {
+    schedule = {
+      ...scheduleBase,
+      mode: 'daily',
+      time: policyForm.scheduleTime,
+      cron_expr: quickScheduleToCron(policyForm),
+    }
+  } else if (policyForm.quickScheduleType === 'weekly') {
+    schedule = {
+      ...scheduleBase,
+      mode: 'weekly',
+      time: policyForm.scheduleTime,
+      weekdays: [...new Set(policyForm.scheduleWeekdays)].sort((a, b) => a - b),
+      cron_expr: quickScheduleToCron(policyForm),
+    }
+  } else {
+    schedule = {
+      ...scheduleBase,
+      mode: 'monthly',
+      time: policyForm.scheduleTime,
+      month_days: [...new Set(policyForm.scheduleMonthDays)].sort((a, b) => a - b),
+      month_end: policyForm.scheduleMonthEnd,
+      cron_expr: quickScheduleToCron(policyForm),
+    }
+  }
   return {
     name: policyForm.name.trim(),
     is_active: policyForm.policyActive,
-    schedule: {
-      enabled: policyForm.sectionScheduleEnabled,
-      cron_expr: cronExpr || '0 0 * * *',
-    },
+    schedule,
     retention: retentionFormToApi(policyForm),
     throttling: throttlingFormToApi(policyForm),
     error_handling: errorHandlingFormToApi(policyForm),

@@ -10,6 +10,7 @@ from apps.lens_bridge.models.links import (
     LensSessionLink,
     LensSlUserLink,
     LensUsageLedger,
+    LensWorkspaceBinding,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "LensSessionLink",
     "LensSlUserLink",
     "LensUsageLedger",
+    "LensWorkspaceBinding",
 ]

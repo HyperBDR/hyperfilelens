@@ -1,6 +1,10 @@
 from rest_framework import serializers
 
-from apps.lens_bridge.models import LensKnowledgeSource, LensSessionLink
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensSessionLink,
+)
 from apps.lens_bridge.services import gateway_readiness, ingest_policy, provisioning
 from apps.protection.models import BackupConfig, BackupSourceSnapshot
 from apps.protection.services.source_identity import resolve_source_display_name
@@ -31,6 +35,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
             "sl_lensnode_uuid",
             "status",
             "status_detail",
+            "lifecycle_status",
             "sync_phase",
             "sync_state_json",
             "last_restore_record_id",
@@ -49,6 +54,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
             "sl_lensnode_uuid",
             "status",
             "status_detail",
+            "lifecycle_status",
             "sync_phase",
             "sync_state_json",
             "last_restore_record_id",
@@ -108,7 +114,32 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
             return attrs
         gateway = attrs["gateway"]
         provisioning.require_gateway_node(org, gateway.id)
-        link = provisioning.get_gateway_link(org, gateway.id)
+        expected_scope = self.context.get(
+            "gateway_scope",
+            LensGatewayLink.GatewayScope.USER,
+        )
+        if expected_scope == LensGatewayLink.GatewayScope.USER:
+            from apps.lens_bridge.services.gateway_execution import (
+                require_user_gateway_link,
+            )
+
+            owner_user_id = self.context.get("gateway_owner_user_id")
+            if owner_user_id is None:
+                raise serializers.ValidationError(
+                    {"gateway": "Private data gateway owner is required."}
+                )
+            link = require_user_gateway_link(
+                tenant_organization=org,
+                gateway_id=gateway.id,
+                owner_user_id=owner_user_id,
+                require_ready=False,
+            )
+        else:
+            link = provisioning.get_gateway_link(org, gateway.id)
+            if link.scope != expected_scope:
+                raise serializers.ValidationError(
+                    {"gateway": "Data gateway scope is invalid for this operation."}
+                )
         gateway_readiness.require_hfl_usable_gateway(link, field="gateway")
 
         source_scopes = attrs.pop("source_scopes", None)
@@ -155,11 +186,23 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
         attrs["source_path"] = source_path
 
         if is_gateway_local:
-            root = link.resolved_workspace_root().rstrip("/") or "/"
-            if source_path != root and not source_path.startswith(f"{root}/"):
+            from apps.lens_bridge.services.gateway_paths import (
+                GatewayPathError,
+                path_within_root,
+            )
+
+            try:
+                source_path = path_within_root(
+                    source_path,
+                    link.resolved_workspace_root(),
+                    allow_root=True,
+                    field="source_path",
+                )
+            except GatewayPathError as exc:
                 raise serializers.ValidationError(
                     {"source_path": "Directory must be under the gateway workspace root."}
-                )
+                ) from exc
+            attrs["source_path"] = source_path
         else:
             if not attrs.get("backup_source_snapshot_id"):
                 raise serializers.ValidationError(

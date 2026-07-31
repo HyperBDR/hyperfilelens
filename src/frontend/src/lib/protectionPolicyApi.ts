@@ -2,9 +2,24 @@ import { getEffectiveOrgKey } from '../composables/useAuth'
 import { api } from './api'
 import { asList, asPagination, unwrapApiPayload } from './parse'
 
+export type BackupPolicyScheduleMode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'advanced'
+
 export type BackupPolicySchedule = {
   enabled: boolean
   cron_expr: string
+  /** Absent on legacy cron-only policies. */
+  mode?: BackupPolicyScheduleMode
+  /** IANA timezone. Legacy policies without one execute in UTC. */
+  timezone?: string
+  /** Local wall-clock activation minute in the selected timezone. */
+  starts_at?: string | null
+  interval_unit?: 'minute' | 'hour' | 'day'
+  interval_value?: number
+  time?: string
+  /** ISO weekdays: Monday=1 through Sunday=7. */
+  weekdays?: number[]
+  month_days?: number[]
+  month_end?: boolean
 }
 
 /** Kopia retention flags: --keep-latest / --keep-hourly / --keep-daily / --keep-weekly / --keep-monthly / --keep-annual */

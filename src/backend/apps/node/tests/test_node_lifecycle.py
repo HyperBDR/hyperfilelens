@@ -173,7 +173,7 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(ctx.exception.code, "node_workload_active")
 
     def test_force_gateway_remove_does_not_bypass_knowledge_source_binding(self):
-        from apps.lens_bridge.models import LensKnowledgeSource
+        from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
 
         gateway = Node.objects.create(
             organization=self.org,
@@ -181,9 +181,16 @@ class NodeLifecycleTests(TestCase):
             role=NodeRole.GATEWAY,
             status=Node.Status.ONLINE,
         )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
         LensKnowledgeSource.objects.create(
             organization=self.org,
             gateway=gateway,
+            gateway_link=gateway_link,
             name="Bound knowledge source",
             source_path="/protected/source",
         )

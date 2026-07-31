@@ -73,8 +73,7 @@ def list_copilot_assistants(
     rows = list_org_assistants(
         org,
         user=user,
-        membership=membership,
-        manage=False,
+        can_manage_all=False,
     )
     ks_by_uuid = _ks_by_assistant_uuid(org)
     ks_by_id = _ks_by_id(org)
@@ -108,7 +107,7 @@ def create_copilot_session(
         org,
         assistant_uuid,
         user=user,
-        manage=False,
+        can_manage_all=False,
     )
     if assistant.get("status") != "active":
         raise ValidationError({"assistant_uuid": "Assistant is not active."})
@@ -145,7 +144,11 @@ def create_copilot_session(
             sl_assistant_uuid=assistant_uuid,
             knowledge_source=ks,
         )
-    if not assistant_access.assistant_visible_to(user=user, link=link, manage=False):
+    if not assistant_access.assistant_visible_to(
+        user=user,
+        link=link,
+        can_manage_all=False,
+    ):
         raise NotFound("Assistant not found.")
 
     model_ref_raw = assistant.get("agent_model_ref")

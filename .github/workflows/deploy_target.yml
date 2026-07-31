@@ -61,6 +61,11 @@ on:
         required: false
         default: false
         type: boolean
+      email_code_login_enabled:
+        description: Allow tenant email verification-code sign-in
+        required: false
+        default: true
+        type: boolean
       google_oauth_enabled:
         description: Allow Google OAuth sign-in when credentials are valid
         required: false
@@ -68,6 +73,11 @@ on:
         type: boolean
       google_client_id:
         description: Optional Google OAuth web client ID
+        required: false
+        default: ''
+        type: string
+      ga_measurement_id:
+        description: Optional GA4 measurement ID for the official SaaS deployment
         required: false
         default: ''
         type: string
@@ -172,9 +182,11 @@ jobs:
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
           EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
+          EMAIL_CODE_LOGIN_ENABLED: ${{ inputs.email_code_login_enabled }}
           GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
+          GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
           TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
@@ -258,6 +270,9 @@ jobs:
           if [[ "$EMAIL_SIGNUP_ENABLED" == "true" && "$smtp_configured" -ne "${#smtp_values[@]}" ]]; then
             echo '::warning title=Email sign-up::Email sign-up is enabled without a complete staged SMTP configuration; deployment will continue.'
           fi
+          if [[ "$EMAIL_CODE_LOGIN_ENABLED" == "true" && "$smtp_configured" -ne "${#smtp_values[@]}" ]]; then
+            echo '::warning title=Email-code sign-in::Email-code sign-in is enabled without a complete staged SMTP configuration; deployment will continue.'
+          fi
 
           if [[ "$GOOGLE_OAUTH_ENABLED" == "true" ]]; then
             if [[ ! "$GOOGLE_CLIENT_ID" =~ ^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]] \
@@ -265,6 +280,9 @@ jobs:
               || [[ "$GOOGLE_CLIENT_SECRET" == *$'\n'* || "$GOOGLE_CLIENT_SECRET" == *$'\r'* ]]; then
               echo '::warning title=Google OAuth configuration::Google OAuth settings are missing or malformed; deployment will preserve the installed Google configuration.'
             fi
+          fi
+          if [[ "$DEPLOY_TARGET" != "prod" && -n "$GA_MEASUREMENT_ID" ]]; then
+            echo '::warning title=Google Analytics configuration::Analytics is only supported for the production SaaS target; the supplied value will be ignored.'
           fi
           if [[ "$TURNSTILE_ENABLED" == "true" ]] \
             && { [[ -z "$TURNSTILE_SITE_KEY" ]] || [[ -z "$TURNSTILE_SECRET_KEY" ]]; }; then
@@ -305,6 +323,7 @@ jobs:
 
       - name: Stage Runtime Configuration
         env:
+          DEPLOY_TARGET: ${{ inputs.target }}
           HFL_INSECURE_TLS: ${{ inputs.hfl_insecure_tls }}
           HFL_PLATFORM_GATEWAY_AUTO_DEPLOY: ${{ inputs.platform_gateway_auto_deploy }}
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
@@ -317,7 +336,9 @@ jobs:
           SMTP_SECURITY: ${{ inputs.smtp_security }}
           EMAIL_FROM: ${{ inputs.email_from }}
           HFL_EMAIL_SIGNUP_ENABLED: ${{ inputs.email_signup_enabled }}
+          HFL_EMAIL_CODE_LOGIN_ENABLED: ${{ inputs.email_code_login_enabled }}
           HFL_GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
+          HFL_GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
         shell: bash
@@ -329,11 +350,15 @@ jobs:
           python3 - "$runtime_env" <<'PY'
           import os
           import pathlib
+          import re
           import sys
 
+          ga4_measurement_id_pattern = re.compile(r"^G-[A-Z0-9]+$")
           names = (
               "HFL_EMAIL_SIGNUP_ENABLED",
+              "HFL_EMAIL_CODE_LOGIN_ENABLED",
               "HFL_GOOGLE_OAUTH_ENABLED",
+              "HFL_GA_MEASUREMENT_ID",
               "HFL_INSECURE_TLS",
               "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
               "TURNSTILE_ENABLED",
@@ -351,6 +376,25 @@ jobs:
           lines = []
           for name in names:
               value = os.environ.get(name, "")
+              if name == "HFL_GA_MEASUREMENT_ID":
+                  if os.environ.get("DEPLOY_TARGET") != "prod":
+                      value = ""
+                  else:
+                      candidate = value.strip(" \t")
+                      if value and (
+                          "\r" in value
+                          or "\n" in value
+                          or "\x00" in value
+                          or not ga4_measurement_id_pattern.fullmatch(candidate)
+                      ):
+                          print(
+                              "::warning title=Google Analytics configuration::"
+                              "Invalid GA4 measurement ID; analytics will be disabled "
+                              "and deployment will continue."
+                          )
+                          value = ""
+                      else:
+                          value = candidate
               if "\r" in value or "\n" in value or "\x00" in value:
                   print(
                       f"::warning title=Optional deployment configuration::{name} "

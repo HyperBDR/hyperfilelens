@@ -83,7 +83,13 @@ def complete_user_registration(user: User, password: str, code: str) -> tuple[bo
     if user.is_active:
         return False, "ALREADY_ACTIVE", None
 
-    is_valid, error_reason = verify_email_verification_code(user, code)
+    from apps.iam.email_verification_models import EmailVerificationCode
+
+    is_valid, error_reason = verify_email_verification_code(
+        user,
+        code,
+        purpose=EmailVerificationCode.Purpose.REGISTRATION,
+    )
     if not is_valid:
         return False, error_reason, None
 
@@ -155,12 +161,22 @@ def generate_registration_verification_code(user: User) -> tuple[str, str | None
     from apps.iam.email_verification_models import EmailVerificationCode
 
     plain_code = EmailVerificationCode.generate_code()
-    code_hash = EmailVerificationCode.hash_code(plain_code)
+    purpose = EmailVerificationCode.Purpose.REGISTRATION
+    code_hash = EmailVerificationCode.hash_code(
+        plain_code,
+        user_id=user.id,
+        purpose=purpose,
+    )
 
-    EmailVerificationCode.objects.filter(user=user, is_used=False).update(is_used=True)
+    EmailVerificationCode.objects.filter(
+        user=user,
+        purpose=purpose,
+        is_used=False,
+    ).update(is_used=True, used_at=timezone.now())
 
     email_code = EmailVerificationCode.objects.create(
         user=user,
+        purpose=purpose,
         code_hash=code_hash,
         expires_at=timezone.now()
         + timedelta(minutes=get_registration_verification_code_minutes()),
@@ -205,12 +221,22 @@ def generate_password_reset_code(user: User) -> tuple[str, str | None]:
     from apps.iam.email_verification_models import EmailVerificationCode
 
     plain_code = EmailVerificationCode.generate_code()
-    code_hash = EmailVerificationCode.hash_code(plain_code)
+    purpose = EmailVerificationCode.Purpose.PASSWORD_RESET
+    code_hash = EmailVerificationCode.hash_code(
+        plain_code,
+        user_id=user.id,
+        purpose=purpose,
+    )
 
-    EmailVerificationCode.objects.filter(user=user, is_used=False).update(is_used=True)
+    EmailVerificationCode.objects.filter(
+        user=user,
+        purpose=purpose,
+        is_used=False,
+    ).update(is_used=True, used_at=timezone.now())
 
     email_code = EmailVerificationCode.objects.create(
         user=user,
+        purpose=purpose,
         code_hash=code_hash,
         expires_at=timezone.now()
         + timedelta(minutes=get_password_reset_verification_code_minutes()),

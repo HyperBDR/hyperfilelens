@@ -4,12 +4,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
+from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+from apps.lens_bridge.services import platform_lens
+from apps.lens_bridge.services.gateway_execution import create_workspace_binding
 from apps.node.models import Node, NodeTask
 from apps.protection.models import (
     BackupConfig,
@@ -138,6 +142,187 @@ class RestoreApiTests(TestCase):
                 }
             ],
         }
+
+    def _workspace_binding(self, gateway_link: LensGatewayLink):
+        knowledge_source = LensKnowledgeSource.objects.create(
+            organization=self.org,
+            name="Restore test KS",
+            gateway=gateway_link.gateway,
+            gateway_link=gateway_link,
+            backup_source_snapshot_id=self.snapshot.id,
+            backup_snapshot_directory_id=self.snapshot_dir.id,
+            source_path="/data",
+            created_by=self.user,
+        )
+        binding = create_workspace_binding(
+            tenant_organization=self.org,
+            knowledge_source=knowledge_source,
+        )
+        binding.state = binding.State.READY
+        binding.identity_status = binding.IdentityStatus.READY
+        binding.save(update_fields=["state", "identity_status", "updated_at"])
+        return binding
+
+    @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
+    def test_lens_workspace_restore_uses_platform_execution_identity(self, _ready):
+        platform_org = platform_lens.get_or_create_platform_org()
+        platform_gateway = Node.objects.create(
+            organization=platform_org,
+            name="platform-restore-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=platform_org,
+            gateway=platform_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": platform_gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": "lens-workspace:test:1",
+            }
+        )
+
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+
+        self.assertEqual(record.organization_id, self.org.id)
+        self.assertEqual(record.purpose, RestoreRecord.Purpose.LENS_WORKSPACE)
+        self.assertEqual(record.target_execution_organization_id, platform_org.id)
+        self.assertEqual(record.target_execution_node_id, platform_gateway.id)
+        product_task = Task.objects.get(pk=record.task_id)
+        self.assertEqual(product_task.organization_id, self.org.id)
+        node_task = NodeTask.objects.get(
+            kind="restore.run",
+            correlation_id=str(record.task_uuid),
+        )
+        self.assertEqual(node_task.organization_id, platform_org.id)
+        self.assertEqual(node_task.requesting_organization_id, self.org.id)
+        retried = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+        self.assertEqual(retried.id, record.id)
+        self.assertEqual(
+            RestoreRecord.objects.filter(
+                purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+                idempotency_key="lens-workspace:test:1",
+            ).count(),
+            1,
+        )
+        node_task.status = NodeTask.Status.SUCCESS
+        node_task.result = {"restored": True}
+        node_task.save(update_fields=["status", "result", "updated_at"])
+        item = record.items.get()
+        item.refresh_from_db()
+        self.assertEqual(item.status, RestoreRecordItem.Status.SUCCESS)
+        product_task.refresh_from_db()
+        self.assertEqual(product_task.status, Task.Status.SUCCESS)
+
+    def test_public_restore_cannot_target_platform_gateway(self):
+        platform_org = platform_lens.get_or_create_platform_org()
+        platform_gateway = Node.objects.create(
+            organization=platform_org,
+            name="forbidden-platform-target",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ONLINE,
+        )
+        payload = self._manual_restore_payload()
+        payload["target_ref_id"] = platform_gateway.id
+
+        response = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(RestoreRecord.objects.exists())
+
+    @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
+    def test_lens_workspace_restore_rejects_nonbinding_target_path(self, _ready):
+        platform_org = platform_lens.get_or_create_platform_org()
+        platform_gateway = Node.objects.create(
+            organization=platform_org,
+            name="platform-path-boundary-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=platform_org,
+            gateway=platform_gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": platform_gateway.id,
+                "target_path": "/workspace/platform/another-tenant",
+                "idempotency_key": "lens-workspace:path-boundary",
+            }
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Lens workspace target path is not authoritative",
+        ):
+            restore_service.create_lens_workspace_restore_record(
+                organization_id=self.org.id,
+                workspace_binding_id=workspace_binding.id,
+                data=payload,
+            )
+
+        self.assertFalse(RestoreRecord.objects.exists())
+
+    @patch("apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway")
+    def test_lens_workspace_restore_on_private_gateway_remains_in_tenant(self, _ready):
+        private_gateway = Node.objects.create(
+            organization=self.org,
+            name="private-lens-gateway",
+            role=Node.Role.GATEWAY,
+            status=Node.Status.ONLINE,
+        )
+        gateway_link = LensGatewayLink.objects.create(
+            organization=self.org,
+            gateway=private_gateway,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+        )
+        workspace_binding = self._workspace_binding(gateway_link)
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_ref_id": private_gateway.id,
+                "target_path": workspace_binding.resolved_path(),
+                "idempotency_key": "lens-workspace:private:1",
+            }
+        )
+
+        record = restore_service.create_lens_workspace_restore_record(
+            organization_id=self.org.id,
+            workspace_binding_id=workspace_binding.id,
+            data=payload,
+        )
+
+        self.assertEqual(record.target_execution_organization_id, self.org.id)
+        node_task = NodeTask.objects.get(
+            kind="restore.run",
+            correlation_id=str(record.task_uuid),
+        )
+        self.assertEqual(node_task.organization_id, self.org.id)
+        self.assertEqual(node_task.requesting_organization_id, self.org.id)
 
     def _active_restore_task(self, *, source_ref_id: int | None = None, status_value: str = Task.Status.RUNNING) -> Task:
         task = Task.objects.create(
@@ -1737,6 +1922,9 @@ class RestoreApiTests(TestCase):
         task.save(update_fields=["status", "updated_at"])
         record = RestoreRecord.objects.create(
             organization_id=self.org.id,
+            requesting_organization_id=self.org.id,
+            target_execution_organization_id=self.org.id,
+            target_execution_node_id=self.target.id,
             restore_uid="rst-cancel-test",
             source_mode=RestoreRecord.SourceMode.PLAN,
             plan_id=None,

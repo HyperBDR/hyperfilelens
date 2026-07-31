@@ -182,6 +182,7 @@ services:
     environment:
       TZ: UTC
       HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}
+      HFL_GA_MEASUREMENT_ID: ${HFL_GA_MEASUREMENT_ID:-}
       LOGROTATE_INTERVAL_SECONDS: "3600"
       LOGROTATE_STATE: /var/log/hyperfilelens/.logrotate.status
       LOGROTATE_LOCK: /var/log/hyperfilelens/.logrotate.lock

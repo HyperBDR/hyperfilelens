@@ -24,6 +24,7 @@ HFL_ADMIN_PUBLIC_URL=
 HFL_INSECURE_TLS=1
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false
 HFL_GOOGLE_OAUTH_ENABLED=false
+HFL_GA_MEASUREMENT_ID=G-OLD123
 GOOGLE_CLIENT_ID=123-old.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=old-google-secret
 TURNSTILE_ENABLED=true
@@ -32,7 +33,9 @@ TURNSTILE_SECRET_KEY=old-secret
 ENV
 cat >"${runtime_file}" <<'ENV'
 HFL_EMAIL_SIGNUP_ENABLED=true
+HFL_EMAIL_CODE_LOGIN_ENABLED=true
 HFL_GOOGLE_OAUTH_ENABLED=true
+HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF
 HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true
@@ -70,7 +73,9 @@ grep -Fx 'TURNSTILE_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${env_file}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${env_file}" >/dev/null
 grep -Fx 'HFL_EMAIL_SIGNUP_ENABLED=true' "${env_file}" >/dev/null
+grep -Fx 'HFL_EMAIL_CODE_LOGIN_ENABLED=true' "${env_file}" >/dev/null
 grep -Fx 'HFL_GOOGLE_OAUTH_ENABLED=true' "${env_file}" >/dev/null
+grep -Fx 'HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${env_file}" >/dev/null
 grep -Fx 'GOOGLE_CLIENT_ID=123-new.apps.googleusercontent.com' "${env_file}" >/dev/null
 grep -Fx 'GOOGLE_CLIENT_SECRET="new-google-secret"' "${env_file}" >/dev/null
 grep -Fx 'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend' "${env_file}" >/dev/null
@@ -100,6 +105,7 @@ HFL_EMAIL_SIGNUP_ENABLED=false
 HFL_INSECURE_TLS=0
 TURNSTILE_ENABLED=true
 HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=invalid
+HFL_GA_MEASUREMENT_ID=invalid
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=invalid secret
 ENV
@@ -114,6 +120,25 @@ grep -Fx 'HFL_ADMIN_PUBLIC_URL=https://admin.hyperfilelens.com' "${invalid_env}"
 grep -Fx 'TURNSTILE_SITE_KEY=new-site' "${invalid_env}" >/dev/null
 grep -Fx 'TURNSTILE_SECRET_KEY=new-secret' "${invalid_env}" >/dev/null
 grep -Fx 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${invalid_env}" >/dev/null
+if grep -F 'HFL_GA_MEASUREMENT_ID=' "${invalid_env}" >/dev/null; then
+	printf 'ERROR: invalid analytics configuration must remove the installed ID\n' >&2
+	exit 1
+fi
+
+disabled_analytics_env="${tmp}/disabled-analytics.env"
+disabled_analytics_runtime="${tmp}/disabled-analytics-runtime.env"
+cp "${env_file}" "${disabled_analytics_env}"
+cat >"${disabled_analytics_runtime}" <<'ENV'
+HFL_EMAIL_SIGNUP_ENABLED=false
+HFL_INSECURE_TLS=1
+HFL_GA_MEASUREMENT_ID=
+ENV
+python3 "${helper}" --env-file "${disabled_analytics_env}" \
+	--runtime-env-file "${disabled_analytics_runtime}" >/dev/null
+if grep -F 'HFL_GA_MEASUREMENT_ID=' "${disabled_analytics_env}" >/dev/null; then
+	printf 'ERROR: disabled analytics must remove the installed ID\n' >&2
+	exit 1
+fi
 
 preserved_env="${tmp}/preserved.env"
 empty_smtp_runtime="${tmp}/empty-smtp-runtime.env"
@@ -137,6 +162,7 @@ python3 "${helper}" \
 	--runtime-env-file "${empty_smtp_runtime}" >/dev/null
 grep -Fx 'EMAIL_HOST=smtp.example.com' "${preserved_env}" >/dev/null
 grep -F 'EMAIL_HOST_PASSWORD="pa$$$$ word' "${preserved_env}" >/dev/null
+grep -Fx 'HFL_GA_MEASUREMENT_ID=G-0RX9GZJCWF' "${preserved_env}" >/dev/null
 
 partial_env="${tmp}/partial.env"
 partial_runtime="${tmp}/partial-runtime.env"

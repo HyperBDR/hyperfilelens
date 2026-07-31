@@ -33,10 +33,9 @@ def assistant_visible_to(
     *,
     user: AbstractBaseUser,
     link: LensAssistantLink,
-    manage: bool = False,
-    membership: Membership | None = None,
+    can_manage_all: bool = False,
 ) -> bool:
-    if manage and can_manage_all_assistants(membership):
+    if can_manage_all:
         return True
     if link.visibility_scope == LensAssistantLink.VisibilityScope.ORGANIZATION:
         return True
@@ -72,6 +71,7 @@ def ensure_assistant_link(
     visibility_scope: str | None = None,
     owner_user: AbstractBaseUser | None = None,
     created_by: AbstractBaseUser | None = None,
+    lifecycle_owner: str = LensAssistantLink.LifecycleOwner.MANUAL,
 ) -> LensAssistantLink:
     scope = visibility_scope or LensAssistantLink.VisibilityScope.ORGANIZATION
     ks = knowledge_source
@@ -87,6 +87,7 @@ def ensure_assistant_link(
         "visibility_scope": scope,
         "knowledge_source": ks,
         "created_by": created_by or (ks.created_by if ks else None),
+        "lifecycle_owner": lifecycle_owner,
     }
     if scope == LensAssistantLink.VisibilityScope.USER:
         defaults["owner_user"] = owner_user or created_by or (ks.created_by if ks else None)
@@ -105,6 +106,10 @@ def ensure_assistant_link(
             existing.deleted_at = None
             existing.save()
             return existing
+        if existing.lifecycle_owner != lifecycle_owner:
+            raise ValueError(
+                "Assistant lifecycle ownership conflicts with its existing link."
+            )
         return existing
 
     return LensAssistantLink.objects.create(

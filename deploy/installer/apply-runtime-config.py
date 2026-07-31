@@ -7,13 +7,15 @@ import pathlib
 import re
 import stat
 import tempfile
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
 RUNTIME_KEYS = {
     "HFL_EMAIL_SIGNUP_ENABLED",
+    "HFL_EMAIL_CODE_LOGIN_ENABLED",
     "HFL_GOOGLE_OAUTH_ENABLED",
+    "HFL_GA_MEASUREMENT_ID",
     "HFL_INSECURE_TLS",
     "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
     "TURNSTILE_ENABLED",
@@ -32,6 +34,7 @@ KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 GOOGLE_CLIENT_ID_PATTERN = re.compile(
     r"^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$"
 )
+GA4_MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]+$")
 
 
 def warn(message: str) -> None:
@@ -191,6 +194,19 @@ def google_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def analytics_runtime_update(values: Dict[str, str]) -> Tuple[bool, str]:
+    """Return whether SaaS analytics was staged and its validated ID."""
+    if "HFL_GA_MEASUREMENT_ID" not in values:
+        return False, ""
+    measurement_id = values.get("HFL_GA_MEASUREMENT_ID", "").strip()
+    if not measurement_id:
+        return True, ""
+    if not GA4_MEASUREMENT_ID_PATTERN.fullmatch(measurement_id):
+        warn("invalid GA4 measurement ID; analytics is disabled")
+        return True, ""
+    return True, measurement_id
+
+
 def turnstile_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     """Apply Turnstile atomically without replacing usable installed credentials."""
     enabled = values.get("TURNSTILE_ENABLED", "").strip().lower()
@@ -264,6 +280,7 @@ def apply_configuration(
             current[key] = value
 
     updates: Dict[str, str] = {}
+    removals: Set[str] = set()
     runtime_values = read_runtime_values(runtime_path)
     if runtime_path is not None:
         signup_enabled = runtime_values.get("HFL_EMAIL_SIGNUP_ENABLED", "").lower()
@@ -271,12 +288,27 @@ def apply_configuration(
             updates["HFL_EMAIL_SIGNUP_ENABLED"] = signup_enabled
         else:
             warn("invalid email sign-up value; preserving installed sign-up setting")
+        email_code_login_enabled = runtime_values.get(
+            "HFL_EMAIL_CODE_LOGIN_ENABLED", ""
+        ).lower()
+        if email_code_login_enabled in {"true", "false"}:
+            updates["HFL_EMAIL_CODE_LOGIN_ENABLED"] = email_code_login_enabled
+        else:
+            warn(
+                "invalid email-code login value; preserving installed email-code login setting"
+            )
         insecure_tls = runtime_values.get("HFL_INSECURE_TLS", "")
         if insecure_tls not in {"0", "1"}:
             raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")
         updates["HFL_INSECURE_TLS"] = insecure_tls
         updates.update(smtp_runtime_updates(runtime_values))
         updates.update(google_runtime_updates(runtime_values))
+        analytics_staged, measurement_id = analytics_runtime_update(runtime_values)
+        if analytics_staged:
+            if measurement_id:
+                updates["HFL_GA_MEASUREMENT_ID"] = measurement_id
+            else:
+                removals.add("HFL_GA_MEASUREMENT_ID")
 
         gateway_enabled = runtime_values.get(
             "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY", ""
@@ -360,6 +392,8 @@ def apply_configuration(
     seen = set()
     for line in lines:
         key = line.split("=", 1)[0] if "=" in line else ""
+        if key in removals:
+            continue
         if key in updates:
             value = updates[key]
             if key in {"EMAIL_HOST_PASSWORD", "GOOGLE_CLIENT_SECRET"}:

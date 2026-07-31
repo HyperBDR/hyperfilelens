@@ -24,12 +24,14 @@ const platformOpsManaged = computed(() => meta.value?.platform_ops_source === 'd
 const disablesPlatformOps = computed(() => Boolean(meta.value?.platform_ops_enabled && !form.platform_ops_enabled))
 const form = reactive({
   email_signup_enabled: false,
+  email_code_login_enabled: false,
   platform_ops_enabled: true,
   platform_ops_allowed_cidrs: '',
   registration_verification_code_minutes: 10,
   registration_token_expiry_hours: 24,
   password_reset_verification_code_minutes: 10,
   password_reset_timeout_seconds: 3600,
+  login_verification_code_minutes: 10,
 })
 
 async function load() {
@@ -38,12 +40,14 @@ async function load() {
     const data = await fetchPlatformIdentitySettings()
     meta.value = data
     form.email_signup_enabled = data.email_signup_enabled
+    form.email_code_login_enabled = data.email_code_login_enabled
     form.platform_ops_enabled = data.platform_ops_enabled
     form.platform_ops_allowed_cidrs = (data.platform_ops_allowed_cidrs || []).join(', ')
     form.registration_verification_code_minutes = data.iam.registration_verification_code_minutes
     form.registration_token_expiry_hours = data.iam.registration_token_expiry_hours
     form.password_reset_verification_code_minutes = data.iam.password_reset_verification_code_minutes
     form.password_reset_timeout_seconds = data.iam.password_reset_timeout_seconds
+    form.login_verification_code_minutes = data.iam.login_verification_code_minutes
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('platformOps.settings.loadFailed')), grouping: true })
   } finally {
@@ -56,6 +60,7 @@ async function performSave(confirmDisable = false) {
   try {
     const body: Record<string, unknown> = {
       email_signup_enabled: form.email_signup_enabled,
+      email_code_login_enabled: form.email_code_login_enabled,
       platform_ops_enabled: form.platform_ops_enabled,
       platform_ops_allowed_cidrs: form.platform_ops_allowed_cidrs,
       iam: {
@@ -63,6 +68,7 @@ async function performSave(confirmDisable = false) {
         registration_token_expiry_hours: form.registration_token_expiry_hours,
         password_reset_verification_code_minutes: form.password_reset_verification_code_minutes,
         password_reset_timeout_seconds: form.password_reset_timeout_seconds,
+        login_verification_code_minutes: form.login_verification_code_minutes,
       },
     }
     if (confirmDisable) body.confirm_disable = 'DISABLE'
@@ -98,6 +104,10 @@ onMounted(load)
         <el-form-item :label="t('platformOps.settings.identity.emailSignup')">
           <el-switch v-model="form.email_signup_enabled" />
         </el-form-item>
+        <el-form-item :label="t('platformOps.settings.identity.emailCodeLogin')">
+          <el-switch v-model="form.email_code_login_enabled" />
+          <p class="platform-settings__hint">{{ t('platformOps.settings.identity.emailCodeLoginHint') }}</p>
+        </el-form-item>
         <el-form-item :label="t('platformOps.settings.identity.platformOps')">
           <el-switch v-model="form.platform_ops_enabled" :disabled="platformOpsManaged" />
           <p v-if="platformOpsManaged" class="platform-settings__hint">Admin Console availability is managed by deployment configuration and is read-only here.</p>
@@ -123,6 +133,9 @@ onMounted(load)
         </el-form-item>
         <el-form-item :label="t('platformOps.settings.identity.resetTimeoutSeconds')">
           <el-input-number v-model="form.password_reset_timeout_seconds" :min="60" :max="86400" />
+        </el-form-item>
+        <el-form-item :label="t('platformOps.settings.identity.loginCodeMinutes')">
+          <el-input-number v-model="form.login_verification_code_minutes" :min="1" :max="30" />
         </el-form-item>
       </el-form>
 

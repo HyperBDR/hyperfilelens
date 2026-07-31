@@ -16,6 +16,7 @@ from apps.configuration.services.internal.registry import registry_by_key
 from apps.configuration.services.internal.validation import validate_config_key
 from apps.iam import conf as iam_conf
 from apps.iam.config import (
+    get_login_verification_code_minutes,
     get_password_reset_timeout_seconds,
     get_password_reset_verification_code_minutes,
     get_registration_token_expiry_hours,
@@ -38,6 +39,7 @@ from apps.platform_ops.services.internal.runtime_settings import (
     KEY_EMAIL_USE_SSL,
     KEY_EMAIL_USE_TLS,
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_EMAIL_CODE_LOGIN,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
     KEY_IDENTITY_OPS_CIDRS,
@@ -52,6 +54,7 @@ from apps.platform_ops.services.internal.runtime_settings import (
     SECRET_KEY_OPENAI,
     SECRET_KEY_TURNSTILE,
     email_delivery_configured,
+    email_code_login_enabled,
     email_signup_enabled,
     email_connection_kwargs,
     email_settings_managed_by_deployment,
@@ -243,6 +246,7 @@ class PlatformOpsSettingsIdentityView(APIView):
         return Response(
             {
                 "email_signup_enabled": email_signup_enabled(),
+                "email_code_login_enabled": email_code_login_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
                 "platform_ops_source": get_source(KEY_IDENTITY_PLATFORM_OPS),
@@ -265,6 +269,7 @@ class PlatformOpsSettingsIdentityView(APIView):
                     "registration_verification_code_minutes": get_registration_verification_code_minutes(),
                     "registration_token_expiry_hours": get_registration_token_expiry_hours(),
                     "password_reset_verification_code_minutes": get_password_reset_verification_code_minutes(),
+                    "login_verification_code_minutes": get_login_verification_code_minutes(),
                     "password_reset_timeout_seconds": get_password_reset_timeout_seconds(),
                 },
             }
@@ -292,6 +297,7 @@ class PlatformOpsSettingsIdentityView(APIView):
                     )
         bool_map = {
             "email_signup_enabled": KEY_IDENTITY_EMAIL_SIGNUP,
+            "email_code_login_enabled": KEY_IDENTITY_EMAIL_CODE_LOGIN,
             "google_oauth_enabled": KEY_IDENTITY_GOOGLE_OAUTH,
             "platform_ops_enabled": KEY_IDENTITY_PLATFORM_OPS,
         }
@@ -336,6 +342,11 @@ class PlatformOpsSettingsIdentityView(APIView):
                 iam_conf.CONFIG_KEY_PASSWORD_RESET_CODE_MINUTES,
                 GlobalConfig.ValueType.NUMBER,
                 iam_conf.DEFAULT_PASSWORD_RESET_VERIFICATION_CODE_MINUTES,
+            ),
+            "login_verification_code_minutes": (
+                iam_conf.CONFIG_KEY_LOGIN_CODE_MINUTES,
+                GlobalConfig.ValueType.NUMBER,
+                iam_conf.DEFAULT_LOGIN_VERIFICATION_CODE_MINUTES,
             ),
             "password_reset_timeout_seconds": (
                 iam_conf.CONFIG_KEY_PASSWORD_RESET_TIMEOUT,
@@ -542,6 +553,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 "effective": {
                     "tenant_public_url": tenant_public_url(),
                     "email_signup_enabled": email_signup_enabled(),
+                    "email_code_login_enabled": email_code_login_enabled(),
                     "password_reset_available": email_delivery_configured(),
                     "platform_ops_enabled": platform_ops_enabled(),
                     "turnstile_enabled": turnstile_enabled(),
@@ -552,6 +564,9 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 },
                 "sources": {
                     "email_signup_enabled": get_source(KEY_IDENTITY_EMAIL_SIGNUP),
+                    "email_code_login_enabled": get_source(
+                        KEY_IDENTITY_EMAIL_CODE_LOGIN
+                    ),
                     "google_oauth_enabled": get_source(KEY_IDENTITY_GOOGLE_OAUTH),
                     "turnstile_enabled": "env",
                     "email_host": cfg["source"],

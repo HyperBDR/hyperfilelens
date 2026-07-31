@@ -6,12 +6,14 @@ import { BookOpen, Plus, TriangleAlert, Trash2 } from 'lucide-vue-next'
 import {
   compileFilterIgnorePatterns,
   createEmptyFilterCustomRule,
+  getScheduleTimezoneOptions,
   getSimpleIntervalUnitMeta,
   getSimpleIntervalUnitOptions,
   syncFilterFormIgnorePatterns,
   validateCronExpression,
   validateLongVsShortRetention,
   validateMidRetention,
+  validateScheduleForm,
   type BackupPolicyForm,
   type FileFilterRuleForm,
   type MessageLocale,
@@ -38,6 +40,23 @@ const { t } = useI18n()
 const router = useRouter()
 const messageLocale = computed<MessageLocale>(() => 'en')
 const simpleIntervalOptions = computed(() => getSimpleIntervalUnitOptions(messageLocale.value))
+const scheduleTimezoneOptions = computed(() => getScheduleTimezoneOptions())
+const quickScheduleTypeOptions = computed(() => [
+  { value: 'interval' as const, label: t('protection.policiesPage.scheduleTypeInterval') },
+  { value: 'daily' as const, label: t('protection.policiesPage.scheduleTypeDaily') },
+  { value: 'weekly' as const, label: t('protection.policiesPage.scheduleTypeWeekly') },
+  { value: 'monthly' as const, label: t('protection.policiesPage.scheduleTypeMonthly') },
+])
+const scheduleWeekdayOptions = computed(() => [
+  { value: 1 as const, label: t('protection.policiesPage.weekdayMon') },
+  { value: 2 as const, label: t('protection.policiesPage.weekdayTue') },
+  { value: 3 as const, label: t('protection.policiesPage.weekdayWed') },
+  { value: 4 as const, label: t('protection.policiesPage.weekdayThu') },
+  { value: 5 as const, label: t('protection.policiesPage.weekdayFri') },
+  { value: 6 as const, label: t('protection.policiesPage.weekdaySat') },
+  { value: 7 as const, label: t('protection.policiesPage.weekdaySun') },
+])
+const scheduleMonthDayOptions = Array.from({ length: 31 }, (_, index) => index + 1)
 const currentIntervalUnitMeta = computed(() =>
   getSimpleIntervalUnitMeta(policyForm.value.simpleIntervalUnit, messageLocale.value),
 )
@@ -48,6 +67,7 @@ const cronErrorText = computed(() => {
     ? t('protection.policiesPage.cronErrEmpty')
     : t('protection.policiesPage.cronErrFormat')
 })
+const scheduleErrorText = computed(() => validateScheduleForm(policyForm.value))
 const midRetentionError = computed(() => validateMidRetention(policyForm.value, messageLocale.value))
 const longVsShortRetentionError = computed(() => validateLongVsShortRetention(policyForm.value, messageLocale.value))
 
@@ -250,6 +270,13 @@ function onSimpleIntervalUnitChange() {
   }
 }
 
+function toggleScheduleMonthDay(day: number) {
+  const days = new Set(policyForm.value.scheduleMonthDays)
+  if (days.has(day)) days.delete(day)
+  else days.add(day)
+  policyForm.value.scheduleMonthDays = [...days].sort((a, b) => a - b)
+}
+
 </script>
 
 <template>
@@ -300,30 +327,122 @@ function onSimpleIntervalUnitChange() {
           <el-radio value="simple">{{ t('protection.policiesPage.freqSimple') }}</el-radio>
           <el-radio value="advanced">{{ t('protection.policiesPage.freqAdvanced') }}</el-radio>
         </el-radio-group>
-        <div v-if="policyForm.freqMode === 'simple'" class="flex flex-wrap items-end gap-3">
-          <ElFormItem :label="t('protection.policiesPage.labelInterval')" class="!mb-0">
+        <div class="schedule-context-grid">
+          <ElFormItem :label="t('protection.policiesPage.scheduleTimezone')" class="!mb-0">
             <el-select
-              v-model="policyForm.simpleIntervalUnit"
-              style="width: 200px"
-              @change="onSimpleIntervalUnitChange"
+              v-model="policyForm.scheduleTimezone"
+              filterable
+              class="schedule-context-control"
+              :placeholder="t('protection.policiesPage.scheduleTimezonePlaceholder')"
             >
               <el-option
-                v-for="opt in simpleIntervalOptions"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
+                v-for="timezoneName in scheduleTimezoneOptions"
+                :key="timezoneName"
+                :label="timezoneName"
+                :value="timezoneName"
               />
             </el-select>
           </ElFormItem>
-          <ElFormItem :label="currentIntervalUnitMeta.valueLabel + t('protection.policiesPage.labelColon')" class="!mb-0">
-            <ElInputNumber
-              v-model="policyForm.simpleIntervalValue"
-              :min="currentIntervalUnitMeta.min"
-              :max="currentIntervalUnitMeta.max"
-              :step="1"
-              step-strictly
+          <ElFormItem :label="t('protection.policiesPage.scheduleStartsAt')" class="!mb-0">
+            <ElDatePicker
+              v-model="policyForm.scheduleStartsAt"
+              type="datetime"
+              class="schedule-context-control"
+              format="YYYY-MM-DD HH:mm"
+              value-format="YYYY-MM-DDTHH:mm"
+              :placeholder="t('protection.policiesPage.scheduleStartsAtPlaceholder')"
             />
           </ElFormItem>
+        </div>
+        <p class="schedule-context-hint">{{ t('protection.policiesPage.scheduleTimezoneHint') }}</p>
+
+        <div v-if="policyForm.freqMode === 'simple'" class="quick-schedule-stack">
+          <ElFormItem :label="t('protection.policiesPage.scheduleCycle')" class="!mb-0">
+            <el-select v-model="policyForm.quickScheduleType" class="schedule-cycle-control">
+              <el-option
+                v-for="option in quickScheduleTypeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </ElFormItem>
+
+          <div v-if="policyForm.quickScheduleType === 'interval'" class="schedule-inline-controls">
+            <ElFormItem :label="t('protection.policiesPage.labelInterval')" class="!mb-0">
+              <el-select
+                v-model="policyForm.simpleIntervalUnit"
+                class="schedule-interval-unit"
+                @change="onSimpleIntervalUnitChange"
+              >
+                <el-option
+                  v-for="opt in simpleIntervalOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+            </ElFormItem>
+            <ElFormItem :label="currentIntervalUnitMeta.valueLabel + t('protection.policiesPage.labelColon')" class="!mb-0">
+              <ElInputNumber
+                v-model="policyForm.simpleIntervalValue"
+                :min="currentIntervalUnitMeta.min"
+                :max="currentIntervalUnitMeta.max"
+                :step="1"
+                step-strictly
+              />
+            </ElFormItem>
+          </div>
+
+          <template v-else>
+            <div v-if="policyForm.quickScheduleType === 'weekly'" class="schedule-picker-block">
+              <span class="schedule-picker-label">{{ t('protection.policiesPage.scheduleWeekdays') }}</span>
+              <ElCheckboxGroup v-model="policyForm.scheduleWeekdays" class="schedule-weekday-grid">
+                <ElCheckbox
+                  v-for="option in scheduleWeekdayOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </ElCheckbox>
+              </ElCheckboxGroup>
+            </div>
+
+            <div v-if="policyForm.quickScheduleType === 'monthly'" class="schedule-picker-block">
+              <span class="schedule-picker-label">{{ t('protection.policiesPage.scheduleMonthDays') }}</span>
+              <div class="schedule-month-day-grid">
+                <button
+                  v-for="day in scheduleMonthDayOptions"
+                  :key="day"
+                  type="button"
+                  class="schedule-month-day"
+                  :class="{ 'schedule-month-day--selected': policyForm.scheduleMonthDays.includes(day) }"
+                  :aria-pressed="policyForm.scheduleMonthDays.includes(day)"
+                  @click="toggleScheduleMonthDay(day)"
+                >
+                  {{ day }}
+                </button>
+                <button
+                  type="button"
+                  class="schedule-month-day schedule-month-day--end"
+                  :class="{ 'schedule-month-day--selected': policyForm.scheduleMonthEnd }"
+                  :aria-pressed="policyForm.scheduleMonthEnd"
+                  @click="policyForm.scheduleMonthEnd = !policyForm.scheduleMonthEnd"
+                >
+                  {{ t('protection.policiesPage.scheduleMonthEnd') }}
+                </button>
+              </div>
+            </div>
+
+            <ElFormItem :label="t('protection.policiesPage.scheduleTime')" class="schedule-time-field !mb-0">
+              <ElInput
+                v-model="policyForm.scheduleTime"
+                type="time"
+                class="schedule-time-control"
+              />
+            </ElFormItem>
+          </template>
+          <p v-if="scheduleErrorText" class="schedule-field-error">{{ scheduleErrorText }}</p>
         </div>
         <div v-else class="space-y-3">
           <div class="cron-row">
@@ -797,6 +916,114 @@ function onSimpleIntervalUnitChange() {
   border-color: rgba(226, 232, 240, 0.95);
 }
 
+.schedule-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.schedule-context-control,
+.schedule-cycle-control {
+  width: 100%;
+}
+
+.schedule-context-hint {
+  margin: 0 0 14px;
+  color: rgb(100 116 139);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.quick-schedule-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.schedule-cycle-control {
+  max-width: 240px;
+}
+
+.schedule-inline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.schedule-interval-unit {
+  width: 200px;
+}
+
+.schedule-picker-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule-picker-label {
+  color: rgb(51 65 85);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.schedule-weekday-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.schedule-weekday-grid :deep(.el-checkbox) {
+  margin-right: 0;
+}
+
+.schedule-month-day-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(36px, 1fr));
+  gap: 6px;
+}
+
+.schedule-month-day {
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.96);
+  color: rgb(51 65 85);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.schedule-month-day:hover {
+  border-color: var(--color-primary, var(--el-color-primary, #409eff));
+}
+
+.schedule-month-day--selected {
+  border-color: var(--color-primary, var(--el-color-primary, #409eff));
+  background: var(--color-primary, var(--el-color-primary, #409eff));
+  color: #fff;
+}
+
+.schedule-month-day--end {
+  grid-column: span 2;
+}
+
+.schedule-time-field {
+  max-width: 240px;
+}
+
+.schedule-time-control {
+  width: 100%;
+}
+
+.schedule-field-error {
+  margin: -4px 0 0;
+  color: var(--el-color-danger, #f56c6c);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .policy-option-title {
   margin: 0 0 6px;
   color: rgb(15 23 42);
@@ -973,6 +1200,25 @@ function onSimpleIntervalUnitChange() {
 }
 
 @media (max-width: 640px) {
+  .schedule-context-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-cycle-control,
+  .schedule-interval-unit,
+  .schedule-time-field {
+    max-width: none;
+    width: 100%;
+  }
+
+  .schedule-weekday-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .schedule-month-day-grid {
+    grid-template-columns: repeat(5, minmax(36px, 1fr));
+  }
+
   .policy-basic-row {
     grid-template-columns: 1fr;
     justify-items: stretch;

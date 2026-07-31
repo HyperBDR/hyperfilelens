@@ -4,6 +4,7 @@ set -eu
 output=${HFL_WEBSITE_CONFIG_OUTPUT:-/usr/share/nginx/website/website-runtime-config.js}
 temporary="${output}.tmp"
 app_url=${HFL_WEBSITE_APP_URL:-}
+ga_measurement_id=${HFL_GA_MEASUREMENT_ID:-}
 
 if [ -n "${app_url}" ] && ! printf '%s' "${app_url}" \
   | grep -Eq '^https?://(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?/?$'; then
@@ -11,6 +12,13 @@ if [ -n "${app_url}" ] && ! printf '%s' "${app_url}" \
   app_url=
 fi
 
+if [ -n "${ga_measurement_id}" ] && ! printf '%s' "${ga_measurement_id}" \
+  | grep -Eq '^G-[A-Z0-9]+$'; then
+  printf '%s\n' '[website-config] WARNING: invalid GA4 measurement ID; analytics is disabled' >&2
+  ga_measurement_id=
+fi
+
 umask 022
-printf "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: '%s' })\n" "${app_url%/}" > "${temporary}"
+printf "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: '%s', gaMeasurementId: '%s' })\n" \
+  "${app_url%/}" "${ga_measurement_id}" > "${temporary}"
 mv -f "${temporary}" "${output}"

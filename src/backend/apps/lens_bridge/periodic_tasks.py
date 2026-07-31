@@ -1,0 +1,36 @@
+from celery.schedules import crontab
+
+from common.scheduling.registry import TASK_REGISTRY
+
+
+def register_periodic_tasks() -> None:
+    TASK_REGISTRY.add(
+        name="lens_bridge_reconcile_gateway_lensnode_provisions",
+        task=(
+            "apps.lens_bridge.tasks.gateway_provisioning."
+            "reconcile_gateway_lensnode_provisions_task"
+        ),
+        schedule=crontab(minute="*/5"),
+        kwargs={"limit": 100},
+        enabled=True,
+    )
+    TASK_REGISTRY.add(
+        name="lens_bridge_reconcile_chat_provisions",
+        task=(
+            "apps.lens_bridge.tasks.chat_lifecycle."
+            "reconcile_copilot_chat_provisions_task"
+        ),
+        schedule=crontab(minute="*/5"),
+        kwargs={"limit": 100},
+        enabled=True,
+    )
+    TASK_REGISTRY.add(
+        name="lens_bridge_reconcile_resource_teardowns",
+        task=(
+            "apps.lens_bridge.tasks.chat_lifecycle."
+            "reconcile_lens_resource_teardowns_task"
+        ),
+        schedule=crontab(minute="*/5"),
+        kwargs={"limit": 100},
+        enabled=True,
+    )

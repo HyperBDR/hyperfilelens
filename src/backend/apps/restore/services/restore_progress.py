@@ -18,21 +18,19 @@ _RESTORE_CORRELATION = "restore.record"
 def maybe_trigger_restore_progress(*, node_task: NodeTask) -> None:
     if node_task.correlation_type != _RESTORE_CORRELATION or not node_task.correlation_id:
         return
-    record = RestoreRecord.objects.filter(
-        organization_id=node_task.organization_id,
-        task_uuid=node_task.correlation_id,
-    ).first()
-    if record is None:
-        return
     item_id = _payload_int(node_task.payload, "restore_record_item_id")
     if not item_id:
         return
-    item = RestoreRecordItem.objects.filter(
-        organization_id=record.organization_id,
-        restore_record=record,
-        id=item_id,
-    ).first()
+    item = RestoreRecordItem.objects.select_related("restore_record").filter(id=item_id).first()
     if item is None:
+        return
+    record = item.restore_record
+    if str(record.task_uuid) != str(node_task.correlation_id):
+        return
+    if (
+        record.target_execution_organization_id != node_task.organization_id
+        or record.target_execution_node_id != node_task.node_id
+    ):
         return
     progress = _node_task_progress(node_task)
     if progress:
@@ -47,7 +45,10 @@ def maybe_trigger_restore_progress(*, node_task: NodeTask) -> None:
 
 def sync_restore_items_from_node_tasks(*, record: RestoreRecord) -> None:
     for item in record.items.order_by("id"):
-        node_task = _node_task_for_restore_item(item=item, organization_id=record.organization_id)
+        node_task = _node_task_for_restore_item(
+            item=item,
+            organization_id=record.target_execution_organization_id,
+        )
         if node_task is None:
             continue
         progress = _node_task_progress(node_task)

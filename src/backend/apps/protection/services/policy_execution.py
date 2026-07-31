@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import transaction
 from django.utils import timezone
@@ -62,8 +64,26 @@ def _cron_value_matches(field: str, value: int) -> bool:
     return False
 
 
-def cron_matches_now(cron_expr: str, *, now=None) -> bool:
-    current = timezone.localtime(now or timezone.now()).replace(second=0, microsecond=0)
+def _aware_minute(now=None):
+    current = now or timezone.now()
+    if timezone.is_naive(current):
+        current = timezone.make_aware(current, UTC)
+    return current.replace(second=0, microsecond=0)
+
+
+def _schedule_timezone(timezone_name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(str(timezone_name or "UTC"))
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _schedule_local_minute(schedule: dict, *, now=None):
+    return _aware_minute(now).astimezone(_schedule_timezone(schedule.get("timezone")))
+
+
+def cron_matches_now(cron_expr: str, *, now=None, timezone_name: str = "UTC") -> bool:
+    current = _aware_minute(now).astimezone(_schedule_timezone(timezone_name))
     fields = str(cron_expr or "").split()
     if len(fields) != 5:
         return False
@@ -80,6 +100,109 @@ def cron_matches_now(cron_expr: str, *, now=None) -> bool:
         and _cron_value_matches(month, current.month)
         and weekday_matches
     )
+
+
+def _schedule_start(schedule: dict) -> datetime | None:
+    raw = str(schedule.get("starts_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return None
+
+
+def _schedule_start_instant(schedule: dict) -> datetime | None:
+    starts_at = _schedule_start(schedule)
+    if starts_at is None:
+        return None
+    return starts_at.replace(
+        tzinfo=_schedule_timezone(schedule.get("timezone"))
+    ).astimezone(UTC)
+
+
+def _schedule_has_started(schedule: dict, current) -> bool:
+    starts_at = _schedule_start(schedule)
+    if starts_at is None:
+        return True
+    return current.replace(tzinfo=None) >= starts_at
+
+
+def _schedule_time_matches(schedule: dict, current) -> bool:
+    raw = str(schedule.get("time") or "")
+    try:
+        hour, minute = (int(part) for part in raw.split(":", 1))
+    except (TypeError, ValueError):
+        return False
+    return current.hour == hour and current.minute == minute
+
+
+def schedule_matches_now(schedule: dict, *, now=None) -> bool:
+    if not isinstance(schedule, dict) or not schedule.get("enabled", False):
+        return False
+    mode = str(schedule.get("mode") or "").strip().lower()
+    if not mode:
+        return cron_matches_now(str(schedule.get("cron_expr") or ""), now=now)
+
+    current = _schedule_local_minute(schedule, now=now)
+    if not _schedule_has_started(schedule, current):
+        return False
+    if mode == "advanced":
+        return cron_matches_now(
+            str(schedule.get("cron_expr") or ""),
+            now=now,
+            timezone_name=str(schedule.get("timezone") or "UTC"),
+        )
+    if mode == "interval":
+        starts_at = _schedule_start(schedule)
+        if starts_at is None:
+            return cron_matches_now(
+                str(schedule.get("cron_expr") or ""),
+                now=now,
+                timezone_name=str(schedule.get("timezone") or "UTC"),
+            )
+        unit_minutes = {"minute": 1, "hour": 60, "day": 24 * 60}
+        try:
+            interval_value = int(schedule.get("interval_value") or 0)
+        except (TypeError, ValueError):
+            return False
+        interval_minutes = unit_minutes.get(str(schedule.get("interval_unit") or ""), 0) * interval_value
+        if interval_minutes < 1:
+            return False
+        start_instant = _schedule_start_instant(schedule)
+        if start_instant is None:
+            return False
+        elapsed_minutes = int((_aware_minute(now) - start_instant).total_seconds() // 60)
+        return elapsed_minutes >= 0 and elapsed_minutes % interval_minutes == 0
+    if not _schedule_time_matches(schedule, current):
+        return False
+    if mode == "daily":
+        return True
+    if mode == "weekly":
+        try:
+            weekdays = {int(day) for day in schedule.get("weekdays", [])}
+        except (TypeError, ValueError):
+            return False
+        return current.isoweekday() in weekdays
+    if mode == "monthly":
+        try:
+            month_days = {int(day) for day in schedule.get("month_days", [])}
+        except (TypeError, ValueError):
+            return False
+        is_month_end = current.day == calendar.monthrange(current.year, current.month)[1]
+        return current.day in month_days or (bool(schedule.get("month_end")) and is_month_end)
+    return False
+
+
+def _schedule_fire_key(schedule: dict, *, now=None) -> str:
+    if schedule.get("mode") and schedule.get("mode") != "interval":
+        current = _schedule_local_minute(schedule, now=now)
+    else:
+        current = _aware_minute(now).astimezone(ZoneInfo("UTC"))
+    # Calendar schedules deliberately omit the UTC offset so a repeated DST
+    # wall-clock minute is one logical occurrence. Fixed intervals use UTC
+    # because both repeated wall-clock minutes are separate elapsed intervals.
+    return current.strftime("%Y%m%d%H%M")
 
 
 def _policy_configs() -> list[tuple[BackupConfig, BackupPolicy]]:
@@ -101,18 +224,15 @@ def _policy_configs() -> list[tuple[BackupConfig, BackupPolicy]]:
 
 
 def schedule_due_backup_tasks(*, now=None) -> dict[str, int]:
-    current = timezone.localtime(now or timezone.now()).replace(second=0, microsecond=0)
+    current = _aware_minute(now)
     scheduled = 0
     skipped = 0
     for config, policy in _policy_configs():
         schedule = policy.schedule if isinstance(policy.schedule, dict) else {}
-        if not schedule.get("enabled", False):
+        if not schedule_matches_now(schedule, now=current):
             skipped += 1
             continue
-        if not cron_matches_now(str(schedule.get("cron_expr") or ""), now=current):
-            skipped += 1
-            continue
-        fire_key = current.strftime("%Y%m%d%H%M")
+        fire_key = _schedule_fire_key(schedule, now=current)
         result = start_backup_tasks(
             organization_id=config.organization_id,
             sources=[

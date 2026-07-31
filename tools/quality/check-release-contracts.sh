@@ -245,7 +245,7 @@ if grep -F '"AI_MODEL_API_KEY=$AI_MODEL_API_KEY"' \
 	printf 'ERROR: AI model API key must not be persisted in the runtime .env\n' >&2
 	exit 1
 fi
-for variable in EMAIL_SIGNUP_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
+for variable in EMAIL_SIGNUP_ENABLED EMAIL_CODE_LOGIN_ENABLED GOOGLE_OAUTH_ENABLED GOOGLE_CLIENT_ID; do
 	grep -F "vars.TEST_${variable}" "${workflow}" >/dev/null
 	grep -F "vars.PREPROD_${variable}" "${workflow}" >/dev/null
 	grep -F "vars.PROD_${variable}" "${production_workflow}" >/dev/null
@@ -254,7 +254,7 @@ grep -F 'secrets.TEST_GOOGLE_CLIENT_SECRET' "${workflow}" >/dev/null
 grep -F 'secrets.PREPROD_GOOGLE_CLIENT_SECRET' "${workflow}" "${release_workflow}" >/dev/null
 grep -F 'secrets.PROD_GOOGLE_CLIENT_SECRET' "${production_workflow}" >/dev/null
 for runtime_key in \
-	HFL_EMAIL_SIGNUP_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
+	HFL_EMAIL_SIGNUP_ENABLED HFL_EMAIL_CODE_LOGIN_ENABLED HFL_GOOGLE_OAUTH_ENABLED \
 	GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SMTP_PASSWORD; do
 	grep -F "\"${runtime_key}\"" "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 done
@@ -609,6 +609,7 @@ grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/nu
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-ga-runtime-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
@@ -766,7 +767,7 @@ for listener in 11442 11443 11444; do
 done
 grep -F 'COPY build/website/public /usr/share/nginx/website' \
 	"${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
-grep -F 'COPY build/website/runtime-config.sh /docker-entrypoint.d/20-hfl-website-runtime-config.sh' \
+grep -F 'COPY deploy/docker/frontend-runtime-config.sh /docker-entrypoint.d/20-hfl-frontend-runtime-config.sh' \
 	"${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null
 if grep -F 'COPY website/' "${ROOT}/deploy/docker/frontend.Dockerfile" >/dev/null; then
 	printf 'ERROR: HFL frontend image must consume the standalone Website artifact only\n' >&2

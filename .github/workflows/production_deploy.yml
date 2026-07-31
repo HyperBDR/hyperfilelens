@@ -77,8 +77,10 @@ jobs:
       turnstile_site_key: ${{ vars.PROD_TURNSTILE_SITE_KEY }}
       turnstile_enabled: ${{ vars.PROD_TURNSTILE_ENABLED == 'true' }}
       email_signup_enabled: ${{ vars.PROD_EMAIL_SIGNUP_ENABLED == 'true' }}
+      email_code_login_enabled: ${{ vars.PROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
       google_oauth_enabled: ${{ vars.PROD_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.PROD_GOOGLE_CLIENT_ID }}
+      ga_measurement_id: ${{ vars.PROD_GA_MEASUREMENT_ID }}
       platform_gateway_auto_deploy: ${{ vars.PROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.PROD_HFL_INSECURE_TLS }}
       smtp_host: ${{ vars.PROD_SMTP_HOST }}

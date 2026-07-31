@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   setStoredOrgKey: vi.fn(),
   setUser: vi.fn(),
+  turnstileBlocked: false,
 }))
 
 vi.mock('../../lib/api', () => ({ api: mocks.api }))
@@ -47,7 +48,7 @@ vi.mock('../../composables/useTurnstileConfig', () => ({
     turnstileSiteKey: ref('test-site-key'),
     isTurnstilePending: ref(false),
     isTurnstileReady: ref(true),
-    isTurnstileBlocked: ref(false),
+    isTurnstileBlocked: ref(mocks.turnstileBlocked),
     authTurnstileMountGeneration: ref(0),
     loadTurnstileConfig: mocks.loadTurnstileConfig,
     retryTurnstileConfig: mocks.retryTurnstileConfig,
@@ -168,8 +169,10 @@ describe('Login Turnstile lifecycle', () => {
     }
     mocks.fetchDeployProfile.mockResolvedValue({
       email_signup_enabled: false,
+      email_code_login_available: false,
       password_reset_available: false,
     })
+    mocks.turnstileBlocked = false
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
     mocks.retryTurnstileConfig.mockResolvedValue(undefined)
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
@@ -202,6 +205,44 @@ describe('Login Turnstile lifecycle', () => {
     replayMount.unmount()
   })
 
+  it('keeps equal login tabs on password mode when Turnstile is blocked', async () => {
+    mocks.turnstileBlocked = true
+    mocks.fetchDeployProfile.mockResolvedValue({
+      email_signup_enabled: false,
+      email_code_login_available: true,
+      password_reset_available: false,
+    })
+
+    const wrapper = await mountLogin(1440)
+    const tabs = wrapper.findAll('.login-method-tabs__tab')
+
+    expect(tabs).toHaveLength(2)
+    expect(tabs[0].classes()).toContain('is-active')
+    expect(tabs[1].classes()).not.toContain('is-active')
+    expect(wrapper.findComponent({ name: 'EmailCodeLoginForm' }).exists()).toBe(false)
+
+    await tabs[1].trigger('click')
+    expect(tabs[1].classes()).toContain('is-active')
+    expect(wrapper.findComponent({ name: 'EmailCodeLoginForm' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps the forgot-password action visible in email-code mode', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      email_signup_enabled: false,
+      email_code_login_available: true,
+      password_reset_available: true,
+    })
+
+    const wrapper = await mountLogin(1440)
+    const tabs = wrapper.findAll('.login-method-tabs__tab')
+
+    expect(wrapper.get('.forgot-link').text()).toBe('Forgot Password?')
+    await tabs[1].trigger('click')
+    expect(wrapper.get('.forgot-link').text()).toBe('Forgot Password?')
+    wrapper.unmount()
+  })
+
   it('requires non-empty credentials after Turnstile succeeds', async () => {
     const wrapper = await mountLogin(1440)
     const inputs = wrapper.findAll('input')
@@ -221,6 +262,30 @@ describe('Login Turnstile lifecycle', () => {
     await inputs[1].setValue('invalid')
     expect(submit.attributes('disabled')).toBeUndefined()
     expect(emailLoginCalls()).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+
+  it('rejects an invalid email format before password login', async () => {
+    const wrapper = await mountLogin(1440)
+    const inputs = wrapper.findAll('input')
+    const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
+    const submit = wrapper.get('button.submit-btn')
+
+    turnstile.vm.$emit('success', 'verified-token')
+    await inputs[0].setValue('invalid-email')
+    await inputs[1].setValue('ValidPass123')
+
+    expect(wrapper.get('.input-wrapper.has-error .error-msg').text()).toBe('Invalid email format')
+    expect(submit.attributes('disabled')).toBeDefined()
+
+    await inputs[1].trigger('keyup.enter')
+    await flushPromises()
+    expect(emailLoginCalls()).toHaveLength(0)
+
+    await inputs[0].setValue('person@example.com')
+    expect(wrapper.find('.input-wrapper.has-error').exists()).toBe(false)
+    expect(submit.attributes('disabled')).toBeUndefined()
 
     wrapper.unmount()
   })
