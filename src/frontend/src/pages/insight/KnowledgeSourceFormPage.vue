@@ -76,6 +76,7 @@ const {
   removeBackupScopeEntry,
   updateBackupScopeEntryInput,
   validateBackupScopeEntry,
+  validateBackupScopeEntryOnBlur,
   pickBackupScopeForEntry,
   loadGatewayDirTreeNode,
   setGatewayDirPickerOpen,
@@ -490,7 +491,7 @@ onMounted(() => {
                                   :placeholder="t('insight.kb.phSelectOrEnterRestoreScope')"
                                   :disabled="isEditing || !effectiveSnapshotId || snapshotDirectories.length === 0"
                                   @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
-                                  @blur="validateBackupScopeEntry(scopeEntry.id)"
+                                  @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
                                   @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
                                 >
                                   <template #prefix>

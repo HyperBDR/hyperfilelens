@@ -61,6 +61,7 @@ const {
   removeBackupScopeEntry,
   updateBackupScopeEntryInput,
   validateBackupScopeEntry,
+  validateBackupScopeEntryOnBlur,
   validateAllBackupScopeEntries,
   pickBackupScopeForEntry,
 } = useKnowledgeSourceForm(editingId, sourceType)
@@ -275,7 +276,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                           placeholder="Select a file or folder"
                           :disabled="!effectiveSnapshotId || snapshotDirectories.length === 0"
                           @update:model-value="updateBackupScopeEntryInput(scopeEntry.id, $event)"
-                          @blur="validateBackupScopeEntry(scopeEntry.id)"
+                          @blur="validateBackupScopeEntryOnBlur(scopeEntry.id)"
                           @keydown.enter.prevent="validateBackupScopeEntry(scopeEntry.id)"
                         >
                           <template #prefix><TextCursorInput :size="14" /></template>
