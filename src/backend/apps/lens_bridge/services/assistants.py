@@ -8,8 +8,13 @@ from typing import Any
 from django.contrib.auth.models import AbstractBaseUser
 from rest_framework.exceptions import NotFound, ValidationError
 
-from apps.iam.models import Membership, Organization
-from apps.lens_bridge.models import LensAssistantLink, LensGatewayLink, LensKnowledgeSource
+from apps.iam.models import Organization
+from apps.lens_bridge.models import (
+    LensAssistantLink,
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensSessionLink,
+)
 from apps.lens_bridge.services import assistant_access, sl_client
 from apps.lens_bridge.services.provisioning import _slugify_assistant, get_or_create_org_link
 
@@ -170,8 +175,7 @@ def list_org_assistants(
     org: Organization,
     *,
     user: AbstractBaseUser,
-    membership: Membership | None = None,
-    manage: bool = False,
+    can_manage_all: bool = False,
 ) -> list[dict[str, Any]]:
     raw = sl_client.request_json("GET", "/api/lens/assistants/")
     items = _unwrap_list(raw)
@@ -198,8 +202,7 @@ def list_org_assistants(
         if not assistant_access.assistant_visible_to(
             user=user,
             link=link,
-            manage=manage,
-            membership=membership,
+            can_manage_all=can_manage_all,
         ):
             continue
         rows.append(row)
@@ -213,8 +216,7 @@ def get_org_assistant(
     assistant_uuid: uuid_lib.UUID,
     *,
     user: AbstractBaseUser | None = None,
-    membership: Membership | None = None,
-    manage: bool = False,
+    can_manage_all: bool = False,
 ) -> dict[str, Any]:
     data = sl_client.request_json("GET", f"/api/lens/assistants/{assistant_uuid}/")
     if not isinstance(data, dict) or not _belongs_to_org(org, data):
@@ -226,8 +228,7 @@ def get_org_assistant(
     if user is not None and not assistant_access.assistant_visible_to(
         user=user,
         link=link,
-        manage=manage,
-        membership=membership,
+        can_manage_all=can_manage_all,
     ):
         raise NotFound("Assistant not found.")
     merged = assistant_access.merge_link_fields(dict(data), link)
@@ -259,11 +260,12 @@ def _apply_retrieval_include_paths(
 
 
 def _knowledge_source_execution(org: Organization, ks: LensKnowledgeSource) -> dict[str, Any]:
-    link = (
-        LensGatewayLink.objects.filter(organization=org, gateway=ks.gateway)
-        .exclude(sl_lensnode_uuid__isnull=True)
-        .first()
-    )
+    from apps.lens_bridge.services.gateway_execution import context_for_knowledge_source
+
+    link = context_for_knowledge_source(
+        tenant_organization=org,
+        knowledge_source=ks,
+    ).gateway_link
     lensnode_uuid = ks.sl_lensnode_uuid or (link.sl_lensnode_uuid if link else None)
     if not lensnode_uuid:
         raise ValidationError(
@@ -285,13 +287,41 @@ def _knowledge_source_execution(org: Organization, ks: LensKnowledgeSource) -> d
     }
 
 
-def _apply_knowledge_source_payload(org: Organization, payload: dict[str, Any]) -> dict[str, Any]:
+_TENANT_EXECUTION_FIELDS = frozenset({"lensnode", "lensnode_uuid", "selected_dirs"})
+
+
+def _apply_knowledge_source_payload(
+    org: Organization,
+    payload: dict[str, Any],
+    *,
+    user: AbstractBaseUser | None = None,
+    platform_passthrough: bool = False,
+    require_knowledge_source: bool = False,
+) -> dict[str, Any]:
+    """Derive tenant Assistant execution fields from an authorized KS."""
+
     ks_id = payload.pop("knowledge_source_id", None)
     include_paths = payload.pop("retrieval_include_paths", None)
     if include_paths is not None and not isinstance(include_paths, list):
         raise ValidationError({"retrieval_include_paths": "Must be a list of path rules."})
 
+    if not platform_passthrough:
+        supplied_execution_fields = sorted(_TENANT_EXECUTION_FIELDS.intersection(payload))
+        if supplied_execution_fields:
+            raise ValidationError(
+                {
+                    "knowledge_source_id": (
+                        "Tenant Assistants must derive LensNode and directory settings "
+                        "from a knowledge source."
+                    )
+                }
+            )
+
     if ks_id in (None, ""):
+        if require_knowledge_source and not platform_passthrough:
+            raise ValidationError(
+                {"knowledge_source_id": "Knowledge source is required."}
+            )
         if include_paths is not None and payload.get("selected_dirs"):
             payload["selected_dirs"] = _apply_retrieval_include_paths(
                 payload["selected_dirs"],
@@ -301,13 +331,49 @@ def _apply_knowledge_source_payload(org: Organization, payload: dict[str, Any]) 
 
     ks = (
         LensKnowledgeSource.objects.filter(organization=org, pk=ks_id)
-        .select_related("gateway")
+        .select_related("gateway", "gateway_link", "gateway_link__gateway", "gateway_link__organization")
         .first()
     )
     if ks is None:
         raise ValidationError({"knowledge_source_id": "Knowledge source not found."})
+    if not platform_passthrough:
+        if user is None:
+            raise ValidationError(
+                {"knowledge_source_id": "Knowledge source owner is required."}
+            )
+        if ks.created_by_id != user.id:
+            raise ValidationError(
+                {
+                    "knowledge_source_id": (
+                        "Knowledge source is not owned by the current user."
+                    )
+                }
+            )
+        gateway_link = ks.gateway_link
+        if (
+            gateway_link.scope == LensGatewayLink.GatewayScope.USER
+            and gateway_link.owner_user_id != user.id
+        ):
+            raise ValidationError(
+                {
+                    "knowledge_source_id": (
+                        "Knowledge source data gateway is not owned by the current user."
+                    )
+                }
+            )
+    if ks.session_links.exclude(
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
+    ).exists():
+        raise ValidationError(
+            {
+                "knowledge_source_id": (
+                    "Chat-managed knowledge sources cannot be rebound through "
+                    "the Assistant API."
+                )
+            }
+        )
     execution = _knowledge_source_execution(org, ks)
-    payload.setdefault("lensnode_uuid", execution["lensnode_uuid"])
+    payload["lensnode_uuid"] = execution["lensnode_uuid"]
     payload["selected_dirs"] = _apply_retrieval_include_paths(
         execution["selected_dirs"],
         include_paths,
@@ -318,11 +384,7 @@ def _apply_knowledge_source_payload(org: Organization, payload: dict[str, Any]) 
 def _serialize_knowledge_source_option(org: Organization, ks: LensKnowledgeSource) -> dict[str, Any]:
     from apps.lens_bridge.services.knowledge_source_sync import indexed_dir_paths, scope_entries
 
-    link = (
-        LensGatewayLink.objects.filter(organization=org, gateway=ks.gateway)
-        .exclude(sl_lensnode_uuid__isnull=True)
-        .first()
-    )
+    link = ks.gateway_link
     lensnode_uuid = ks.sl_lensnode_uuid or (link.sl_lensnode_uuid if link else None)
     scope_paths = [
         str(item.get("source_path") or "").strip()
@@ -352,6 +414,7 @@ def create_org_assistant(
     body: dict[str, Any],
     *,
     user: AbstractBaseUser | None = None,
+    platform_passthrough: bool = False,
 ) -> dict[str, Any]:
     payload, visibility_scope_raw, ks_id = _strip_hfl_visibility(body)
     visibility_scope = _resolve_visibility_scope(
@@ -365,7 +428,13 @@ def create_org_assistant(
         raise ValidationError({"name": "Name is required."})
     slug = str(payload.get("slug") or "").strip()
     payload["slug"] = slug or _slugify_assistant(name, org)
-    payload = _apply_knowledge_source_payload(org, payload)
+    payload = _apply_knowledge_source_payload(
+        org,
+        payload,
+        user=user,
+        platform_passthrough=platform_passthrough,
+        require_knowledge_source=True,
+    )
     if not payload.get("lensnode_uuid"):
         raise ValidationError({"lensnode_uuid": "LensNode is required."})
     if not payload.get("selected_task"):
@@ -400,12 +469,29 @@ def update_org_assistant(
     body: dict[str, Any],
     *,
     user: AbstractBaseUser | None = None,
+    can_manage_all: bool = False,
+    platform_passthrough: bool = False,
 ) -> dict[str, Any]:
-    get_org_assistant(org, assistant_uuid, user=user, manage=True)
+    if user is None and not can_manage_all:
+        raise ValidationError(
+            {"assistant": "Assistant management authorization is required."}
+        )
+    get_org_assistant(
+        org,
+        assistant_uuid,
+        user=user,
+        can_manage_all=can_manage_all,
+    )
+    _require_manual_assistant_management(org, assistant_uuid)
     payload, visibility_scope_raw, ks_id = _strip_hfl_visibility(body)
     if ks_id not in (None, ""):
         payload["knowledge_source_id"] = ks_id
-    payload = _apply_knowledge_source_payload(org, payload)
+    payload = _apply_knowledge_source_payload(
+        org,
+        payload,
+        user=user,
+        platform_passthrough=platform_passthrough,
+    )
     _validate_assistant_tool_bindings(org, payload)
     data = sl_client.request_json(
         "PATCH",
@@ -422,10 +508,14 @@ def update_org_assistant(
         created_by=user,
     )
     link = assistant_access.get_assistant_link(org, assistant_uuid)
-    if visibility_scope_raw is not None:
+    if visibility_scope_raw is not None or ks_id not in (None, ""):
         visibility_scope = _resolve_visibility_scope(
             visibility_scope_raw,
-            default=LensAssistantLink.VisibilityScope.USER,
+            default=(
+                link.visibility_scope
+                if link is not None
+                else LensAssistantLink.VisibilityScope.USER
+            ),
         )
         link = _upsert_assistant_link(
             org=org,
@@ -447,8 +537,24 @@ def update_org_assistant(
     return assistant_access.merge_link_fields(data, link)
 
 
-def delete_org_assistant(org: Organization, assistant_uuid: uuid_lib.UUID) -> None:
-    get_org_assistant(org, assistant_uuid, manage=True)
+def delete_org_assistant(
+    org: Organization,
+    assistant_uuid: uuid_lib.UUID,
+    *,
+    user: AbstractBaseUser | None = None,
+    can_manage_all: bool = False,
+) -> None:
+    if user is None and not can_manage_all:
+        raise ValidationError(
+            {"assistant": "Assistant management authorization is required."}
+        )
+    get_org_assistant(
+        org,
+        assistant_uuid,
+        user=user,
+        can_manage_all=can_manage_all,
+    )
+    _require_manual_assistant_management(org, assistant_uuid)
     _delete_sl_assistant(assistant_uuid)
     assistant_access.soft_delete_assistant_link(org, assistant_uuid)
     affected_ks_ids = list(
@@ -465,23 +571,54 @@ def delete_org_assistant(org: Organization, assistant_uuid: uuid_lib.UUID) -> No
         _reassign_ks_primary_assistant(org, ks_id)
 
 
-def _delete_sl_assistant(assistant_uuid: uuid_lib.UUID) -> None:
-    """Best-effort real SL DELETE (chat path then admin path). 404 = success."""
-    last_exc: Exception | None = None
-    for path in (
-        f"/api/lens/assistants/{assistant_uuid}/",
-        f"/api/lens/admin/assistants/{assistant_uuid}/",
+def _require_manual_assistant_management(
+    org: Organization,
+    assistant_uuid: uuid_lib.UUID,
+) -> LensAssistantLink:
+    """Reject mutations owned by the durable Chat lifecycle."""
+
+    link = assistant_access.get_assistant_link(org, assistant_uuid)
+    if link is None:
+        raise NotFound("Assistant not found.")
+    has_live_chat = LensSessionLink.objects.filter(
+        organization=org,
+        sl_assistant_uuid=assistant_uuid,
+    ).exclude(
+        lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
+    ).exists()
+    if (
+        link.lifecycle_owner == LensAssistantLink.LifecycleOwner.CHAT
+        or has_live_chat
     ):
-        try:
-            sl_client.request_json("DELETE", path)
+        raise ValidationError(
+            {
+                "assistant": (
+                    "Chat-managed assistants must be changed by deleting and "
+                    "recreating the owning Chat."
+                )
+            }
+        )
+    return link
+
+
+def _delete_sl_assistant(assistant_uuid: uuid_lib.UUID) -> None:
+    """Retire an Assistant through SourceLens' supported DELETE contract.
+
+    Bundled SourceLens 0.4.0 implements this endpoint as a soft retirement by
+    setting the Assistant status to ``disabled``. HFL treats an existing 404 as
+    idempotent success but preserves every other error for durable retry.
+    """
+
+    try:
+        sl_client.request_json(
+            "DELETE",
+            f"/api/lens/assistants/{assistant_uuid}/",
+        )
+    except sl_client.LensBridgeError as exc:
+        status = getattr(exc, "status_code", None)
+        if status == 404 or "404" in str(exc):
             return
-        except sl_client.LensBridgeError as exc:
-            status = getattr(exc, "status_code", None)
-            if status == 404 or "404" in str(exc):
-                return
-            last_exc = exc
-    if last_exc is not None:
-        raise last_exc
+        raise
 
 
 def _reassign_ks_primary_assistant(org: Organization, ks_id: int) -> None:
@@ -504,13 +641,23 @@ def _reassign_ks_primary_assistant(org: Organization, ks_id: int) -> None:
     )
 
 
-def list_org_lensnodes(org: Organization) -> list[dict[str, Any]]:
+def list_org_lensnodes(
+    org: Organization,
+    *,
+    owner_user: AbstractBaseUser | None = None,
+) -> list[dict[str, Any]]:
+    links = LensGatewayLink.objects.filter(
+        organization=org,
+        sl_lensnode_uuid__isnull=False,
+    )
+    if owner_user is not None:
+        links = links.filter(
+            scope=LensGatewayLink.GatewayScope.USER,
+            owner_user=owner_user,
+        )
     linked = {
         str(link.sl_lensnode_uuid)
-        for link in LensGatewayLink.objects.filter(
-            organization=org,
-            sl_lensnode_uuid__isnull=False,
-        )
+        for link in links
     }
     if not linked:
         return []
@@ -522,6 +669,7 @@ def list_org_lensnodes(org: Organization) -> list[dict[str, Any]]:
 def assistant_form_options(
     org: Organization,
     *,
+    user: AbstractBaseUser | None = None,
     platform_passthrough: bool = False,
 ) -> dict[str, Any]:
     from apps.lens_bridge.services import provisioning
@@ -532,9 +680,15 @@ def assistant_form_options(
 
         links = platform_lens.platform_gateway_links().filter(sl_lensnode_uuid__isnull=False)
     else:
+        if user is None:
+            raise ValidationError(
+                {"assistant": "Assistant form option owner is required."}
+            )
         links = LensGatewayLink.objects.filter(
             organization=org,
             sl_lensnode_uuid__isnull=False,
+            scope=LensGatewayLink.GatewayScope.USER,
+            owner_user=user,
         ).select_related("gateway")
 
     for link in links:
@@ -576,7 +730,10 @@ def assistant_form_options(
         mcps = []
 
     ks_org = org
-    ks_qs = LensKnowledgeSource.objects.filter(organization=org)
+    ks_qs = LensKnowledgeSource.objects.filter(
+        organization=org,
+        created_by=user,
+    )
     if platform_passthrough:
         from apps.lens_bridge.services import platform_lens as pl
 
@@ -585,7 +742,10 @@ def assistant_form_options(
         ks_qs = LensKnowledgeSource.objects.filter(organization=platform_org)
 
     return {
-        "lensnodes": list_org_lensnodes(ks_org),
+        "lensnodes": list_org_lensnodes(
+            ks_org,
+            owner_user=None if platform_passthrough else user,
+        ),
         "gateways": gateway_rows,
         "knowledge_sources": [
             _serialize_knowledge_source_option(ks_org, ks)

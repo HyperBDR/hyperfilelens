@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import platform_lens
 from apps.node.models import NodeToken
@@ -59,6 +60,7 @@ def platform_gateway_api_base() -> str:
 def ensure_local_platform_gateway_token() -> NodeToken:
     """Return a reusable enrollment token for the installer-managed Gateway."""
     org = platform_lens.get_or_create_platform_org()
+    Organization.objects.select_for_update().get(pk=org.pk)
     now = timezone.now()
     token = (
         NodeToken.objects.select_for_update()
@@ -118,6 +120,7 @@ def reconcile_local_platform_gateway_links() -> int:
     from apps.node.models import Node
 
     org = platform_lens.get_or_create_platform_org()
+    Organization.objects.select_for_update().get(pk=org.pk)
     managed_gateway_ids = list(
         Node.objects.filter(
             organization=org,
@@ -140,6 +143,7 @@ def reconcile_local_platform_gateway_links() -> int:
         .filter(
             organization=org,
             gateway_id__in=managed_gateway_ids,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
             is_deleted=False,
         )
         .order_by("id")
@@ -150,9 +154,6 @@ def reconcile_local_platform_gateway_links() -> int:
     changed = 0
     for link in links:
         update_fields = []
-        if link.scope != LensGatewayLink.GatewayScope.PLATFORM:
-            link.scope = LensGatewayLink.GatewayScope.PLATFORM
-            update_fields.append("scope")
         if link.origin != LensGatewayLink.Origin.PLATFORM:
             link.origin = LensGatewayLink.Origin.PLATFORM
             update_fields.append("origin")

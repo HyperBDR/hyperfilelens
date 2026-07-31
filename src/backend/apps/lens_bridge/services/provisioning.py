@@ -6,13 +6,21 @@ import logging
 import re
 import time
 import uuid
+from datetime import timedelta
 from typing import Any
 
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource, LensOrgLink
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensOrgLink,
+    LensWorkspaceBinding,
+)
 from apps.lens_bridge.services import ingest_policy, org_models, sl_client
 from apps.node.models.base import NodeRole
 from apps.node.models.node import Node
@@ -21,6 +29,15 @@ logger = logging.getLogger(__name__)
 
 _LENSNODE_DIR_WAIT_SECONDS = 30.0
 _LENSNODE_DIR_POLL_SECONDS = 0.5
+LENSNODE_PROVISION_CLAIM_TTL_SECONDS = 300
+
+
+class LensNodeProvisionBusyError(sl_client.LensBridgeError):
+    """Raised when another caller owns the durable provisioning lease."""
+
+    status_code = 409
+    default_detail = "LensNode provisioning is already in progress."
+    default_code = "lensnode_provision_busy"
 
 
 def get_or_create_org_link(org: Organization) -> LensOrgLink:
@@ -35,6 +52,22 @@ def _slugify_assistant(name: str, org: Organization) -> str:
     slug = f"{prefix}-{base}"[:160]
     slug = re.sub(r"[^a-z0-9-]", "-", slug.lower())
     return slug.strip("-") or f"{prefix}-source"
+
+
+def assistant_slug_for_ks(*, org: Organization, ks: LensKnowledgeSource) -> str:
+    """Return a deterministic, collision-resistant slug for one HFL KS."""
+    suffix = f"-ks-{ks.id}"
+    max_prefix_length = max(1, 160 - len(suffix) - 2)
+    org_prefix = (
+        get_or_create_org_link(org)
+        .resolved_prefix()[:max_prefix_length]
+        .strip("-")
+        or "org"
+    )
+    max_base_length = max(1, 160 - len(org_prefix) - len(suffix) - 1)
+    base = (slugify(ks.name) or "source")[:max_base_length]
+    base = re.sub(r"[^a-z0-9-]", "-", base.lower()).strip("-") or "source"
+    return f"{org_prefix}-{base}{suffix}"
 
 
 def default_model_ref_for_org(org: Organization) -> str | None:
@@ -83,9 +116,11 @@ def default_model_ref_for_org(org: Organization) -> str | None:
 
 
 def get_gateway_link(org: Organization, gateway_id: int) -> LensGatewayLink:
-    """Resolve gateway link for tenant org, falling back to platform-scoped DG."""
-    from apps.lens_bridge.services import platform_lens
+    """Resolve an existing gateway link owned by ``org``.
 
+    Platform gateway access is intentionally handled by the Copilot gateway
+    execution service; tenant-facing APIs must never fall back across orgs.
+    """
     existing = (
         LensGatewayLink.objects.filter(organization=org, gateway_id=gateway_id)
         .select_related("gateway")
@@ -93,32 +128,10 @@ def get_gateway_link(org: Organization, gateway_id: int) -> LensGatewayLink:
     )
     if existing is not None:
         return existing
-
-    platform_org = platform_lens.get_or_create_platform_org()
-    platform_link = (
-        LensGatewayLink.objects.filter(
-            organization=platform_org,
-            gateway_id=gateway_id,
-            scope=LensGatewayLink.GatewayScope.PLATFORM,
-        )
-        .select_related("gateway")
-        .first()
-    )
-    if platform_link is not None:
-        return platform_link
-
-    gateway = require_gateway_node(org, gateway_id)
-    link, _ = LensGatewayLink.objects.get_or_create(
-        organization=org,
-        gateway=gateway,
-        defaults={"workspace_root": f"/workspace/org-{org.id}"},
-    )
-    return link
+    raise ValidationError({"gateway_id": "Data gateway link not found."})
 
 
 def require_gateway_node(org: Organization, gateway_id: int) -> Node:
-    from apps.lens_bridge.services import platform_lens
-
     node = Node.objects.filter(
         organization=org,
         id=gateway_id,
@@ -127,23 +140,7 @@ def require_gateway_node(org: Organization, gateway_id: int) -> Node:
     ).first()
     if node is not None:
         return node
-
-    platform_org = platform_lens.get_or_create_platform_org()
-    node = Node.objects.filter(
-        organization=platform_org,
-        id=gateway_id,
-        role=NodeRole.GATEWAY,
-        is_deleted=False,
-    ).first()
-    if node is not None:
-        return node
-
     raise ValidationError({"gateway_id": "Data gateway not found."})
-
-
-def workspace_path_for_ks(org: Organization, gateway_link: LensGatewayLink, ks_id: int) -> str:
-    root = gateway_link.resolved_workspace_root()
-    return f"{root}/ks-{ks_id}"
 
 
 def _lensnode_dir_paths(lensnode_data: dict[str, Any]) -> set[str]:
@@ -192,7 +189,7 @@ def ensure_ks_workspace_on_gateway(
     org: Organization,
     gateway: Node,
     gateway_link: LensGatewayLink,
-    workspace_path: str,
+    workspace_binding: LensWorkspaceBinding,
 ) -> None:
     """Create the KS workspace directory on the gateway host and wait for LensNode."""
 
@@ -202,18 +199,52 @@ def ensure_ks_workspace_on_gateway(
     if not lensnode_uuid:
         raise ValidationError({"gateway_id": "LensNode is not linked to this gateway."})
 
+    from apps.lens_bridge.services.gateway_execution import (
+        context_for_gateway_link,
+        workspace_identity_payload,
+    )
+
+    context = context_for_gateway_link(
+        tenant_organization=org,
+        gateway_link=gateway_link,
+    )
+    if context.gateway.id != gateway.id:
+        raise ValidationError({"gateway_id": "Data gateway link does not match the execution node."})
     root = gateway_link.resolved_workspace_root()
+    workspace_path = workspace_binding.resolved_path()
+    if (
+        workspace_binding.gateway_link_id != gateway_link.id
+        or workspace_binding.execution_node_id != gateway.id
+        or workspace_binding.execution_organization_id != context.execution_organization.id
+        or workspace_binding.workspace_root != root
+    ):
+        raise ValidationError({"workspace": "Workspace execution binding is inconsistent."})
     outcome = run_agent_task_sync(
-        org=org,
+        org=context.execution_organization,
         node_id=gateway.id,
         kind="lens.ks.prepare",
-        payload={"path": workspace_path, "workspace_root": root},
+        payload={
+            "path": workspace_path,
+            **workspace_identity_payload(workspace_binding),
+        },
         correlation_type="lens_knowledge_source",
+        requesting_organization_id=org.id,
         wait_timeout_seconds=60,
     )
     if not outcome.ok:
         detail = outcome.task.last_error or "Failed to prepare knowledge source workspace on gateway."
+        workspace_binding.identity_status = LensWorkspaceBinding.IdentityStatus.ERROR
+        workspace_binding.last_error = detail
+        workspace_binding.save(
+            update_fields=["identity_status", "last_error", "updated_at"]
+        )
         raise ValidationError({"gateway": detail})
+
+    workspace_binding.identity_status = LensWorkspaceBinding.IdentityStatus.READY
+    workspace_binding.last_error = ""
+    workspace_binding.save(
+        update_fields=["identity_status", "last_error", "updated_at"]
+    )
 
     wait_for_lensnode_dir(lensnode_uuid=lensnode_uuid, path=workspace_path)
 
@@ -306,7 +337,9 @@ def create_sl_assistant_for_ks(
     ks: LensKnowledgeSource,
     gateway_link: LensGatewayLink,
     model_ref: str | uuid.UUID | None = None,
+    slug: str | None = None,
 ) -> uuid.UUID:
+    """Create the remote Assistant without mutating HFL ownership state."""
     lensnode_uuid = gateway_link.sl_lensnode_uuid
     if not lensnode_uuid:
         raise ValidationError({"gateway_id": "LensNode is not linked to this gateway."})
@@ -317,22 +350,19 @@ def create_sl_assistant_for_ks(
             {"model": "Set a default AI model in Insights → AI Models before creating knowledge sources."}
         )
 
-    workspace_path = ks.workspace_path_on_lensnode or workspace_path_for_ks(
-        org, gateway_link, ks.id
-    )
+    workspace_path = (ks.workspace_path_on_lensnode or "").strip()
+    if not workspace_path:
+        raise ValidationError({"workspace": "Knowledge source workspace is not prepared."})
     selected_task = pick_lensnode_task(lensnode_uuid)
-    slug = _slugify_assistant(ks.name, org)
+    resolved_slug = (slug or "").strip() or _slugify_assistant(ks.name, org)
 
     selected_dirs = indexed_dirs_for_ks(ks)
     if not selected_dirs:
-        workspace_path = ks.workspace_path_on_lensnode or workspace_path_for_ks(
-            org, gateway_link, ks.id
-        )
         selected_dirs = [{"path": workspace_path}]
 
     payload: dict[str, Any] = {
         "name": ks.name,
-        "slug": slug,
+        "slug": resolved_slug,
         "lensnode_uuid": str(lensnode_uuid),
         "selected_task": selected_task,
         "selected_dirs": selected_dirs,
@@ -351,16 +381,7 @@ def create_sl_assistant_for_ks(
     assistant_uuid = data.get("uuid")
     if not assistant_uuid:
         raise sl_client.LensBridgeError("SourceLens assistant create returned no uuid.")
-    assistant_uuid_obj = uuid.UUID(str(assistant_uuid))
-    from apps.lens_bridge.services import assistant_access
-
-    assistant_access.ensure_assistant_link(
-        org=org,
-        sl_assistant_uuid=assistant_uuid_obj,
-        knowledge_source=ks,
-        created_by=ks.created_by,
-    )
-    return assistant_uuid_obj
+    return uuid.UUID(str(assistant_uuid))
 
 
 def sync_assistant_agent_model(
@@ -435,6 +456,354 @@ def refresh_ks_status_from_sl(ks: LensKnowledgeSource) -> LensKnowledgeSource:
     return ks
 
 
+def _lensnode_lookup_name(
+    *,
+    link: LensGatewayLink,
+    gateway: Node,
+    requested_name: str | None,
+) -> str:
+    """Return a stable remote identity unique to one HFL Gateway link."""
+
+    suffix = f"-hfl-gateway-link-{link.id}"
+    max_base_length = max(1, 160 - len(suffix))
+    base = slugify(requested_name or gateway.name or "gateway")
+    base = (base or "gateway")[:max_base_length].strip("-") or "gateway"
+    return f"{base}{suffix}"
+
+
+def _source_lens_lensnodes() -> list[dict[str, Any]]:
+    """Return all SourceLens LensNodes through bounded pagination."""
+
+    rows: list[dict[str, Any]] = []
+    seen_pages: set[tuple[str, ...]] = set()
+    page_size = 100
+    for page in range(1, 1001):
+        raw = sl_client.request_json(
+            "GET",
+            "/api/lens/admin/lensnodes/",
+            params={"page": page, "page_size": page_size},
+        )
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = raw.get("results", raw.get("items", []))
+        else:
+            items = []
+        page_rows = [item for item in items if isinstance(item, dict)]
+        rows.extend(page_rows)
+        if isinstance(raw, list) or not page_rows or len(page_rows) < page_size:
+            return rows
+        signature = tuple(
+            str(item.get("uuid") or item.get("name") or "")
+            for item in page_rows
+        )
+        if signature in seen_pages:
+            raise sl_client.LensBridgeError(
+                "SourceLens pagination did not advance while finding a LensNode."
+            )
+        seen_pages.add(signature)
+    raise sl_client.LensBridgeError(
+        "SourceLens pagination limit reached while finding a LensNode."
+    )
+
+
+def _find_source_lens_lensnode(*, lookup_name: str) -> dict[str, Any] | None:
+    matches = [
+        row
+        for row in _source_lens_lensnodes()
+        if str(row.get("name") or "").strip() == lookup_name
+    ]
+    if len(matches) > 1:
+        raise sl_client.LensBridgeError(
+            f"SourceLens returned multiple LensNodes named {lookup_name!r}."
+        )
+    return matches[0] if matches else None
+
+
+@transaction.atomic
+def _claim_lensnode_provision(
+    *,
+    link_id: int,
+    gateway: Node,
+    requested_name: str | None,
+) -> tuple[LensGatewayLink, str, str]:
+    """Persist remote-create intent and acquire the provisioning lease."""
+
+    link = LensGatewayLink.objects.select_for_update().get(pk=link_id)
+    if link.sl_lensnode_uuid:
+        return link, "", "ready"
+    now = timezone.now()
+    if (
+        link.lensnode_provision_claim_token
+        and link.lensnode_provision_claimed_at
+        and link.lensnode_provision_claimed_at
+        > now - timedelta(seconds=LENSNODE_PROVISION_CLAIM_TTL_SECONDS)
+    ):
+        return link, "", "busy"
+
+    state = dict(link.lensnode_provision_state_json or {})
+    lookup_name = str(state.get("lookup_name") or "").strip()
+    if not lookup_name:
+        lookup_name = _lensnode_lookup_name(
+            link=link,
+            gateway=gateway,
+            requested_name=requested_name,
+        )
+    claim_token = uuid.uuid4()
+    state.update(
+        {
+            "lookup_name": lookup_name,
+            "status": "provisioning",
+            "last_error": "",
+            "updated_at": now.isoformat(),
+        }
+    )
+    link.lensnode_provision_state_json = state
+    link.lensnode_provision_attempts += 1
+    link.lensnode_provision_claim_token = claim_token
+    link.lensnode_provision_claimed_at = now
+    link.save(
+        update_fields=[
+            "lensnode_provision_state_json",
+            "lensnode_provision_attempts",
+            "lensnode_provision_claim_token",
+            "lensnode_provision_claimed_at",
+            "updated_at",
+        ]
+    )
+    return link, str(claim_token), "claimed"
+
+
+@transaction.atomic
+def _complete_lensnode_provision(
+    *,
+    link_id: int,
+    claim_token: str,
+    lensnode_uuid: uuid.UUID,
+    token: str,
+) -> LensGatewayLink:
+    """Commit recovered credentials only while the caller owns the lease."""
+
+    link = (
+        LensGatewayLink.objects.select_for_update()
+        .filter(
+            pk=link_id,
+            lensnode_provision_claim_token=claim_token,
+            sl_lensnode_uuid__isnull=True,
+        )
+        .first()
+    )
+    if link is None:
+        raise LensNodeProvisionBusyError(
+            "LensNode provisioning lease was lost before completion."
+        )
+    config = dict(link.config_json or {})
+    config["lensnode_token_issued"] = True
+    config["lensnode_token"] = token
+    state = dict(link.lensnode_provision_state_json or {})
+    state.update(
+        {
+            "remote_uuid": str(lensnode_uuid),
+            "status": "ready",
+            "last_error": "",
+            "updated_at": timezone.now().isoformat(),
+        }
+    )
+    link.sl_lensnode_uuid = lensnode_uuid
+    link.sidecar_status = LensGatewayLink.SidecarStatus.OFFLINE
+    link.config_json = config
+    link.lensnode_provision_state_json = state
+    link.lensnode_provision_claim_token = None
+    link.lensnode_provision_claimed_at = None
+    link.save(
+        update_fields=[
+            "sl_lensnode_uuid",
+            "sidecar_status",
+            "config_json",
+            "lensnode_provision_state_json",
+            "lensnode_provision_claim_token",
+            "lensnode_provision_claimed_at",
+            "updated_at",
+        ]
+    )
+    return link
+
+
+def _record_lensnode_provision_failure(
+    *,
+    link_id: int,
+    claim_token: str,
+    error: Exception,
+) -> None:
+    """Retain a failed lease until expiry to avoid timeout duplication."""
+
+    with transaction.atomic():
+        link = (
+            LensGatewayLink.objects.select_for_update()
+            .filter(pk=link_id, lensnode_provision_claim_token=claim_token)
+            .first()
+        )
+        if link is None:
+            return
+        state = dict(link.lensnode_provision_state_json or {})
+        state.update(
+            {
+                "status": "error",
+                "last_error": str(error)[:1000],
+                "updated_at": timezone.now().isoformat(),
+            }
+        )
+        link.lensnode_provision_state_json = state
+        link.save(
+            update_fields=["lensnode_provision_state_json", "updated_at"]
+        )
+
+
+def _provision_source_lens_lensnode(
+    *,
+    link: LensGatewayLink,
+    gateway: Node,
+    requested_name: str | None,
+) -> LensGatewayLink:
+    """Create or recover one SourceLens LensNode under a durable lease."""
+
+    claimed_link, claim_token, claim_status = _claim_lensnode_provision(
+        link_id=link.id,
+        gateway=gateway,
+        requested_name=requested_name,
+    )
+    if claim_status == "ready":
+        return claimed_link
+    if claim_status == "busy":
+        raise LensNodeProvisionBusyError()
+
+    state = dict(claimed_link.lensnode_provision_state_json or {})
+    lookup_name = str(state["lookup_name"])
+    try:
+        remote = _find_source_lens_lensnode(lookup_name=lookup_name)
+        if remote is None:
+            remote = sl_client.request_json(
+                "POST",
+                "/api/lens/admin/lensnodes/",
+                json_body={"name": lookup_name},
+            )
+            token = str(remote.get("token") or "")
+        else:
+            remote_uuid = remote.get("uuid")
+            if not remote_uuid:
+                raise sl_client.LensBridgeError(
+                    "Recovered SourceLens LensNode has no uuid."
+                )
+            if (
+                LensGatewayLink.objects.exclude(pk=link.id)
+                .filter(sl_lensnode_uuid=remote_uuid)
+                .exists()
+            ):
+                raise sl_client.LensBridgeError(
+                    "Recovered SourceLens LensNode is already bound to another "
+                    "HFL data gateway."
+                )
+            issued = sl_client.request_json(
+                "POST",
+                f"/api/lens/admin/lensnodes/{remote_uuid}/issue-token/",
+            )
+            token = str(issued.get("token") or "")
+        remote_uuid = remote.get("uuid")
+        if not remote_uuid or not token:
+            raise sl_client.LensBridgeError(
+                "SourceLens LensNode provisioning returned incomplete credentials."
+            )
+        return _complete_lensnode_provision(
+            link_id=link.id,
+            claim_token=claim_token,
+            lensnode_uuid=uuid.UUID(str(remote_uuid)),
+            token=token,
+        )
+    except Exception as exc:
+        _record_lensnode_provision_failure(
+            link_id=link.id,
+            claim_token=claim_token,
+            error=exc,
+        )
+        raise
+
+
+@transaction.atomic
+def _resolve_gateway_link_identity(
+    *,
+    org: Organization,
+    gateway: Node,
+    owner_user,
+    normalized_scope: str | None,
+) -> LensGatewayLink:
+    """Create or verify an immutable Gateway identity under a row lock."""
+
+    existing = (
+        LensGatewayLink.objects.select_for_update()
+        .filter(organization=org, gateway=gateway)
+        .first()
+    )
+    desired_scope = (
+        existing.scope
+        if existing is not None and normalized_scope is None
+        else normalized_scope or LensGatewayLink.GatewayScope.USER
+    )
+    if (
+        desired_scope == LensGatewayLink.GatewayScope.USER
+        and owner_user is None
+        and existing is None
+    ):
+        raise ValidationError(
+            {"owner_user": "Private data gateway requires an owner."}
+        )
+    desired_origin = (
+        existing.origin
+        if existing is not None and normalized_scope is None
+        else (
+            LensGatewayLink.Origin.PLATFORM
+            if desired_scope == LensGatewayLink.GatewayScope.PLATFORM
+            else LensGatewayLink.Origin.USER
+        )
+    )
+    is_platform = desired_scope == LensGatewayLink.GatewayScope.PLATFORM
+    if existing is None:
+        link, created = LensGatewayLink.objects.get_or_create(
+            organization=org,
+            gateway=gateway,
+            defaults={
+                "workspace_root": f"/workspace/org-{org.id}/data",
+                "owner_user": None if is_platform else owner_user,
+                "scope": desired_scope,
+                "origin": desired_origin,
+            },
+        )
+        if created:
+            return link
+        existing = LensGatewayLink.objects.select_for_update().get(pk=link.pk)
+
+    link = existing
+    requested_owner_id = getattr(owner_user, "id", None)
+    if (
+        not is_platform
+        and link.scope == desired_scope
+        and requested_owner_id is not None
+        and link.owner_user_id != requested_owner_id
+    ):
+        raise ValidationError(
+            {"owner_user": "Private data gateway belongs to another user."}
+        )
+    if link.scope != desired_scope:
+        raise ValidationError(
+            {
+                "scope": (
+                    "Data gateway scope is immutable after registration. "
+                    "Uninstall and register the data gateway again to change it."
+                )
+            }
+        )
+    return link
+
+
 def ensure_lensnode_for_gateway(
     *,
     org: Organization,
@@ -446,6 +815,10 @@ def ensure_lensnode_for_gateway(
     """Idempotently associate a SourceLens LensNode with an HFL data gateway."""
     if gateway.role != NodeRole.GATEWAY:
         raise ValidationError({"gateway_id": "Node is not a data gateway."})
+    if gateway.organization_id != org.id:
+        raise ValidationError(
+            {"gateway_id": "Data gateway belongs to another organization."}
+        )
 
     from apps.node.services.internal.local_platform_gateway import (
         is_local_platform_gateway_metadata,
@@ -461,83 +834,51 @@ def ensure_lensnode_for_gateway(
     if normalized_scope is None and is_local_platform_gateway_metadata(gateway.metadata):
         normalized_scope = LensGatewayLink.GatewayScope.PLATFORM
 
-    desired_scope = normalized_scope or LensGatewayLink.GatewayScope.USER
-    desired_origin = (
-        LensGatewayLink.Origin.PLATFORM
-        if desired_scope == LensGatewayLink.GatewayScope.PLATFORM
-        else LensGatewayLink.Origin.USER
-    )
-    is_platform = desired_scope == LensGatewayLink.GatewayScope.PLATFORM
-    link, created = LensGatewayLink.objects.get_or_create(
-        organization=org,
+    link = _resolve_gateway_link_identity(
+        org=org,
         gateway=gateway,
-        defaults={
-            "workspace_root": f"/workspace/org-{org.id}",
-            "owner_user": None if is_platform else owner_user,
-            "scope": desired_scope,
-            "origin": desired_origin,
-        },
+        owner_user=owner_user,
+        normalized_scope=normalized_scope,
     )
-
-    if not created and normalized_scope is not None:
-        update_fields = []
-        if link.scope != desired_scope:
-            link.scope = desired_scope
-            update_fields.append("scope")
-        if link.origin != desired_origin:
-            link.origin = desired_origin
-            update_fields.append("origin")
-        if is_platform and link.owner_user_id is not None:
-            link.owner_user = None
-            update_fields.append("owner_user")
-        if not is_platform and owner_user is not None and link.owner_user_id is None:
-            link.owner_user = owner_user
-            update_fields.append("owner_user")
-        if update_fields:
-            link.save(update_fields=[*update_fields, "updated_at"])
 
     is_platform = link.scope == LensGatewayLink.GatewayScope.PLATFORM
-    if is_platform and not link.is_platform_default:
-        has_platform_default = LensGatewayLink.objects.filter(
-            organization=org,
-            scope=LensGatewayLink.GatewayScope.PLATFORM,
-            is_platform_default=True,
-        ).exclude(pk=link.pk).exists()
-        if is_local_platform_gateway_metadata(gateway.metadata) and not has_platform_default:
-            link.is_platform_default = True
-            link.save(update_fields=["is_platform_default", "updated_at"])
+    if (
+        is_platform
+        and not link.is_platform_default
+        and is_local_platform_gateway_metadata(gateway.metadata)
+    ):
+        try:
+            with transaction.atomic():
+                locked_link = LensGatewayLink.objects.select_for_update().get(
+                    pk=link.pk
+                )
+                has_platform_default = (
+                    LensGatewayLink.objects.filter(
+                        organization=org,
+                        scope=LensGatewayLink.GatewayScope.PLATFORM,
+                        is_platform_default=True,
+                    )
+                    .exclude(pk=locked_link.pk)
+                    .exists()
+                )
+                if not has_platform_default:
+                    locked_link.is_platform_default = True
+                    locked_link.save(
+                        update_fields=["is_platform_default", "updated_at"]
+                    )
+                link.is_platform_default = locked_link.is_platform_default
+        except IntegrityError:
+            # Another registration won the conditional unique constraint.
+            # The link remains valid and simply is not the platform default.
+            link.refresh_from_db(fields=["is_platform_default"])
 
     if link.sl_lensnode_uuid:
         return link
-
-    node_name = name or f"hfl-gw-{gateway.id}-{gateway.name}"[:160]
-    data = sl_client.request_json(
-        "POST",
-        "/api/lens/admin/lensnodes/",
-        json_body={"name": node_name},
+    return _provision_source_lens_lensnode(
+        link=link,
+        gateway=gateway,
+        requested_name=name,
     )
-    lensnode_uuid = data.get("uuid")
-    token = data.get("token")
-    if not lensnode_uuid:
-        raise sl_client.LensBridgeError("LensNode create returned no uuid.")
-
-    config = dict(link.config_json or {})
-    if token:
-        config["lensnode_token_issued"] = True
-        config["lensnode_token"] = token
-
-    link.sl_lensnode_uuid = uuid.UUID(str(lensnode_uuid))
-    link.sidecar_status = LensGatewayLink.SidecarStatus.OFFLINE
-    link.config_json = config
-    link.save(
-        update_fields=[
-            "sl_lensnode_uuid",
-            "sidecar_status",
-            "config_json",
-            "updated_at",
-        ]
-    )
-    return link
 
 
 def enable_ai_on_gateway(
@@ -545,24 +886,16 @@ def enable_ai_on_gateway(
     org: Organization,
     gateway: Node,
     name: str | None = None,
+    owner_user=None,
     scope: str | None = None,
 ) -> LensGatewayLink:
-    link = ensure_lensnode_for_gateway(
+    return ensure_lensnode_for_gateway(
         org=org,
         gateway=gateway,
         name=name,
+        owner_user=owner_user,
         scope=scope,
     )
-    if scope:
-        desired = scope.strip().lower()
-        if desired in (
-            LensGatewayLink.GatewayScope.PLATFORM,
-            LensGatewayLink.GatewayScope.USER,
-        ):
-            if link.scope != desired:
-                link.scope = desired
-                link.save(update_fields=["scope", "updated_at"])
-    return link
 
 
 def build_lens_enroll_config(link: LensGatewayLink) -> dict[str, Any]:
@@ -635,13 +968,6 @@ def record_gateway_install_status(
     status = str(status or "").strip().lower()
 
     link = LensGatewayLink.objects.filter(organization=org, gateway=gateway).first()
-    if link is None and status == "failed":
-        link, _ = LensGatewayLink.objects.get_or_create(
-            organization=org,
-            gateway=gateway,
-            defaults={"workspace_root": f"/workspace/org-{org.id}"},
-        )
-
     if link is None:
         return None
 
@@ -822,7 +1148,16 @@ def _entry_is_dir(item: dict[str, Any]) -> bool:
     return bool(item.get("isLeaf") is False)
 
 
-def _normalize_gateway_browse_entries(raw_entries: Any) -> list[dict[str, Any]]:
+def _normalize_gateway_browse_entries(
+    raw_entries: Any,
+    *,
+    workspace_root: str,
+) -> list[dict[str, Any]]:
+    from apps.lens_bridge.services.gateway_paths import (
+        GatewayPathError,
+        path_within_root,
+    )
+
     if not isinstance(raw_entries, list):
         return []
     rows: list[dict[str, Any]] = []
@@ -835,6 +1170,15 @@ def _normalize_gateway_browse_entries(raw_entries: Any) -> list[dict[str, Any]]:
             continue
         path = str(item.get("path") or "").strip()
         if not path or path in seen:
+            continue
+        try:
+            path = path_within_root(
+                path,
+                workspace_root,
+                allow_root=False,
+                field="entry_path",
+            )
+        except GatewayPathError:
             continue
         seen.add(path)
         name = str(item.get("name") or item.get("label") or "").strip() or path.rstrip("/").split("/")[-1]
@@ -857,35 +1201,55 @@ def browse_gateway_directory(
     org: Organization,
     gateway_id: int,
     path: str = "",
+    expected_scope: str | None = None,
+    expected_owner_user_id: int | None = None,
     limit: int = 200,
     wait_timeout_seconds: int = 15,
 ) -> dict[str, Any]:
-    import posixpath
-
     from apps.node.services.interface import run_agent_task_sync
+    from apps.lens_bridge.services.gateway_paths import (
+        GatewayPathError,
+        path_within_root,
+    )
 
     gateway = require_gateway_node(org, gateway_id)
     if gateway.status != Node.Status.ONLINE:
         raise ValidationError({"gateway": "Data gateway must be online to browse directories."})
 
-    link, _ = LensGatewayLink.objects.get_or_create(
-        organization=org,
-        gateway=gateway,
-        defaults={"workspace_root": f"/workspace/org-{org.id}"},
-    )
+    link = get_gateway_link(org, gateway.id)
+    if expected_scope is not None and link.scope != expected_scope:
+        raise ValidationError({"gateway_id": "Data gateway scope is invalid."})
+    if expected_scope is not None or expected_owner_user_id is not None:
+        from apps.lens_bridge.services.gateway_execution import (
+            context_for_gateway_link,
+        )
 
-    root = link.resolved_workspace_root().rstrip("/") or "/"
-    browse_path = str(path or "").strip() or root
-    normalized_root = root.rstrip("/") or "/"
-    if browse_path != normalized_root and not browse_path.startswith(f"{normalized_root}/"):
-        raise ValidationError({"path": "Path must be under the gateway workspace root."})
+        context_for_gateway_link(
+            tenant_organization=org,
+            gateway_link=link,
+            expected_owner_user_id=expected_owner_user_id,
+            require_ready=False,
+        )
+
+    normalized_root = link.resolved_workspace_root()
+    try:
+        browse_path = path_within_root(
+            str(path or "").strip() or normalized_root,
+            normalized_root,
+            allow_root=True,
+        )
+    except GatewayPathError as exc:
+        raise ValidationError(
+            {"path": "Path must be under the gateway workspace root."}
+        ) from exc
 
     outcome = run_agent_task_sync(
         organization_id=org.id,
         node_id=gateway.id,
-        kind="explorer.list",
+        kind="lens.gateway.browse",
         payload={
             "path": browse_path,
+            "allowed_root": normalized_root,
             "dirs_only": True,
             "include_metadata": False,
             "limit": limit,
@@ -908,8 +1272,26 @@ def browse_gateway_directory(
         result = {}
 
     listed_path = str(result.get("path") or browse_path).strip() or browse_path
+    try:
+        listed_path = path_within_root(
+            listed_path,
+            normalized_root,
+            allow_root=True,
+            field="listed_path",
+        )
+    except GatewayPathError:
+        listed_path = browse_path
+    import posixpath
+
     parent_path = posixpath.dirname(listed_path.rstrip("/")) or normalized_root
-    if parent_path != normalized_root and not parent_path.startswith(f"{normalized_root}/"):
+    try:
+        parent_path = path_within_root(
+            parent_path,
+            normalized_root,
+            allow_root=True,
+            field="parent_path",
+        )
+    except GatewayPathError:
         parent_path = normalized_root
 
     return {
@@ -917,7 +1299,10 @@ def browse_gateway_directory(
         "path": listed_path,
         "root_path": normalized_root,
         "parent_path": parent_path,
-        "entries": _normalize_gateway_browse_entries(result.get("entries")),
+        "entries": _normalize_gateway_browse_entries(
+            result.get("entries"),
+            workspace_root=normalized_root,
+        ),
         "has_more": bool(result.get("has_more")),
         "next_cursor": str(result.get("next_cursor") or ""),
     }

@@ -27,6 +27,7 @@ class NodeTask(OrganizationScopedModel):
         on_delete=models.CASCADE,
         related_name="node_tasks",
     )
+    requesting_organization_id = models.BigIntegerField(db_index=True)
     node = models.ForeignKey(
         "node.Node",
         on_delete=models.CASCADE,
@@ -87,3 +88,8 @@ class NodeTask(OrganizationScopedModel):
 
     def __str__(self) -> str:
         return f"{self.kind}@{self.pk} ({self.status})"
+
+    def save(self, *args, **kwargs) -> None:
+        if self.requesting_organization_id is None:
+            self.requesting_organization_id = self.organization_id
+        super().save(*args, **kwargs)

@@ -1,6 +1,7 @@
 from django.http import JsonResponse, StreamingHttpResponse
 import uuid
 
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -220,6 +221,8 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx["org"] = self.org
+        ctx["gateway_scope"] = LensGatewayLink.GatewayScope.USER
+        ctx["gateway_owner_user_id"] = self.request.user.id
         return ctx
 
     def list(self, request, *args, **kwargs):
@@ -236,26 +239,62 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def perform_create(self, serializer):
-        gateway = provisioning.require_gateway_node(self.org, serializer.validated_data["gateway"].id)
-        gateway_link = provisioning.get_gateway_link(self.org, gateway.id)
-        ks = serializer.save(
-            organization=self.org,
-            created_by=self.request.user,
-            sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
-        )
-        ks = knowledge_source_sync.prepare_new_knowledge_source(org=self.org, ks=ks)
-        knowledge_source_sync.enqueue_knowledge_source_sync(
-            organization_id=self.org.id,
-            knowledge_source_id=ks.id,
-            mode="full",
+        from apps.lens_bridge.services.gateway_execution import (
+            require_user_gateway_link,
         )
 
+        with transaction.atomic():
+            gateway_link = require_user_gateway_link(
+                tenant_organization=self.org,
+                gateway_id=serializer.validated_data["gateway"].id,
+                owner_user_id=self.request.user.id,
+                lock=True,
+            )
+            ks = serializer.save(
+                organization=self.org,
+                created_by=self.request.user,
+                gateway_link=gateway_link,
+                sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
+            )
+            ks = knowledge_source_sync.prepare_new_knowledge_source(
+                org=self.org,
+                ks=ks,
+            )
+            transaction.on_commit(
+                lambda organization_id=self.org.id, knowledge_source_id=ks.id: (
+                    knowledge_source_sync.enqueue_knowledge_source_sync(
+                        organization_id=organization_id,
+                        knowledge_source_id=knowledge_source_id,
+                        mode="full",
+                    )
+                )
+            )
+
     def perform_update(self, serializer):
+        if (
+            serializer.instance.lifecycle_status
+            != LensKnowledgeSource.LifecycleStatus.READY
+        ):
+            raise ValidationError(
+                {"lifecycle_status": "Knowledge source is being deleted."}
+            )
         scan_changed = "scan_enabled" in serializer.validated_data
         ks = serializer.save()
         if scan_changed and not ks.scan_enabled:
             ks.status = LensKnowledgeSource.Status.PAUSED
             ks.save(update_fields=["status", "updated_at"])
+
+    def destroy(self, request, *args, **kwargs):
+        from apps.lens_bridge.services.knowledge_source_teardown import (
+            request_knowledge_source_teardown,
+        )
+
+        instance = self.get_object()
+        request_knowledge_source_teardown(instance)
+        return Response(
+            {"id": instance.id, "lifecycle_status": "deleting"},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=True, methods=["post"])
     def sync(self, request, pk=None):
@@ -302,6 +341,7 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
             organization=self.org,
             gateway=gateway,
             scope=LensGatewayLink.GatewayScope.USER,
+            owner_user=request.user,
         ).first()
         if link and link.sl_lensnode_uuid:
             provisioning.sync_gateway_lensnode_status(link)
@@ -309,6 +349,7 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
             org=self.org,
             gateway=gateway,
             name=body.validated_data.get("name") or None,
+            owner_user=request.user,
             scope=LensGatewayLink.GatewayScope.USER,
         )
         payload = provisioning.build_gateway_ai_payload(
@@ -321,11 +362,16 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
     @action(detail=True, methods=["get"], url_path="ai")
     def ai_status(self, request, pk=None):
         gateway = provisioning.require_gateway_node(self.org, int(pk))
-        link = LensGatewayLink.objects.filter(
-            organization=self.org,
-            gateway=gateway,
-            scope=LensGatewayLink.GatewayScope.USER,
-        ).first()
+        from apps.lens_bridge.services.gateway_execution import (
+            require_user_gateway_link,
+        )
+
+        link = require_user_gateway_link(
+            tenant_organization=self.org,
+            gateway_id=gateway.id,
+            owner_user_id=request.user.id,
+            require_ready=False,
+        )
         if link and link.sl_lensnode_uuid:
             provisioning.sync_gateway_lensnode_status(link)
         return Response(
@@ -344,6 +390,8 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
                 org=self.org,
                 gateway_id=int(pk),
                 path=path,
+                expected_scope=LensGatewayLink.GatewayScope.USER,
+                expected_owner_user_id=request.user.id,
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
@@ -441,13 +489,12 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def list(self, request):
         membership = get_membership(request)
-        manage = assistant_access.can_manage_all_assistants(membership)
+        can_manage_all = assistant_access.can_manage_all_assistants(membership)
         try:
             rows = list_org_assistants(
                 self.org,
                 user=request.user,
-                membership=membership,
-                manage=manage,
+                can_manage_all=can_manage_all,
             )
         except sl_client.LensBridgeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
@@ -455,14 +502,13 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def retrieve(self, request, pk=None):
         membership = get_membership(request)
-        manage = assistant_access.can_manage_all_assistants(membership)
+        can_manage_all = assistant_access.can_manage_all_assistants(membership)
         try:
             data = get_org_assistant(
                 self.org,
                 uuid.UUID(str(pk)),
                 user=request.user,
-                membership=membership,
-                manage=manage,
+                can_manage_all=can_manage_all,
             )
         except NotFound:
             raise
@@ -480,12 +526,15 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         return Response(data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, pk=None):
+        membership = get_membership(request)
+        can_manage_all = assistant_access.can_manage_all_assistants(membership)
         try:
             data = update_org_assistant(
                 self.org,
                 uuid.UUID(str(pk)),
                 dict(request.data),
                 user=request.user,
+                can_manage_all=can_manage_all,
             )
         except NotFound:
             raise
@@ -496,8 +545,15 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         return Response(data)
 
     def destroy(self, request, pk=None):
+        membership = get_membership(request)
+        can_manage_all = assistant_access.can_manage_all_assistants(membership)
         try:
-            delete_org_assistant(self.org, uuid.UUID(str(pk)))
+            delete_org_assistant(
+                self.org,
+                uuid.UUID(str(pk)),
+                user=request.user,
+                can_manage_all=can_manage_all,
+            )
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
@@ -507,7 +563,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="form-options")
     def form_options(self, request):
         try:
-            data = assistant_form_options(self.org)
+            data = assistant_form_options(self.org, user=request.user)
         except sl_client.LensBridgeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(data)
@@ -752,7 +808,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         link = self._get_user_link(pk)
         from apps.lens_bridge.services import chat_lifecycle
 
-        chat_lifecycle.request_copilot_chat_teardown(link)
+        link = chat_lifecycle.request_copilot_chat_teardown(link)
         return Response(LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=["post"], url_path="retry")

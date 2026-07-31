@@ -10,9 +10,10 @@ from typing import Any
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from common.errors import AppError
+from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.node.models.base import NodeRole
@@ -385,6 +386,25 @@ def create_manual_restore_record(
     data: dict[str, Any],
     user_id: int | None = None,
 ) -> RestoreRecord:
+    return _create_manual_restore_record(
+        organization_id=organization_id,
+        data=data,
+        user_id=user_id,
+        purpose=RestoreRecord.Purpose.USER_DATA,
+    )
+
+
+def _create_manual_restore_record(
+    *,
+    organization_id: int,
+    data: dict[str, Any],
+    user_id: int | None,
+    purpose: str,
+    target_execution_organization_id: int | None = None,
+    target_execution_node_id: int | None = None,
+    workspace_binding_id: int | None = None,
+    expected_target_path: str | None = None,
+) -> RestoreRecord:
     source_type = _choice(data, "source_type", SOURCE_TYPES)
     target_type = _choice(data, "target_type", SOURCE_TYPES)
     source_ref_id = _int(data, "source_ref_id")
@@ -399,12 +419,35 @@ def create_manual_restore_record(
         ref_id=source_ref_id,
         field="source_ref_id",
     )
-    _validate_endpoint_exists(
-        organization_id=organization_id,
-        endpoint_type=target_type,
-        ref_id=target_ref_id,
-        field="target_ref_id",
-    )
+    if purpose == RestoreRecord.Purpose.USER_DATA:
+        if target_execution_organization_id is not None or target_execution_node_id is not None:
+            raise ValueError("public restore cannot override its execution identity")
+        _validate_endpoint_exists(
+            organization_id=organization_id,
+            endpoint_type=target_type,
+            ref_id=target_ref_id,
+            field="target_ref_id",
+        )
+        execution_node = _target_execution_node(
+            organization_id=organization_id,
+            target_type=target_type,
+            target_ref_id=target_ref_id,
+        )
+        target_execution_organization_id = organization_id
+        target_execution_node_id = execution_node.id
+    else:
+        if purpose != RestoreRecord.Purpose.LENS_WORKSPACE:
+            raise ValueError("unsupported restore purpose")
+        if target_execution_organization_id is None or target_execution_node_id is None:
+            raise ValueError("lens workspace restore requires a validated execution binding")
+        if workspace_binding_id is None or expected_target_path is None:
+            raise ValueError("lens workspace restore requires an authoritative workspace binding")
+        if target_type != RestoreRecord.EndpointType.AGENT:
+            raise ValidationError({"target_type": "Lens workspace restore requires a data gateway."})
+        if target_execution_node_id != target_ref_id:
+            raise ValidationError({"target_ref_id": "Lens workspace target does not match its gateway binding."})
+        if target_path != expected_target_path:
+            raise ValidationError({"target_path": "Lens workspace target path is not authoritative."})
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=organization_id,
         pk=source_snapshot_id,
@@ -434,6 +477,12 @@ def create_manual_restore_record(
                 "target_path": _path(item, "target_path", default=target_path),
                 "conflict_mode": _choice(item, "conflict_mode", CONFLICT_MODES, default=conflict_mode),
             }
+        )
+    if purpose == RestoreRecord.Purpose.LENS_WORKSPACE and any(
+        item["target_path"] != expected_target_path for item in item_inputs
+    ):
+        raise ValidationError(
+            {"items": "Lens workspace restore item paths must match the workspace binding."}
         )
     logger.info(
         "restore manual create started org_id=%s source_snapshot_id=%s source_type=%s source_ref_id=%s target_type=%s target_ref_id=%s item_count=%s user_id=%s",
@@ -466,6 +515,12 @@ def create_manual_restore_record(
             "idempotency_key": str(data.get("idempotency_key") or ""),
         },
         created_by_id=user_id,
+        purpose=purpose,
+        requesting_organization_id=organization_id,
+        target_execution_organization_id=target_execution_organization_id,
+        target_execution_node_id=target_execution_node_id,
+        idempotency_key=str(data.get("idempotency_key") or ""),
+        workspace_binding_id=workspace_binding_id,
     )
     logger.info(
         "restore manual create ok restore_record_id=%s restore_uid=%s task_uuid=%s",
@@ -474,6 +529,98 @@ def create_manual_restore_record(
         record.task_uuid,
     )
     return record
+
+
+@transaction.atomic
+def create_lens_workspace_restore_record(
+    *,
+    organization_id: int,
+    workspace_binding_id: int,
+    data: dict[str, Any],
+) -> RestoreRecord:
+    """Create the only restore type allowed to execute on a Platform gateway."""
+
+    tenant_organization = Organization.objects.select_for_update().filter(
+        pk=organization_id
+    ).first()
+    if tenant_organization is None:
+        raise ValidationError({"organization_id": "Organization is not available."})
+    from apps.lens_bridge.services.gateway_execution import (
+        context_for_workspace_binding,
+    )
+
+    execution_context, workspace_binding = context_for_workspace_binding(
+        tenant_organization=tenant_organization,
+        workspace_binding_id=workspace_binding_id,
+    )
+    expected_target_path = workspace_binding.resolved_path()
+    idempotency_key = str(data.get("idempotency_key") or "").strip()
+    if not idempotency_key:
+        raise ValidationError({"idempotency_key": "Lens workspace restore requires an idempotency key."})
+    existing = RestoreRecord.objects.filter(
+        organization_id=organization_id,
+        purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+        idempotency_key=idempotency_key,
+    ).first()
+    if existing is not None:
+        expected = (
+            int(execution_context.execution_organization.id),
+            int(execution_context.gateway.id),
+            workspace_binding.id,
+            _int(data, "source_snapshot_id"),
+            expected_target_path,
+        )
+        actual = (
+            existing.target_execution_organization_id,
+            existing.target_execution_node_id,
+            existing.workspace_binding_id,
+            existing.source_snapshot_id,
+            existing.target_path,
+        )
+        if actual != expected:
+            raise ValidationError(
+                {"idempotency_key": "Lens workspace idempotency key is bound to another execution request."}
+            )
+        return existing
+    try:
+        with transaction.atomic():
+            return _create_manual_restore_record(
+                organization_id=organization_id,
+                data=data,
+                user_id=None,
+                purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+                target_execution_organization_id=execution_context.execution_organization.id,
+                target_execution_node_id=execution_context.gateway.id,
+                workspace_binding_id=workspace_binding.id,
+                expected_target_path=expected_target_path,
+            )
+    except IntegrityError:
+        existing = RestoreRecord.objects.filter(
+            organization_id=organization_id,
+            purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+            idempotency_key=idempotency_key,
+        ).first()
+        if existing is None:
+            raise
+        expected = (
+            execution_context.execution_organization.id,
+            execution_context.gateway.id,
+            workspace_binding.id,
+            _int(data, "source_snapshot_id"),
+            expected_target_path,
+        )
+        actual = (
+            existing.target_execution_organization_id,
+            existing.target_execution_node_id,
+            existing.workspace_binding_id,
+            existing.source_snapshot_id,
+            existing.target_path,
+        )
+        if actual != expected:
+            raise ValidationError(
+                {"idempotency_key": "Lens workspace idempotency key is bound to another execution request."}
+            )
+        return existing
 
 
 def _create_restore_record(
@@ -493,13 +640,33 @@ def _create_restore_record(
     item_inputs: list[dict[str, Any]],
     request_payload: dict[str, Any],
     created_by_id: int | None,
+    purpose: str = RestoreRecord.Purpose.USER_DATA,
+    requesting_organization_id: int | None = None,
+    target_execution_organization_id: int | None = None,
+    target_execution_node_id: int | None = None,
+    idempotency_key: str = "",
+    workspace_binding_id: int | None = None,
 ) -> RestoreRecord:
-    _validate_endpoint_exists(
-        organization_id=organization_id,
-        endpoint_type=target_type,
-        ref_id=target_ref_id,
-        field="target_ref_id",
-    )
+    if target_execution_node_id is None or target_execution_organization_id is None:
+        _validate_endpoint_exists(
+            organization_id=organization_id,
+            endpoint_type=target_type,
+            ref_id=target_ref_id,
+            field="target_ref_id",
+        )
+        execution_node = _target_execution_node(
+            organization_id=organization_id,
+            target_type=target_type,
+            target_ref_id=target_ref_id,
+        )
+        target_execution_node_id = execution_node.id
+        target_execution_organization_id = execution_node.organization_id
+    elif not Node.objects.filter(
+        id=target_execution_node_id,
+        organization_id=target_execution_organization_id,
+        is_deleted=False,
+    ).exists():
+        raise ValidationError({"target_ref_id": "Restore execution node not found."})
     _ensure_no_active_restore_for_source(
         organization_id=organization_id,
         source_type=source_type,
@@ -538,6 +705,12 @@ def _create_restore_record(
     )
     record = RestoreRecord.objects.create(
         organization_id=organization_id,
+        requesting_organization_id=requesting_organization_id or organization_id,
+        target_execution_organization_id=target_execution_organization_id,
+        target_execution_node_id=target_execution_node_id,
+        purpose=purpose,
+        idempotency_key=idempotency_key,
+        workspace_binding_id=workspace_binding_id,
         restore_uid=restore_uid,
         source_mode=source_mode,
         plan_id=plan_id,
@@ -1212,11 +1385,50 @@ def _target_execution_node(*, organization_id: int, target_type: str, target_ref
 
 
 def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task: Task) -> None:
-    node = _target_execution_node(
-        organization_id=organization_id,
-        target_type=record.target_type,
-        target_ref_id=record.target_ref_id,
-    )
+    managed_workspace_payload: dict[str, Any] = {}
+    if record.purpose == RestoreRecord.Purpose.LENS_WORKSPACE:
+        if record.workspace_binding_id is None:
+            raise ValidationError(
+                {"workspace_binding_id": "Lens workspace restore has no execution binding."}
+            )
+        tenant_organization = Organization.objects.filter(pk=record.organization_id).first()
+        if tenant_organization is None:
+            raise ValidationError({"organization_id": "Restore organization is not available."})
+        from apps.lens_bridge.services.gateway_execution import (
+            context_for_workspace_binding,
+            workspace_identity_payload,
+        )
+
+        execution_context, workspace_binding = context_for_workspace_binding(
+            tenant_organization=tenant_organization,
+            workspace_binding_id=record.workspace_binding_id,
+        )
+        if (
+            record.target_execution_organization_id
+            != execution_context.execution_organization.id
+            or record.target_execution_node_id != execution_context.gateway.id
+            or record.target_path != workspace_binding.resolved_path()
+            or any(
+                not _same_or_ancestor_path(record.target_path, item_path)
+                for item_path in record.items.values_list("target_path", flat=True)
+            )
+        ):
+            raise ValidationError(
+                {"workspace_binding_id": "Restore execution no longer matches its workspace binding."}
+            )
+        managed_workspace_payload = {
+            "managed_workspace_path": workspace_binding.resolved_path(),
+            **workspace_identity_payload(workspace_binding),
+        }
+    node = Node.objects.filter(
+        organization_id=record.target_execution_organization_id,
+        id=record.target_execution_node_id,
+        is_deleted=False,
+    ).first()
+    if node is None:
+        raise ValidationError({"target_ref_id": "Restore execution node not found."})
+    if node.status != Node.Status.ONLINE:
+        raise ValidationError({"target_ref_id": "Restore execution node is offline."})
     all_items = list(record.items.all())
     items = [
         item
@@ -1327,14 +1539,16 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
                 "repository": repository_payload,
                 "repository_reader_node_id": repository_access.node.id,
                 "restore_transfer_mode": restore_transfer_mode,
+                **managed_workspace_payload,
             }
             handle = run_agent_task_async(
-                organization_id=organization_id,
+                organization_id=record.target_execution_organization_id,
                 node_id=node.id,
                 kind="restore.run",
                 payload=payload,
                 correlation_type="restore.record",
                 correlation_id=str(record.task_uuid),
+                requesting_organization_id=record.requesting_organization_id,
             )
             log_agent_dispatch(
                 "restore item",
@@ -1753,8 +1967,11 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
                 ]
             )
 
+    execution_org_ids = {organization_id}
+    if record is not None:
+        execution_org_ids.add(record.target_execution_organization_id)
     for node_task in NodeTask.objects.filter(
-        organization_id=organization_id,
+        organization_id__in=execution_org_ids,
         correlation_id=str(task.task_uuid),
         status__in=_ACTIVE_NODE_STATUSES,
     ):
@@ -1798,8 +2015,15 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
 def restore_task_is_stopping(*, task: Task) -> bool:
     if task.status != Task.Status.CANCELLED:
         return False
-    return NodeTask.objects.filter(
+    record = RestoreRecord.objects.filter(
         organization_id=task.organization_id,
+        task_uuid=task.task_uuid,
+    ).first()
+    organization_ids = {task.organization_id}
+    if record is not None:
+        organization_ids.add(record.target_execution_organization_id)
+    return NodeTask.objects.filter(
+        organization_id__in=organization_ids,
         correlation_id=str(task.task_uuid),
         status__in=_ACTIVE_NODE_STATUSES,
     ).exists()

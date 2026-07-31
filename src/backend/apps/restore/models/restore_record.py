@@ -6,6 +6,10 @@ from django.db import models
 
 
 class RestoreRecord(models.Model):
+    class Purpose(models.TextChoices):
+        USER_DATA = "user_data", "User data"
+        LENS_WORKSPACE = "lens_workspace", "Lens workspace"
+
     class SourceMode(models.TextChoices):
         PLAN = "plan", "Plan"
         MANUAL = "manual", "Manual"
@@ -23,6 +27,17 @@ class RestoreRecord(models.Model):
         OVERWRITE = "overwrite", "Overwrite"
 
     organization_id = models.BigIntegerField(db_index=True)
+    requesting_organization_id = models.BigIntegerField(db_index=True)
+    target_execution_organization_id = models.BigIntegerField(db_index=True)
+    target_execution_node_id = models.BigIntegerField(db_index=True)
+    purpose = models.CharField(
+        max_length=24,
+        choices=Purpose.choices,
+        default=Purpose.USER_DATA,
+        db_index=True,
+    )
+    idempotency_key = models.CharField(max_length=160, blank=True, default="")
+    workspace_binding_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     restore_uid = models.CharField(max_length=64)
     source_mode = models.CharField(max_length=16, choices=SourceMode.choices, db_index=True)
     plan_id = models.BigIntegerField(blank=True, null=True, db_index=True)
@@ -61,6 +76,28 @@ class RestoreRecord(models.Model):
             models.UniqueConstraint(
                 fields=["organization_id", "restore_uid"],
                 name="uniq_restore_record_uid",
+            ),
+            models.UniqueConstraint(
+                fields=["organization_id", "purpose", "idempotency_key"],
+                condition=(
+                    models.Q(purpose="lens_workspace")
+                    & ~models.Q(idempotency_key="")
+                ),
+                name="uniq_restore_org_purpose_idem",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        purpose="lens_workspace",
+                        workspace_binding_id__isnull=False,
+                    )
+                    & ~models.Q(idempotency_key="")
+                    | models.Q(
+                        purpose="user_data",
+                        workspace_binding_id__isnull=True,
+                    )
+                ),
+                name="restore_purpose_workspace_ck",
             ),
         ]
 

@@ -6,8 +6,10 @@ import io
 import json
 from unittest import mock
 
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory
 
 from apps.lens_bridge.models import LensGatewayLink
@@ -62,6 +64,10 @@ class LocalPlatformGatewayConfigTests(SimpleTestCase):
 class LocalPlatformGatewayEnrollmentTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
+        self.user = get_user_model().objects.create_user(
+            username="gateway-owner@example.test",
+            email="gateway-owner@example.test",
+        )
 
     def test_token_is_reused(self):
         first = ensure_local_platform_gateway_token()
@@ -79,14 +85,6 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
             name="managed-gateway",
             role=NodeRole.GATEWAY,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
-        )
-        stale_link = LensGatewayLink.objects.create(
-            organization=org,
-            gateway=managed,
-            scope=LensGatewayLink.GatewayScope.USER,
-            origin=LensGatewayLink.Origin.USER,
-            sl_lensnode_uuid="0d16cf33-5c21-471e-9cbd-b5e9819ff19c",
-            is_platform_default=True,
         )
         Node.objects.create(
             organization=org,
@@ -110,10 +108,6 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         )
         self.assertTrue(payload["token"])
         self.assertEqual(payload["managed_node_ids"], [managed.id])
-        stale_link.refresh_from_db()
-        self.assertEqual(stale_link.scope, LensGatewayLink.GatewayScope.PLATFORM)
-        self.assertEqual(stale_link.origin, LensGatewayLink.Origin.PLATFORM)
-        self.assertTrue(stale_link.is_platform_default)
 
     @mock.patch(
         "apps.lens_bridge.services.provisioning.provision_gateway_lens_on_register",
@@ -164,34 +158,6 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         )
         self.assertIsNone(mock_provision.call_args_list[1].kwargs["scope"])
 
-    def test_managed_gateway_repairs_stale_scope_without_explicit_token_scope(self):
-        org = platform_lens.get_or_create_platform_org()
-        gateway = Node.objects.create(
-            organization=org,
-            name="managed-gateway",
-            role=NodeRole.GATEWAY,
-            metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
-        )
-        link = LensGatewayLink.objects.create(
-            organization=org,
-            gateway=gateway,
-            scope=LensGatewayLink.GatewayScope.USER,
-            origin=LensGatewayLink.Origin.USER,
-            sl_lensnode_uuid="5ed4b4d1-b9b0-456d-8d73-cc88d948877b",
-        )
-
-        result = provisioning.ensure_lensnode_for_gateway(
-            org=org,
-            gateway=gateway,
-            scope=None,
-        )
-
-        result.refresh_from_db()
-        self.assertEqual(result.pk, link.pk)
-        self.assertEqual(result.scope, LensGatewayLink.GatewayScope.PLATFORM)
-        self.assertEqual(result.origin, LensGatewayLink.Origin.PLATFORM)
-        self.assertTrue(result.is_platform_default)
-
     def test_unknown_scope_preserves_existing_non_platform_identity(self):
         org = platform_lens.get_or_create_platform_org()
         gateway = Node.objects.create(
@@ -202,6 +168,7 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         LensGatewayLink.objects.create(
             organization=org,
             gateway=gateway,
+            owner_user=self.user,
             scope=LensGatewayLink.GatewayScope.USER,
             origin=LensGatewayLink.Origin.EXTERNAL,
             sl_lensnode_uuid="a3b9975f-cded-4c0a-a754-ec6f954d2b2c",
@@ -216,6 +183,35 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         result.refresh_from_db()
         self.assertEqual(result.scope, LensGatewayLink.GatewayScope.USER)
         self.assertEqual(result.origin, LensGatewayLink.Origin.EXTERNAL)
+
+    def test_platform_to_private_conversion_is_rejected(self):
+        org = platform_lens.get_or_create_platform_org()
+        gateway = Node.objects.create(
+            organization=org,
+            name="converted-private-gateway",
+            role=NodeRole.GATEWAY,
+        )
+        LensGatewayLink.objects.create(
+            organization=org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+            origin=LensGatewayLink.Origin.PLATFORM,
+            sl_lensnode_uuid="d896d7ee-9903-4d55-9050-44e3f93c0103",
+            is_platform_default=True,
+        )
+
+        with self.assertRaises(ValidationError):
+            provisioning.ensure_lensnode_for_gateway(
+                org=org,
+                gateway=gateway,
+                owner_user=self.user,
+                scope=LensGatewayLink.GatewayScope.USER,
+            )
+
+        link = LensGatewayLink.objects.get(gateway=gateway)
+        self.assertEqual(link.scope, LensGatewayLink.GatewayScope.PLATFORM)
+        self.assertIsNone(link.owner_user)
+        self.assertTrue(link.is_platform_default)
 
     @mock.patch(
         "apps.lens_bridge.services.provisioning.sl_client.request_json",

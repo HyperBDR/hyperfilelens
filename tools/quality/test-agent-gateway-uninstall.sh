@@ -116,4 +116,25 @@ PATH="${fake_bin}:${PATH}" \
 grep -Fx 'image rm hyperfilelens-sourcelens-lensnode:latest' "${docker_state}.images" >/dev/null
 grep -Fx 'image rm example/hfl-lensnode:test' "${docker_state}.images" >/dev/null
 
+validate_workspace() {
+	bash -c 'source "$1"; validate_gateway_workspace_path "$2"' \
+		_ "${ROOT}/deploy/bootstrap/gateway-lifecycle.sh" "$1"
+}
+
+[[ "$(validate_workspace /workspace/org-42/data)" == "/workspace/org-42/data" ]]
+[[ "$(validate_workspace /workspace/org-42/data/)" == "/workspace/org-42/data" ]]
+for unsafe_workspace in \
+	/workspace/org-0/data \
+	/workspace/org-alpha/data \
+	/workspace/org-42 \
+	/workspace/org-42/data/child \
+	/workspace/org-42/data/../secrets \
+	/workspace/../etc \
+	/; do
+	if validate_workspace "${unsafe_workspace}" >/dev/null 2>&1; then
+		printf 'unsafe Gateway workspace path accepted: %s\n' "${unsafe_workspace}" >&2
+		exit 1
+	fi
+done
+
 printf 'Agent-managed Data Gateway uninstall contracts passed.\n'

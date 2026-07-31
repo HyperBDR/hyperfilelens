@@ -34,7 +34,10 @@ def get_restore_plan(*, organization_id: int, plan_id: int) -> RestorePlan | Non
 
 def restore_records_queryset(*, organization_id: int) -> QuerySet[RestoreRecord]:
     return (
-        RestoreRecord.objects.filter(organization_id=organization_id)
+        RestoreRecord.objects.filter(
+            organization_id=organization_id,
+            purpose=RestoreRecord.Purpose.USER_DATA,
+        )
         .prefetch_related("items")
         .order_by("-created_at", "-id")
     )

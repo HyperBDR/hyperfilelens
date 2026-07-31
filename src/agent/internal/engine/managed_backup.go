@@ -1492,6 +1492,9 @@ func (e *Engine) runManagedRestore(
 	if targetPath == "" {
 		return "failed", nil, "target_path is required"
 	}
+	if err := validateLensManagedRestoreTarget(p, targetPath); err != nil {
+		return "failed", nil, err.Error()
+	}
 	bin, err := e.kopiaBin(ctx)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -1517,6 +1520,9 @@ func (e *Engine) runManagedRestore(
 	for pathIndex, selectedPath := range selectedPaths {
 		source := snapshotObjectPath(p.SnapshotID, selectedPath)
 		restoreTarget := restoreTargetPathForSelection(p, targetPath, selectedPath)
+		if err := validateLensManagedRestoreTarget(p, restoreTarget); err != nil {
+			return "failed", result, err.Error()
+		}
 		sourceIsDir, inspectRes, inspectErr := snapshotDownloadTargetIsDir(ctx, bin, configFile, env, source)
 		sourceObjectType := "directory"
 		if inspectErr != nil {
@@ -1593,6 +1599,9 @@ func (e *Engine) runManagedRestore(
 		if lastPathTotal > 0 {
 			completedBytes += lastPathTotal
 		}
+	}
+	if err := validateLensManagedRestoreTarget(p, targetPath); err != nil {
+		return "failed", result, "managed workspace identity changed during restore: " + err.Error()
 	}
 	result["snapshot_id"] = p.SnapshotID
 	result["target_path"] = targetPath

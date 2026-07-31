@@ -47,6 +47,24 @@ class CopilotSessionApiTests(TestCase):
         )
         self.assertEqual(payload["run_outcomes"], [])
 
+    @patch(
+        "apps.lens_bridge.services.chat_lifecycle._queue_teardown_or_record_error"
+    )
+    def test_delete_returns_the_persisted_deleting_state(self, _queue_teardown):
+        response = self.client.delete(
+            reverse("lens-copilot-session-detail", kwargs={"pk": self.session.pk}),
+            HTTP_X_ORG_KEY=self.org.key,
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        payload = payload.get("data", payload)
+        self.assertEqual(
+            payload["lifecycle_status"],
+            LensSessionLink.LifecycleStatus.DELETING,
+        )
+        self.assertEqual(payload["status"], LensSessionLink.Status.ARCHIVED)
+
     @patch("apps.lens_bridge.services.sl_client.request_json")
     def test_sync_returns_a_durable_sanitized_failed_run_outcome(self, request_json):
         run_uuid = uuid.uuid4()

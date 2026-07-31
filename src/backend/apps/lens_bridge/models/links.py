@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -167,7 +169,7 @@ class LensGatewayLink(OrganizationScopedModel):
     sl_lensnode_uuid = models.UUIDField(null=True, blank=True, unique=True)
     owner_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="lens_gateway_links_owned",
@@ -186,6 +188,18 @@ class LensGatewayLink(OrganizationScopedModel):
         db_index=True,
     )
     config_json = models.JSONField(default=dict, blank=True)
+    lensnode_provision_state_json = models.JSONField(default=dict, blank=True)
+    lensnode_provision_attempts = models.PositiveIntegerField(default=0)
+    lensnode_provision_claim_token = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+    )
+    lensnode_provision_claimed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     scope = models.CharField(
         max_length=16,
         choices=GatewayScope.choices,
@@ -200,6 +214,29 @@ class LensGatewayLink(OrganizationScopedModel):
             models.UniqueConstraint(
                 fields=["organization", "gateway"],
                 name="uniq_lens_bridge_gw_link_org_gw",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(scope="platform", owner_user_id__isnull=True)
+                    | models.Q(scope="user", owner_user_id__isnull=False)
+                ),
+                name="lens_brgw_scope_owner_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(is_platform_default=False)
+                    | models.Q(scope="platform")
+                ),
+                name="lens_brgw_default_scope_ck",
+            ),
+            models.UniqueConstraint(
+                fields=["organization"],
+                condition=models.Q(
+                    scope="platform",
+                    is_platform_default=True,
+                    is_deleted=False,
+                ),
+                name="uniq_lens_brgw_org_default",
             ),
         ]
         indexes = [
@@ -216,7 +253,7 @@ class LensGatewayLink(OrganizationScopedModel):
     def resolved_workspace_root(self) -> str:
         if self.workspace_root:
             return self.workspace_root.rstrip("/")
-        return f"/workspace/org-{self.organization_id}"
+        return f"/workspace/org-{self.organization_id}/data"
 
 
 class LensKnowledgeSource(OrganizationScopedModel):
@@ -233,11 +270,22 @@ class LensKnowledgeSource(OrganizationScopedModel):
         ERROR = "error", "Error"
         PAUSED = "paused", "Paused"
 
+    class LifecycleStatus(models.TextChoices):
+        READY = "ready", "Ready"
+        DELETING = "deleting", "Deleting"
+        DELETED = "deleted", "Deleted"
+
     name = models.CharField(max_length=160)
     gateway = models.ForeignKey(
         "node.Node",
         on_delete=models.PROTECT,
         related_name="lens_knowledge_sources",
+    )
+    gateway_link = models.ForeignKey(
+        LensGatewayLink,
+        on_delete=models.PROTECT,
+        related_name="knowledge_sources",
+        help_text="Authoritative gateway authorization used for execution.",
     )
     backup_source_snapshot_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     backup_snapshot_directory_id = models.BigIntegerField(null=True, blank=True, db_index=True)
@@ -264,6 +312,17 @@ class LensKnowledgeSource(OrganizationScopedModel):
     last_restore_record_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     ingest_policy_json = models.JSONField(default=dict, blank=True)
     scan_enabled = models.BooleanField(default=True)
+    lifecycle_status = models.CharField(
+        max_length=16,
+        choices=LifecycleStatus.choices,
+        default=LifecycleStatus.READY,
+        db_index=True,
+    )
+    teardown_state_json = models.JSONField(default=dict, blank=True)
+    teardown_attempts = models.PositiveIntegerField(default=0)
+    teardown_claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    teardown_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    teardown_next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -287,12 +346,125 @@ class LensKnowledgeSource(OrganizationScopedModel):
         ]
 
 
+class LensWorkspaceBinding(OrganizationScopedModel):
+    """Immutable authorization and filesystem identity for one KS workspace."""
+
+    class WorkspaceKind(models.TextChoices):
+        MANAGED_RESTORE = "managed_restore", "Managed restore"
+        GATEWAY_LOCAL = "gateway_local", "Gateway local"
+
+    class State(models.TextChoices):
+        PREPARING = "preparing", "Preparing"
+        READY = "ready", "Ready"
+        DELETING = "deleting", "Deleting"
+        DELETED = "deleted", "Deleted"
+        ERROR = "error", "Error"
+
+    class IdentityStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        READY = "ready", "Ready"
+        NOT_APPLICABLE = "not_applicable", "Not applicable"
+        ERROR = "error", "Error"
+
+    workspace_uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    knowledge_source = models.OneToOneField(
+        LensKnowledgeSource,
+        on_delete=models.PROTECT,
+        related_name="workspace_binding",
+    )
+    gateway_link = models.ForeignKey(
+        LensGatewayLink,
+        on_delete=models.PROTECT,
+        related_name="workspace_bindings",
+    )
+    execution_organization_id = models.BigIntegerField(db_index=True)
+    execution_node_id = models.BigIntegerField(db_index=True)
+    workspace_kind = models.CharField(
+        max_length=24,
+        choices=WorkspaceKind.choices,
+        db_index=True,
+    )
+    workspace_root = models.CharField(max_length=500)
+    relative_path = models.CharField(max_length=500, blank=True, default="")
+    state = models.CharField(
+        max_length=16,
+        choices=State.choices,
+        default=State.PREPARING,
+        db_index=True,
+    )
+    identity_status = models.CharField(
+        max_length=24,
+        choices=IdentityStatus.choices,
+        default=IdentityStatus.PENDING,
+        db_index=True,
+    )
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "lens_bridge_workspace_binding"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["gateway_link", "relative_path"],
+                condition=~models.Q(relative_path=""),
+                name="uniq_lens_workspace_link_path",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        workspace_kind="managed_restore",
+                        relative_path__gt="",
+                        identity_status__in=["pending", "ready", "error"],
+                    )
+                    | models.Q(
+                        workspace_kind="gateway_local",
+                        relative_path="",
+                        identity_status="not_applicable",
+                    )
+                ),
+                name="lens_bws_kind_path_identity_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "state"],
+                name="lens_bws_org_state_idx",
+            ),
+            models.Index(
+                fields=["execution_node_id", "state"],
+                name="lens_bws_node_state_idx",
+            ),
+        ]
+
+    def resolved_path(self) -> str:
+        from apps.lens_bridge.services.gateway_paths import path_within_root
+
+        root = str(self.workspace_root or "").strip()
+        if not self.relative_path:
+            return path_within_root(root, root, allow_root=True, field="workspace_root")
+        relative = str(self.relative_path).strip()
+        if relative.startswith("/"):
+            raise ValueError("relative_path must be relative")
+        parts = relative.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("relative_path contains an unsafe path component")
+        return path_within_root(
+            f"{root.rstrip('/')}/{relative}",
+            root,
+            allow_root=False,
+            field="workspace_path",
+        )
+
+
 class LensAssistantLink(OrganizationScopedModel):
     """HFL-side visibility and ownership for a SourceLens assistant."""
 
     class VisibilityScope(models.TextChoices):
         USER = "user", "Only me"
         ORGANIZATION = "organization", "Organization"
+
+    class LifecycleOwner(models.TextChoices):
+        MANUAL = "manual", "Manual assistant management"
+        CHAT = "chat", "Chat lifecycle"
 
     sl_assistant_uuid = models.UUIDField(db_index=True)
     knowledge_source = models.ForeignKey(
@@ -306,6 +478,12 @@ class LensAssistantLink(OrganizationScopedModel):
         max_length=16,
         choices=VisibilityScope.choices,
         default=VisibilityScope.ORGANIZATION,
+        db_index=True,
+    )
+    lifecycle_owner = models.CharField(
+        max_length=16,
+        choices=LifecycleOwner.choices,
+        default=LifecycleOwner.MANUAL,
         db_index=True,
     )
     owner_user = models.ForeignKey(
@@ -509,6 +687,16 @@ class LensSessionLink(OrganizationScopedModel):
         db_index=True,
     )
     provision_detail = models.CharField(max_length=300, blank=True, default="")
+    provision_state_json = models.JSONField(default=dict, blank=True)
+    provision_attempts = models.PositiveIntegerField(default=0)
+    provision_claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    provision_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    provision_next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    teardown_state_json = models.JSONField(default=dict, blank=True)
+    teardown_attempts = models.PositiveIntegerField(default=0)
+    teardown_claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    teardown_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    teardown_next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = "lens_bridge_session_link"

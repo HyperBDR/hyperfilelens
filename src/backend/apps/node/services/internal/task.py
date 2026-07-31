@@ -348,6 +348,7 @@ def create_agent_task(
     payload: dict | None = None,
     correlation_type: str = "",
     correlation_id: str = "",
+    requesting_organization_id: int | None = None,
 ) -> NodeTask:
     if node.organization_id != org.id:
         raise ValueError("node/org mismatch")
@@ -355,6 +356,7 @@ def create_agent_task(
     now = timezone.now()
     task = NodeTask.objects.create(
         organization=org,
+        requesting_organization_id=requesting_organization_id or org.id,
         node=node,
         correlation_type=correlation_type or "",
         correlation_id=str(correlation_id or ""),
@@ -627,6 +629,7 @@ def dispatch_task(
     payload: dict | None = None,
     correlation_type: str = "",
     correlation_id: str = "",
+    requesting_organization_id: int | None = None,
 ) -> NodeTask:
     task = create_agent_task(
         org=org,
@@ -635,6 +638,7 @@ def dispatch_task(
         payload=payload,
         correlation_type=correlation_type,
         correlation_id=correlation_id,
+        requesting_organization_id=requesting_organization_id,
     )
     transaction.on_commit(
         lambda bound_task=task: deliver_agent_task(task=bound_task),

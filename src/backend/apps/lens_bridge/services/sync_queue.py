@@ -124,6 +124,25 @@ def queue_copilot_chat_teardown(*, session_link_id: int) -> None:
         raise RuntimeError("Unable to queue chat teardown.") from exc
 
 
+def queue_knowledge_source_teardown(*, knowledge_source_id: int) -> None:
+    """Queue durable KS teardown without an in-process fallback."""
+
+    from apps.lens_bridge.tasks.knowledge_source_teardown import (
+        execute_knowledge_source_teardown_task,
+    )
+
+    try:
+        execute_knowledge_source_teardown_task.delay(
+            knowledge_source_id=knowledge_source_id
+        )
+    except Exception as exc:
+        logger.exception(
+            "Failed to queue knowledge source teardown ks_id=%s",
+            knowledge_source_id,
+        )
+        raise RuntimeError("Unable to queue knowledge source teardown.") from exc
+
+
 def _run_chat_user_provision_in_thread(*, user_id: int, gateway_operator: bool) -> None:
     close_old_connections()
     from django.contrib.auth import get_user_model

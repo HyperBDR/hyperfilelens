@@ -8,7 +8,6 @@ from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services.gateway_readiness import (
     gateway_runtime_state,
-    require_copilot_gateway,
     require_hfl_usable_gateway,
 )
 
@@ -27,11 +26,14 @@ def get_or_create_platform_org() -> Organization:
     return org
 
 
-def user_gateway_links(*, user):
-    return LensGatewayLink.objects.filter(
+def user_gateway_links(*, user, organization: Organization | None = None):
+    links = LensGatewayLink.objects.filter(
         owner_user=user,
         scope=LensGatewayLink.GatewayScope.USER,
     ).select_related("gateway")
+    if organization is not None:
+        links = links.filter(organization=organization)
+    return links
 
 
 def platform_gateway_links():
@@ -97,13 +99,18 @@ def resolve_gateway_link_for_copilot(
         )
         if link is None:
             link = (
-                user_gateway_links(user=user)
+                user_gateway_links(user=user, organization=org)
                 .filter(pk=gateway_link_id, sl_lensnode_uuid__isnull=False)
                 .first()
             )
         if link is None:
             raise ValidationError({"gateway_link_id": "Data gateway is not available."})
-        require_copilot_gateway(link)
+        from apps.lens_bridge.services.gateway_execution import context_for_gateway_link
+
+        context_for_gateway_link(
+            tenant_organization=org,
+            gateway_link=link,
+        )
         return link
 
     platform_default = resolve_auto_gateway_link_for_copilot(user=user)
@@ -118,6 +125,7 @@ def resolve_gateway_link_for_copilot(
 @transaction.atomic
 def set_platform_default_gateway(*, gateway_link_id: int) -> LensGatewayLink:
     org = get_or_create_platform_org()
+    Organization.objects.select_for_update().get(pk=org.pk)
     link = LensGatewayLink.objects.select_for_update().get(
         pk=gateway_link_id,
         organization=org,

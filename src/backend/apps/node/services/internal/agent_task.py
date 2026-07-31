@@ -106,6 +106,7 @@ def run_agent_task_async(
     payload: dict | None = None,
     correlation_type: str = "",
     correlation_id: str = "",
+    requesting_organization_id: int | None = None,
 ) -> AgentTaskHandle:
     """
     Long-running work: dispatch and return immediately; caller polls status.
@@ -129,6 +130,7 @@ def run_agent_task_async(
         payload=payload,
         correlation_type=correlation_type,
         correlation_id=correlation_id,
+        requesting_organization_id=requesting_organization_id,
     )
     return AgentTaskHandle(task_id=str(task.id), task=task)
 
@@ -223,6 +225,7 @@ def run_agent_task_sync(
     persisted_payload: dict | None = None,
     correlation_type: str = "",
     correlation_id: str = "",
+    requesting_organization_id: int | None = None,
     wait_timeout_seconds: int | None = None,
     on_stream_message: Callable[[dict[str, Any]], None] | None = None,
 ) -> AgentTaskSyncResult:
@@ -250,6 +253,7 @@ def run_agent_task_sync(
             payload=persisted_payload if persisted_payload is not None else payload,
             correlation_type=correlation_type,
             correlation_id=correlation_id,
+            requesting_organization_id=requesting_organization_id,
         )
         task_id = task.id
 

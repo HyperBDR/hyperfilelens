@@ -10,8 +10,13 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensWorkspaceBinding,
+)
 from apps.lens_bridge.services import gateway_readiness, ingest_policy, provisioning
+from apps.lens_bridge.services.gateway_execution import context_for_knowledge_source
 from apps.node.models.node import Node
 from apps.node.services.internal.node_workload import get_node_workload_blockers
 from apps.protection.models import BackupSourceSnapshot, BackupSourceSnapshotDirectory
@@ -51,6 +56,12 @@ _TERMINAL_TASK_STATUSES = frozenset(
 
 class KnowledgeSourceSyncError(Exception):
     """Non-validation failure during knowledge source sync."""
+
+
+def _require_active_lifecycle(ks: LensKnowledgeSource) -> None:
+    ks.refresh_from_db(fields=["lifecycle_status"])
+    if ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
+        raise KnowledgeSourceSyncError("Knowledge source deletion was requested.")
 
 
 def is_gateway_local_ks(ks: LensKnowledgeSource) -> bool:
@@ -212,10 +223,16 @@ def request_knowledge_source_sync(
     ks: LensKnowledgeSource,
     mode: str = "resume",
 ) -> LensKnowledgeSource:
+    if ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
+        raise ValidationError({"lifecycle_status": "Knowledge source is being deleted."})
     if ks.status == LensKnowledgeSource.Status.SYNCING:
         raise ValidationError({"status": "Knowledge source sync is already in progress."})
 
-    blockers = get_node_workload_blockers(node=ks.gateway)
+    execution = context_for_knowledge_source(
+        tenant_organization=org,
+        knowledge_source=ks,
+    )
+    blockers = get_node_workload_blockers(node=execution.gateway)
     if blockers:
         raise ValidationError(
             {
@@ -231,10 +248,13 @@ def request_knowledge_source_sync(
 
     from apps.node.services.internal.node_lifecycle import _active_lifecycle_task
 
-    if _active_lifecycle_task(org=org, node=ks.gateway):
+    if _active_lifecycle_task(
+        org=execution.execution_organization,
+        node=execution.gateway,
+    ):
         raise ValidationError({"gateway": "Data gateway lifecycle operation is in progress."})
 
-    gateway_link = provisioning.get_gateway_link(org, ks.gateway_id)
+    gateway_link = execution.gateway_link
     if gateway_link.sidecar_status in {
         LensGatewayLink.SidecarStatus.UPGRADING,
         LensGatewayLink.SidecarStatus.REMOVING,
@@ -244,12 +264,14 @@ def request_knowledge_source_sync(
 
     sync_state = dict(ks.sync_state_json or {})
     if mode == "full":
+        next_generation = max(1, int(sync_state.get("restore_generation") or 0) + 1)
         sync_state = {
             "mode": "full",
             "started_at": timezone.now().isoformat(),
             "completed_phases": [],
             "phase": "prepare_workspace",
             "restore_scope_status": {},
+            "restore_generation": next_generation,
             "last_error": None,
         }
     else:
@@ -275,7 +297,13 @@ def run_knowledge_source_sync(*, organization_id: int, knowledge_source_id: int)
     from django.db import close_old_connections
 
     close_old_connections()
-    ks = LensKnowledgeSource.objects.select_related("gateway").filter(
+    ks = LensKnowledgeSource.objects.select_related(
+        "gateway",
+        "gateway_link",
+        "gateway_link__gateway",
+        "gateway_link__organization",
+        "workspace_binding",
+    ).filter(
         organization_id=organization_id,
         pk=knowledge_source_id,
     ).first()
@@ -302,6 +330,7 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
     sync_state = dict(ks.sync_state_json or {})
     completed = set(sync_state.get("completed_phases") or [])
 
+    _require_active_lifecycle(ks)
     if "prepare_workspace" not in completed:
         _run_phase_prepare_workspace(org=org, ks=ks, sync_state=sync_state)
         completed.add("prepare_workspace")
@@ -309,6 +338,7 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
         ks.sync_state_json = sync_state
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
+    _require_active_lifecycle(ks)
     if should_run_restore_phase(ks=ks, sync_state=sync_state):
         _run_phase_restore_snapshot(org=org, ks=ks, sync_state=sync_state)
         completed.add("restore_snapshot")
@@ -318,6 +348,7 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
     ks.sync_state_json = sync_state
     ks.save(update_fields=["sync_state_json", "updated_at"])
 
+    _require_active_lifecycle(ks)
     if "push_assistant" not in completed:
         _run_phase_push_assistant(org=org, ks=ks, sync_state=sync_state)
         completed.add("push_assistant")
@@ -325,6 +356,7 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
         ks.sync_state_json = sync_state
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
+    _require_active_lifecycle(ks)
     if "trigger_ingest" not in completed:
         _run_phase_trigger_ingest(org=org, ks=ks, sync_state=sync_state)
         completed.add("trigger_ingest")
@@ -332,6 +364,7 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
         ks.sync_state_json = sync_state
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
+    _require_active_lifecycle(ks)
     _run_phase_finalize(org=org, ks=ks, sync_state=sync_state)
     completed.add("finalize")
 
@@ -351,17 +384,53 @@ def _run_phase_prepare_workspace(
     sync_state: dict[str, Any],
 ) -> None:
     _update_sync_phase(ks=ks, sync_state=sync_state, phase="prepare_workspace")
-    gateway = ks.gateway
-    gateway_link = provisioning.get_gateway_link(org, gateway.id)
+    execution = context_for_knowledge_source(
+        tenant_organization=org,
+        knowledge_source=ks,
+    )
+    gateway = execution.gateway
+    gateway_link = execution.gateway_link
+    try:
+        workspace_binding = ks.workspace_binding
+    except LensWorkspaceBinding.DoesNotExist as exc:
+        raise KnowledgeSourceSyncError(
+            "Knowledge source has no authoritative workspace binding."
+        ) from exc
 
     if is_gateway_local_ks(ks):
+        if workspace_binding.workspace_kind != LensWorkspaceBinding.WorkspaceKind.GATEWAY_LOCAL:
+            raise KnowledgeSourceSyncError("Gateway-local knowledge source binding is inconsistent.")
+        from apps.node.services.internal.agent_task import run_agent_task_sync
+
+        for scope in scope_entries(ks):
+            source_path = str(scope.get("source_path") or "").strip()
+            outcome = run_agent_task_sync(
+                org=execution.execution_organization,
+                node_id=gateway.id,
+                kind="lens.workspace.validate-local",
+                payload={
+                    "path": source_path,
+                    "allowed_root": gateway_link.resolved_workspace_root(),
+                },
+                correlation_type="lens_knowledge_source.validate_local",
+                correlation_id=str(ks.id),
+                requesting_organization_id=org.id,
+                wait_timeout_seconds=30,
+            )
+            if not outcome.ok:
+                detail = outcome.task.last_error or "Gateway directory validation failed."
+                raise KnowledgeSourceSyncError(detail)
         ks.workspace_path_on_lensnode = ks.source_path
         ks.mount_path_on_gateway = ks.source_path
         ks.save(update_fields=["workspace_path_on_lensnode", "mount_path_on_gateway", "updated_at"])
+        if workspace_binding.state != LensWorkspaceBinding.State.READY:
+            workspace_binding.state = LensWorkspaceBinding.State.READY
+            workspace_binding.last_error = ""
+            workspace_binding.save(update_fields=["state", "last_error", "updated_at"])
     else:
-        workspace_path = ks.workspace_path_on_lensnode or provisioning.workspace_path_for_ks(
-            org, gateway_link, ks.id
-        )
+        if workspace_binding.workspace_kind != LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE:
+            raise KnowledgeSourceSyncError("Managed knowledge source binding is inconsistent.")
+        workspace_path = workspace_binding.resolved_path()
         ks.workspace_path_on_lensnode = workspace_path
         ks.mount_path_on_gateway = workspace_path
         ks.save(update_fields=["workspace_path_on_lensnode", "mount_path_on_gateway", "updated_at"])
@@ -369,8 +438,12 @@ def _run_phase_prepare_workspace(
             org=org,
             gateway=gateway,
             gateway_link=gateway_link,
-            workspace_path=workspace_path,
+            workspace_binding=workspace_binding,
         )
+        if workspace_binding.state != LensWorkspaceBinding.State.READY:
+            workspace_binding.state = LensWorkspaceBinding.State.READY
+            workspace_binding.last_error = ""
+            workspace_binding.save(update_fields=["state", "last_error", "updated_at"])
 
 
 def _run_phase_restore_snapshot(
@@ -380,6 +453,15 @@ def _run_phase_restore_snapshot(
     sync_state: dict[str, Any],
 ) -> None:
     _update_sync_phase(ks=ks, sync_state=sync_state, phase="restore_snapshot")
+    generation = max(1, int(sync_state.get("restore_generation") or 1))
+    previous_record_id = sync_state.get("restore_record_id")
+    if previous_record_id and _restore_record_failed(
+        record_id=int(previous_record_id),
+        organization_id=org.id,
+    ):
+        generation += 1
+        sync_state["restore_generation"] = generation
+        sync_state["restore_scope_status"] = {}
     snapshot_id = resolve_snapshot_id_for_sync(ks=ks)
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=org.id,
@@ -428,8 +510,9 @@ def _run_phase_restore_snapshot(
         ks.save(update_fields=["sync_state_json", "updated_at"])
         return
 
-    record = restore_services.create_manual_restore_record(
+    record = restore_services.create_lens_workspace_restore_record(
         organization_id=org.id,
+        workspace_binding_id=ks.workspace_binding.id,
         data={
             "source_type": snapshot.source_type,
             "source_ref_id": snapshot.source_ref_id,
@@ -440,7 +523,9 @@ def _run_phase_restore_snapshot(
             "scope": "paths",
             "conflict_mode": "overwrite",
             "items": items,
-            "idempotency_key": f"ks-sync-{ks.id}-{snapshot_id}-{int(time.time())}",
+            "idempotency_key": (
+                f"lens-workspace:{ks.id}:generation:{generation}:snapshot:{snapshot_id}"
+            ),
         },
     )
     ks.last_restore_record_id = record.id
@@ -467,7 +552,10 @@ def _run_phase_push_assistant(
     sync_state: dict[str, Any],
 ) -> None:
     _update_sync_phase(ks=ks, sync_state=sync_state, phase="push_assistant")
-    gateway_link = provisioning.get_gateway_link(org, ks.gateway_id)
+    gateway_link = context_for_knowledge_source(
+        tenant_organization=org,
+        knowledge_source=ks,
+    ).gateway_link
     lensnode_uuid = gateway_link.sl_lensnode_uuid
     if lensnode_uuid:
         for path in indexed_dir_paths(ks):
@@ -643,13 +731,19 @@ def maybe_refresh_degraded_status(*, ks: LensKnowledgeSource) -> LensKnowledgeSo
 
 def prepare_new_knowledge_source(*, org: Organization, ks: LensKnowledgeSource) -> LensKnowledgeSource:
     """Allocate workspace paths and mark the row syncing before async pipeline starts."""
-    gateway_link = provisioning.get_gateway_link(org, ks.gateway_id)
+    from apps.lens_bridge.services.gateway_execution import create_workspace_binding
+
+    workspace_binding = create_workspace_binding(
+        tenant_organization=org,
+        knowledge_source=ks,
+    )
+    gateway_link = workspace_binding.gateway_link
     ks.sl_lensnode_uuid = gateway_link.sl_lensnode_uuid
     if is_gateway_local_ks(ks):
         ks.workspace_path_on_lensnode = ks.source_path
         ks.mount_path_on_gateway = ks.source_path
     else:
-        ks.workspace_path_on_lensnode = provisioning.workspace_path_for_ks(org, gateway_link, ks.id)
+        ks.workspace_path_on_lensnode = workspace_binding.resolved_path()
         ks.mount_path_on_gateway = ks.workspace_path_on_lensnode
 
     ks.status = LensKnowledgeSource.Status.SYNCING
@@ -660,6 +754,7 @@ def prepare_new_knowledge_source(*, org: Organization, ks: LensKnowledgeSource) 
         "started_at": timezone.now().isoformat(),
         "completed_phases": [],
         "restore_scope_status": {},
+        "restore_generation": 1,
         "last_error": None,
     }
     ks.save(
