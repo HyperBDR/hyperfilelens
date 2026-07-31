@@ -92,6 +92,96 @@ class ProtectionPolicyApiTests(TestCase):
         self.assertIn(policy_id, [row["id"] for row in listing.data["results"]])
         self.assertEqual(policy_display_name(policy_id=policy_id, organization_id=self.org.id), "Daily production policy")
 
+    def test_structured_schedule_validates_and_round_trips(self):
+        weekly = self._policy_payload("Shanghai weekdays")
+        weekly["schedule"] = {
+            "enabled": True,
+            "mode": "weekly",
+            "timezone": "Asia/Shanghai",
+            "starts_at": "2026-07-31T09:30",
+            "time": "09:30",
+            "weekdays": [5, 1, 3, 3],
+            "cron_expr": "ignored by normalization",
+        }
+
+        response = self.client.post(
+            "/api/v1/protection/policies/",
+            weekly,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(
+            response.data["schedule"],
+            {
+                "enabled": True,
+                "mode": "weekly",
+                "timezone": "Asia/Shanghai",
+                "starts_at": "2026-07-31T09:30",
+                "time": "09:30",
+                "weekdays": [1, 3, 5],
+                "cron_expr": "30 9 * * 1,3,5",
+            },
+        )
+        self.assertIn("Asia/Shanghai", response.data["schedule_summary"])
+
+        invalid_timezone = self._policy_payload("Invalid timezone")
+        invalid_timezone["schedule"] = {
+            **weekly["schedule"],
+            "timezone": "Mars/Olympus",
+        }
+        timezone_response = self.client.post(
+            "/api/v1/protection/policies/",
+            invalid_timezone,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(timezone_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        nonexistent_start = self._policy_payload("Nonexistent DST start")
+        nonexistent_start["schedule"] = {
+            **weekly["schedule"],
+            "timezone": "America/New_York",
+            "starts_at": "2026-03-08T02:30",
+        }
+        dst_response = self.client.post(
+            "/api/v1/protection/policies/",
+            nonexistent_start,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(dst_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        missing_weekday = self._policy_payload("Missing weekday")
+        missing_weekday["schedule"] = {**weekly["schedule"], "weekdays": []}
+        weekday_response = self.client.post(
+            "/api/v1/protection/policies/",
+            missing_weekday,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(weekday_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        month_end = self._policy_payload("Month end")
+        month_end["schedule"] = {
+            "enabled": True,
+            "mode": "monthly",
+            "timezone": "UTC",
+            "starts_at": None,
+            "time": "08:00",
+            "month_days": [1, 15],
+            "month_end": True,
+        }
+        month_end_response = self.client.post(
+            "/api/v1/protection/policies/",
+            month_end,
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(month_end_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(month_end_response.data["schedule"]["cron_expr"], "0 8 1,15,31 * *")
+
     def test_policy_search_validation_tenant_state_and_delete_protection(self):
         first = BackupPolicy.objects.create(
             organization_id=self.org.id,

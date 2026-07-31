@@ -111,6 +111,8 @@ import {
   listBackupPolicies,
   listFileFilterRules,
   type BackupPolicy,
+  type BackupPolicySchedule,
+  type BackupPolicyScheduleMode,
   type FileFilterRule,
 } from '../../lib/protectionPolicyApi'
 import {
@@ -1027,6 +1029,55 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {}
 }
 
+const BACKUP_POLICY_SCHEDULE_MODES = new Set<string>([
+  'interval',
+  'daily',
+  'weekly',
+  'monthly',
+  'advanced',
+])
+
+function isBackupPolicyScheduleMode(value: string): value is BackupPolicyScheduleMode {
+  return BACKUP_POLICY_SCHEDULE_MODES.has(value)
+}
+
+function backupPolicyScheduleMode(value: unknown): BackupPolicyScheduleMode | undefined {
+  const mode = String(value || '')
+  return isBackupPolicyScheduleMode(mode) ? mode : undefined
+}
+
+function scheduleNumberList(value: unknown, min: number, max: number): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value
+    .map(Number)
+    .filter((item) => Number.isInteger(item) && item >= min && item <= max)
+}
+
+function expandedPolicySchedule(value: Record<string, unknown>): BackupPolicySchedule {
+  const mode = backupPolicyScheduleMode(value.mode)
+  const weekdays = scheduleNumberList(value.weekdays, 1, 7)
+  const monthDays = scheduleNumberList(value.month_days, 1, 31)
+  return {
+    enabled: value.enabled !== false,
+    cron_expr: String(value.cron_expr || ''),
+    ...(mode ? { mode } : {}),
+    ...(typeof value.timezone === 'string' ? { timezone: value.timezone } : {}),
+    ...(typeof value.starts_at === 'string' || value.starts_at === null
+      ? { starts_at: value.starts_at }
+      : {}),
+    ...(value.interval_unit === 'minute' || value.interval_unit === 'hour' || value.interval_unit === 'day'
+      ? { interval_unit: value.interval_unit }
+      : {}),
+    ...(Number.isFinite(Number(value.interval_value))
+      ? { interval_value: Number(value.interval_value) }
+      : {}),
+    ...(typeof value.time === 'string' ? { time: value.time } : {}),
+    ...(weekdays ? { weekdays } : {}),
+    ...(monthDays ? { month_days: monthDays } : {}),
+    ...(typeof value.month_end === 'boolean' ? { month_end: value.month_end } : {}),
+  }
+}
+
 function isRepositoryDetailComplete(repo: StorageRepository | undefined) {
   return Boolean(repo && String(repo.repo_type || '').trim())
 }
@@ -1105,10 +1156,7 @@ function expandedPolicies(rows: FlowSourceRow[]): BackupPolicy[] {
         id,
         name: String(item.name || `#${id}`),
         is_active: item.is_active !== false,
-        schedule: {
-          enabled: schedule.enabled !== false,
-          cron_expr: String(schedule.cron_expr || ''),
-        },
+        schedule: expandedPolicySchedule(schedule),
         retention: {
           enabled: retention.enabled !== false,
           recent_points: Number(retention.recent_points || 0),

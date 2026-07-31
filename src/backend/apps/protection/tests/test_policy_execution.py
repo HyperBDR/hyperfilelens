@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -10,7 +10,12 @@ from apps.iam.models import Membership, Organization
 from apps.node.models import Node
 from apps.protection.models import BackupConfig, BackupPolicy, BackupSourceSnapshot
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
-from apps.protection.services.policy_execution import cron_matches_now, retention_delete_candidates_for_config
+from apps.protection.services.policy_execution import (
+    _schedule_fire_key,
+    cron_matches_now,
+    retention_delete_candidates_for_config,
+    schedule_matches_now,
+)
 from apps.storage.repositories.models import Repository
 
 
@@ -86,6 +91,7 @@ class PolicyExecutionTests(TestCase):
             backup_config_id=self.config.id,
             repository_id=self.repository.id,
             task_id=1,
+            task_uuid="00000000-0000-0000-0000-000000000001",
             idempotency_key=key,
             status=BackupSourceSnapshot.Status.AVAILABLE,
             directory_count=1,
@@ -102,6 +108,124 @@ class PolicyExecutionTests(TestCase):
         now = datetime(2026, 6, 26, 10, 15, tzinfo=timezone.get_current_timezone())
         self.assertTrue(cron_matches_now("*/5 * * * *", now=now))
         self.assertFalse(cron_matches_now("*/10 * * * *", now=now))
+
+    def test_structured_schedules_use_local_time_and_start_gate(self):
+        daily = {
+            "enabled": True,
+            "mode": "daily",
+            "timezone": "Asia/Shanghai",
+            "starts_at": "2026-07-31T09:30",
+            "time": "09:30",
+            "cron_expr": "30 9 * * *",
+        }
+
+        self.assertFalse(
+            schedule_matches_now(daily, now=datetime(2026, 7, 30, 1, 30, tzinfo=UTC))
+        )
+        self.assertTrue(
+            schedule_matches_now(daily, now=datetime(2026, 7, 31, 1, 30, tzinfo=UTC))
+        )
+        self.assertFalse(
+            schedule_matches_now(daily, now=datetime(2026, 7, 31, 9, 30, tzinfo=UTC))
+        )
+
+    def test_weekly_and_month_end_schedules_match_selected_calendar_days(self):
+        weekly = {
+            "enabled": True,
+            "mode": "weekly",
+            "timezone": "UTC",
+            "starts_at": None,
+            "time": "09:15",
+            "weekdays": [1, 3, 5],
+            "cron_expr": "15 9 * * 1,3,5",
+        }
+        monthly = {
+            "enabled": True,
+            "mode": "monthly",
+            "timezone": "UTC",
+            "starts_at": None,
+            "time": "08:00",
+            "month_days": [31],
+            "month_end": True,
+            "cron_expr": "0 8 31 * *",
+        }
+
+        self.assertTrue(
+            schedule_matches_now(weekly, now=datetime(2026, 7, 31, 9, 15, tzinfo=UTC))
+        )
+        self.assertFalse(
+            schedule_matches_now(weekly, now=datetime(2026, 8, 1, 9, 15, tzinfo=UTC))
+        )
+        self.assertTrue(
+            schedule_matches_now(monthly, now=datetime(2026, 2, 28, 8, 0, tzinfo=UTC))
+        )
+        self.assertFalse(
+            schedule_matches_now(monthly, now=datetime(2026, 2, 27, 8, 0, tzinfo=UTC))
+        )
+
+    def test_interval_anchor_and_legacy_cron_remain_compatible(self):
+        interval = {
+            "enabled": True,
+            "mode": "interval",
+            "timezone": "Asia/Shanghai",
+            "starts_at": "2026-07-31T02:30",
+            "interval_unit": "hour",
+            "interval_value": 6,
+            "cron_expr": "0 */6 * * *",
+        }
+        legacy = {"enabled": True, "cron_expr": "0 2 * * *"}
+
+        self.assertTrue(
+            schedule_matches_now(interval, now=datetime(2026, 7, 31, 0, 30, tzinfo=UTC))
+        )
+        self.assertFalse(
+            schedule_matches_now(interval, now=datetime(2026, 7, 30, 23, 30, tzinfo=UTC))
+        )
+        self.assertTrue(
+            schedule_matches_now(legacy, now=datetime(2026, 7, 31, 2, 0, tzinfo=UTC))
+        )
+        self.assertFalse(
+            schedule_matches_now(legacy, now=datetime(2026, 7, 31, 18, 0, tzinfo=UTC))
+        )
+
+    def test_repeated_dst_wall_minute_uses_one_fire_key(self):
+        schedule = {
+            "enabled": True,
+            "mode": "daily",
+            "timezone": "America/New_York",
+            "starts_at": None,
+            "time": "01:30",
+            "cron_expr": "30 1 * * *",
+        }
+        first = datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
+        repeated = datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+
+        self.assertTrue(schedule_matches_now(schedule, now=first))
+        self.assertTrue(schedule_matches_now(schedule, now=repeated))
+        self.assertEqual(
+            _schedule_fire_key(schedule, now=first),
+            _schedule_fire_key(schedule, now=repeated),
+        )
+
+    def test_interval_uses_elapsed_time_across_repeated_dst_hour(self):
+        schedule = {
+            "enabled": True,
+            "mode": "interval",
+            "timezone": "America/New_York",
+            "starts_at": "2026-11-01T00:30",
+            "interval_unit": "hour",
+            "interval_value": 1,
+            "cron_expr": "0 */1 * * *",
+        }
+        first = datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
+        repeated = datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+
+        self.assertTrue(schedule_matches_now(schedule, now=first))
+        self.assertTrue(schedule_matches_now(schedule, now=repeated))
+        self.assertNotEqual(
+            _schedule_fire_key(schedule, now=first),
+            _schedule_fire_key(schedule, now=repeated),
+        )
 
     def test_retention_candidates_are_logical_snapshots(self):
         now = timezone.now()
