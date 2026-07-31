@@ -13,6 +13,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 RUNTIME_KEYS = {
     "HFL_EMAIL_SIGNUP_ENABLED",
+    "HFL_EMAIL_CODE_LOGIN_ENABLED",
     "HFL_GOOGLE_OAUTH_ENABLED",
     "HFL_GA_MEASUREMENT_ID",
     "HFL_INSECURE_TLS",
@@ -287,6 +288,15 @@ def apply_configuration(
             updates["HFL_EMAIL_SIGNUP_ENABLED"] = signup_enabled
         else:
             warn("invalid email sign-up value; preserving installed sign-up setting")
+        email_code_login_enabled = runtime_values.get(
+            "HFL_EMAIL_CODE_LOGIN_ENABLED", ""
+        ).lower()
+        if email_code_login_enabled in {"true", "false"}:
+            updates["HFL_EMAIL_CODE_LOGIN_ENABLED"] = email_code_login_enabled
+        else:
+            warn(
+                "invalid email-code login value; preserving installed email-code login setting"
+            )
         insecure_tls = runtime_values.get("HFL_INSECURE_TLS", "")
         if insecure_tls not in {"0", "1"}:
             raise SystemExit("HFL_INSECURE_TLS must be 0 or 1")

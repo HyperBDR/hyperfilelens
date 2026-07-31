@@ -18,6 +18,7 @@ TAGLINE = "AI-Powered File Backup Insights."
 class VerificationEmailKind(str, Enum):
     REGISTRATION = "registration"
     PASSWORD_RESET = "password_reset"
+    LOGIN = "login"
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,23 @@ def _content_for_kind(kind: VerificationEmailKind, code: str, minutes: int) -> V
             ),
             ignore_plain=_(
                 "If you did not request a password reset, please ignore this email."
+            ),
+        )
+    if kind is VerificationEmailKind.LOGIN:
+        return VerificationEmailContent(
+            subject=_("%(code)s is your HyperFileLens sign-in code") % {"code": code},
+            intro_html=_(
+                "Use the verification code below to sign in to "
+                "<strong>HyperFileLens</strong>:"
+            ),
+            intro_plain=_(
+                "Use the verification code below to sign in to HyperFileLens:"
+            ),
+            ignore_html=_(
+                "If you did not request this sign-in code, please ignore this email."
+            ),
+            ignore_plain=_(
+                "If you did not request this sign-in code, please ignore this email."
             ),
         )
     raise ValueError(f"Unknown verification email kind: {kind}")

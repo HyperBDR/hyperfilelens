@@ -212,6 +212,7 @@ Common settings include:
 | `SOURCELENS_CONSOLE_PORT` | `11445` | SourceLens HTTPS console port |
 | `SOURCELENS_MODE` | `bundled` | Use the bundled or an external SourceLens deployment |
 | `HFL_EMAIL_SIGNUP_ENABLED` | `false` | Enable public email/password sign-up |
+| `HFL_EMAIL_CODE_LOGIN_ENABLED` | `true` | Enable tenant email verification-code sign-in when SMTP is configured |
 | `HFL_GOOGLE_OAUTH_ENABLED` | `false` | Enable Google OAuth sign-in when credentials are configured |
 | `HFL_INSECURE_TLS` | `1` | Allow self-signed enrollment TLS; SaaS automation forces strict verification |
 | `TURNSTILE_ENABLED` | `false` | Require configured Cloudflare Turnstile verification on public auth flows |

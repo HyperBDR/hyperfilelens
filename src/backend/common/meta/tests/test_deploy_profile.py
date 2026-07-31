@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 
 @override_settings(
     HFL_EMAIL_SIGNUP_ENABLED=False,
+    HFL_EMAIL_CODE_LOGIN_ENABLED=False,
     HFL_PLATFORM_OPS_ENABLED=True,
     HFL_ADMIN_PORT=11444,
     FRONTEND_URL="https://127.0.0.1:11443",
@@ -43,11 +44,26 @@ class DeployProfileViewTest(TestCase):
         self.assertFalse(response.data["platform_ops_access_allowed"])
         self.assertFalse(response.data["email_signup_enabled"])
         self.assertFalse(response.data["password_reset_available"])
+        self.assertFalse(response.data["email_code_login_available"])
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
     def test_password_reset_is_available_with_deliverable_test_backend(self):
         response = self.client.get("/api/v1/meta/deploy-profile")
         self.assertTrue(response.data["password_reset_available"])
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        HFL_EMAIL_CODE_LOGIN_ENABLED=True,
+    )
+    def test_email_code_login_requires_tenant_listener_and_email_delivery(self):
+        tenant = self.client.get("/api/v1/meta/deploy-profile")
+        ops = self.client.get(
+            "/api/v1/meta/deploy-profile",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+
+        self.assertTrue(tenant.data["email_code_login_available"])
+        self.assertFalse(ops.data["email_code_login_available"])
 
     def test_ops_listener_hides_tenant_registration(self):
         response = self.client.get(
