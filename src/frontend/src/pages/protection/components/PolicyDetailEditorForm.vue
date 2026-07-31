@@ -28,10 +28,21 @@ const notConfiguredText = computed(() => 'Not configured')
 
 const scheduleSummary = computed(() => summarizeSchedule(props.policyForm, messageLocale.value))
 
-const simpleIntervalLabel = computed(() => {
+const quickScheduleLabel = computed(() => {
   const f = props.policyForm
-  const unit = getSimpleIntervalUnitMeta(f.simpleIntervalUnit, messageLocale.value)
-  return `Every ${f.simpleIntervalValue} ${Number(f.simpleIntervalValue) === 1 ? unit.unitText.replace(/s$/, '') : unit.unitText}`
+  if (f.quickScheduleType === 'interval') {
+    const unit = getSimpleIntervalUnitMeta(f.simpleIntervalUnit, messageLocale.value)
+    return `Every ${f.simpleIntervalValue} ${Number(f.simpleIntervalValue) === 1 ? unit.unitText.replace(/s$/, '') : unit.unitText}`
+  }
+  if (f.quickScheduleType === 'daily') return `Daily at ${f.scheduleTime}`
+  if (f.quickScheduleType === 'weekly') {
+    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    const weekdays = f.scheduleWeekdays.map((day) => names[day - 1]).join(', ')
+    return `Weekly on ${weekdays} at ${f.scheduleTime}`
+  }
+  const dates = f.scheduleMonthDays.map(String)
+  if (f.scheduleMonthEnd) dates.push('E.O.M')
+  return `Monthly on ${dates.join(', ')} at ${f.scheduleTime}`
 })
 
 const cronDescription = computed(() =>
@@ -149,12 +160,22 @@ function enabledText(enabled: boolean) {
             </span>
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
-            <span class="hfl-detail-row__label">{{ policyForm.freqMode === 'advanced' ? t('protection.policiesPage.cronLabel') : t('protection.policiesPage.labelInterval') }}</span>
+            <span class="hfl-detail-row__label">{{ policyForm.freqMode === 'advanced' ? t('protection.policiesPage.cronLabel') : t('protection.policiesPage.scheduleCycle') }}</span>
             <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
               <code v-if="policyForm.freqMode === 'advanced'" class="policy-detail-overview__code">{{ policyForm.cronExpr }}</code>
-              <span v-else class="hfl-detail-row__text">{{ simpleIntervalLabel }}</span>
+              <span v-else class="hfl-detail-row__text">{{ quickScheduleLabel }}</span>
               <span v-if="policyForm.freqMode === 'advanced'" class="hfl-detail-row__hint">{{ cronDescription }}</span>
             </span>
+          </div>
+        </div>
+        <div v-if="policyForm.sectionScheduleEnabled" class="policy-detail-editor__pair-row">
+          <div class="hfl-detail-row policy-detail-editor__pair-item">
+            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.scheduleTimezone') }}</span>
+            <span class="hfl-detail-row__value">{{ policyForm.scheduleTimezone || 'UTC' }}</span>
+          </div>
+          <div class="hfl-detail-row policy-detail-editor__pair-item">
+            <span class="hfl-detail-row__label">{{ t('protection.policiesPage.scheduleStartsAt') }}</span>
+            <span class="hfl-detail-row__value">{{ policyForm.scheduleStartsAt || emptyText }}</span>
           </div>
         </div>
         <div v-if="policyForm.sectionScheduleEnabled" class="hfl-detail-row hfl-detail-row--full">

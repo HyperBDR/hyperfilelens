@@ -90,7 +90,6 @@ import {
   listBackupPolicies,
   listFileFilterRules,
   type BackupPolicy,
-  type BackupPolicyWritePayload,
   type FileFilterRule,
 } from '../../lib/protectionPolicyApi'
 import {
@@ -129,11 +128,9 @@ import {
   fileFilterRuleToForm,
   getFilterExcludedExtensions,
   getFilterExcludedPaths,
-  retentionFormToApi,
-  throttlingFormToApi,
-  errorHandlingFormToApi,
   fileFilterFormToWritePayload,
-  validateCronExpression,
+  policyFormToWritePayload,
+  validateScheduleForm,
   validateRetentionForm,
   type BackupPolicyForm,
   type FileFilterRuleForm,
@@ -414,23 +411,6 @@ function mapFilter(rule: FileFilterRule): WizardFilter {
     largeFileBytesMax: Number(rule.large_file_bytes_max || 0),
     relatedBackupCount: Number(rule.related_backup_count || 0),
     raw: rule,
-  }
-}
-
-function policyFormToPayload(form: BackupPolicyForm): BackupPolicyWritePayload {
-  const cronExpr = form.freqMode === 'advanced'
-    ? form.cronExpr.trim()
-    : `*/${Math.max(1, Number(form.simpleIntervalValue) || 1)} * * * *`
-  return {
-    name: form.name.trim(),
-    is_active: form.policyActive,
-    schedule: {
-      enabled: form.sectionScheduleEnabled,
-      cron_expr: cronExpr,
-    },
-    retention: retentionFormToApi(form),
-    throttling: throttlingFormToApi(form),
-    error_handling: errorHandlingFormToApi(form),
   }
 }
 
@@ -4890,12 +4870,10 @@ async function submitAddFilterDialog() {
     ElMessage.warning({ message: t('protection.policiesPage.msgPolicyNameRequired'), grouping: true })
     return
   }
-  if (addPolicyForm.value.sectionScheduleEnabled && addPolicyForm.value.freqMode === 'advanced') {
-    const cron = validateCronExpression(addPolicyForm.value.cronExpr)
-    if (!cron.ok) {
-      ElMessage.warning({ message: cron.reason === 'empty' ? t('protection.policiesPage.msgCronEmpty') : t('protection.policiesPage.msgCronBad'), grouping: true })
-      return
-    }
+  const scheduleError = validateScheduleForm(addPolicyForm.value)
+  if (scheduleError) {
+    ElMessage.warning({ message: scheduleError, grouping: true })
+    return
   }
   if (addPolicyForm.value.sectionRetentionEnabled && addPolicyRetentionError.value) {
     ElMessage.warning({ message: addPolicyRetentionError.value, grouping: true })
@@ -4904,7 +4882,7 @@ async function submitAddFilterDialog() {
   addPolicySaving.value = true
   try {
     const snapshot = JSON.parse(JSON.stringify({ ...addPolicyForm.value, name })) as BackupPolicyForm
-    const created = await createBackupPolicy(policyFormToPayload(snapshot))
+    const created = await createBackupPolicy(policyFormToWritePayload(snapshot))
     const id = String(created.id)
     realPolicies.value = [mapPolicy(created), ...realPolicies.value.filter((item) => item.id !== id)]
     const emptyGroup = wizardSourceGroups.value.find((group) => !sourcePolicyMap.value[group.key])

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -10,6 +12,10 @@ from django.db import IntegrityError, transaction
 from apps.protection.models import BackupConfig, BackupPolicy, FileFilterRule
 
 CRON_FIELD_RE = re.compile(r"^(\*|\d+(-\d+)?)(/\d+)?(,(\*|\d+(-\d+)?)(/\d+)?)*$")
+SCHEDULE_MODES = {"interval", "daily", "weekly", "monthly", "advanced"}
+SCHEDULE_INTERVAL_LIMITS = {"minute": 59, "hour": 23, "day": 365}
+SCHEDULE_LOCAL_DATETIME_FORMAT = "%Y-%m-%dT%H:%M"
+SCHEDULE_TIME_FORMAT = "%H:%M"
 
 
 class ResourceInUseError(Exception):
@@ -37,6 +43,61 @@ def validate_cron_expr(raw: str) -> str:
     return cron_expr
 
 
+def _normalize_schedule_timezone(raw: Any) -> str:
+    timezone_name = str(raw or "UTC").strip() or "UTC"
+    try:
+        ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValidationError({"schedule": "timezone must be a valid IANA timezone."}) from exc
+    return timezone_name
+
+
+def _normalize_schedule_starts_at(raw: Any, timezone_name: str) -> str | None:
+    if raw in (None, ""):
+        return None
+    text = str(raw).strip()
+    try:
+        parsed = datetime.strptime(text, SCHEDULE_LOCAL_DATETIME_FORMAT)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            {"schedule": "starts_at must use YYYY-MM-DDTHH:MM in the selected timezone."}
+        ) from exc
+    schedule_timezone = ZoneInfo(timezone_name)
+    round_tripped = (
+        parsed.replace(tzinfo=schedule_timezone)
+        .astimezone(UTC)
+        .astimezone(schedule_timezone)
+        .replace(tzinfo=None)
+    )
+    if round_tripped != parsed:
+        raise ValidationError(
+            {"schedule": "starts_at does not exist in the selected timezone because of DST."}
+        )
+    return parsed.strftime(SCHEDULE_LOCAL_DATETIME_FORMAT)
+
+
+def _normalize_schedule_time(raw: Any) -> str:
+    text = str(raw or "").strip()
+    try:
+        parsed = datetime.strptime(text, SCHEDULE_TIME_FORMAT)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"schedule": "time must use HH:MM."}) from exc
+    return parsed.strftime(SCHEDULE_TIME_FORMAT)
+
+
+def _schedule_time_parts(value: str) -> tuple[int, int]:
+    parsed = datetime.strptime(value, SCHEDULE_TIME_FORMAT)
+    return parsed.hour, parsed.minute
+
+
+def _interval_cron(unit: str, value: int) -> str:
+    if unit == "minute":
+        return f"*/{value} * * * *"
+    if unit == "hour":
+        return f"0 */{value} * * *"
+    return f"0 0 */{value} * *"
+
+
 def _bool(data: dict[str, Any], key: str, default: bool = False) -> bool:
     value = data.get(key, default)
     if isinstance(value, str):
@@ -55,8 +116,91 @@ def normalize_schedule(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValidationError({"schedule": "schedule must be an object."})
     enabled = _bool(value, "enabled", True)
-    cron_expr = validate_cron_expr(str(value.get("cron_expr") or ""))
-    return {"enabled": enabled, "cron_expr": cron_expr}
+    raw_mode = str(value.get("mode") or "").strip().lower()
+    if not raw_mode:
+        cron_expr = validate_cron_expr(str(value.get("cron_expr") or ""))
+        return {"enabled": enabled, "cron_expr": cron_expr}
+    if raw_mode not in SCHEDULE_MODES:
+        raise ValidationError({"schedule": "mode is invalid."})
+
+    timezone_name = _normalize_schedule_timezone(value.get("timezone"))
+    normalized: dict[str, Any] = {
+        "enabled": enabled,
+        "mode": raw_mode,
+        "timezone": timezone_name,
+        "starts_at": _normalize_schedule_starts_at(value.get("starts_at"), timezone_name),
+    }
+    if raw_mode == "advanced":
+        normalized["cron_expr"] = validate_cron_expr(str(value.get("cron_expr") or ""))
+        return normalized
+
+    if raw_mode == "interval":
+        unit = str(value.get("interval_unit") or "").strip().lower()
+        if unit not in SCHEDULE_INTERVAL_LIMITS:
+            raise ValidationError({"schedule": "interval_unit must be minute, hour, or day."})
+        interval_value = _int(value, "interval_value")
+        if interval_value < 1 or interval_value > SCHEDULE_INTERVAL_LIMITS[unit]:
+            raise ValidationError(
+                {"schedule": f"interval_value must be between 1 and {SCHEDULE_INTERVAL_LIMITS[unit]}."}
+            )
+        normalized.update(
+            {
+                "interval_unit": unit,
+                "interval_value": interval_value,
+                "cron_expr": _interval_cron(unit, interval_value),
+            }
+        )
+        return normalized
+
+    schedule_time = _normalize_schedule_time(value.get("time"))
+    hour, minute = _schedule_time_parts(schedule_time)
+    normalized["time"] = schedule_time
+    if raw_mode == "daily":
+        normalized["cron_expr"] = f"{minute} {hour} * * *"
+        return normalized
+
+    if raw_mode == "weekly":
+        raw_weekdays = value.get("weekdays")
+        if not isinstance(raw_weekdays, list):
+            raise ValidationError({"schedule": "weekdays must be a non-empty list."})
+        try:
+            weekdays = sorted({int(day) for day in raw_weekdays})
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"schedule": "weekdays must contain integers from 1 to 7."}) from exc
+        if not weekdays or any(day < 1 or day > 7 for day in weekdays):
+            raise ValidationError({"schedule": "weekdays must contain integers from 1 to 7."})
+        cron_weekdays = [0 if day == 7 else day for day in weekdays]
+        normalized.update(
+            {
+                "weekdays": weekdays,
+                "cron_expr": f"{minute} {hour} * * {','.join(str(day) for day in cron_weekdays)}",
+            }
+        )
+        return normalized
+
+    raw_month_days = value.get("month_days")
+    if not isinstance(raw_month_days, list):
+        raise ValidationError({"schedule": "month_days must be a list."})
+    try:
+        month_days = sorted({int(day) for day in raw_month_days})
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"schedule": "month_days must contain integers from 1 to 31."}) from exc
+    month_end = _bool(value, "month_end", False)
+    if any(day < 1 or day > 31 for day in month_days):
+        raise ValidationError({"schedule": "month_days must contain integers from 1 to 31."})
+    if not month_days and not month_end:
+        raise ValidationError({"schedule": "select at least one month day or end of month."})
+    # Keep cron_expr useful to legacy readers. Month-end adds day 31, which can
+    # miss shorter months but cannot run on an extra day.
+    cron_month_days = sorted({*month_days, *([31] if month_end else [])})
+    normalized.update(
+        {
+            "month_days": month_days,
+            "month_end": month_end,
+            "cron_expr": f"{minute} {hour} {','.join(str(day) for day in cron_month_days)} * *",
+        }
+    )
+    return normalized
 
 
 def _coerce_retention_input(value: dict[str, Any]) -> dict[str, Any]:
@@ -225,10 +369,47 @@ def _humanize_cron_expression(expr: str) -> str:
     return "Custom schedule"
 
 
+def _structured_schedule_summary(schedule: dict[str, Any]) -> str:
+    mode = str(schedule.get("mode") or "")
+    timezone_name = str(schedule.get("timezone") or "UTC")
+    starts_at = str(schedule.get("starts_at") or "")
+    if mode == "interval":
+        value = int(schedule.get("interval_value") or 1)
+        unit = str(schedule.get("interval_unit") or "minute")
+        summary = f"Every {value} {unit}{'' if value == 1 else 's'}"
+    elif mode == "daily":
+        summary = f"Daily at {schedule.get('time')}"
+    elif mode == "weekly":
+        weekday_names = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
+        labels = [weekday_names[int(day) - 1] for day in schedule.get("weekdays", [])]
+        summary = f"Weekly on {', '.join(labels)} at {schedule.get('time')}"
+    elif mode == "monthly":
+        labels = [str(day) for day in schedule.get("month_days", [])]
+        if schedule.get("month_end"):
+            labels.append("end of month")
+        summary = f"Monthly on {', '.join(labels)} at {schedule.get('time')}"
+    else:
+        summary = _humanize_cron_expression(str(schedule.get("cron_expr") or ""))
+    summary = f"{summary} ({timezone_name})"
+    if starts_at:
+        summary = f"{summary}, starts {starts_at}"
+    return summary
+
+
 def backup_policy_schedule_summary(policy: BackupPolicy) -> str:
     schedule = policy.schedule or {}
     if not schedule.get("enabled", False):
         return "Not configured"
+    if schedule.get("mode") in SCHEDULE_MODES:
+        return _structured_schedule_summary(schedule)
     return _humanize_cron_expression(str(schedule.get("cron_expr") or ""))
 
 

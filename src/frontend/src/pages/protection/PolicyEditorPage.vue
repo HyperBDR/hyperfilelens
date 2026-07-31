@@ -23,8 +23,8 @@ import {
   fileFilterRuleToForm,
   policyFormToWritePayload,
   summarizeSchedule,
-  validateCronExpression,
   validateRetentionForm,
+  validateScheduleForm,
   type BackupPolicyForm,
   type FileFilterRuleForm,
   type MessageLocale,
@@ -102,12 +102,10 @@ async function savePolicy() {
     ElMessage.warning({ message: t('protection.policiesPage.msgPolicyNameRequired'), grouping: true })
     return
   }
-  if (form.value.sectionScheduleEnabled && form.value.freqMode === 'advanced') {
-    const cron = validateCronExpression(form.value.cronExpr)
-    if (!cron.ok) {
-      ElMessage.warning({ message: cron.reason === 'empty' ? t('protection.policiesPage.msgCronEmpty') : t('protection.policiesPage.msgCronBad'), grouping: true })
-      return
-    }
+  const scheduleError = validateScheduleForm(form.value)
+  if (scheduleError) {
+    ElMessage.warning({ message: scheduleError, grouping: true })
+    return
   }
   const retentionError = validateRetentionForm(form.value, messageLocale.value)
   if (form.value.sectionRetentionEnabled && retentionError) {
