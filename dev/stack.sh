@@ -170,7 +170,7 @@ load_repo_env_defaults() {
 	for key in \
 		GITHUB_DOWNLOAD_MIRROR GITHUB_TOKEN DOCKER_DOWNLOAD_MIRROR \
 		APT_MIRROR GOPROXY GOSUMDB PIP_INDEX_URL PIP_TRUSTED_HOST \
-		NPM_REGISTRY BUILD_SOURCELENS SOURCELENS_GIT_REF SOURCELENS_GIT_URL \
+		NPM_REGISTRY BUILD_SOURCELENS SOURCELENS_GIT_URL \
 		DOCKER_PULL_TIMEOUT_SECONDS DOCKER_PULL_RETRIES DEV_OFFLINE \
 		DEV_SMOKE_PLAYWRIGHT_VERSION SOURCELENS_GIT_TIMEOUT_SECONDS \
 		SOURCELENS_GIT_RETRIES SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS \
@@ -192,6 +192,13 @@ apply_mirror_env_defaults() {
 	OPT_PIP_INDEX_URL="${OPT_PIP_INDEX_URL:-${PIP_INDEX_URL:-}}"
 	OPT_PIP_TRUSTED_HOST="${OPT_PIP_TRUSTED_HOST:-${PIP_TRUSTED_HOST:-}}"
 	OPT_NPM_REGISTRY="${OPT_NPM_REGISTRY:-${NPM_REGISTRY:-}}"
+	export GITHUB_DOWNLOAD_MIRROR="${MIRROR_GITHUB_DOWNLOAD}"
+	export GITHUB_TOKEN="${MIRROR_GITHUB_TOKEN}"
+	export DOCKER_DOWNLOAD_MIRROR="${MIRROR_DOCKER_DOWNLOAD}"
+	export APT_MIRROR="${MIRROR_APT}"
+	export PIP_INDEX_URL="${OPT_PIP_INDEX_URL}"
+	export PIP_TRUSTED_HOST="${OPT_PIP_TRUSTED_HOST}"
+	export NPM_REGISTRY="${OPT_NPM_REGISTRY}"
 	[[ -z "${OPT_GO_PROXY}" ]] || export GOPROXY="${OPT_GO_PROXY}"
 	[[ -z "${OPT_GO_SUMDB}" ]] || export GOSUMDB="${OPT_GO_SUMDB}"
 }
@@ -584,14 +591,6 @@ prepare_sourcelens_dev() {
 	[[ -n "${SOURCELENS_GIT_REF}" ]] && args+=(--sourcelens-ref "${SOURCELENS_GIT_REF}")
 	[[ -n "${SOURCELENS_GIT_URL}" ]] && args+=(--sourcelens-git-url "${SOURCELENS_GIT_URL}")
 	[[ -n "${MIRROR_GITHUB_DOWNLOAD}" ]] && args+=(--github-download-mirror "${MIRROR_GITHUB_DOWNLOAD}")
-	[[ -n "${MIRROR_APT}" ]] && export APT_MIRROR="${MIRROR_APT}"
-	[[ -n "${MIRROR_DOCKER_DOWNLOAD}" ]] && export DOCKER_DOWNLOAD_MIRROR="${MIRROR_DOCKER_DOWNLOAD}"
-	if [[ -n "${MIRROR_GITHUB_TOKEN}" ]]; then
-		export GITHUB_TOKEN="${MIRROR_GITHUB_TOKEN}"
-	fi
-	[[ -n "${OPT_PIP_INDEX_URL}" ]] && export PIP_INDEX_URL="${OPT_PIP_INDEX_URL}"
-	[[ -n "${OPT_PIP_TRUSTED_HOST}" ]] && export PIP_TRUSTED_HOST="${OPT_PIP_TRUSTED_HOST}"
-	[[ -n "${OPT_NPM_REGISTRY}" ]] && export NPM_REGISTRY="${OPT_NPM_REGISTRY}"
 	export DEV_OFFLINE="${DEV_OFFLINE}"
 	export DOCKER_PULL_TIMEOUT_SECONDS="${DOCKER_PULL_TIMEOUT}"
 	export DOCKER_PULL_RETRIES
@@ -1234,7 +1233,9 @@ main() {
 	esac
 }
 
-hfl_logging_configure dev
-trap 'rc=$?; hfl_logging_finish "${rc}"' EXIT
-trap 'exit 130' INT TERM
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	hfl_logging_configure dev
+	trap 'rc=$?; hfl_logging_finish "${rc}"' EXIT
+	trap 'exit 130' INT TERM
+	main "$@"
+fi

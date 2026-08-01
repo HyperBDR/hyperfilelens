@@ -1562,6 +1562,17 @@ sourcelens_ensure_dev_data_dirs() {
 		"${SOURCELENS_DATA_DIR}/django/staticfiles"
 }
 
+sourcelens_normalize_dev_runtime_permissions() {
+	local dev_root=$1
+	find "${dev_root}/deploy" -type d -exec chmod 0755 {} +
+	find "${dev_root}/deploy" -type f -exec chmod 0644 {} +
+	if [[ -d "${dev_root}/deploy/postgresql/initdb.d" ]]; then
+		find "${dev_root}/deploy/postgresql/initdb.d" -type f -name '*.sh' \
+			-exec chmod 0755 {} +
+	fi
+	chmod 0644 "${dev_root}/docker-compose.yml"
+}
+
 sourcelens_prepare_dev_runtime_tree() {
 	local src="${SOURCELENS_BUILD_SOURCE}"
 	local dev_root="${SOURCELENS_DEV_DIR}"
@@ -1636,6 +1647,7 @@ PY
 	ln -sfn "${env_file}" "${dev_root}/.env"
 
 	sourcelens_write_runtime_compose "${dev_root}/docker-compose.yml"
+	sourcelens_normalize_dev_runtime_permissions "${dev_root}"
 }
 
 sourcelens_migrate_legacy_dev_project() {
@@ -1668,31 +1680,36 @@ sourcelens_dev_compose() {
 	)
 }
 
-sourcelens_ensure_database_initialized() {
-	local check_cmd='cd /opt/backend && python manage.py migrate --check >/dev/null'
-	local init_cmd='cd /opt/backend && python manage.py sourcelens_init --skip-collectstatic'
-	local static_cmd='cd /opt/backend && mkdir -p core/staticfiles && python manage.py collectstatic --noinput'
+sourcelens_manage() {
+	sourcelens_dev_compose exec -T --workdir /opt/backend \
+		api /opt/venv/bin/python manage.py "$@"
+}
 
-	if ! sourcelens_dev_compose exec -T api sh -lc "${check_cmd}"; then
+sourcelens_ensure_database_initialized() {
+	if ! sourcelens_manage migrate --check >/dev/null; then
 		sourcelens_log "Initializing SourceLens database (missing or pending migrations)"
-		sourcelens_dev_compose exec -T api sh -lc "${init_cmd}"
+		sourcelens_manage sourcelens_init --skip-collectstatic
 	else
 		sourcelens_log "SourceLens database migrations are current"
 	fi
 
 	sourcelens_log "Collecting SourceLens static assets"
-	sourcelens_dev_compose exec -T api sh -lc "${static_cmd}"
+	sourcelens_dev_compose exec -T api mkdir -p /opt/backend/core/staticfiles
+	sourcelens_manage collectstatic --noinput
 }
 
 sourcelens_configure_hfl_env() {
 	local hfl_env="${HFL_ROOT}/.env"
 	[[ -f "${hfl_env}" ]] || return 0
-	python3 - "${hfl_env}" <<'PY'
+	python3 - "${hfl_env}" "${SOURCELENS_GIT_REF}" <<'PY'
 import pathlib
 import re
 import sys
 
 env_path = pathlib.Path(sys.argv[1])
+git_ref = sys.argv[2].strip()
+if not re.fullmatch(r"v\d+\.\d+\.\d+", git_ref):
+    raise SystemExit(f"invalid SourceLens Git ref: {git_ref}")
 text = env_path.read_text(encoding="utf-8")
 
 def read_key(name: str, default: str = "") -> str:
@@ -1709,6 +1726,7 @@ updates = {
     "LENS_BASE_URL": "http://sourcelens-nginx",
     "LENS_GATEWAY_BASE_URL": f"{frontend}/sourcelens",
     "NO_PROXY": ",".join(no_proxy),
+    "SOURCELENS_GIT_REF": git_ref,
 }
 
 def set_key(name: str, value: str) -> None:
