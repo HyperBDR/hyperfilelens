@@ -10,6 +10,12 @@ class BackupSourceRepositoryPurgePending(models.Model):
     source_kind = models.CharField(max_length=16, db_index=True)
     source_ref_id = models.BigIntegerField(db_index=True)
     repository_id = models.BigIntegerField(db_index=True)
+    idempotency_key = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+    )
     payload = models.JSONField(default=dict, blank=True)
     retry_count = models.PositiveIntegerField(default=0)
     last_error = models.TextField(blank=True, default="")

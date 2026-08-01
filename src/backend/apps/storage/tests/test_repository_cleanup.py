@@ -189,6 +189,48 @@ class RepositoryCleanupTests(TestCase):
 
     @mock.patch(
         "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
+        return_value={
+            "physical_cleanup": "partially_deleted",
+            "cleanup_complete": False,
+            "cleanup_failures": [
+                {
+                    "code": "repository_cleanup_incomplete",
+                    "detail": "A repository shard was retained.",
+                }
+            ],
+            "retained_resources": ["repository_shard:1"],
+        },
+    )
+    def test_strict_cleanup_fails_when_physical_result_is_incomplete(
+        self,
+        execute_cleanup,
+    ):
+        repository = self._s3_repository("strict-incomplete-s3")
+        repository_task = create_repository_cleanup_task(
+            repository=repository,
+            dispatch=False,
+        )
+
+        result = run_repository_cleanup_task(repository_task_id=repository_task.id)
+
+        repository.refresh_from_db()
+        repository_task.task.refresh_from_db()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(repository_task.task.status, Task.Status.FAILED)
+        self.assertEqual(
+            repository_task.task.error_code,
+            "REPOSITORY_CLEANUP_INVALID",
+        )
+        self.assertEqual(
+            repository_task.task.error_message,
+            "A repository shard was retained.",
+        )
+        self.assertEqual(repository.status, Repository.Status.REMOVE_FAILED)
+        self.assertIsNone(repository.removed_at)
+        execute_cleanup.assert_called_once()
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_cleanup._execute_physical_cleanup",
         side_effect=RuntimeError("owner offline"),
     )
     def test_remove_failed_repository_delete_creates_an_independent_task(self, execute_cleanup):

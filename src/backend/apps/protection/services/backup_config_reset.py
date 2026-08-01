@@ -132,6 +132,7 @@ def _resource_defs(
     ]
 
 
+@transaction.atomic
 def ensure_backup_config_reset_task(
     *,
     organization_id: int,
@@ -139,6 +140,16 @@ def ensure_backup_config_reset_task(
     source_ref_id: int,
     trigger_type: str = Task.TriggerType.MANUAL,
 ) -> tuple[Task | None, bool]:
+    from apps.source.services.internal.source_operation_fence import (
+        active_source_control_task,
+        lock_source_identity,
+    )
+
+    lock_source_identity(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
     active = _active_reset_task(
         organization_id=organization_id,
         source_type=source_type,
@@ -146,6 +157,40 @@ def ensure_backup_config_reset_task(
     )
     if active is not None:
         return active, False
+
+    source_control_blocker = active_source_control_task(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
+    if source_control_blocker is not None:
+        raise ValidationError(
+            {
+                "source_ref_id": (
+                    "A source unregister task is already running. "
+                    "Wait for it to finish before resetting configuration."
+                ),
+                "task_uuid": str(source_control_blocker.task_uuid),
+            }
+        )
+
+    from apps.source.services.internal.backup_source_delete import (
+        _running_tasks_for_source,
+    )
+
+    running = _running_tasks_for_source(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
+    if running:
+        raise ValidationError(
+            {
+                "source_ref_id": (
+                    f"{len(running)} backup or restore task(s) are still running."
+                )
+            }
+        )
 
     configs = _configs_for_source(
         organization_id=organization_id,
@@ -164,32 +209,31 @@ def ensure_backup_config_reset_task(
         "repository_ids": repository_ids,
         "source_snapshot_ids": [snapshot.id for snapshot in snapshots],
     }
-    with transaction.atomic():
-        task = create_task(
-            organization_id=organization_id,
-            task_type=Task.Type.BACKUP_CONFIG_RESET,
-            display_name=f"Reset backup configuration for {_source_key(source_type, source_ref_id)}",
-            trigger_type=trigger_type,
-            request_payload=payload,
-            resources=_resource_defs(
-                source_type=source_type,
-                source_ref_id=source_ref_id,
-                configs=configs,
-                snapshots=snapshots,
-            ),
-            steps=[
-                {"step_name": "prepare_reset"},
-                {"step_name": "delete_kopia_snapshots"},
-                {"step_name": "delete_snapshot_records"},
-                {"step_name": "delete_restore_plans"},
-                {"step_name": "delete_backup_configs"},
-                {"step_name": "finalize_reset"},
-            ],
-        )
-        BackupConfig.objects.filter(id__in=config_ids).update(
-            status=BackupConfig.Status.RESETTING,
-            reset_task_uuid=task.task_uuid,
-        )
+    task = create_task(
+        organization_id=organization_id,
+        task_type=Task.Type.BACKUP_CONFIG_RESET,
+        display_name=f"Reset backup configuration for {_source_key(source_type, source_ref_id)}",
+        trigger_type=trigger_type,
+        request_payload=payload,
+        resources=_resource_defs(
+            source_type=source_type,
+            source_ref_id=source_ref_id,
+            configs=configs,
+            snapshots=snapshots,
+        ),
+        steps=[
+            {"step_name": "prepare_reset"},
+            {"step_name": "delete_kopia_snapshots"},
+            {"step_name": "delete_snapshot_records"},
+            {"step_name": "delete_restore_plans"},
+            {"step_name": "delete_backup_configs"},
+            {"step_name": "finalize_reset"},
+        ],
+    )
+    BackupConfig.objects.filter(id__in=config_ids).update(
+        status=BackupConfig.Status.RESETTING,
+        reset_task_uuid=task.task_uuid,
+    )
     return task, True
 
 
@@ -258,12 +302,6 @@ def _reset_block_message(
         _running_tasks_for_source,
     )
 
-    if _active_reset_task(
-        organization_id=organization_id,
-        source_type=source_type,
-        source_ref_id=source_ref_id,
-    ):
-        return "A backup configuration reset is already running."
     if _active_unregister_task_for_source(
         organization_id=organization_id,
         source_type=source_type,

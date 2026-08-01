@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from celery import Task as CeleryTask
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
@@ -18,9 +19,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SOURCE_UNREGISTER_LEASE_SECONDS = 30
+_SOURCE_UNREGISTER_LEASE_SECONDS = 5 * 60
 _SOURCE_UNREGISTER_CONFLICT_RETRY_SECONDS = 3
 _SOURCE_UNREGISTER_LEASE_KEY = "_advance_lease"
+
+
+class SourceUnregisterCeleryTask(CeleryTask):
+    """Ensure exhausted worker retries also finalize the domain task."""
+
+    abstract = True
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        domain_task_id = int((kwargs or {}).get("task_id") or 0)
+        if domain_task_id > 0:
+            try:
+                from apps.source.services.internal.backup_source_delete import (
+                    fail_source_unregister_task_unexpectedly,
+                )
+
+                fail_source_unregister_task_unexpectedly(
+                    task_id=domain_task_id,
+                    exc=exc,
+                )
+            except Exception:
+                logger.exception(
+                    "failed to finalize exhausted source unregister task id=%s",
+                    domain_task_id,
+                )
+        super().on_failure(exc, task_id, args, kwargs, einfo)
+
+
+class SourceUnregisterLeaseLost(RuntimeError):
+    """Raised when a worker no longer owns the unregister execution lease."""
 
 
 @dataclass(frozen=True)
@@ -107,6 +137,36 @@ def _release_source_unregister_lease(*, lease: SourceUnregisterLease) -> None:
     task.save(update_fields=["request_payload", "updated_at"])
 
 
+@transaction.atomic
+def renew_source_unregister_lease(*, task_id: int, owner_token: str) -> bool:
+    """Renew the lease only while the caller remains its fenced owner."""
+    from apps.task.models import Task
+
+    if not owner_token:
+        return False
+    task = Task.objects.select_for_update().filter(pk=int(task_id)).first()
+    if task is None or task.status in {
+        Task.Status.SUCCESS,
+        Task.Status.FAILED,
+        Task.Status.CANCELLED,
+        Task.Status.TIMEOUT,
+    }:
+        return False
+    payload = dict(task.request_payload or {})
+    current = payload.get(_SOURCE_UNREGISTER_LEASE_KEY)
+    if not isinstance(current, dict):
+        return False
+    if str(current.get("owner_token") or "") != owner_token:
+        return False
+    current["expires_at"] = (
+        timezone.now() + timedelta(seconds=_SOURCE_UNREGISTER_LEASE_SECONDS)
+    ).isoformat()
+    payload[_SOURCE_UNREGISTER_LEASE_KEY] = current
+    task.request_payload = payload
+    task.save(update_fields=["request_payload", "updated_at"])
+    return True
+
+
 def queue_source_unregister_task(*, task_id: int, countdown_seconds: int = 0) -> None:
     """Queue one idempotent source-unregister advance."""
     from apps.source.tasks.source_unregister import execute_source_unregister_task
@@ -119,6 +179,7 @@ def queue_source_unregister_task(*, task_id: int, countdown_seconds: int = 0) ->
 
 @shared_task(
     name="apps.source.tasks.source_unregister.execute_source_unregister_task",
+    base=SourceUnregisterCeleryTask,
     bind=True,
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -162,7 +223,18 @@ def execute_source_unregister_task(self, *, task_id: int) -> dict:
             return run_source_unregister_task(
                 organization_id=int(task.organization_id),
                 task_uuid=str(task.task_uuid),
+                lease_owner_token=lease.owner_token,
             )
+    except SourceUnregisterLeaseLost:
+        queue_source_unregister_task(
+            task_id=int(task.id),
+            countdown_seconds=_SOURCE_UNREGISTER_CONFLICT_RETRY_SECONDS,
+        )
+        return {
+            "status": "lease_lost",
+            "task_id": int(task.id),
+            "retry_in_seconds": _SOURCE_UNREGISTER_CONFLICT_RETRY_SECONDS,
+        }
     finally:
         _release_source_unregister_lease(lease=lease)
 

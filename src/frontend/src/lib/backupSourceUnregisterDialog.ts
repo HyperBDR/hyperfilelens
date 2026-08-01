@@ -2,32 +2,6 @@ import type { ComposerTranslation } from 'vue-i18n'
 import type { BackupSourceDeletePreflight, BackupSourceDeleteReason } from './sourceApi'
 import { humanizeLegacyErrorMessage } from './errors'
 
-export const FORCE_UNREGISTER_REASON_CODES = new Set([
-  'agent_offline',
-  'proxy_offline',
-  'proxy_unbound',
-  'nas_umount_failed',
-  'repository_snapshot_delete_failed',
-  'repository_unreachable',
-])
-
-export function shouldOfferForceUnregister(options: {
-  preflight?: BackupSourceDeletePreflight | null
-  submitErrorReasons?: BackupSourceDeleteReason[]
-  retryAfterFailure?: boolean
-  submitFailed?: boolean
-}): boolean {
-  const {
-    preflight,
-    submitErrorReasons = [],
-    retryAfterFailure = false,
-    submitFailed = false,
-  } = options
-  if (retryAfterFailure || submitFailed) return true
-  if (preflight?.strict_may_fail || preflight?.risks?.length) return true
-  return submitErrorReasons.some((reason) => FORCE_UNREGISTER_REASON_CODES.has(reason.code))
-}
-
 export function mergeUnregisterSubmitRisks(
   preflight: BackupSourceDeletePreflight | null,
   submitErrorReasons: BackupSourceDeleteReason[],

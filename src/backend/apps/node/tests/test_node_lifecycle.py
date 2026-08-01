@@ -23,6 +23,7 @@ from apps.node.services.internal.node_lifecycle import (
     start_node_upgrade,
 )
 from apps.node.services.internal.task import complete_task
+from apps.task.models import Task, TaskResource
 
 
 class NodeLifecycleTests(TestCase):
@@ -42,6 +43,46 @@ class NodeLifecycleTests(TestCase):
             version="1.0.0",
             metadata={"capabilities": ["detached_uninstall_v2"]},
         )
+
+    def _create_active_source_unregister(self) -> Task:
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister agent source",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.node.id,
+            is_primary=True,
+        )
+        return task
+
+    def test_upgrade_is_blocked_by_active_source_unregister(self):
+        self._create_active_source_unregister()
+
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_upgrade(org=self.org, node=self.node, user=self.user)
+
+        self.assertEqual(raised.exception.code, "source_operation_in_progress")
+        self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
+
+    def test_force_remove_is_blocked_by_unrelated_source_unregister(self):
+        self._create_active_source_unregister()
+
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(
+                org=self.org,
+                node=self.node,
+                user=self.user,
+                force=True,
+            )
+
+        self.assertEqual(raised.exception.code, "source_operation_in_progress")
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.is_deleted)
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_strict_remove_requires_reliable_uninstall_capability(self, _routable):
@@ -98,6 +139,25 @@ class NodeLifecycleTests(TestCase):
         self.assertTrue(self.node.is_deleted)
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
+    def test_parent_owned_offline_force_remove_defers_control_plane_purge(
+        self,
+        _routable,
+    ):
+        result = start_node_remove(
+            org=self.org,
+            node=self.node,
+            user=self.user,
+            force=True,
+            triggered_by_task_id=123,
+        )
+
+        self.assertFalse(result["purged"])
+        self.assertTrue(result["control_plane_purge_deferred"])
+        self.assertEqual(result["phase"], "awaiting_parent_finalize")
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.is_deleted)
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_offline_force_gateway_records_agent_and_sidecar_residue(self, _routable):
         self.node.role = NodeRole.GATEWAY
         self.node.save(update_fields=["role", "updated_at"])
@@ -130,9 +190,23 @@ class NodeLifecycleTests(TestCase):
             {"task": task, "task_id": str(task.id)},
         )()
 
-        result = start_node_remove(org=self.org, node=self.node, user=self.user)
+        result = start_node_remove(
+            org=self.org,
+            node=self.node,
+            user=self.user,
+            triggered_by_task_id=42,
+            triggered_by_task_attempt=2,
+        )
         self.assertEqual(result["state"], "removing")
         mock_dispatch.assert_called_once()
+        self.assertEqual(
+            mock_dispatch.call_args.kwargs["payload"]["source_unregister_task_id"],
+            42,
+        )
+        self.assertEqual(
+            mock_dispatch.call_args.kwargs["payload"]["source_unregister_attempt"],
+            2,
+        )
 
     @patch("apps.node.services.internal.node_lifecycle.validate_agent_upgrade", return_value="1.2.0")
     @patch("apps.node.services.internal.node_lifecycle.run_agent_task_async")

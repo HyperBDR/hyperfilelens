@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -126,20 +127,35 @@ def _supports_reliable_uninstall(node: Node) -> bool:
 
 
 def _force_purge_without_remote_uninstall(
-    *, org: Organization, node: Node, user=None, reason_code: str, reason_detail: str
+    *,
+    org: Organization,
+    node: Node,
+    user=None,
+    reason_code: str,
+    reason_detail: str,
+    defer_control_plane_purge: bool = False,
 ) -> dict[str, Any]:
     retained_resources = ["agent_installation"]
     if node.role == NodeRole.GATEWAY:
         retained_resources.append("lensnode_sidecar")
-    summary = _purge_agent_server_records(org=org, node=node, user=user)
+    summary = (
+        {}
+        if defer_control_plane_purge
+        else _purge_agent_server_records(org=org, node=node, user=user)
+    )
     return {
         "operation_id": f"force-remove:{node.id}",
         "task_id": None,
         "node_id": node.id,
         "kind": LIFECYCLE_KIND_REMOVE,
         "state": "completed",
-        "phase": "control_plane_purged",
-        "purged": True,
+        "phase": (
+            "awaiting_parent_finalize"
+            if defer_control_plane_purge
+            else "control_plane_purged"
+        ),
+        "purged": not defer_control_plane_purge,
+        "control_plane_purge_deferred": defer_control_plane_purge,
         "force": True,
         "outcome": "force_cleanup_success",
         "cleanup_complete": False,
@@ -675,14 +691,37 @@ def advance_node_lifecycle(
     return summary
 
 
+@transaction.atomic
 def start_node_upgrade(
     *,
     org: Organization,
     node: Node,
     user=None,
 ) -> dict[str, Any]:
+    node = Node.objects.select_for_update().get(
+        pk=node.id,
+        organization_id=org.id,
+        is_deleted=False,
+    )
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY):
         raise NodeLifecycleError("Only enrolled agents support remote upgrade.", code="role_not_managed")
+
+    if node.role == NodeRole.AGENT:
+        from apps.source.services.internal.source_operation_fence import (
+            assert_source_product_operation_allowed,
+        )
+
+        try:
+            assert_source_product_operation_allowed(
+                organization_id=org.id,
+                source_type="agent",
+                source_ref_id=node.id,
+            )
+        except ValidationError as exc:
+            raise NodeLifecycleError(
+                "Backup source has an active Reset or Unregister operation.",
+                code="source_operation_in_progress",
+            ) from exc
 
     active = _active_lifecycle_task(org=org, node=node)
     if active is not None:
@@ -732,6 +771,7 @@ def start_node_remove(
     force: bool = False,
     keep_data: bool = False,
     triggered_by_task_id: int | None = None,
+    triggered_by_task_attempt: int = 0,
 ) -> dict[str, Any]:
     with transaction.atomic():
         locked_node = Node.objects.select_for_update().get(
@@ -746,6 +786,7 @@ def start_node_remove(
             force=force,
             keep_data=keep_data,
             triggered_by_task_id=triggered_by_task_id,
+            triggered_by_task_attempt=triggered_by_task_attempt,
         )
 
 
@@ -757,10 +798,29 @@ def _start_node_remove_locked(
     force: bool,
     keep_data: bool,
     triggered_by_task_id: int | None,
+    triggered_by_task_attempt: int,
 ) -> dict[str, Any]:
     """Run authoritative node-remove preflight while holding the node fence."""
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY, NodeRole.GATEWAY):
         raise NodeLifecycleError("Only enrolled agents support remote removal.", code="role_not_managed")
+
+    if node.role == NodeRole.AGENT:
+        from apps.source.services.internal.source_operation_fence import (
+            assert_source_product_operation_allowed,
+        )
+
+        try:
+            assert_source_product_operation_allowed(
+                organization_id=org.id,
+                source_type="agent",
+                source_ref_id=node.id,
+                allowed_task_id=triggered_by_task_id,
+            )
+        except ValidationError as exc:
+            raise NodeLifecycleError(
+                "Backup source has an active Reset or Unregister operation.",
+                code="source_operation_in_progress",
+            ) from exc
 
     active = _active_lifecycle_task(org=org, node=node)
     if active is not None:
@@ -804,6 +864,7 @@ def _start_node_remove_locked(
             user=user,
             reason_code="agent_upgrade_required",
             reason_detail=f"{detail} Remote uninstall was not attempted.",
+            defer_control_plane_purge=triggered_by_task_id is not None,
         )
 
     if not agent_ws_routable(agent_id=node.id):
@@ -818,8 +879,19 @@ def _start_node_remove_locked(
             user=user,
             reason_code="agent_offline",
             reason_detail="Remote uninstall was not executed because the Agent was offline.",
+            defer_control_plane_purge=triggered_by_task_id is not None,
         )
-        result.update({"operation_id": f"offline-remove:{node.id}", "phase": "offline_purged", "offline": True})
+        result.update(
+            {
+                "operation_id": f"offline-remove:{node.id}",
+                "phase": (
+                    "awaiting_parent_finalize"
+                    if result.get("control_plane_purge_deferred")
+                    else "offline_purged"
+                ),
+                "offline": True,
+            }
+        )
         return result
 
     uninstall_payload: dict[str, Any] = {
@@ -829,6 +901,10 @@ def _start_node_remove_locked(
     if triggered_by_task_id:
         uninstall_payload["source_unregister_task_id"] = int(
             triggered_by_task_id
+        )
+        uninstall_payload["source_unregister_attempt"] = max(
+            0,
+            int(triggered_by_task_attempt),
         )
     handle = run_agent_task_async(
         org=org,

@@ -592,6 +592,16 @@ def start_backup_tasks(
         )
         for config in configs:
             try:
+                with transaction.atomic():
+                    from apps.source.services.internal.source_operation_fence import (
+                        assert_source_product_operation_allowed,
+                    )
+
+                    assert_source_product_operation_allowed(
+                        organization_id=organization_id,
+                        source_type=source.source_type,
+                        source_ref_id=source.source_ref_id,
+                    )
                 validate_backup_repository_compatible(
                     organization_id=organization_id,
                     source_type=source.source_type,
@@ -641,6 +651,15 @@ def start_backup_tasks(
             snapshot: BackupSourceSnapshot | None = None
             try:
                 with transaction.atomic():
+                    from apps.source.services.internal.source_operation_fence import (
+                        assert_source_product_operation_allowed,
+                    )
+
+                    assert_source_product_operation_allowed(
+                        organization_id=organization_id,
+                        source_type=source.source_type,
+                        source_ref_id=source.source_ref_id,
+                    )
                     locked_config = BackupConfig.objects.select_for_update().get(
                         organization_id=organization_id,
                         id=config.id,

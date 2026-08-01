@@ -38,4 +38,32 @@ describe('sourceUnregisterTaskOutcome', () => {
       errorMessage: 'Agent uninstall callback failed',
     })
   })
+
+  it('distinguishes force cleanup residue from a clean success', () => {
+    expect(sourceUnregisterTaskOutcome({
+      status: 'success',
+      result_payload: {
+        result: 'partial_success',
+        cleanup_complete: false,
+        retained_resources: ['agent_installation'],
+      },
+    } as never)).toMatchObject({
+      terminal: true,
+      success: true,
+      partialSuccess: true,
+      cleanupComplete: false,
+    })
+
+    expect(sourceUnregisterTaskOutcome({
+      status: 'success',
+      result_payload: {
+        result: 'success',
+        cleanup_complete: true,
+      },
+    } as never)).toMatchObject({
+      success: true,
+      partialSuccess: false,
+      cleanupComplete: true,
+    })
+  })
 })

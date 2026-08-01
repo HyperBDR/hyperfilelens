@@ -5,7 +5,6 @@ import { ElButton, ElDialog } from 'element-plus'
 import BackupSourceUnregisterDialogBody from './BackupSourceUnregisterDialogBody.vue'
 import {
   mergeUnregisterSubmitRisks,
-  shouldOfferForceUnregister,
   unregisterReasonLabel,
   type BackupSourceUnregisterDisplayRow,
 } from '../lib/backupSourceUnregisterDialog'
@@ -24,7 +23,6 @@ const props = defineProps<{
   sourceIds: string[]
   sources?: BackupSourceUnregisterDisplayRow[]
   showSnapshots?: boolean
-  retryAfterFailure?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -49,9 +47,10 @@ const force = ref(false)
 const loading = ref(false)
 const preflightLoading = ref(false)
 const preflight = ref<BackupSourceDeletePreflight | null>(null)
+const preflightError = ref(false)
 const submitErrorReasons = ref<BackupSourceDeleteReason[]>([])
-const submitFailed = ref(false)
 const confirmText = ref('')
+let preflightRequestSeq = 0
 const confirmationKeyword = computed(() => force.value ? 'FORCE UNREGISTER' : 'UNREGISTER')
 
 const visible = computed({
@@ -67,55 +66,66 @@ const title = computed(() =>
 
 const displayRisks = computed(() => mergeUnregisterSubmitRisks(preflight.value, submitErrorReasons.value))
 
-const showForceOption = computed(() =>
-  shouldOfferForceUnregister({
-    preflight: preflight.value,
-    submitErrorReasons: submitErrorReasons.value,
-    retryAfterFailure: props.retryAfterFailure,
-    submitFailed: submitFailed.value,
-  }),
-)
-
 const deleteDisabled = computed(() => {
   if (loading.value || preflightLoading.value) return true
+  if (preflightError.value || !preflight.value) return true
   if (preflight.value?.delete_disabled) return true
   if (confirmText.value !== confirmationKeyword.value) return true
   return false
 })
 
 async function loadPreflight() {
-  if (!props.sourceIds.length) {
+  const requestSeq = ++preflightRequestSeq
+  const sourceIds = [...props.sourceIds]
+  if (!sourceIds.length) {
     preflight.value = null
+    preflightError.value = false
+    preflightLoading.value = false
     return
   }
+  preflight.value = null
+  preflightError.value = false
   preflightLoading.value = true
   try {
-    preflight.value = await preflightDeleteBackupSources(props.sourceIds)
+    const result = await preflightDeleteBackupSources(sourceIds)
+    if (requestSeq !== preflightRequestSeq) return
+    preflight.value = result
+    submitErrorReasons.value = []
   } catch {
-    preflight.value = { risks: [], blocking: [], strict_may_fail: false, delete_disabled: false }
+    if (requestSeq !== preflightRequestSeq) return
+    preflight.value = null
+    preflightError.value = true
   } finally {
-    preflightLoading.value = false
+    if (requestSeq === preflightRequestSeq) preflightLoading.value = false
   }
 }
 
+function resetDialogState() {
+  preflightRequestSeq += 1
+  force.value = false
+  confirmText.value = ''
+  preflight.value = null
+  preflightError.value = false
+  preflightLoading.value = false
+  submitErrorReasons.value = []
+}
+
 watch(
-  () => [props.modelValue, props.sourceIds.join(','), props.retryAfterFailure] as const,
+  () => [props.modelValue, props.sourceIds.join(',')] as const,
   ([open]) => {
     if (!open) {
-      force.value = false
-      confirmText.value = ''
-      preflight.value = null
-      submitErrorReasons.value = []
-      submitFailed.value = false
+      resetDialogState()
       return
     }
-    confirmText.value = ''
-    submitErrorReasons.value = []
-    submitFailed.value = false
-    force.value = false
+    resetDialogState()
     void loadPreflight()
   },
+  { immediate: true },
 )
+
+watch(force, () => {
+  confirmText.value = ''
+})
 
 function close() {
   if (loading.value) return
@@ -125,7 +135,7 @@ function close() {
 async function confirmDelete() {
   if (deleteDisabled.value || !props.sourceIds.length) return
   const sourceIds = [...props.sourceIds]
-  const forceDelete = showForceOption.value ? force.value : false
+  const forceDelete = force.value
   const confirmation = confirmText.value
   emit('started', { sourceIds })
   loading.value = true
@@ -147,7 +157,6 @@ async function confirmDelete() {
   } catch (err: unknown) {
     const parsed = parseBackupSourceDeleteError(err)
     submitErrorReasons.value = parsed.reasons
-    submitFailed.value = true
     emit('failed', { sourceIds })
     const reasonLines = parsed.reasons.length
       ? parsed.reasons.map((reason) => unregisterReasonLabel(reason, t)).join('\n')
@@ -160,6 +169,7 @@ async function confirmDelete() {
       showClose: true,
       grouping: true,
     })
+    void loadPreflight()
   } finally {
     loading.value = false
   }
@@ -185,8 +195,9 @@ async function confirmDelete() {
       :preflight="preflight"
       :display-risks="displayRisks"
       :preflight-loading="preflightLoading"
+      :preflight-error="preflightError"
       :loading="loading"
-      :show-force-option="showForceOption"
+      @retry-preflight="loadPreflight"
       @confirm="confirmDelete"
     />
 

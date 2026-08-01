@@ -335,6 +335,27 @@ class TaskApiTests(TestCase):
             first_step.id,
         )
 
+    def test_source_unregister_task_cannot_be_cancelled_generically(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+
+        response = self.client.post(
+            f"/api/v1/tasks/{task.task_uuid}/cancel/",
+            {"reason": "cancel cleanup"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("cannot be cancelled", str(response.data))
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.RUNNING)
+
     def test_failed_complete_task_stores_explicit_progress(self):
         task = Task.objects.create(
             organization_id=self.org.id,

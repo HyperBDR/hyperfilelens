@@ -35,6 +35,7 @@ from apps.storage.services.internal.repository_cleanup import (
     RepositoryCleanupBlocked,
     create_direct_nas_target_cleanup_task,
     direct_nas_cleanup_target_ids,
+    repository_active_task_blockers,
     repository_cleanup_task_payload,
     run_repository_cleanup_task,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "RepositoryCleanupBlocked",
     "create_direct_nas_target_cleanup_task",
     "direct_nas_cleanup_target_ids",
+    "repository_active_task_blockers",
     "repository_cleanup_task_payload",
     "run_repository_cleanup_task",
     "apply_provider_catalog_import",

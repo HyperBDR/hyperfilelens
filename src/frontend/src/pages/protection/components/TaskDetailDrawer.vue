@@ -173,6 +173,7 @@ const usesTargetRepositoryResources = computed(() => props.resourceListMode === 
 
 const canCancel = computed(() => {
   if (props.readOnly) return false
+  if (activeTask.value?.task_type === 'source_unregister') return false
   if (activeTask.value?.task_type === 'repository_operation') {
     return canCancelRepositoryTask(activeTask.value)
   }

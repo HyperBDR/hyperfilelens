@@ -917,14 +917,12 @@ const hostMoreActionsOpen = ref(false)
 const nasMoreActionsOpen = ref(false)
 const backupSourceDeleteDialogOpen = ref(false)
 const backupSourceDeleteIds = ref<string[]>([])
-const backupSourceDeleteRetryAfterFailure = computed(() =>
-  backupSourceDeleteIds.value.some((id) => pendingSourceOps.value.get(id)?.kind === 'delete_failed'),
-)
 const pendingSourceOps = ref(new Map<string, SourcePendingOp>())
 const SOURCE_DELETE_TASK_POLL_MS = 2000
 const SOURCE_DELETE_TASK_TIMEOUT_MS = 15 * 60 * 1000
 let sourceDeleteTaskPollTimer: number | null = null
 let sourceDeleteTaskPollInFlight = false
+let sourceDeletePartialSuccessPending = false
 
 function refreshPendingSourceOps() {
   pendingSourceOps.value = readWizardPendingSourceOps()
@@ -958,6 +956,9 @@ async function reconcilePendingSourceDeleteTasks() {
   if (!pending.length) return
   sourceDeleteTaskPollInFlight = true
   let changed = false
+  let partialSuccess = false
+  let terminalFailure = false
+  let unresolved = false
   try {
     const tasks = await Promise.allSettled(pending.map(({ op }) => getTask(op.taskUuid!)))
     const now = Date.now()
@@ -966,15 +967,20 @@ async function reconcilePendingSourceDeleteTasks() {
       if (settled.status === 'rejected') {
         if (op.startedAt && now - op.startedAt >= SOURCE_DELETE_TASK_TIMEOUT_MS) {
           markWizardPendingBySourceIds([sourceId], { ...op, kind: 'delete_failed' })
+          terminalFailure = true
           changed = true
+        } else {
+          unresolved = true
         }
         return
       }
       const outcome = sourceUnregisterTaskOutcome(settled.value)
       if (outcome.success) {
+        partialSuccess ||= outcome.partialSuccess
         clearWizardPendingBySourceIds([sourceId])
         changed = true
       } else if (outcome.terminal) {
+        terminalFailure = true
         markWizardPendingBySourceIds([sourceId], {
           ...op,
           kind: 'delete_failed',
@@ -985,8 +991,22 @@ async function reconcilePendingSourceDeleteTasks() {
           grouping: true,
         })
         changed = true
+      } else {
+        unresolved = true
       }
     })
+    if (terminalFailure) {
+      sourceDeletePartialSuccessPending = false
+    } else if (partialSuccess) {
+      sourceDeletePartialSuccessPending = true
+    }
+    if (sourceDeletePartialSuccessPending && !terminalFailure && !unresolved) {
+      ElMessage.warning({
+        message: t('protection.backupsPage.msgDeleteSourcePartialSuccess'),
+        grouping: true,
+      })
+      sourceDeletePartialSuccessPending = false
+    }
     refreshPendingSourceOps()
     if (changed) await load()
   } finally {
@@ -1181,7 +1201,7 @@ async function onBackupSourcesDeleted(payload: {
   await load()
   if (payload.pending_removals?.length) {
     ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
-  } else if (payload.result === 'partial_success' && payload.warnings.length) {
+  } else if (payload.result === 'partial_success') {
     ElMessage.warning({ message: t('protection.backupsPage.msgDeleteSourcePartialSuccess'), grouping: true })
   } else {
     ElMessage.success({ message: t('protection.backupsPage.msgDeleteSourceSuccess'), grouping: true })
@@ -2528,7 +2548,6 @@ onUnmounted(() => {
       v-model="backupSourceDeleteDialogOpen"
       :source-ids="backupSourceDeleteIds"
       :sources="backupSourceDeleteRows"
-      :retry-after-failure="backupSourceDeleteRetryAfterFailure"
       @started="onBackupSourcesDeleteStarted"
       @failed="onBackupSourcesDeleteFailed"
       @deleted="onBackupSourcesDeleted"

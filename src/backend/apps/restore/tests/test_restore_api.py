@@ -1591,6 +1591,35 @@ class RestoreApiTests(TestCase):
         self._assert_restore_already_running(create, active_task)
         self.assertFalse(RestoreRecord.objects.exists())
 
+    def test_create_manual_restore_record_is_blocked_by_source_unregister(self):
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        create = self.client.post(
+            "/api/v1/restore/records/",
+            self._manual_restore_payload(),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(
+            "active Reset or Unregister operation",
+            str(create.data),
+        )
+        self.assertFalse(RestoreRecord.objects.exists())
+
     def test_create_manual_restore_record_rejects_same_source_pending_restore(self):
         active_task = self._active_restore_task(status_value=Task.Status.PENDING)
 

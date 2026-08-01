@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElCheckbox, ElTable, ElTableColumn, ElTag } from 'element-plus'
+import { ElAlert, ElButton, ElCheckbox, ElTable, ElTableColumn, ElTag } from 'element-plus'
 import AgentPlatformBrandIcon from './agent-deploy/AgentPlatformBrandIcon.vue'
 import ExactKeywordConfirmInput from './ExactKeywordConfirmInput.vue'
 import {
@@ -23,14 +23,14 @@ const props = withDefaults(defineProps<{
   preflight: BackupSourceDeletePreflight | null
   displayRisks?: BackupSourceDeleteReason[]
   preflightLoading?: boolean
+  preflightError?: boolean
   loading?: boolean
-  showForceOption?: boolean
 }>(), {
   showSnapshots: true,
   isStep3: false,
   preflightLoading: false,
+  preflightError: false,
   loading: false,
-  showForceOption: false,
 })
 
 const force = defineModel<boolean>('force', { default: false })
@@ -38,6 +38,7 @@ const confirmText = defineModel<string>('confirmText', { default: '' })
 
 const emit = defineEmits<{
   (e: 'confirm'): void
+  (e: 'retry-preflight'): void
 }>()
 
 const { t } = useI18n()
@@ -246,14 +247,36 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
         </ul>
       </div>
 
+      <ElAlert
+        v-if="preflightError"
+        class="hfl-flow-action-dialog__preflight-error"
+        type="error"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          {{ t('protection.backupsPage.deletePreflightFailedTitle') }}
+        </template>
+        <div class="hfl-flow-action-dialog__preflight-error-content">
+          <span>{{ t('protection.backupsPage.deletePreflightFailedHint') }}</span>
+          <ElButton
+            type="primary"
+            link
+            :disabled="loading || preflightLoading"
+            @click="emit('retry-preflight')"
+          >
+            {{ t('common.retry') }}
+          </ElButton>
+        </div>
+      </ElAlert>
+
       <div
-        v-if="showForceOption"
         class="hfl-flow-action-dialog__force-panel"
       >
         <label class="hfl-flow-action-dialog__force">
           <ElCheckbox
             v-model="force"
-            :disabled="loading || preflightLoading"
+            :disabled="loading"
           />
           <span class="hfl-flow-action-dialog__force-copy">
             <span class="hfl-flow-action-dialog__force-label">{{ t('protection.backupsPage.deleteForceLabel') }}</span>
