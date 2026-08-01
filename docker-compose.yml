@@ -224,8 +224,10 @@ services:
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/nginx/snippets:/etc/nginx/snippets:ro
+      - ./deploy/nginx/development-upstreams.conf:/etc/nginx/snippets/hfl-active-upstreams.conf:ro
       - ./deploy/nginx/development-spa-locations.conf:/etc/nginx/snippets/hfl-tenant-spa-locations.conf:ro
       - ./deploy/nginx/development-spa-locations.conf:/etc/nginx/snippets/hfl-ops-spa-locations.conf:ro
+      - ./deploy/nginx/development-static-website.conf:/etc/nginx/snippets/hfl-website-locations.conf:ro
       - ./build/website/public:/usr/share/nginx/website:ro
       - ./data/lang-packs:/opt/hyperfilelens/lang-packs:ro
       - ./data/media:/opt/backend/media:ro

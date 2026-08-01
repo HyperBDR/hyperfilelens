@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from common.errors import AppError
 from apps.iam.models import Organization
@@ -1633,6 +1634,7 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
             status=RestoreRecordItem.Status.FAILED,
             error_code="RESTORE_DISPATCH_FAILED",
             error_message=error_message,
+            terminal_projection_at=timezone.now(),
         )
         append_task_step_event(
             task=task,
@@ -1917,6 +1919,18 @@ def stop_restore_repository_servers(*, task: Task) -> None:
         node_id = int(state.get("repository_node_id") or 0)
         if not session_id or not node_id:
             continue
+        # A retrying projector must not schedule duplicate cleanup commands.
+        # Agent delivery itself is registered with transaction.on_commit(), so
+        # a surrounding restore-finalization rollback also rolls back this
+        # durable command before it can be sent.
+        if NodeTask.objects.filter(
+            organization_id=task.organization_id,
+            kind="repository.server.stop",
+            correlation_type="restore.repository_server",
+            correlation_id=str(task.task_uuid),
+            payload__session_id=session_id,
+        ).exists():
+            continue
         try:
             run_agent_task_async(
                 organization_id=task.organization_id,
@@ -1998,6 +2012,8 @@ def cancel_restore(*, organization_id: int, task_uuid: str, reason: str = "") ->
                 node_task_id=item.node_task_id,
                 previous_status=previous_status,
             )
+            item.terminal_projection_at = timezone.now()
+            item.save(update_fields=["terminal_projection_at", "updated_at"])
 
     execution_org_ids = {organization_id}
     if record is not None:

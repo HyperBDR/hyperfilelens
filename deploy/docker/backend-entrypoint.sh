@@ -49,7 +49,6 @@ run_api_stack() {
   GUNICORN_PID=""
 
   api_stack_cleanup() {
-    python manage.py ws_recovery_gate begin >/dev/null 2>&1 || true
     if [ -n "${DAPHNE_PID}" ]; then
       kill -TERM "${DAPHNE_PID}" 2>/dev/null || true
       wait "${DAPHNE_PID}" 2>/dev/null || true
@@ -61,8 +60,6 @@ run_api_stack() {
   }
 
   trap api_stack_cleanup INT TERM
-
-  python manage.py ws_recovery_gate begin
 
   echo "[entrypoint] start daphne on ${WS_BIND_HOST}:${WS_BIND_PORT}"
   daphne -b "${WS_BIND_HOST}" -p "${WS_BIND_PORT}" project.asgi_ws:application &
@@ -138,7 +135,7 @@ run_scheduler_dev() {
 
 case "${1:-api}" in
   migrate)
-    # Ad-hoc only: docker compose run --rm worker migrate
+    # Singleton installer job: docker compose --profile tools run --rm migration
     ensure_log_dir
     wait_for_postgres
     run_migrations_and_register
@@ -156,7 +153,6 @@ case "${1:-api}" in
   worker)
     ensure_log_dir
     wait_for_postgres
-    run_migrations_and_register
     echo "[entrypoint] start celery worker"
     exec celery -A common worker --loglevel=INFO \
       --concurrency="${CELERY_WORKER_CONCURRENCY:-2}" \
@@ -168,10 +164,8 @@ case "${1:-api}" in
   scheduler)
     ensure_log_dir
     wait_for_postgres
-    echo "[entrypoint] start celery scheduler (DatabaseScheduler)"
-    exec celery -A common beat \
-      --scheduler django_celery_beat.schedulers:DatabaseScheduler \
-      --loglevel=INFO
+    echo "[entrypoint] start cluster-safe celery scheduler leader"
+    exec python manage.py run_scheduler_leader
     ;;
   scheduler-dev)
     run_scheduler_dev

@@ -11,7 +11,25 @@ from apps.node.ws.node_agent import NodeAgentConsumer
 from apps.node.ws.wire import TASK_RESULT_ACK_SUBPROTOCOL
 
 
+def _immediate_database_sync_to_async(func):
+    """Keep consumer unit tests independent of asgiref's thread executor."""
+
+    async def invoke(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return invoke
+
+
 class NodeAgentTaskResultAckTests(SimpleTestCase):
+    async def test_deployment_drain_closes_with_service_restart_code(self):
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.close = AsyncMock()
+
+        await consumer.deployment_drain({"reason": "test cutover"})
+
+        consumer.close.assert_awaited_once_with(code=1012)
+
     async def test_negotiates_ack_subprotocol_when_agent_offers_it(self):
         consumer = NodeAgentConsumer()
         consumer.scope = {
@@ -27,6 +45,10 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
             patch(
                 "apps.node.ws.node_agent.validate_agent_ws_credentials",
                 return_value=True,
+            ),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
             ),
             patch("apps.node.ws.node_agent.on_agent_connected"),
         ):
@@ -65,6 +87,10 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         with (
             patch("apps.node.ws.node_agent.handle_uplink", side_effect=commit),
             patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
+            ),
+            patch(
                 "apps.node.ws.node_agent.trigger_task_result_followup",
                 side_effect=followup,
             ),
@@ -92,6 +118,10 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
             patch(
                 "apps.node.ws.node_agent.handle_uplink",
                 side_effect=DatabaseError("database unavailable"),
+            ),
+            patch(
+                "apps.node.ws.node_agent.database_sync_to_async",
+                side_effect=_immediate_database_sync_to_async,
             ),
             patch("apps.node.ws.node_agent.trigger_task_result_followup") as followup,
         ):

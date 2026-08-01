@@ -4,7 +4,7 @@ import uuid
 from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,10 +24,24 @@ from apps.lens_bridge.api.serializers import (
     LensSessionTitleSerializer,
     LensSessionUpdateSerializer,
 )
-from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource, LensSessionLink
-from apps.lens_bridge.services import knowledge_source_sync, org_models, provisioning, sl_client, usage
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensSessionLink,
+)
+from apps.lens_bridge.services import (
+    knowledge_source_sync,
+    org_models,
+    provisioning,
+    sl_client,
+    usage,
+)
 from apps.iam.permissions_org import get_membership
-from apps.lens_bridge.services import assistant_access, chat_binding as chat_binding_service, copilot as copilot_service
+from apps.lens_bridge.services import (
+    assistant_access,
+    chat_binding as chat_binding_service,
+    copilot as copilot_service,
+)
 from apps.lens_bridge.services.assistants import (
     assistant_form_options,
     create_org_assistant,
@@ -55,6 +69,12 @@ from common.drf.org_scoped import OrgScopedMixin
 from common.drf.renderers import ServerSentEventsRenderer
 
 
+class SourceLensMaintenanceUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "AI services are temporarily unavailable during maintenance."
+    default_code = "sourcelens_maintenance"
+
+
 def health(request):
     ping = sl_client.ping()
     return JsonResponse({"app": "lens_bridge", "status": "ok", "lens": ping})
@@ -78,7 +98,9 @@ class LensModelProxyView(OrgScopedMixin, APIView):
             data = sl_client.request_json("GET", "/api/v1/admin/llm-config/models/")
         elif config_uuid:
             link = org_models.require_org_model(self.org, config_uuid)
-            data = sl_client.request_json("GET", f"/api/v1/admin/llm-config/{config_uuid}/")
+            data = sl_client.request_json(
+                "GET", f"/api/v1/admin/llm-config/{config_uuid}/"
+            )
             data = org_models.merge_model_display_name(data, link)
         else:
             data = org_models.list_org_model_configs(self.org)
@@ -103,7 +125,9 @@ class LensModelProxyView(OrgScopedMixin, APIView):
             return Response(data)
         body = dict(request.data)
         display_name = body.pop("name", None)
-        data = sl_client.request_json("POST", "/api/v1/admin/llm-config/", json_body=body)
+        data = sl_client.request_json(
+            "POST", "/api/v1/admin/llm-config/", json_body=body
+        )
         config_uuid_created = data.get("uuid")
         if config_uuid_created:
             link = org_models.register_org_model(
@@ -139,7 +163,9 @@ class LensModelProxyView(OrgScopedMixin, APIView):
                 json_body=body,
             )
         else:
-            data = sl_client.request_json("GET", f"/api/v1/admin/llm-config/{config_uuid}/")
+            data = sl_client.request_json(
+                "GET", f"/api/v1/admin/llm-config/{config_uuid}/"
+            )
         org_models.set_model_display_name(link, display_name)
         link.refresh_from_db(fields=["display_name"])
         return Response(org_models.merge_model_display_name(data, link))
@@ -189,7 +215,9 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
     def get(self, request):
         rows = []
         for model in org_models.active_llm_configs(org=self.org):
-            config = model.get("config") if isinstance(model.get("config"), dict) else {}
+            config = (
+                model.get("config") if isinstance(model.get("config"), dict) else {}
+            )
             rows.append(
                 {
                     "uuid": str(model["uuid"]),
@@ -315,7 +343,9 @@ class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):
             ks.save(update_fields=["status", "status_detail", "updated_at"])
             raise
         return Response(
-            LensKnowledgeSourceSerializer(ks, context=self.get_serializer_context()).data
+            LensKnowledgeSourceSerializer(
+                ks, context=self.get_serializer_context()
+            ).data
         )
 
 
@@ -328,7 +358,9 @@ class LensGatewayViewSet(OrgScopedMixin, viewsets.ViewSet):
         return super().get_permissions()
 
     def list(self, request):
-        from apps.lens_bridge.services.gateway_insights import list_user_gateway_insight_rows
+        from apps.lens_bridge.services.gateway_insights import (
+            list_user_gateway_insight_rows,
+        )
 
         return Response(list_user_gateway_insight_rows(user=request.user))
 
@@ -407,7 +439,9 @@ class LensCopilotBindingView(OrgScopedMixin, APIView):
         return super().get_permissions()
 
     def get(self, request):
-        binding = chat_binding_service.get_active_chat_binding(self.org, user=request.user)
+        binding = chat_binding_service.get_active_chat_binding(
+            self.org, user=request.user
+        )
         if binding is None:
             return Response({"binding": None})
         return Response(
@@ -422,8 +456,12 @@ class LensCopilotBindingView(OrgScopedMixin, APIView):
                 self.org,
                 user=request.user,
                 backup_config_id=body.validated_data["backup_config_id"],
-                backup_source_snapshot_id=body.validated_data["backup_source_snapshot_id"],
-                backup_snapshot_directory_id=body.validated_data.get("backup_snapshot_directory_id"),
+                backup_source_snapshot_id=body.validated_data[
+                    "backup_source_snapshot_id"
+                ],
+                backup_snapshot_directory_id=body.validated_data.get(
+                    "backup_snapshot_directory_id"
+                ),
                 source_path=body.validated_data.get("source_path") or "",
                 gateway_link_id=body.validated_data.get("gateway_link_id"),
             )
@@ -476,7 +514,6 @@ class LensCopilotKnowledgeSourceView(OrgScopedMixin, APIView):
         return Response(
             LensKnowledgeSourceSerializer(qs, many=True, context={"view": self}).data
         )
-
 
 
 class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
@@ -595,7 +632,9 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def create(self, request):
         try:
-            data = create_org_skill(self.org, dict(request.data), created_by=request.user)
+            data = create_org_skill(
+                self.org, dict(request.data), created_by=request.user
+            )
         except sl_client.LensBridgeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(data, status=status.HTTP_201_CREATED)
@@ -653,14 +692,18 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     def create(self, request):
         try:
-            data = create_org_mcp_server(self.org, dict(request.data), created_by=request.user)
+            data = create_org_mcp_server(
+                self.org, dict(request.data), created_by=request.user
+            )
         except sl_client.LensBridgeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, pk=None):
         try:
-            data = update_org_mcp_server(self.org, uuid.UUID(str(pk)), dict(request.data))
+            data = update_org_mcp_server(
+                self.org, uuid.UUID(str(pk)), dict(request.data)
+            )
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
@@ -737,7 +780,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
                 self.org,
                 user=request.user,
                 backup_config_id=body.validated_data["backup_config_id"],
-                backup_source_snapshot_id=body.validated_data["backup_source_snapshot_id"],
+                backup_source_snapshot_id=body.validated_data[
+                    "backup_source_snapshot_id"
+                ],
                 source_scopes=body.validated_data["source_scopes"],
                 gateway_mode=body.validated_data["gateway_mode"],
                 gateway_link_id=body.validated_data.get("gateway_link_id"),
@@ -747,7 +792,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             raise
         except sl_client.LensBridgeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-        return Response(LensSessionLinkSerializer(link).data, status=status.HTTP_201_CREATED)
+        return Response(
+            LensSessionLinkSerializer(link).data, status=status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=["patch"], url_path="model")
     def set_model(self, request, pk=None):
@@ -809,7 +856,9 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         from apps.lens_bridge.services import chat_lifecycle
 
         link = chat_lifecycle.request_copilot_chat_teardown(link)
-        return Response(LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED)
+        return Response(
+            LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED
+        )
 
     @action(detail=True, methods=["post"], url_path="retry")
     def retry(self, request, pk=None):
@@ -818,12 +867,17 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
 
         link = chat_lifecycle.retry_copilot_chat_provision(link)
         link.refresh_from_db()
-        return Response(LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED)
+        return Response(
+            LensSessionLinkSerializer(link).data, status=status.HTTP_202_ACCEPTED
+        )
 
     @action(detail=True, methods=["get"], url_path="messages")
     def messages(self, request, pk=None):
         link = self._get_user_link(pk)
-        if link.lifecycle_status != LensSessionLink.LifecycleStatus.READY or not link.sl_session_uuid:
+        if (
+            link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
+            or not link.sl_session_uuid
+        ):
             return Response([])
         data = sl_client.request_json(
             "GET",
@@ -834,6 +888,11 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
 
     @action(detail=True, methods=["post"], url_path="runs")
     def create_run(self, request, pk=None):
+        from apps.lens_bridge.services.maintenance import (
+            sourcelens_maintenance_active,
+            sourcelens_run_creation_guard,
+        )
+
         link = self._get_user_link(pk)
         self._require_ready_session(link)
         body = LensRunCreateSerializer(data=request.data)
@@ -841,38 +900,44 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         payload = {"question": body.validated_data.get("question") or ""}
         if body.validated_data.get("idempotency_key"):
             payload["idempotency_key"] = body.validated_data["idempotency_key"]
-        data = sl_client.request_json(
-            "POST",
-            f"/api/lens/sessions/{link.sl_session_uuid}/runs/",
-            json_body=payload,
-            hfl_user=request.user,
-        )
-        from django.utils import timezone
+        with sourcelens_run_creation_guard():
+            if sourcelens_maintenance_active():
+                raise SourceLensMaintenanceUnavailable()
+            data = sl_client.request_json(
+                "POST",
+                f"/api/lens/sessions/{link.sl_session_uuid}/runs/",
+                json_body=payload,
+                hfl_user=request.user,
+            )
+            from django.utils import timezone
 
-        link.last_message_at = timezone.now()
-        run_uuid = data.get("uuid")
-        run_status = str(data.get("status") or "queued")
-        if run_uuid:
-            link.save(update_fields=["last_message_at", "updated_at"])
-            copilot_service.set_active_run(
-                link,
-                run_uuid=uuid.UUID(str(run_uuid)),
-                status=run_status,
-            )
-            usage.register_usage_run(
-                link,
-                run_uuid=uuid.UUID(str(run_uuid)),
-                question=payload["question"],
-                status=run_status,
-            )
-        else:
-            link.save(update_fields=["last_message_at", "updated_at"])
+            link.last_message_at = timezone.now()
+            run_uuid = data.get("uuid")
+            run_status = str(data.get("status") or "queued")
+            if run_uuid:
+                link.save(update_fields=["last_message_at", "updated_at"])
+                copilot_service.set_active_run(
+                    link,
+                    run_uuid=uuid.UUID(str(run_uuid)),
+                    status=run_status,
+                )
+                usage.register_usage_run(
+                    link,
+                    run_uuid=uuid.UUID(str(run_uuid)),
+                    question=payload["question"],
+                    status=run_status,
+                )
+            else:
+                link.save(update_fields=["last_message_at", "updated_at"])
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], url_path="sync")
     def sync(self, request, pk=None):
         link = self._get_user_link(pk)
-        if link.lifecycle_status != LensSessionLink.LifecycleStatus.READY or not link.sl_session_uuid:
+        if (
+            link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
+            or not link.sl_session_uuid
+        ):
             return Response(
                 {
                     "session_id": link.id,
@@ -898,7 +963,6 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
             )
         )
         return Response(data)
-
 
     @action(detail=True, methods=["get"], url_path="active-run")
     def active_run(self, request, pk=None):
@@ -933,7 +997,10 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         return link
 
     def _require_ready_session(self, link: LensSessionLink) -> None:
-        if link.lifecycle_status != LensSessionLink.LifecycleStatus.READY or not link.sl_session_uuid:
+        if (
+            link.lifecycle_status != LensSessionLink.LifecycleStatus.READY
+            or not link.sl_session_uuid
+        ):
             raise ValidationError(
                 {
                     "lifecycle_status": (
@@ -953,7 +1020,9 @@ class LensCopilotUsageView(OrgScopedMixin, APIView):
         try:
             if run_uuid is not None:
                 return Response(usage.usage_detail(self.org, request.user, run_uuid))
-            return Response(usage.usage_overview(self.org, request.user, request.query_params))
+            return Response(
+                usage.usage_overview(self.org, request.user, request.query_params)
+            )
         except sl_client.LensBridgeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -983,7 +1052,9 @@ class LensCopilotRunStreamView(APIView):
             f"/api/lens/runs/{run_uuid}/stream/",
             hfl_user=request.user,
         )
-        response = StreamingHttpResponse(stream, content_type="text/event-stream; charset=utf-8")
+        response = StreamingHttpResponse(
+            stream, content_type="text/event-stream; charset=utf-8"
+        )
         response["Cache-Control"] = "no-cache, no-transform"
         response["X-Accel-Buffering"] = "no"
         response["Connection"] = "keep-alive"

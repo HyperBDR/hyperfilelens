@@ -12,9 +12,10 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
+from apps.node import conf as node_conf
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
 from apps.node.services.internal.client_ip import resolve_agent_client_ip_from_scope
-from apps.node.ws.groups import agent_group_name
+from apps.node.ws.groups import agent_group_name, ws_instance_group_name
 from apps.node.ws.uplink import (
     apply_heartbeat_inventory_snapshot,
     handle_uplink,
@@ -36,6 +37,7 @@ from apps.node.ws.wire import (
 logger = logging.getLogger(__name__)
 
 _CLOSE_UNAUTHORIZED = 4401
+_CLOSE_SERVICE_RESTART = 1012
 
 
 @dataclass(frozen=True)
@@ -72,14 +74,24 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
             params.token,
         )
         if not ok:
-            logger.warning("agent ws connect rejected: invalid credentials node_id=%s", params.node_id)
+            logger.warning(
+                "agent ws connect rejected: invalid credentials node_id=%s",
+                params.node_id,
+            )
             await self.close(code=_CLOSE_UNAUTHORIZED)
             return
 
         self.node_id = params.node_id
         self.session_id = uuid.uuid4().hex
         self.agent_group = agent_group_name(node_id=self.node_id)
+        self.ws_instance_group = ws_instance_group_name(
+            ws_instance_id=node_conf.WS_INSTANCE_ID
+        )
         await self.channel_layer.group_add(self.agent_group, self.channel_name)
+        await self.channel_layer.group_add(
+            self.ws_instance_group,
+            self.channel_name,
+        )
         offered = set(self.scope.get("subprotocols") or [])
         self.task_result_ack_enabled = TASK_RESULT_ACK_SUBPROTOCOL in offered
         await self.accept(
@@ -97,6 +109,11 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
         if getattr(self, "agent_group", ""):
             await self.channel_layer.group_discard(
                 self.agent_group,
+                self.channel_name,
+            )
+        if getattr(self, "ws_instance_group", ""):
+            await self.channel_layer.group_discard(
+                self.ws_instance_group,
                 self.channel_name,
             )
         if getattr(self, "node_id", None) and getattr(self, "session_id", ""):
@@ -135,7 +152,9 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 node_id=self.node_id,
                 inventory=message.heartbeat_payload,
             )
-            await database_sync_to_async(enqueue_uplink)(node_id=self.node_id, message=message)
+            await database_sync_to_async(enqueue_uplink)(
+                node_id=self.node_id, message=message
+            )
             return
 
         # Task frames drive watchdog + lifecycle; must persist synchronously.
@@ -157,7 +176,9 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
             return
         if self.task_result_ack_enabled:
             try:
-                await self.send(text_data=dumps_wire(task_result_ack_wire(task_id=task.id)))
+                await self.send(
+                    text_data=dumps_wire(task_result_ack_wire(task_id=task.id))
+                )
             except Exception:
                 logger.warning(
                     "agent task result ACK send failed node_id=%s task_id=%s",
@@ -166,7 +187,9 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                     exc_info=True,
                 )
         try:
-            await database_sync_to_async(trigger_task_result_followup)(node_task_id=task.id)
+            await database_sync_to_async(trigger_task_result_followup)(
+                node_task_id=task.id
+            )
         except Exception:
             logger.exception(
                 "agent task result follow-up failed node_id=%s task_id=%s",
@@ -189,3 +212,12 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 body.get("kind"),
                 exc_info=True,
             )
+
+    async def deployment_drain(self, event: dict) -> None:
+        """Ask Agents to reconnect through stable Nginx during a color cutover."""
+        logger.info(
+            "closing agent websocket for deployment drain node_id=%s reason=%s",
+            getattr(self, "node_id", "-"),
+            event.get("reason", "service restart"),
+        )
+        await self.close(code=_CLOSE_SERVICE_RESTART)

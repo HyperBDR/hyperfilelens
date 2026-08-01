@@ -21,6 +21,16 @@ SHOW_GENERATED_CREDENTIALS="${HFL_SHOW_GENERATED_CREDENTIALS:-auto}"
 UPGRADE_RECOVERY_ARMED=0
 UPGRADE_HFL_WAS_RUNNING=0
 UPGRADE_SOURCELENS_WAS_RUNNING=0
+UPGRADE_PREVIOUS_COLOR=""
+UPGRADE_LEGACY_API_CID=""
+UPGRADE_TARGET_COLOR=""
+UPGRADE_TARGET_VERSION=""
+SOURCELENS_MAINTENANCE_ARMED=0
+SOURCELENS_UPGRADE_STARTED=0
+UPGRADE_HFL_COMMITTED=0
+UPGRADE_HFL_CUTOVER_ATTEMPTED=0
+INSTALLER_LOCK_ACQUIRED=0
+DRAINED_WS_INSTANCES=""
 LOCAL_PLATFORM_AGENT_INSTALL_DIR="/opt/hyperfilelens-agent"
 LOCAL_PLATFORM_AGENT_DATA_DIR="/var/lib/hyperfilelens-agent"
 LOCAL_PLATFORM_LENSNODE_ENV_FILE="/etc/hyperfilelens/lensnode.env"
@@ -39,6 +49,7 @@ Commands:
   stop          docker compose down
   restart       stop then start
   status        Show version and compose service status
+  manage        Run a Django management command in the active API color
   platform-gateway Ensure the configured installer-managed platform Gateway
   upgrade       In-place upgrade from another release package directory or .tar.gz
   uninstall     Stop and remove Docker containers and app images (does not remove the install dir; see uninstall options)
@@ -63,7 +74,9 @@ Options:
                             Creates a verified managed backup set under backup/ before upgrade
                             and retains the latest three valid sets
                             Extracts the new package to upgrade_tmp, merges keys from its .env.example into .env,
-                            overwrites app files, loads images, and restarts; removes upgrade_tmp on success
+                            runs a singleton migration, starts the inactive API/Web color, validates and
+                            atomically switches stable Nginx, drains Agent WebSockets, then hands off workers;
+                            removes upgrade_tmp on success
     --with-sourcelens       Upgrade bundled SourceLens when sourcelens/ is present (default when present)
     --hfl-only              Skip SourceLens upgrade even when sourcelens/ is present
     --remove-sourcelens     Stop and remove installed SourceLens under the HFL install root
@@ -89,6 +102,9 @@ Options:
 
   platform-gateway:
     ensure                  Deploy or repair the local platform Gateway when enabled
+
+  manage:
+    COMMAND [ARGS...]       Forward a Django management command to the active API color
 
     Uninstall never removes the install directory itself (${INSTALL_DIR} by default).
     Application files (install.sh, docker-compose.yml, images/, payload/, backup/, etc.)
@@ -154,8 +170,18 @@ finish_session() {
 
 cleanup_upgrade_and_finish() {
 	local rc=$?
+	local recovery_rc=0
 	if [[ "${rc}" -ne 0 && "${UPGRADE_RECOVERY_ARMED}" == "1" ]]; then
-		recover_upgrade_services || true
+		record_deployment_phase failed "${UPGRADE_PREVIOUS_COLOR:-unknown}" \
+			"${UPGRADE_TARGET_COLOR:-unknown}" "${UPGRADE_TARGET_VERSION:-unknown}" || true
+		recover_upgrade_services || recovery_rc=$?
+	fi
+	if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" ]]; then
+		if [[ "${recovery_rc}" -eq 0 ]]; then
+			clear_sourcelens_maintenance_gate || true
+		else
+			warn "SourceLens recovery did not become healthy; keeping the maintenance gate until its fail-safe lease expires"
+		fi
 	fi
 	cleanup_upgrade_tmp
 	finish_session "${rc}"
@@ -166,20 +192,70 @@ recover_upgrade_services() {
 	warn "upgrade failed after the maintenance window began; attempting best-effort service recovery"
 	set +e
 	if [[ "${UPGRADE_SOURCELENS_WAS_RUNNING}" == "1" ]] && sourcelens_installed; then
-		sourcelens_compose up -d --no-build
+		if [[ "${SOURCELENS_UPGRADE_STARTED}" == "1" ]]; then
+			sourcelens_compose up -d --no-build
+		else
+			# Target SourceLens files may already be staged.  Starting existing
+			# containers avoids converging an unchanged live runtime before its
+			# independent maintenance/drain phase begins.
+			sourcelens_compose start
+		fi
 		[[ $? -eq 0 ]] || recovered=0
+		if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" && "${recovered}" == "1" ]]; then
+			wait_for_sourcelens_health
+			[[ $? -eq 0 ]] || recovered=0
+		fi
 	fi
 	if [[ "${UPGRADE_HFL_WAS_RUNNING}" == "1" && -f "${ROOT}/.env" ]]; then
-		compose_in_root up -d --no-build
-		[[ $? -eq 0 ]] || recovered=0
+		local recovery_color
+		if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
+			recovery_color="${UPGRADE_TARGET_COLOR}"
+		elif [[ "${UPGRADE_PREVIOUS_COLOR}" != "legacy" ]]; then
+			recovery_color="${UPGRADE_PREVIOUS_COLOR}"
+		fi
+		if [[ "${UPGRADE_HFL_COMMITTED}" != "1" \
+			&& "${UPGRADE_PREVIOUS_COLOR}" == "legacy" \
+			&& -n "${UPGRADE_LEGACY_API_CID}" \
+			&& "$(docker inspect --format '{{.State.Running}}' "${UPGRADE_LEGACY_API_CID}" 2>/dev/null || true)" == "true" ]]; then
+			compose_in_root up -d --no-build --no-recreate postgres redis
+			compose_in_root up -d --no-build worker scheduler
+			[[ $? -eq 0 ]] || recovered=0
+			restore_previous_hfl_color legacy "${UPGRADE_TARGET_COLOR}"
+			[[ $? -eq 0 ]] || recovered=0
+		elif [[ -n "${recovery_color:-}" ]]; then
+			# Files and APP_VERSION already describe the target release.  `up`
+			# would therefore recreate the still-valid previous-color containers
+			# with the target image and destroy the rollback path.  Start only
+			# existing stable/color containers; worker and scheduler are singleton
+			# consumers and may safely converge to the target release.
+			compose_in_root start postgres redis nginx
+			[[ $? -eq 0 ]] || recovered=0
+			compose_color "${recovery_color}" start \
+				"api-${recovery_color}" "web-${recovery_color}"
+			[[ $? -eq 0 ]] || recovered=0
+			compose_in_root up -d --no-build worker scheduler
+			[[ $? -eq 0 ]] || recovered=0
+			if [[ "${UPGRADE_HFL_COMMITTED}" == "1" ]]; then
+				render_active_upstreams "${recovery_color}"
+				reload_stable_nginx
+				[[ $? -eq 0 ]] || recovered=0
+				write_active_color "${recovery_color}"
+			else
+				restore_previous_hfl_color "${recovery_color}" "${UPGRADE_TARGET_COLOR}"
+				[[ $? -eq 0 ]] || recovered=0
+			fi
+		elif [[ "${UPGRADE_PREVIOUS_COLOR}" != "legacy" ]]; then
+			recovered=0
+		fi
 	fi
 	set -e
 	if [[ "${recovered}" == "1" ]]; then
 		ok "best-effort service recovery command completed; database backups were not restored automatically"
+		return 0
 	else
 		warn "best-effort service recovery was incomplete; inspect container status and the managed backup before manual recovery"
+		return 1
 	fi
-	return 0
 }
 
 print_config() {
@@ -421,6 +497,7 @@ materialize_to_install_dir() {
 			--checksum
 			--delete
 			--exclude '.env'
+			--exclude '.installer.lock'
 			--exclude 'data/'
 			--exclude 'backup/'
 			--exclude 'upgrade_tmp/'
@@ -436,18 +513,31 @@ materialize_to_install_dir() {
 	log "Copy complete"
 }
 
+acquire_installation_lock() {
+	[[ "${INSTALLER_LOCK_ACQUIRED}" -eq 0 ]] || return 0
+	command -v flock >/dev/null 2>&1 || die "flock is required for serialized installation operations"
+	mkdir -p "${ROOT}"
+	# shellcheck disable=SC3045
+	exec {HFL_INSTALLER_LOCK_FD}>"${ROOT}/.installer.lock"
+	flock -n "${HFL_INSTALLER_LOCK_FD}" \
+		|| die "another HyperFileLens installer operation is already running"
+	INSTALLER_LOCK_ACQUIRED=1
+}
+
 init_install_root() {
 	local source
 	source="$(resolve_source_root)"
 	materialize_to_install_dir "${source}"
 	ROOT="${INSTALL_DIR}"
 	safe_assert_package_root "${ROOT}"
+	acquire_installation_lock
 }
 
 init_existing_install_root() {
 	INSTALL_DIR="$(safe_normalize_dir "${INSTALL_DIR}")"
 	ROOT="${INSTALL_DIR}"
 	safe_assert_package_root "${ROOT}"
+	acquire_installation_lock
 }
 
 require_docker() {
@@ -462,6 +552,296 @@ compose_in_root() {
 		cd "${ROOT}"
 		"${COMPOSE[@]}" --env-file "${ROOT}/.env" -f "${ROOT}/docker-compose.yml" "$@"
 	)
+}
+
+blue_green_state_dir() { printf '%s' "${ROOT}/deploy/blue-green"; }
+
+active_color_file() { printf '%s' "$(blue_green_state_dir)/active-color"; }
+
+record_deployment_phase() {
+	local phase=$1 previous=$2 target=$3 version=$4
+	local state_dir="$(blue_green_state_dir)" output temporary
+	mkdir -p "${state_dir}"
+	output="${state_dir}/deployment-state"
+	temporary="${output}.tmp.$$"
+	{
+		printf 'phase=%s\n' "${phase}"
+		printf 'previous_color=%s\n' "${previous}"
+		printf 'target_color=%s\n' "${target}"
+		printf 'target_version=%s\n' "${version}"
+		printf 'updated_at=%s\n' "$(hfl_now)"
+	} > "${temporary}"
+	mv "${temporary}" "${output}"
+}
+
+read_active_color() {
+	local color=""
+	[[ -f "$(active_color_file)" ]] && color="$(tr -d '[:space:]' < "$(active_color_file)")"
+	case "${color}" in blue | green) printf '%s' "${color}" ;; *) return 1 ;; esac
+}
+
+opposite_color() {
+	case "$1" in blue) printf 'green' ;; green) printf 'blue' ;; *) printf 'green' ;; esac
+}
+
+render_active_upstreams() {
+	local api_color=$1 web_color=${2:-$1}
+	case "${api_color}" in blue | green | legacy) ;; *) die "invalid API color: ${api_color}" ;; esac
+	case "${web_color}" in blue | green) ;; *) die "invalid Web color: ${web_color}" ;; esac
+	local runtime_dir="${ROOT}/deploy/nginx/snippets"
+	local output="${runtime_dir}/hfl-active-upstreams.conf" temporary
+	mkdir -p "${runtime_dir}"
+	temporary="${output}.tmp.$$"
+	local api_service="api-${api_color}"
+	[[ "${api_color}" == "legacy" ]] && api_service="api"
+	cat > "${temporary}" <<EOF
+# Installer-managed execution cache. Do not edit while an upgrade is running.
+upstream hfl_api_http { server ${api_service}:8000; keepalive 32; }
+upstream hfl_api_ws { server ${api_service}:8001; }
+upstream hfl_web_tenant { server web-${web_color}:8080; keepalive 16; }
+upstream hfl_web_ops { server web-${web_color}:8081; keepalive 16; }
+upstream hfl_website { server web-${web_color}:8082; keepalive 8; }
+EOF
+	mv "${temporary}" "${output}"
+}
+
+write_active_color() {
+	local color=$1 state_dir="$(blue_green_state_dir)" temporary
+	case "${color}" in blue | green) ;; *) die "invalid active color: ${color}" ;; esac
+	mkdir -p "${state_dir}"
+	temporary="${state_dir}/active-color.tmp.$$"
+	printf '%s\n' "${color}" > "${temporary}"
+	mv "${temporary}" "$(active_color_file)"
+}
+
+ensure_blue_green_state() {
+	local color
+	if ! color="$(read_active_color)"; then
+		color=blue
+		write_active_color "${color}"
+	fi
+	render_active_upstreams "${color}"
+	if [[ ! -f "$(blue_green_state_dir)/deployment-state" ]]; then
+		record_deployment_phase complete "${color}" "${color}" "$(read_version)"
+	fi
+}
+
+compose_color() {
+	local color=$1
+	shift
+	case "${color}" in blue | green) ;; *) die "invalid compose color: ${color}" ;; esac
+	compose_in_root --profile "${color}" "$@"
+}
+
+compose_all_profiles() {
+	compose_in_root --profile blue --profile green --profile tools "$@"
+}
+
+active_api_service() {
+	local color
+	color="$(read_active_color)" || die "active blue/green color is unavailable"
+	printf 'api-%s' "${color}"
+}
+
+container_health_status() {
+	local cid=$1
+	docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true
+}
+
+wait_for_services_health() {
+	local timeout_seconds=$1
+	shift
+	local deadline=$((SECONDS + timeout_seconds))
+	while ((SECONDS < deadline)); do
+		local ready=1 service cid status service_count
+		for service in "$@"; do
+			service_count=0
+			while IFS= read -r cid; do
+				[[ -n "${cid}" ]] || continue
+				service_count=$((service_count + 1))
+				status="$(container_health_status "${cid}")"
+				if [[ "${status}" != "healthy" && "${status}" != "running" ]]; then
+					ready=0
+					break
+				fi
+			done < <(compose_in_root ps -q "${service}" 2>/dev/null)
+			if [[ "${service_count}" -eq 0 ]]; then
+				ready=0
+			fi
+			[[ "${ready}" -eq 1 ]] || break
+		done
+		[[ "${ready}" -eq 1 ]] && return 0
+		sleep 3
+	done
+	return 1
+}
+
+wait_for_color_health() {
+	local color=$1 timeout_seconds="${HFL_HEALTH_TIMEOUT_SECONDS:-600}"
+	step "Waiting for ${color} API/Web pool health (timeout ${timeout_seconds}s) ..."
+	wait_for_services_health "${timeout_seconds}" "api-${color}" "web-${color}"
+}
+
+reload_stable_nginx() {
+	compose_in_root exec -T nginx nginx -t
+	compose_in_root exec -T nginx nginx -s reload
+}
+
+start_hfl_stack() {
+	local color
+	ensure_blue_green_state
+	color="$(read_active_color)"
+	compose_in_root up -d --no-build --no-recreate postgres redis
+	compose_in_root --profile tools run --rm --no-deps migration
+	compose_in_root up -d --no-build worker scheduler
+	compose_color "${color}" up -d --no-build "api-${color}" "web-${color}"
+	wait_for_color_health "${color}" || return 1
+	compose_in_root up -d --no-build nginx
+	# Compose may recreate an active-color container with a new address while the
+	# stable gateway itself stays running. Reload so Nginx resolves the current
+	# service addresses instead of retaining a stale upstream from its last start.
+	reload_stable_nginx || return 1
+}
+
+drain_api_color() {
+	local color=$1
+	local service="api-${color}"
+	local cid ws_instance
+	DRAINED_WS_INSTANCES=""
+	if [[ "${color}" == "legacy" ]]; then
+		[[ -n "${UPGRADE_LEGACY_API_CID}" ]] || return 0
+		ws_instance="$(docker inspect --format '{{.Config.Hostname}}' "${UPGRADE_LEGACY_API_CID}" 2>/dev/null || true)"
+		DRAINED_WS_INSTANCES="${ws_instance}"
+		docker exec "${UPGRADE_LEGACY_API_CID}" \
+			python manage.py ws_recovery_gate drain --grace 3 || true
+		return 0
+	else
+		while IFS= read -r cid; do
+			[[ -n "${cid}" ]] || continue
+			ws_instance="$(docker inspect --format '{{.Config.Hostname}}' "${cid}" 2>/dev/null || true)"
+			if [[ -n "${ws_instance}" ]]; then
+				DRAINED_WS_INSTANCES="${DRAINED_WS_INSTANCES:+${DRAINED_WS_INSTANCES},}${ws_instance}"
+			fi
+			docker exec "${cid}" \
+				python manage.py ws_recovery_gate drain --grace 3 || true
+		done < <(compose_in_root ps -q "${service}" 2>/dev/null)
+	fi
+}
+
+remove_retired_color() {
+	local color=$1
+	if [[ "${color}" == "legacy" ]]; then
+		if [[ -n "${UPGRADE_LEGACY_API_CID}" ]] \
+			&& container_owned_by_installation "${UPGRADE_LEGACY_API_CID}"; then
+			docker stop --time 90 "${UPGRADE_LEGACY_API_CID}" >/dev/null 2>&1 || true
+			docker rm "${UPGRADE_LEGACY_API_CID}" >/dev/null 2>&1 || true
+		fi
+		return 0
+	fi
+	compose_in_root stop "api-${color}" "web-${color}" || true
+	compose_in_root rm -f "api-${color}" "web-${color}" || true
+}
+
+wait_for_public_endpoints() {
+	local timeout_seconds="${HFL_HEALTH_TIMEOUT_SECONDS:-600}"
+	local website_port tenant_port deadline
+	website_port="$(read_env_value HFL_WEBSITE_PORT)"
+	[[ -n "${website_port}" ]] || website_port=11442
+	tenant_port="$(read_env_value HFL_TENANT_PORT)"
+	[[ -n "${tenant_port}" ]] || tenant_port=11443
+	deadline=$((SECONDS + timeout_seconds))
+	while ((SECONDS < deadline)); do
+		if curl -kfsS "https://127.0.0.1:${website_port}/en/" >/dev/null 2>&1 \
+			&& curl -kfsS "https://127.0.0.1:${tenant_port}/health/ready" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 3
+	done
+	return 1
+}
+
+cutover_hfl_color() {
+	local previous=$1 target=$2
+	UPGRADE_HFL_CUTOVER_ATTEMPTED=1
+	render_active_upstreams "${target}"
+	if ! reload_stable_nginx || ! wait_for_public_endpoints; then
+		warn "${target} cutover health failed; restoring the previous API route"
+		restore_previous_hfl_color "${previous}" "${target}" || true
+		return 1
+	fi
+	drain_api_color "${previous}"
+	if ! wait_for_active_task_reattach "${target}"; then
+		warn "Active task Agents did not reattach; rolling traffic back"
+		restore_previous_hfl_color "${previous}" "${target}" || true
+		return 1
+	fi
+	# Nginx reload is graceful: old workers retain already accepted HTTP/SSE
+	# connections. Keep the retired upstream alive briefly before removal.
+	local http_drain_seconds="${HFL_HTTP_DRAIN_SECONDS:-30}"
+	[[ "${http_drain_seconds}" =~ ^[0-9]+$ ]] \
+		|| die "HFL_HTTP_DRAIN_SECONDS must be a non-negative integer"
+	if [[ "${http_drain_seconds}" -gt 0 ]]; then
+		log "Draining existing HTTP/SSE connections for ${http_drain_seconds}s"
+		sleep "${http_drain_seconds}"
+	fi
+	ok "Stable entry switched to ${target}; cutover remains uncommitted through the final HFL gate"
+}
+
+wait_for_active_task_reattach() {
+	local color=$1 timeout_seconds="${HFL_AGENT_REATTACH_TIMEOUT_SECONDS:-180}"
+	local -a args=(reattach --timeout "${timeout_seconds}") drained_instances=()
+	local ws_instance
+	IFS=',' read -ra drained_instances <<<"${DRAINED_WS_INSTANCES}"
+	for ws_instance in "${drained_instances[@]}"; do
+		[[ -n "${ws_instance}" ]] && args+=(--exclude-instance "${ws_instance}")
+	done
+	if [[ "${color}" == "legacy" ]]; then
+		[[ -n "${UPGRADE_LEGACY_API_CID}" ]] || return 1
+		docker exec "${UPGRADE_LEGACY_API_CID}" \
+			python manage.py ws_recovery_gate "${args[@]}"
+	else
+		compose_in_root exec -T "api-${color}" \
+			python manage.py ws_recovery_gate "${args[@]}"
+	fi
+}
+
+restore_previous_hfl_color() {
+	local previous=$1 target=$2 rollback_web=$1
+	[[ "${previous}" == "legacy" ]] && rollback_web="${target}"
+	render_active_upstreams "${previous}" "${rollback_web}"
+	reload_stable_nginx || return 1
+	wait_for_public_endpoints || return 1
+	if [[ "${UPGRADE_HFL_CUTOVER_ATTEMPTED}" == "1" ]]; then
+		# Some Agents may already own long-running work through the candidate
+		# Daphne pool. Close those sessions only after the previous route is live,
+		# then prove they reattached away from every candidate instance.
+		drain_api_color "${target}"
+		wait_for_active_task_reattach "${previous}" || return 1
+	fi
+	if [[ "${previous}" == "legacy" ]]; then
+		# The first topology migration has no separately addressable legacy Web
+		# pool. Keep the healthy target Web serving the SPA/Website while rolling
+		# only API and Agent traffic back to the legacy API container.
+		compose_in_root stop "api-${target}" || true
+		compose_in_root rm -f "api-${target}" || true
+	else
+		remove_retired_color "${target}"
+		write_active_color "${previous}"
+	fi
+	return 0
+}
+
+begin_sourcelens_maintenance_gate() {
+	local timeout_seconds="${SOURCELENS_DRAIN_TIMEOUT_SECONDS:-600}"
+	SOURCELENS_MAINTENANCE_ARMED=1
+	compose_in_root exec -T "$(active_api_service)" \
+		python manage.py sourcelens_upgrade_gate begin --timeout "${timeout_seconds}"
+}
+
+clear_sourcelens_maintenance_gate() {
+	compose_in_root exec -T "$(active_api_service)" \
+		python manage.py sourcelens_upgrade_gate end
+	SOURCELENS_MAINTENANCE_ARMED=0
 }
 
 container_owned_by_installation() {
@@ -891,6 +1271,7 @@ def sub_key(name, value):
 
 sub_key("AGENT_VERSION", version)
 sub_key("APP_VERSION", version)
+sub_key("HFL_GATEWAY_VERSION", version)
 sub_key("HFL_RELEASE_CHANNEL", channel)
 sub_key("SECRET_KEY", secret)
 sub_key("POSTGRES_PASSWORD", db_pass)
@@ -932,9 +1313,17 @@ apply_runtime_configuration() {
 }
 
 preflight_package_layout() {
+	local require_blue_green=${1:-1}
 	step "Checking release package layout..."
 	[[ -f "${ROOT}/MANIFEST.json" ]] || die "missing MANIFEST.json"
 	[[ -f "${ROOT}/docker-compose.yml" ]] || die "missing docker-compose.yml"
+	if [[ "${require_blue_green}" -eq 1 ]]; then
+		[[ -f "${ROOT}/deploy/nginx/web.conf" ]] || die "missing internal Web pool configuration"
+		[[ -f "${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf" ]] \
+			|| die "missing blue/green upstream configuration"
+		[[ -f "${ROOT}/deploy/blue-green/active-color" ]] \
+			|| die "missing blue/green initial state"
+	fi
 	[[ -f "${ROOT}/images/00-hyperfilelens.tar.gz" ]] || die "missing HFL image archive"
 	[[ -f "${ROOT}/images/01-postgres-17.tar.gz" ]] || die "missing PostgreSQL image archive"
 	[[ -f "${ROOT}/images/02-redis-alpine.tar.gz" ]] || die "missing Redis image archive"
@@ -942,48 +1331,37 @@ preflight_package_layout() {
 	log "Release package check passed"
 }
 
+preflight_blue_green_source() {
+	local source_root=$1
+	[[ -f "${source_root}/deploy/nginx/web.conf" ]] \
+		|| die "upgrade package is missing internal Web pool configuration"
+	[[ -f "${source_root}/deploy/nginx/snippets/hfl-active-upstreams.conf" ]] \
+		|| die "upgrade package is missing blue/green upstream configuration"
+	[[ -f "${source_root}/deploy/blue-green/active-color" ]] \
+		|| die "upgrade package is missing blue/green initial state"
+}
+
 stack_containers_present() {
 	require_docker
 	local count
-	count="$(compose_in_root ps -q 2>/dev/null | wc -l | tr -d ' ')"
+	count="$(compose_all_profiles ps -q 2>/dev/null | wc -l | tr -d ' ')"
 	[[ "${count}" -gt 0 ]]
 }
 
 wait_for_hfl_health() {
 	local timeout_seconds="${HFL_HEALTH_TIMEOUT_SECONDS:-600}"
 	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || die "HFL_HEALTH_TIMEOUT_SECONDS must be positive"
-	local website_port tenant_port
-	website_port="$(read_env_value HFL_WEBSITE_PORT)"
-	[[ -n "${website_port}" ]] || website_port=11442
-	tenant_port="$(read_env_value HFL_TENANT_PORT)"
-	[[ -n "${tenant_port}" ]] || tenant_port=11443
-	local deadline=$((SECONDS + timeout_seconds))
-	local -a services=(postgres redis worker scheduler api nginx)
+	local color
+	color="$(read_active_color)" || { warn "active blue/green color is unavailable"; return 1; }
+	local -a services=(postgres redis worker scheduler "api-${color}" "web-${color}" nginx)
 	step "Waiting for HyperFileLens health checks (timeout ${timeout_seconds}s) ..."
-	while ((SECONDS < deadline)); do
-		local ready=1 service cid status
-		for service in "${services[@]}"; do
-			cid="$(compose_in_root ps -q "${service}" 2>/dev/null | head -1)"
-			if [[ -z "${cid}" ]]; then
-				ready=0
-				break
-			fi
-			status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || true)"
-			if [[ "${status}" != "healthy" && "${status}" != "running" ]]; then
-				ready=0
-				break
-			fi
-		done
-		if [[ "${ready}" -eq 1 ]] \
-			&& curl -kfsS "https://127.0.0.1:${website_port}/en/" >/dev/null 2>&1 \
-			&& curl -kfsS "https://127.0.0.1:${tenant_port}/health/ready" >/dev/null 2>&1; then
-			ok "HyperFileLens health gate passed"
-			return 0
-		fi
-		sleep 5
-	done
+	if wait_for_services_health "${timeout_seconds}" "${services[@]}" \
+		&& wait_for_public_endpoints; then
+		ok "HyperFileLens health gate passed"
+		return 0
+	fi
 	warn "HyperFileLens health gate timed out"
-	compose_in_root ps || true
+	compose_all_profiles ps || true
 	return 1
 }
 
@@ -1113,6 +1491,34 @@ sync_env_from_example() {
 	step "Merging missing keys from .env.example into .env ..."
 	python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
 	chmod 600 "${env_file}"
+}
+
+pin_gateway_version_if_missing() {
+	local fallback_version=$1 env_file="${ROOT}/.env"
+	[[ -f "${env_file}" ]] || return 0
+	python3 - "${env_file}" "${fallback_version}" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+fallback = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+match = re.search(r"^HFL_GATEWAY_VERSION=(.*)$", text, flags=re.M)
+if match and match.group(1).strip():
+    raise SystemExit(0)
+if match:
+    text = re.sub(
+        r"^HFL_GATEWAY_VERSION=.*$",
+        f"HFL_GATEWAY_VERSION={fallback}",
+        text,
+        count=1,
+        flags=re.M,
+    )
+else:
+    text = text.rstrip() + f"\nHFL_GATEWAY_VERSION={fallback}\n"
+path.write_text(text, encoding="utf-8")
+PY
 }
 
 update_env_versions() {
@@ -1384,6 +1790,17 @@ create_managed_backup() {
 			return 1
 		fi
 	done
+	mkdir -p "${partial}/blue-green"
+	for runtime_state in \
+		"deploy/blue-green/active-color" \
+		"deploy/blue-green/deployment-state" \
+		"deploy/nginx/snippets/hfl-active-upstreams.conf"; do
+		if [[ -f "${ROOT}/${runtime_state}" ]]; then
+			install -m 0600 "${ROOT}/${runtime_state}" \
+				"${partial}/blue-green/$(basename "${runtime_state}")" \
+				|| { rm -rf "${partial}"; return 1; }
+		fi
+	done
 	if [[ -f "${ROOT}/sourcelens/docker-compose.yml" ]]; then
 		install -m 0600 "${ROOT}/sourcelens/docker-compose.yml" "${partial}/sourcelens-docker-compose.yml" \
 			|| { rm -rf "${partial}"; return 1; }
@@ -1551,6 +1968,7 @@ PY
 apply_upgrade_files() {
 	local from_root=$1
 	local remove_sourcelens=${2:-0}
+	local sync_sourcelens=${3:-0}
 	step "Overwriting application files and release payload ..."
 	mkdir -p "${ROOT}/deploy/nginx" "${ROOT}/images" "${ROOT}/host" "${ROOT}/payload"
 	sync_default_tls_bundle "${from_root}/deploy/nginx/certs"
@@ -1564,15 +1982,28 @@ apply_upgrade_files() {
 	if [[ "${remove_sourcelens}" -eq 1 && -d "${ROOT}/sourcelens" ]]; then
 		safe_assert_path_under_dir "${ROOT}/sourcelens" "${ROOT}" "SourceLens runtime path"
 		safe_rm_dir "${ROOT}/sourcelens"
-	elif [[ -d "${from_root}/sourcelens" ]]; then
+	elif [[ "${sync_sourcelens}" -eq 1 && -d "${from_root}/sourcelens" ]]; then
 		rsync -aH --delete "${from_root}/sourcelens/" "${ROOT}/sourcelens/"
 	fi
 	cp "${from_root}/docker-compose.yml" "${ROOT}/docker-compose.yml"
 	mkdir -p "${ROOT}/deploy/nginx/snippets"
 	if [[ -d "${from_root}/deploy/nginx/snippets" ]]; then
-		rsync -aH "${from_root}/deploy/nginx/snippets/" "${ROOT}/deploy/nginx/snippets/"
+		rsync -aH --exclude 'hfl-active-upstreams.conf' \
+			"${from_root}/deploy/nginx/snippets/" "${ROOT}/deploy/nginx/snippets/"
+		if [[ ! -f "${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf" ]]; then
+			cp "${from_root}/deploy/nginx/snippets/hfl-active-upstreams.conf" \
+				"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf"
+		fi
 	fi
 	cp "${from_root}/deploy/nginx/default.conf" "${ROOT}/deploy/nginx/default.conf"
+	cp "${from_root}/deploy/nginx/web.conf" "${ROOT}/deploy/nginx/web.conf"
+	mkdir -p "${ROOT}/deploy/blue-green"
+	# active-color and the active upstream snippet are runtime execution cache.
+	# Preserve an existing cutover state; seed blue only on first install.
+	if [[ ! -f "${ROOT}/deploy/blue-green/active-color" ]]; then
+		cp "${from_root}/deploy/blue-green/active-color" \
+			"${ROOT}/deploy/blue-green/active-color"
+	fi
 	if [[ -f "${from_root}/deploy/logrotate/hyperfilelens.conf" ]]; then
 		mkdir -p "${ROOT}/deploy/logrotate"
 		cp "${from_root}/deploy/logrotate/hyperfilelens.conf" "${ROOT}/deploy/logrotate/hyperfilelens.conf"
@@ -1777,11 +2208,11 @@ print_console_access_summary() {
 			log "Initial admin credentials are stored in ${env_file}; values are hidden in non-interactive logs."
 		fi
 		log "Default organization: ${seed_org} (environment variable SEED_ORG_NAME)."
-		log "Initial seeding is enabled (SEED_INITIAL_DATA=1); the worker service creates this account on first startup."
+		log "Initial seeding is enabled (SEED_INITIAL_DATA=1); the singleton migration job creates this account on first startup."
 		log "Change the default password after your first login."
 	else
 		warn "Initial seeding is disabled (SEED_INITIAL_DATA=${seed:-0}); no default admin account will be created automatically."
-		log "To create a seeded admin, set SEED_INITIAL_DATA=1, SEED_ADMIN_EMAIL, and SEED_ADMIN_PASSWORD in ${env_file}, then restart the worker service."
+		log "To create a seeded admin, set SEED_INITIAL_DATA=1, SEED_ADMIN_EMAIL, and SEED_ADMIN_PASSWORD in ${env_file}, then run: docker compose --profile tools run --rm migration."
 	fi
 }
 
@@ -2138,6 +2569,32 @@ platform_gateway_auto_deploy_enabled() {
 	[[ "${enabled}" == "true" ]]
 }
 
+check_local_platform_gateway_continuity() {
+	if ! platform_gateway_auto_deploy_enabled; then
+		return 0
+	fi
+	# A control-plane release must not mutate independently running Gateway,
+	# Agent, or LensNode workloads. Report continuity only; their upgrade has a
+	# separate lifecycle command and drain contract.
+	if run_as_root systemctl is-active --quiet hyperfilelens-agent.service; then
+		ok "Installer-managed platform Gateway Agent remained active"
+	else
+		warn "Installer-managed platform Gateway Agent is not active after the control-plane upgrade"
+	fi
+	local container_id running
+	container_id="$(docker ps -aq --no-trunc \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+		--filter 'label=com.docker.compose.service=lensnode' | head -1)"
+	running="$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)"
+	if [[ -n "${container_id}" && "${running}" == "true" ]]; then
+		ok "Installer-managed platform Gateway LensNode remained active"
+	else
+		warn "Installer-managed platform Gateway LensNode is not active after the control-plane upgrade"
+	fi
+}
+
 read_agent_env_value() {
 	local key=$1 env_file="${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env"
 	[[ -f "${env_file}" ]] || return 0
@@ -2253,7 +2710,7 @@ wait_for_local_platform_gateway_online() {
 	[[ "${node_id}" =~ ^[0-9]+$ ]] \
 		|| die "installer-managed local platform Gateway has no valid node ID"
 	for attempt in $(seq 1 12); do
-		if compose_in_root exec -T api python manage.py shell -c \
+		if compose_in_root exec -T "$(active_api_service)" python manage.py shell -c \
 			"from apps.node.models import Node; from apps.node.services.internal.node_registry import agent_ws_routable; node = Node.objects.filter(pk=${node_id}, status=Node.Status.ONLINE).first(); raise SystemExit(0 if node is not None and agent_ws_routable(agent_id=node.id) else 1)" \
 			>/dev/null 2>&1; then
 			ok "Installer-managed local platform Gateway WebSocket is online"
@@ -2324,7 +2781,7 @@ ensure_local_platform_gateway() {
 	step "Ensuring installer-managed local platform Gateway"
 	local command_output parsed org_key token api_base wss_url managed_node_ids
 	command_output="$(
-		compose_in_root exec -T api \
+		compose_in_root exec -T "$(active_api_service)" \
 			python manage.py ensure_local_platform_gateway_enrollment
 	)" || die "failed to issue local platform Gateway enrollment credentials"
 	parsed="$(
@@ -2415,7 +2872,7 @@ sync_optional_identity_settings() {
 	local output command_status
 	set +e
 	output="$(
-		compose_in_root exec -T api \
+		compose_in_root exec -T "$(active_api_service)" \
 			python manage.py ensure_deployment_identity_settings 2>&1
 	)"
 	command_status=$?
@@ -2435,7 +2892,7 @@ sync_optional_identity_settings() {
 
 	set +e
 	output="$(
-		compose_in_root exec -T api \
+		compose_in_root exec -T "$(active_api_service)" \
 			python manage.py check_google_oauth_readiness 2>&1
 	)"
 	command_status=$?
@@ -2518,7 +2975,7 @@ cmd_install() {
 
 	step "[5/6] Starting services ..."
 	log "Log rotation: built into nginx container (hourly; daily or 500M; keep 30)"
-	compose_in_root up -d --no-build --remove-orphans
+	start_hfl_stack || die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
 	sync_optional_identity_settings
@@ -2527,7 +2984,7 @@ cmd_install() {
 
 	step "[6/6] Done"
 	log "Install and startup complete"
-	compose_in_root ps
+	compose_all_profiles ps
 	print_console_access_summary
 }
 
@@ -2554,12 +3011,12 @@ cmd_start() {
 		sourcelens_compose up -d --no-build --pull never --remove-orphans
 	fi
 	step "Starting services (docker compose up -d --no-build) ..."
-	compose_in_root up -d --no-build --remove-orphans
+	start_hfl_stack || die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its startup health gate"
 	wait_for_sourcelens_health || die "bundled SourceLens failed its startup health gate"
 	sync_optional_identity_settings
 	log "Services started"
-	compose_in_root ps
+	compose_all_profiles ps
 }
 
 cmd_stop() {
@@ -2567,7 +3024,7 @@ cmd_stop() {
 	require_docker
 	compose_in_root stop scheduler worker || true
 	step "Stopping services (docker compose down) ..."
-	compose_in_root down
+	compose_all_profiles down
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
 		stop_bundled_sourcelens
 	fi
@@ -2585,6 +3042,14 @@ cmd_status() {
 	version="$(read_version)"
 	printf 'Version: %s\n' "${version}"
 	printf 'Install dir: %s\n' "${ROOT}"
+	local active_color deployment_phase
+	if active_color="$(read_active_color)"; then
+		printf 'Active color: %s\n' "${active_color}"
+	else
+		printf 'Active color: legacy/unset\n'
+	fi
+	deployment_phase="$(grep -E '^phase=' "$(blue_green_state_dir)/deployment-state" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+	printf 'Deployment phase: %s\n' "${deployment_phase:-unknown}"
 	if sourcelens_installed; then
 		printf 'SourceLens: installed at %s (network %s)\n' \
 			"${SOURCELENS_INSTALL_DIR}" "${HFL_BRIDGE_NETWORK}"
@@ -2603,11 +3068,27 @@ cmd_status() {
 	fi
 	if [[ -f "${ROOT}/.env" ]]; then
 		require_docker
-		compose_in_root ps
+		compose_all_profiles ps
 		print_console_access_summary
 	else
 		warn "missing .env; install has not been run"
 	fi
+}
+
+cmd_manage() {
+	[[ $# -ge 1 ]] || die "manage requires a Django management command" 2
+	init_existing_install_root
+	require_docker
+	[[ -f "${ROOT}/.env" ]] || die "missing .env; run install first"
+	local color api_service
+	if color="$(read_active_color)"; then
+		api_service="api-${color}"
+		compose_in_root --profile "${color}" exec -T "${api_service}" \
+			python manage.py "$@"
+		return
+	fi
+	# Compatibility for installations created before the blue/green topology.
+	compose_in_root exec -T api python manage.py "$@"
 }
 
 init_language_pack_root() {
@@ -2627,6 +3108,7 @@ init_language_pack_root() {
 	else
 		die "cannot find a HyperFileLens root for language-pack management"
 	fi
+	acquire_installation_lock
 }
 
 read_language_pack_app_version() {
@@ -2926,11 +3408,18 @@ restart_language_pack_services() {
 	fi
 	require_docker
 	step "Restarting services to load language-pack changes ..."
+	local api_service color
+	if color="$(read_active_color)"; then
+		api_service="api-${color}"
+		drain_api_color "${color}"
+	else
+		api_service="api"
+	fi
 	if ! (
 		cd "${ROOT}"
 		"${COMPOSE[@]}" --env-file "${ROOT}/.env" \
 			-f "${ROOT}/${LANG_PACK_COMPOSE_FILE}" \
-			restart api worker scheduler nginx
+			restart "${api_service}" worker scheduler nginx
 	); then
 		warn "language pack updated, but automatic service restart failed"
 	fi
@@ -3080,7 +3569,7 @@ cmd_uninstall() {
 		require_docker
 		if [[ -f "${ROOT}/.env" ]]; then
 			step "Stopping and removing HyperFileLens containers ..."
-			compose_in_root down || true
+			compose_all_profiles down || true
 		fi
 		if [[ "${with_sourcelens}" -eq 1 ]]; then
 			uninstall_bundled_sourcelens "${purge_sourcelens_data}"
@@ -3145,6 +3634,7 @@ cmd_upgrade() {
 	local from="" allow_main_build=0
 	local sourcelens_mode=-1 remove_sourcelens=0 purge_sourcelens_data=0
 	local src_root new_version cur_version new_channel cur_channel upgrade_sourcelens=0 backup_stamp
+	local target_color
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--from)
@@ -3169,7 +3659,7 @@ cmd_upgrade() {
 	[[ -n "${from}" ]] || die "upgrade requires --from <directory-or.tar.gz>"
 
 	init_existing_install_root
-	preflight_package_layout
+	preflight_package_layout 0
 	warn_host_resources
 	cur_version="$(read_version)"
 	log "======== HyperFileLens upgrade ${cur_version} ========"
@@ -3203,6 +3693,7 @@ cmd_upgrade() {
 		|| die "managed upgrade backup failed; existing services were not stopped"
 
 	step "[3/8] Validating upgrade package ..."
+	preflight_blue_green_source "${src_root}"
 	validate_publish_artifacts "${src_root}"
 	validate_default_tls_bundle "${src_root}/deploy/nginx/certs"
 	case "$(tls_pair_state "${ROOT}/deploy/nginx/certs")" in
@@ -3213,7 +3704,8 @@ cmd_upgrade() {
 	missing) log "No installed TLS pair exists; package defaults will be installed" ;;
 	incomplete) die "existing TLS certificate pair is incomplete under ${ROOT}/deploy/nginx/certs" ;;
 	esac
-	if package_has_sourcelens_dir "${src_root}"; then
+	if [[ "$(configured_sourcelens_mode)" == "bundled" || "${sourcelens_mode}" -eq 1 ]] \
+		&& package_has_sourcelens_dir "${src_root}"; then
 		preflight_sourcelens_bundle "${src_root}"
 	fi
 	if should_upgrade_sourcelens "${sourcelens_mode}" "${src_root}"; then
@@ -3231,67 +3723,108 @@ cmd_upgrade() {
 	step "Preloading verified target images before the maintenance window ..."
 	load_images_from_manifest "$([[ "${upgrade_sourcelens}" -eq 0 ]] && echo 1 || echo 0)" "${src_root}"
 
-	step "[5/8] Stopping current services ..."
+	step "[5/8] Selecting the inactive color and pausing singleton scheduling ..."
 	if compose_in_root ps -q 2>/dev/null | grep -q .; then
 		UPGRADE_HFL_WAS_RUNNING=1
 	fi
 	if sourcelens_installed && sourcelens_compose ps -q 2>/dev/null | grep -q .; then
 		UPGRADE_SOURCELENS_WAS_RUNNING=1
 	fi
+	if ! UPGRADE_PREVIOUS_COLOR="$(read_active_color)"; then
+		UPGRADE_LEGACY_API_CID="$(compose_in_root ps -q api 2>/dev/null | head -1)"
+		if [[ -n "${UPGRADE_LEGACY_API_CID}" ]]; then
+			UPGRADE_PREVIOUS_COLOR="legacy"
+		else
+			UPGRADE_PREVIOUS_COLOR="blue"
+		fi
+	fi
+	target_color="$(opposite_color "${UPGRADE_PREVIOUS_COLOR}")"
+	UPGRADE_TARGET_COLOR="${target_color}"
+	UPGRADE_TARGET_VERSION="${new_version}"
+	log "Blue/green plan: ${UPGRADE_PREVIOUS_COLOR} -> ${target_color}"
+	record_deployment_phase prepared "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 	UPGRADE_RECOVERY_ARMED=1
-	if [[ -f "${ROOT}/.env" ]]; then
-		compose_in_root stop scheduler worker || true
-		compose_in_root down || true
-	fi
-	if should_remove_sourcelens "${remove_sourcelens}" || [[ "${upgrade_sourcelens}" -eq 1 ]]; then
-		stop_bundled_sourcelens
-	fi
-	if should_remove_sourcelens "${remove_sourcelens}"; then
-		remove_sourcelens_images
-	fi
+	compose_in_root stop scheduler || true
 
-	step "[6/8] Merging .env and overwriting app files ..."
+	step "[6/8] Applying target files, configuration, and singleton migration ..."
+	# Existing releases used APP_VERSION for stable Nginx. Pin that currently
+	# running image before the new environment template is merged.
+	pin_gateway_version_if_missing "${cur_version}"
 	sync_env_from_example "${src_root}/.env.example"
-	apply_upgrade_files "${src_root}" "${remove_sourcelens}"
+	apply_upgrade_files "${src_root}" "${remove_sourcelens}" "${upgrade_sourcelens}"
+	if [[ "${UPGRADE_PREVIOUS_COLOR}" == "legacy" ]]; then
+		# Do not claim a blue active pool while the legacy API still owns traffic.
+		safe_rm_file "$(active_color_file)"
+	fi
 	update_env_versions "${new_version}" "${new_channel}"
 	apply_runtime_configuration
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 
-	if [[ "${remove_sourcelens}" -eq 1 && "${purge_sourcelens_data}" -eq 1 ]]; then
-		purge_sourcelens_data_dir
-	fi
-	if [[ "${remove_sourcelens}" -eq 1 ]]; then
-		log "SourceLens application runtime removed from this host"
-	fi
+	ensure_data_dirs
+	sync_runtime_media
+	compose_in_root up -d --no-recreate postgres redis
+	compose_in_root --profile tools run --rm --no-deps migration
+	record_deployment_phase migrated "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
 
-	step "[7/8] Loading images and starting services ..."
-	if [[ "${upgrade_sourcelens}" -eq 1 ]]; then
+	step "[7/8] Starting ${target_color}, switching stable traffic, and handing off workers ..."
+	compose_color "${target_color}" up -d --no-build \
+		"api-${target_color}" "web-${target_color}"
+	wait_for_color_health "${target_color}" \
+		|| die "inactive ${target_color} API/Web pool failed its readiness gate"
+	record_deployment_phase candidate_ready "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	cutover_hfl_color "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" \
+		|| die "blue/green cutover failed; previous traffic route was restored"
+	record_deployment_phase switched "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	# The active API/Web pool is now authoritative. Celery uses late ACK and
+	# prefetch=1; allow the old worker up to ten minutes to finish/return work.
+	compose_in_root stop --timeout 600 worker || true
+	compose_in_root up -d --no-build worker scheduler
+	wait_for_services_health "${HFL_HEALTH_TIMEOUT_SECONDS:-600}" \
+		postgres redis worker scheduler "api-${target_color}" "web-${target_color}" nginx \
+		&& wait_for_public_endpoints \
+		|| die "HyperFileLens failed its post-upgrade health gate"
+	write_active_color "${target_color}"
+	UPGRADE_HFL_COMMITTED=1
+	record_deployment_phase committed "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	remove_retired_color "${UPGRADE_PREVIOUS_COLOR}"
+
+	# SourceLens is a separate lifecycle. An unchanged bundle is never touched;
+	# when it changes, upgrade it only after HFL traffic has safely switched.
+	if should_remove_sourcelens "${remove_sourcelens}"; then
+		stop_bundled_sourcelens
+		remove_sourcelens_images
+		if [[ "${purge_sourcelens_data}" -eq 1 ]]; then
+			purge_sourcelens_data_dir
+		fi
+		log "SourceLens application runtime removed from this host"
+	elif [[ "${upgrade_sourcelens}" -eq 1 ]]; then
+		begin_sourcelens_maintenance_gate
+		SOURCELENS_UPGRADE_STARTED=1
+		stop_bundled_sourcelens
 		install_bundled_sourcelens
 	fi
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] \
 		&& sourcelens_installed \
 		&& [[ "${remove_sourcelens}" -eq 0 ]]; then
 		configure_lens_bridge_env
+		wait_for_sourcelens_health || die "bundled SourceLens failed its independent post-upgrade health gate"
 	fi
-	ensure_data_dirs
-	sync_runtime_media
-	compose_in_root up -d postgres redis
-	compose_in_root run --rm worker migrate
-	compose_in_root up -d --no-build --remove-orphans
-	wait_for_hfl_health || die "HyperFileLens failed its post-upgrade health gate"
-	wait_for_sourcelens_health || die "bundled SourceLens failed its post-upgrade health gate"
+	if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" ]]; then
+		clear_sourcelens_maintenance_gate
+	fi
 	sync_optional_identity_settings
-	ensure_local_platform_gateway
+	check_local_platform_gateway_continuity
 	prune_agent_release_media
-	UPGRADE_RECOVERY_ARMED=0
 	prune_old_managed_image_refs
+	record_deployment_phase complete "${UPGRADE_PREVIOUS_COLOR}" "${target_color}" "${new_version}"
+	UPGRADE_RECOVERY_ARMED=0
 
 	step "[8/8] Cleaning up temporary directory ..."
 	cleanup_upgrade_tmp
 	trap finish_session EXIT
 
 	log "Upgrade complete: ${new_version}"
-	compose_in_root ps
+	compose_all_profiles ps
 	print_console_access_summary
 }
 
@@ -3345,7 +3878,7 @@ main() {
 
 	local cmd=$1
 	case "${cmd}" in
-	install | backup | start | stop | restart | status | platform-gateway | uninstall | upgrade | lang-pack)
+	install | backup | start | stop | restart | status | manage | platform-gateway | uninstall | upgrade | lang-pack)
 		shift
 		;;
 	-*)
@@ -3364,6 +3897,7 @@ main() {
 	stop) cmd_stop "$@" ;;
 	restart) cmd_restart "$@" ;;
 	status) cmd_status "$@" ;;
+	manage) cmd_manage "$@" ;;
 	platform-gateway) cmd_platform_gateway "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;
 	upgrade) cmd_upgrade "$@" ;;

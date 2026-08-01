@@ -177,6 +177,47 @@ WHERE id=?
 	return err
 }
 
+// UpdateProgress merges the latest progress into a task that is still running.
+func (r *TaskRepo) UpdateProgress(ctx context.Context, taskID string, progress map[string]any) error {
+	if taskID == "" {
+		return fmt.Errorf("empty task id")
+	}
+	return r.db.WithTx(ctx, func(tx *sql.Tx) error {
+		var status string
+		var resultRaw string
+		if err := tx.QueryRowContext(
+			ctx,
+			`SELECT status, result FROM tasks WHERE id=?`,
+			taskID,
+		).Scan(&status, &resultRaw); err != nil {
+			return err
+		}
+		if status != string(model.TaskStatusRunning) {
+			return nil
+		}
+		result := map[string]any{}
+		if resultRaw != "" {
+			if err := json.Unmarshal([]byte(resultRaw), &result); err != nil {
+				return fmt.Errorf("decode running task result: %w", err)
+			}
+		}
+		result["last_progress"] = progress
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(
+			ctx,
+			`UPDATE tasks SET result=?, updated_at=? WHERE id=? AND status=?`,
+			string(resultJSON),
+			formatTime(time.Now().UTC()),
+			taskID,
+			string(model.TaskStatusRunning),
+		)
+		return err
+	})
+}
+
 // Finish updates terminal status, result, and error after execution.
 func (r *TaskRepo) Finish(ctx context.Context, taskID string, status model.TaskStatus, result map[string]any, errMsg string) error {
 	if taskID == "" {

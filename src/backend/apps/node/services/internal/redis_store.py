@@ -176,14 +176,22 @@ def clear_agent_location_if_session(
     if r is None:
         return True
     key = agent_loc_key(agent_id)
-    raw = r.get(key)
-    if not raw:
-        return True
-    _ws_instance, owner_session = _decode_agent_loc(str(raw))
-    if owner_session and owner_session != session_id:
-        return False
-    r.delete(key)
-    return True
+    result = r.eval(
+        """
+        local raw = redis.call('get', KEYS[1])
+        if not raw then return 1 end
+        local decoded, payload = pcall(cjson.decode, raw)
+        if decoded and type(payload) == 'table' and payload['session'] then
+            if tostring(payload['session']) ~= ARGV[1] then return 0 end
+        end
+        redis.call('del', KEYS[1])
+        return 1
+        """,
+        1,
+        key,
+        session_id,
+    )
+    return bool(result)
 
 
 def ws_alive_key(ws_instance_id: str) -> str:
@@ -199,7 +207,10 @@ def begin_ws_recovery_hold(*, seconds: int | None = None) -> bool:
     if r is None:
         return False
     duration = max(1, int(seconds or node_conf.WS_RECOVERY_HOLD_SECONDS))
-    r.set(ws_recovery_hold_key(), "1", ex=duration)
+    # Store the process instance, rather than a boolean.  Concurrent blue/green
+    # replicas may become ready in any order; an earlier replica must not clear
+    # a recovery window most recently opened by a later replica.
+    r.set(ws_recovery_hold_key(), node_conf.WS_INSTANCE_ID, ex=duration)
     return True
 
 
@@ -214,7 +225,19 @@ def clear_ws_recovery_hold() -> bool:
     r = get_redis()
     if r is None:
         return False
-    r.delete(ws_recovery_hold_key())
+    r.eval(
+        """
+        local value = redis.call('get', KEYS[1])
+        if not value then return 1 end
+        if value == ARGV[1] or value == '1' then
+            redis.call('del', KEYS[1])
+        end
+        return 1
+        """,
+        1,
+        ws_recovery_hold_key(),
+        node_conf.WS_INSTANCE_ID,
+    )
     return True
 
 
