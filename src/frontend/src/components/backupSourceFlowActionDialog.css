@@ -418,6 +418,18 @@
   color: var(--el-text-color-regular, var(--color-text-primary, #595959));
 }
 
+.hfl-flow-action-dialog__preflight-error-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hfl-flow-action-dialog__preflight-error-content .el-button {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 .hfl-flow-action-dialog__impact {
   --hfl-flow-action-warning-bg: var(--color-warning-light, #fcf3e1);
   --hfl-flow-action-warning-border: var(--color-warning-border, #f2dba8);

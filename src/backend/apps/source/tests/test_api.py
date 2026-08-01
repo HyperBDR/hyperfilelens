@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -25,7 +26,7 @@ from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 from apps.source.services.internal.source_credentials import resolve_source_credentials
 from apps.source.tasks.connection_probe import run_source_resource_capacity_probe
 from apps.storage.repositories.models import Repository
-from apps.task.models import Task, TaskResource
+from apps.task.models import Task, TaskResource, TaskStep
 
 MOUNTS_ROOT = agent_paths.agent_mounts_dir()
 
@@ -2118,6 +2119,81 @@ class BackupSourceBulkDeleteTests(TestCase):
 
 
 class SourceUnregisterCeleryTests(TestCase):
+    def test_unregister_lease_renewal_is_owner_fenced(self):
+        from apps.source.tasks.source_unregister import (
+            _acquire_source_unregister_lease,
+            renew_source_unregister_lease,
+        )
+
+        org = Organization.objects.create(
+            key="source-unregister-lease",
+            name="Source Unregister Lease",
+        )
+        task = Task.objects.create(
+            organization_id=org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+        )
+        lease, _task = _acquire_source_unregister_lease(task_id=task.id)
+
+        self.assertTrue(
+            renew_source_unregister_lease(
+                task_id=task.id,
+                owner_token=lease.owner_token,
+            )
+        )
+        task.refresh_from_db()
+        payload = dict(task.request_payload or {})
+        payload["_advance_lease"] = {
+            "owner_token": "replacement-owner",
+            "expires_at": timezone.now().isoformat(),
+        }
+        task.request_payload = payload
+        task.save(update_fields=["request_payload", "updated_at"])
+        self.assertFalse(
+            renew_source_unregister_lease(
+                task_id=task.id,
+                owner_token=lease.owner_token,
+            )
+        )
+
+    @patch("apps.source.tasks.source_unregister.queue_source_unregister_task")
+    @patch(
+        "apps.source.services.internal.backup_source_delete.run_source_unregister_task"
+    )
+    def test_lease_loss_reschedules_without_failing_domain_task(
+        self,
+        run_unregister,
+        queue_unregister,
+    ):
+        from apps.source.tasks.source_unregister import (
+            SourceUnregisterLeaseLost,
+            execute_source_unregister_task,
+        )
+
+        org = Organization.objects.create(
+            key="source-unregister-lease-lost",
+            name="Source Unregister Lease Lost",
+        )
+        task = Task.objects.create(
+            organization_id=org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+        )
+        run_unregister.side_effect = SourceUnregisterLeaseLost("lease replaced")
+
+        result = execute_source_unregister_task.run(task_id=task.id)
+
+        self.assertEqual(result["status"], "lease_lost")
+        queue_unregister.assert_called_once_with(
+            task_id=task.id,
+            countdown_seconds=3,
+        )
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.RUNNING)
+
     def test_execute_source_unregister_task_is_celery_registered(self):
         import apps.source.tasks  # noqa: F401
         from common.celery import app as celery_app
@@ -2134,4 +2210,48 @@ class SourceUnregisterCeleryTests(TestCase):
         self.assertIn(
             "apps.source.tasks.source_unregister.reconcile_stuck_source_unregister_tasks_task",
             celery_app.tasks,
+        )
+
+    def test_exhausted_celery_failure_finalizes_domain_task(self):
+        from apps.source.tasks.source_unregister import execute_source_unregister_task
+
+        org = Organization.objects.create(
+            key="source-unregister-celery-failure",
+            name="Source Unregister Celery Failure",
+        )
+        task = Task.objects.create(
+            organization_id=org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+            progress=70,
+            current_step="cleanup_source_endpoint",
+            request_payload={"source_ids": ["agent:999"], "force": True},
+        )
+        TaskStep.objects.create(
+            task=task,
+            step_index=3,
+            step_name="cleanup_source_endpoint",
+            status=TaskStep.Status.RUNNING,
+            progress=70,
+        )
+
+        execute_source_unregister_task.on_failure(
+            RuntimeError("persistent control-plane failure"),
+            "celery-task-id",
+            (),
+            {"task_id": task.id},
+            None,
+        )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.FAILED)
+        self.assertEqual(
+            task.error_code,
+            "SOURCE_UNREGISTER_UNEXPECTED_FAILURE",
+        )
+        self.assertEqual(task.result_payload["result"], "failed")
+        self.assertEqual(
+            task.result_payload["reasons"][0]["code"],
+            "source_unregister_unexpected_failure",
         )

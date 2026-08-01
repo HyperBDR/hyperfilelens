@@ -4437,7 +4437,6 @@ const backupSourceStep3DeleteDialogOpen = ref(false)
 const backupSourceDeleteIds = ref<string[]>([])
 const backupSourceDeleteRows = ref<BackupSourceDeleteDisplayRow[]>([])
 const backupSourceDeleteShowSnapshots = ref(false)
-const backupSourceDeleteRetryAfterFailure = ref(false)
 const UNREGISTER_TASK_POLL_MS = 2000
 const UNREGISTER_TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000
 const unregisterTaskPollTimers = new Set<number>()
@@ -4519,6 +4518,11 @@ function monitorPendingUnregister(
         message: detail || t('protection.backupsPage.msgDeleteSourceFailed'),
         grouping: true,
       })
+    } else if (outcomes.some((outcome) => outcome.partialSuccess)) {
+      ElMessage.warning({
+        message: t('protection.backupsPage.msgDeleteSourcePartialSuccess'),
+        grouping: true,
+      })
     }
     try {
       await Promise.all([
@@ -4596,9 +4600,6 @@ function openBackupSourceDeleteDialog(
   backupSourceDeleteRows.value = sourceRows.map((row) =>
     flowSourceDeleteDisplayRow(row, { includeSnapshots: backupSourceDeleteShowSnapshots.value }),
   )
-  backupSourceDeleteRetryAfterFailure.value = realIds.some(
-    (id) => sourcePendingOps.getOp(id)?.kind === 'delete_failed',
-  )
   backupSourceDeleteDialogOpen.value = true
 }
 
@@ -4613,9 +4614,6 @@ function openBackupSourceStep3DeleteDialog(ids: string[], rows: FlowSourceRow[] 
   backupSourceDeleteShowSnapshots.value = true
   backupSourceDeleteRows.value = sourceRows.map((row) =>
     flowSourceDeleteDisplayRow(row, { includeSnapshots: true }),
-  )
-  backupSourceDeleteRetryAfterFailure.value = realIds.some(
-    (id) => sourcePendingOps.getOp(id)?.kind === 'delete_failed',
   )
   backupSourceStep3DeleteDialogOpen.value = true
 }
@@ -4833,7 +4831,7 @@ async function onBackupSourcesDeleted(payload: {
       ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
     } else {
       sourcePendingOps.clear(Array.from(idSet))
-      if (payload.result === 'partial_success' && payload.warnings.length) {
+      if (payload.result === 'partial_success') {
         ElMessage.warning({ message: t('protection.backupsPage.msgDeleteSourcePartialSuccess'), grouping: true })
       } else {
         ElMessage.success({ message: t('protection.backupsPage.msgDeleteSourceSuccess'), grouping: true })
@@ -11870,7 +11868,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       :source-ids="backupSourceDeleteIds"
       :sources="backupSourceDeleteRows"
       :show-snapshots="backupSourceDeleteShowSnapshots"
-      :retry-after-failure="backupSourceDeleteRetryAfterFailure"
       @started="onBackupSourcesDeleteStarted"
       @failed="onBackupSourcesDeleteFailed"
       @deleted="onBackupSourcesDeleted"
@@ -11880,7 +11877,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       v-model="backupSourceStep3DeleteDialogOpen"
       :source-ids="backupSourceDeleteIds"
       :sources="backupSourceDeleteRows"
-      :retry-after-failure="backupSourceDeleteRetryAfterFailure"
       @started="onBackupSourcesDeleteStarted"
       @failed="onBackupSourcesDeleteFailed"
       @deleted="onBackupSourcesDeleted"

@@ -73,6 +73,30 @@ class RepositoryCleanupBlocked(ValidationError):
         self.preflight = preflight
 
 
+def repository_active_task_blockers(
+    *,
+    repository: Repository,
+    ignored_task_ids: Iterable[int] = (),
+) -> list[dict[str, Any]]:
+    """Return read-only blockers from active tasks using a repository."""
+    ignored = {int(task_id) for task_id in ignored_task_ids if task_id}
+    blockers: list[dict[str, Any]] = []
+    active_tasks = _active_repository_tasks(repository=repository).exclude(
+        id__in=ignored
+    )
+    for task in active_tasks.order_by("-created_at", "-id")[:50]:
+        blockers.append(
+            {
+                "code": "active_task",
+                "detail": f'{task.task_type} task "{task.display_name}" is still active.',
+                "task_id": task.id,
+                "task_uuid": str(task.task_uuid),
+                "task_type": task.task_type,
+            }
+        )
+    return blockers
+
+
 def repository_cleanup_preflight(
     *,
     repository: Repository,
@@ -159,17 +183,12 @@ def repository_cleanup_preflight(
                 }
             )
 
-    active_tasks = _active_repository_tasks(repository=repository).exclude(id__in=ignored)
-    for task in active_tasks.order_by("-created_at", "-id")[:50]:
-        blockers.append(
-            {
-                "code": "active_task",
-                "detail": f'{task.task_type} task "{task.display_name}" is still active.',
-                "task_id": task.id,
-                "task_uuid": str(task.task_uuid),
-                "task_type": task.task_type,
-            }
+    blockers.extend(
+        repository_active_task_blockers(
+            repository=repository,
+            ignored_task_ids=ignored,
         )
+    )
 
     active_cleanup = _logical_cleanup_tasks(repository).filter(
         task__status__in=ACTIVE_TASK_STATUSES,
@@ -301,7 +320,10 @@ def create_direct_nas_target_cleanup_task(
         )
     ignored_task_ids = [
         triggered_by_task.id,
-        *_active_target_cleanup_task_ids(repository),
+        *_active_target_cleanup_task_ids(
+            repository,
+            triggered_by_task=triggered_by_task,
+        ),
     ]
     preflight = repository_cleanup_preflight(
         repository=repository,
@@ -350,7 +372,10 @@ def create_direct_nas_target_cleanup_task(
 
         second_ignored_task_ids = [
             triggered_by_task.id,
-            *_active_target_cleanup_task_ids(locked),
+            *_active_target_cleanup_task_ids(
+                locked,
+                triggered_by_task=triggered_by_task,
+            ),
         ]
         second_preflight = repository_cleanup_preflight(
             repository=locked,
@@ -499,6 +524,19 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     repository_task,
                 ),
             }
+        if not physical_cleanup_complete and not repository_task.force:
+            cleanup_failures = [
+                item
+                for item in result.get("cleanup_failures") or []
+                if isinstance(item, dict)
+            ]
+            first_failure = cleanup_failures[0] if cleanup_failures else {}
+            raise ValidationError(
+                str(
+                    first_failure.get("detail")
+                    or "Physical repository cleanup reported an incomplete result."
+                )
+            )
         if physical_cleanup_complete:
             result = {
                 **result,
@@ -730,14 +768,24 @@ def _active_repository_tasks(*, repository: Repository):
     ).filter(Q(id__in=task_ids) | Q(request_payload__repository_id=repository.id)).distinct()
 
 
-def _active_target_cleanup_task_ids(repository: Repository) -> list[int]:
-    return list(
-        RepositoryTask.objects.filter(
-            repository=repository,
-            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
-            task__status__in=ACTIVE_TASK_STATUSES,
-        ).values_list("task_id", flat=True)
+def _active_target_cleanup_task_ids(
+    repository: Repository,
+    *,
+    triggered_by_task: Task | None = None,
+) -> list[int]:
+    queryset = RepositoryTask.objects.filter(
+        repository=repository,
+        operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+        task__status__in=ACTIVE_TASK_STATUSES,
     )
+    if triggered_by_task is not None:
+        queryset = queryset.filter(
+            triggered_by_task=triggered_by_task,
+            task__request_payload__source_unregister_attempt=int(
+                triggered_by_task.retry_count or 0
+            ),
+        )
+    return list(queryset.values_list("task_id", flat=True))
 
 
 def _ensure_cleanup_targets(repository: Repository) -> list[RepositoryExecutionTarget]:
@@ -1499,6 +1547,7 @@ __all__ = [
     "create_repository_cleanup_task",
     "direct_nas_cleanup_target_ids",
     "repository_cleanup_preflight",
+    "repository_active_task_blockers",
     "repository_cleanup_task_payload",
     "run_repository_cleanup_task",
 ]

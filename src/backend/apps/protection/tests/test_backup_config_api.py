@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status
@@ -17,7 +18,10 @@ from apps.protection.models import (
     BackupSourceSnapshotDirectory,
     FileFilterRule,
 )
-from apps.protection.services.backup_config_reset import run_backup_config_reset_task
+from apps.protection.services.backup_config_reset import (
+    ensure_backup_config_reset_task,
+    run_backup_config_reset_task,
+)
 from apps.protection.services.backup_source_snapshot import create_source_snapshot
 from apps.protection.services.repository_policy import sync_backup_config_repository_policy
 from apps.restore.models import RestorePlan
@@ -992,6 +996,41 @@ class ProtectionBackupConfigApiTests(TestCase):
         self.assertFalse(second.data["results"][0]["created"])
         self.assertEqual(Task.objects.filter(task_type=Task.Type.BACKUP_CONFIG_RESET).count(), 1)
         delay.assert_not_called()
+
+    def test_reset_creation_is_blocked_by_active_source_unregister(self):
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._payload(name="Reset blocked by unregister"),
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        with self.assertRaises(ValidationError):
+            ensure_backup_config_reset_task(
+                organization_id=self.org.id,
+                source_type="agent",
+                source_ref_id=self.agent.id,
+            )
+
+        self.assertFalse(
+            Task.objects.filter(task_type=Task.Type.BACKUP_CONFIG_RESET).exists()
+        )
+        config = BackupConfig.objects.get(pk=create.data["id"])
+        self.assertNotEqual(config.status, BackupConfig.Status.RESETTING)
 
     @mock.patch("apps.node.services.interface.run_agent_task_sync")
     def test_run_backup_config_reset_deletes_snapshots_configs_and_returns_to_step2(self, run_agent_task_sync):

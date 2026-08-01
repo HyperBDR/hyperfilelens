@@ -113,8 +113,13 @@ class TaskViewSet(viewsets.ModelViewSet):
     def cancel(self, request, task_uuid=None):
         serializer = TaskCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        if self.get_object().task_type == Task.Type.REPOSITORY_OPERATION:
+        task_type = self.get_object().task_type
+        if task_type == Task.Type.REPOSITORY_OPERATION:
             raise ValidationError({"detail": "Repository tasks are managed by the server scheduler."})
+        if task_type == Task.Type.SOURCE_UNREGISTER:
+            raise ValidationError(
+                {"detail": "Source unregister tasks cannot be cancelled after cleanup starts."}
+            )
         try:
             task = cancel_task(
                 task_uuid=task_uuid,

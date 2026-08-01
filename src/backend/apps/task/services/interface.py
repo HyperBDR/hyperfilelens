@@ -289,6 +289,10 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise Task.DoesNotExist
     if task.status in TERMINAL_STATUSES:
         raise ValidationError("Finished tasks cannot be cancelled.")
+    if task.task_type == Task.Type.SOURCE_UNREGISTER:
+        raise ValidationError(
+            "Source unregister tasks cannot be cancelled after cleanup starts."
+        )
 
     task.status = Task.Status.CANCELLED
     task.error_code = "TASK_CANCELLED"

@@ -136,6 +136,7 @@ def create_snapshot_delete_task(
     *,
     source_snapshot: BackupSourceSnapshot,
     trigger_type: str = Task.TriggerType.SYSTEM,
+    source_unregister_task: Task | None = None,
 ) -> Task:
     if source_snapshot.status == BackupSourceSnapshot.Status.DELETED:
         raise ValidationError({"source_snapshot_id": "Snapshot is already deleted."})
@@ -144,6 +145,10 @@ def create_snapshot_delete_task(
         source_snapshot_id=source_snapshot.id,
     )
     if active is not None:
+        _attach_source_unregister_parent(
+            task=active,
+            source_unregister_task=source_unregister_task,
+        )
         return active
 
     rows = _snapshot_delete_rows(source_snapshot)
@@ -155,6 +160,15 @@ def create_snapshot_delete_task(
         "kopia_snapshot_ids": kopia_ids,
         "directory_ids": [row.id for row in rows],
     }
+    if source_unregister_task is not None:
+        payload.update(
+            {
+                "source_unregister_task_id": int(source_unregister_task.id),
+                "source_unregister_attempt": int(
+                    source_unregister_task.retry_count or 0
+                ),
+            }
+        )
     with transaction.atomic():
         task = create_task(
             organization_id=source_snapshot.organization_id,
@@ -199,6 +213,7 @@ def create_and_queue_snapshot_delete_task(
     *,
     source_snapshot: BackupSourceSnapshot,
     trigger_type: str = Task.TriggerType.SYSTEM,
+    source_unregister_task: Task | None = None,
 ) -> Task:
     with transaction.atomic():
         locked_snapshot = BackupSourceSnapshot.objects.select_for_update().get(
@@ -210,6 +225,10 @@ def create_and_queue_snapshot_delete_task(
             source_snapshot_id=locked_snapshot.id,
         )
         if active is not None:
+            _attach_source_unregister_parent(
+                task=active,
+                source_unregister_task=source_unregister_task,
+            )
             return active
         if locked_snapshot.status == BackupSourceSnapshot.Status.DELETE_FAILED:
             task = _latest_delete_task(
@@ -230,12 +249,18 @@ def create_and_queue_snapshot_delete_task(
                 task = create_snapshot_delete_task(
                     source_snapshot=locked_snapshot,
                     trigger_type=trigger_type,
+                    source_unregister_task=source_unregister_task,
                 )
         else:
             task = create_snapshot_delete_task(
                 source_snapshot=locked_snapshot,
                 trigger_type=trigger_type,
+                source_unregister_task=source_unregister_task,
             )
+        _attach_source_unregister_parent(
+            task=task,
+            source_unregister_task=source_unregister_task,
+        )
         transaction.on_commit(
             lambda task_id=task.id, snapshot_id=locked_snapshot.id: queue_snapshot_delete_task(
                 task=Task.objects.get(id=task_id),
@@ -243,6 +268,61 @@ def create_and_queue_snapshot_delete_task(
             )
         )
     return task
+
+
+def _attach_source_unregister_parent(
+    *,
+    task: Task,
+    source_unregister_task: Task | None,
+) -> None:
+    """Attach the current unregister attempt before child execution finishes."""
+    if source_unregister_task is None:
+        return
+    payload = dict(task.request_payload or {})
+    parent_id = int(source_unregister_task.id)
+    parent_attempt = int(source_unregister_task.retry_count or 0)
+    if (
+        int(payload.get("source_unregister_task_id") or 0) == parent_id
+        and int(payload.get("source_unregister_attempt") or 0)
+        == parent_attempt
+    ):
+        return
+    payload["source_unregister_task_id"] = parent_id
+    payload["source_unregister_attempt"] = parent_attempt
+    task.request_payload = payload
+    task.save(update_fields=["request_payload", "updated_at"])
+
+
+def _queue_source_unregister_followup(*, snapshot_delete_task_id: int) -> None:
+    """Resume the owning unregister attempt after snapshot cleanup terminates."""
+    child = Task.objects.filter(pk=int(snapshot_delete_task_id)).first()
+    if child is None:
+        return
+    payload = child.request_payload if isinstance(child.request_payload, dict) else {}
+    parent_id = int(payload.get("source_unregister_task_id") or 0)
+    parent_attempt = int(payload.get("source_unregister_attempt") or 0)
+    if parent_id <= 0:
+        return
+    parent = Task.objects.filter(
+        pk=parent_id,
+        task_type=Task.Type.SOURCE_UNREGISTER,
+        status__in={Task.Status.PENDING, Task.Status.RUNNING},
+        retry_count=parent_attempt,
+    ).first()
+    if parent is None:
+        return
+    from apps.source.tasks.source_unregister import queue_source_unregister_task
+
+    queue_source_unregister_task(task_id=parent_id, countdown_seconds=1)
+
+
+def _queue_source_unregister_followup_on_commit(*, task: Task) -> None:
+    task_id = int(task.id)
+    transaction.on_commit(
+        lambda: _queue_source_unregister_followup(
+            snapshot_delete_task_id=task_id,
+        )
+    )
 
 
 def _complete_empty_delete(task: Task, source_snapshot: BackupSourceSnapshot) -> dict[str, Any]:
@@ -271,6 +351,7 @@ def _complete_empty_delete(task: Task, source_snapshot: BackupSourceSnapshot) ->
         progress=100,
         result_payload=result,
     )
+    _queue_source_unregister_followup_on_commit(task=task)
     return result
 
 
@@ -296,6 +377,7 @@ def fail_snapshot_delete_task(
     with transaction.atomic():
         locked_task = Task.objects.select_for_update().get(id=task.id)
         if locked_task.status in _DELETE_TERMINAL:
+            _queue_source_unregister_followup_on_commit(task=locked_task)
             return locked_task.result_payload if isinstance(locked_task.result_payload, dict) else {}
 
         locked_snapshot = None
@@ -363,6 +445,7 @@ def fail_snapshot_delete_task(
             error_code=error_code,
             error_message=clean_message,
         )
+        _queue_source_unregister_followup_on_commit(task=locked_task)
         return task_result
 
 
@@ -583,6 +666,7 @@ def _run_snapshot_delete_task_locked(
             progress=100,
             result_payload=task_result,
         )
+        _queue_source_unregister_followup_on_commit(task=task)
         return task_result
 
     error_message = str(
@@ -671,6 +755,12 @@ def reconcile_snapshot_delete_tasks(*, now=None, limit: int = 100) -> dict[str, 
                 source_snapshot_id=locked.id,
             )
             if task is None or task.status not in _DELETE_TERMINAL - {Task.Status.SUCCESS}:
+                continue
+            payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+            if int(payload.get("source_unregister_task_id") or 0) > 0:
+                # The parent owns Strict/Force semantics and retry attempts.
+                # A new parent attempt explicitly retries and reattaches this
+                # child; the generic snapshot reconciler must not do so.
                 continue
             due_from = task.finished_at or task.updated_at
             if due_from + snapshot_delete_retry_delay(task.retry_count) > current:

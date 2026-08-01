@@ -33,6 +33,8 @@ export function sourceUnregisterTaskOutcome(task: TaskRow) {
     ? task.result_payload as Record<string, unknown>
     : {}
   const rawRemovals = Array.isArray(payload.pending_removals) ? payload.pending_removals : []
+  const result = String(payload.result || '').toLowerCase()
+  const cleanupComplete = payload.cleanup_complete !== false
   const pendingRemovals = rawRemovals.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const row = item as Record<string, unknown>
@@ -43,6 +45,8 @@ export function sourceUnregisterTaskOutcome(task: TaskRow) {
   return {
     terminal,
     success: status === 'success',
+    partialSuccess: status === 'success' && (result === 'partial_success' || !cleanupComplete),
+    cleanupComplete,
     status,
     pendingRemovals,
     errorMessage: String(task.error_message || task.error_code || '').trim(),

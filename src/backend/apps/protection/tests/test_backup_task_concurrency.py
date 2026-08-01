@@ -13,7 +13,7 @@ from apps.protection.models import BackupConfig, BackupConfigDirectory, BackupSo
 from apps.protection.services.backup_task import start_backup_tasks
 from apps.source.models import SourceBackupPipelineEntry
 from apps.storage.repositories.models import Repository
-from apps.task.models import Task
+from apps.task.models import Task, TaskResource
 
 
 class BackupTaskConcurrencyTests(TransactionTestCase):
@@ -72,7 +72,11 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             step=3,
         )
 
-    def test_simultaneous_starts_create_one_active_backup(self):
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "ensure_backup_config_directory_estimates"
+    )
+    def test_simultaneous_starts_create_one_active_backup(self, _estimate_sizes):
         barrier = threading.Barrier(2)
         outcomes: queue.Queue[dict] = queue.Queue()
         errors: queue.Queue[BaseException] = queue.Queue()
@@ -114,3 +118,32 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             BackupSourceSnapshot.objects.filter(status=BackupSourceSnapshot.Status.CREATING).count(),
             1,
         )
+
+    def test_backup_start_is_blocked_by_active_source_unregister(self):
+        unregister_task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.SOURCE_UNREGISTER,
+            display_name="Unregister backup source",
+            status=Task.Status.RUNNING,
+        )
+        TaskResource.objects.create(
+            task=unregister_task,
+            resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent",
+            resource_id=self.agent.id,
+            is_primary=True,
+        )
+
+        result = start_backup_tasks(
+            organization_id=self.org.id,
+            source_ids=[f"agent:{self.agent.id}"],
+            trigger_type="manual",
+            idempotency_key="blocked-by-unregister",
+        )
+
+        self.assertEqual(result["results"][0]["status"], "failed")
+        self.assertIn(
+            "active Reset or Unregister operation",
+            result["results"][0]["message"],
+        )
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())

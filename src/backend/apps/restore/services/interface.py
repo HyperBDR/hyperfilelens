@@ -1286,7 +1286,11 @@ def _active_restore_task_for_source(*, organization_id: int, source_type: str, s
 
 
 def _ensure_no_active_restore_for_source(*, organization_id: int, source_type: str, source_ref_id: int) -> None:
-    _lock_restore_source_endpoint(
+    from apps.source.services.internal.source_operation_fence import (
+        assert_source_product_operation_allowed,
+    )
+
+    assert_source_product_operation_allowed(
         organization_id=organization_id,
         source_type=source_type,
         source_ref_id=source_ref_id,

@@ -46,7 +46,10 @@ const filters = reactive({
   org: String(route.query.org || ''),
 })
 const { schedule: scheduleSearch, runNow: runSearchNow } = useDebouncedAction(applyFilters)
-const canCancel = computed(() => selected.value?.status === 'pending' || selected.value?.status === 'running')
+const canCancel = computed(() => (
+  selected.value?.task_type !== 'source_unregister'
+  && (selected.value?.status === 'pending' || selected.value?.status === 'running')
+))
 const canRetry = computed(() => ['failed', 'timeout', 'cancelled'].includes(selected.value?.status || ''))
 const actionConfirmTitle = computed(() => t(
   `platformOps.monitoring.confirmTask${pendingAction.value === 'cancel' ? 'Cancel' : 'Retry'}Title`,
