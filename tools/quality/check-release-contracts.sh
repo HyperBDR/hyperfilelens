@@ -15,6 +15,8 @@ grep -F './tools/quality/test-sourcelens-git-mirror.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F './tools/quality/test-sourcelens-submodule-recovery.sh' \
 	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F './tools/quality/test-dev-stack-upgrade.sh' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 
 # shellcheck source=../lib/version.sh
 source "${ROOT}/tools/lib/version.sh"

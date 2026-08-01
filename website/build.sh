@@ -84,6 +84,9 @@ install -m 0755 "${SCRIPT_DIR}/runtime-config.sh" "${temporary}/runtime-config.s
 [[ -f "${temporary}/public/website-runtime-config.js" ]] \
 	|| { printf 'ERROR: Website artifact is missing website-runtime-config.js\n' >&2; exit 1; }
 printf 'schema=1\n' >"${temporary}/.hfl-website-artifact"
+find "${temporary}" -type d -exec chmod 0755 {} +
+find "${temporary}" -type f -exec chmod 0644 {} +
+chmod 0755 "${temporary}/runtime-config.sh"
 
 if [[ -e "${OUTPUT}" && ! -f "${OUTPUT}/.hfl-website-artifact" ]]; then
 	printf 'ERROR: refusing to replace unrecognized output directory: %s\n' "${OUTPUT}" >&2
