@@ -15,6 +15,8 @@ from .env import BASE_DIR, env_bool, env_csv, env_int, env_str
 # Override in production; default is for local dev only.
 SECRET_KEY = env_str("SECRET_KEY", "dev-only-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", default=False)
+SENTRY_ENABLED = env_bool("SENTRY_ENABLED", default=False)
+SENTRY_ENVIRONMENT = env_str("SENTRY_ENVIRONMENT")
 PROTECTION_BACKUP_EXECUTION_BACKEND = env_str(
     "PROTECTION_BACKUP_EXECUTION_BACKEND",
     "celery",

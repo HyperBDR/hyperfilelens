@@ -17,9 +17,21 @@ def apply_runtime_env(text: str) -> str:
         else:
             text = text.rstrip() + f"\n{replacement}\n"
 
+    def ensure_key(name: str, value: str) -> None:
+        nonlocal text
+        if not re.search(rf"^{re.escape(name)}=.*$", text, flags=re.M):
+            text = text.rstrip() + f"\n{name}={value}\n"
+
     # Skip Turnstile and other production-only gates until explicitly configured.
     set_key("DJANGO_DEBUG", "true")
-    set_key("SENTRY_ENABLED", "false")
+    ensure_key("SENTRY_ENABLED", "false")
+    ensure_key("SENTRY_DSN", "")
+    ensure_key("SENTRY_FRONTEND_DSN", "")
+    ensure_key("SENTRY_ENVIRONMENT", "")
+    ensure_key("SENTRY_RELEASE", "")
+    ensure_key("SENTRY_FRONTEND_RELEASE", "")
+    set_key("SENTRY_PROFILING_SAMPLE_RATE", "0")
+    set_key("SENTRY_SEND_DEFAULT_PII", "false")
     allowed_hosts_match = re.search(r"^ALLOWED_HOSTS=(.*)$", text, flags=re.M)
     allowed_hosts = []
     if allowed_hosts_match:

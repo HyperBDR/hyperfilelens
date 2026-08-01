@@ -81,6 +81,11 @@ on:
         required: false
         default: ''
         type: string
+      sentry_enabled:
+        description: Enable HFL-managed Sentry reporting for this deployment target
+        required: false
+        default: false
+        type: boolean
       platform_gateway_auto_deploy:
         description: Automatically deploy an HFL-managed local platform Gateway
         required: false
@@ -149,6 +154,15 @@ on:
       ai_model_api_key:
         description: Optional API key for the deployment-managed model
         required: false
+      sentry_backend_dsn:
+        description: Optional HFL backend Sentry DSN
+        required: false
+      sentry_frontend_dsn:
+        description: Optional HFL browser Sentry DSN
+        required: false
+      sentry_auth_token:
+        description: Optional Sentry API token used only for deployment markers
+        required: false
 
 permissions:
   contents: read
@@ -187,6 +201,9 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
           GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
+          SENTRY_ENABLED: ${{ inputs.sentry_enabled }}
+          SENTRY_BACKEND_DSN: ${{ secrets.sentry_backend_dsn }}
+          SENTRY_FRONTEND_DSN: ${{ secrets.sentry_frontend_dsn }}
           TURNSTILE_ENABLED: ${{ inputs.turnstile_enabled }}
           TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
           TURNSTILE_SECRET_KEY: ${{ secrets.turnstile_secret_key }}
@@ -284,6 +301,10 @@ jobs:
           if [[ "$DEPLOY_TARGET" != "prod" && -n "$GA_MEASUREMENT_ID" ]]; then
             echo '::warning title=Google Analytics configuration::Analytics is only supported for the production SaaS target; the supplied value will be ignored.'
           fi
+          if [[ "$SENTRY_ENABLED" == "true" ]] \
+            && { [[ -z "$SENTRY_BACKEND_DSN" ]] || [[ -z "$SENTRY_FRONTEND_DSN" ]]; }; then
+            echo '::warning title=Sentry configuration::Sentry is enabled without both HFL DSNs; the invalid surface will be disabled and deployment will continue.'
+          fi
           if [[ "$TURNSTILE_ENABLED" == "true" ]] \
             && { [[ -z "$TURNSTILE_SITE_KEY" ]] || [[ -z "$TURNSTILE_SECRET_KEY" ]]; }; then
             echo '::warning title=Turnstile configuration::Turnstile is enabled without complete credentials; deployment will continue.'
@@ -339,6 +360,9 @@ jobs:
           HFL_EMAIL_CODE_LOGIN_ENABLED: ${{ inputs.email_code_login_enabled }}
           HFL_GOOGLE_OAUTH_ENABLED: ${{ inputs.google_oauth_enabled }}
           HFL_GA_MEASUREMENT_ID: ${{ inputs.ga_measurement_id }}
+          SENTRY_ENABLED: ${{ inputs.sentry_enabled }}
+          SENTRY_BACKEND_DSN: ${{ secrets.sentry_backend_dsn }}
+          SENTRY_FRONTEND_DSN: ${{ secrets.sentry_frontend_dsn }}
           GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.google_client_secret }}
         shell: bash
@@ -361,6 +385,12 @@ jobs:
               "HFL_GA_MEASUREMENT_ID",
               "HFL_INSECURE_TLS",
               "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
+              "HFL_DEPLOY_TARGET",
+              "SENTRY_ENABLED",
+              "SENTRY_BACKEND_DSN",
+              "SENTRY_FRONTEND_DSN",
+              "SENTRY_ENVIRONMENT",
+              "SENTRY_TRACES_SAMPLE_RATE",
               "TURNSTILE_ENABLED",
               "TURNSTILE_SITE_KEY",
               "TURNSTILE_SECRET_KEY",
@@ -376,6 +406,17 @@ jobs:
           lines = []
           for name in names:
               value = os.environ.get(name, "")
+              if name == "HFL_DEPLOY_TARGET":
+                  value = os.environ.get("DEPLOY_TARGET", "")
+              elif name == "SENTRY_ENVIRONMENT":
+                  target = os.environ.get("DEPLOY_TARGET", "")
+                  value = {
+                      "test": "hfl-test",
+                      "preprod": "hfl-preprod",
+                      "prod": "hfl-production",
+                  }.get(target, "")
+              elif name == "SENTRY_TRACES_SAMPLE_RATE":
+                  value = "0.05" if os.environ.get("DEPLOY_TARGET") == "prod" else "0.1"
               if name == "HFL_GA_MEASUREMENT_ID":
                   if os.environ.get("DEPLOY_TARGET") != "prod":
                       value = ""
@@ -610,4 +651,103 @@ jobs:
           else
             printf '### Public endpoint check\n\nPassed: `%s`\n' "$endpoint" >> "$GITHUB_STEP_SUMMARY"
           fi
+          exit 0
+
+      - name: Record Sentry Deployment
+        env:
+          SENTRY_ENABLED: ${{ inputs.sentry_enabled }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_BACKEND_PROJECT: ${{ vars.SENTRY_BACKEND_PROJECT }}
+          SENTRY_FRONTEND_PROJECT: ${{ vars.SENTRY_FRONTEND_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.sentry_auth_token }}
+          DEPLOY_TARGET: ${{ inputs.target }}
+          ARTIFACT_ID: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set +e
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          if os.environ.get("SENTRY_ENABLED", "").lower() != "true":
+              print("Sentry deployment marker skipped: reporting is disabled.")
+              raise SystemExit(0)
+          url = os.environ.get("SENTRY_URL", "").rstrip("/")
+          org = os.environ.get("SENTRY_ORG", "")
+          backend_project = os.environ.get("SENTRY_BACKEND_PROJECT", "")
+          frontend_project = os.environ.get("SENTRY_FRONTEND_PROJECT", "")
+          token = os.environ.get("SENTRY_AUTH_TOKEN", "")
+          if not all((url, org, backend_project, frontend_project, token)):
+              print("::warning title=Sentry deployment::Deployment marker configuration is incomplete; continuing.")
+              raise SystemExit(0)
+
+          artifact = os.environ.get("ARTIFACT_ID", "").removeprefix("v")
+          defaults = pathlib.Path("tools/sourcelens/defaults.env").read_text(encoding="utf-8")
+          match = re.search(r"SOURCELENS_GIT_REF=.*?v(\d+\.\d+\.\d+)", defaults)
+          sl_version = match.group(1) if match else "unknown"
+          releases = (
+              (f"hyperfilelens-backend@{artifact}", backend_project),
+              (f"hyperfilelens-frontend@{artifact}", frontend_project),
+              (f"hyperfilelens-sourcelens@{artifact}-sl{sl_version}", backend_project),
+              (f"hyperfilelens-sourcelens-frontend@{artifact}-sl{sl_version}", frontend_project),
+              (f"hyperfilelens-agent@{artifact}", backend_project),
+              (f"hyperfilelens-lensnode@{artifact}-sl{sl_version}", backend_project),
+          )
+          environment = {
+              "test": "hfl-test",
+              "preprod": "hfl-preprod",
+              "prod": "hfl-production",
+          }[os.environ["DEPLOY_TARGET"]]
+          failed = []
+          release_endpoint = (
+              f"{url}/api/0/organizations/{urllib.parse.quote(org, safe='')}/releases/"
+          )
+          for release, project in releases:
+              create_request = urllib.request.Request(
+                  release_endpoint,
+                  data=json.dumps({"version": release, "projects": [project]}).encode(),
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(create_request, timeout=15) as response:
+                      response.read()
+              except urllib.error.HTTPError as exc:
+                  if exc.code not in {208, 409}:
+                      failed.append(f"{release} create: HTTP {exc.code}")
+              except (OSError, urllib.error.URLError) as exc:
+                  failed.append(f"{release} create: {type(exc).__name__}")
+              endpoint = (
+                  f"{url}/api/0/organizations/{urllib.parse.quote(org, safe='')}/releases/"
+                  f"{urllib.parse.quote(release, safe='')}/deploys/"
+              )
+              payload = json.dumps({"environment": environment, "name": environment}).encode()
+              request = urllib.request.Request(
+                  endpoint,
+                  data=payload,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=15) as response:
+                      response.read()
+              except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+                  failed.append(f"{release}: {type(exc).__name__}")
+          if failed:
+              print("::warning title=Sentry deployment::Some deployment markers failed; continuing: " + ", ".join(failed))
+          else:
+              print(f"Recorded {len(releases)} Sentry releases in {environment}.")
+          PY
           exit 0

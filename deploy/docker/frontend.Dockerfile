@@ -5,13 +5,11 @@ FROM node:22-alpine AS frontend-dependencies
 LABEL org.opencontainers.image.title="hyperfilelens-frontend"
 
 ARG NPM_REGISTRY
-ARG SENTRY_ENABLED=false
-ARG SENTRY_DSN=
-ARG SENTRY_ENVIRONMENT=
-ARG SENTRY_RELEASE=
-ARG SENTRY_TRACES_SAMPLE_RATE=0
-ARG SENTRY_SEND_DEFAULT_PII=false
 ARG VITE_SHOW_EULA=false
+ARG SENTRY_URL=
+ARG SENTRY_ORG=
+ARG SENTRY_FRONTEND_PROJECT=
+ARG SENTRY_RELEASE=
 
 WORKDIR /app
 COPY src/frontend/package.json src/frontend/package-lock.json ./
@@ -32,14 +30,11 @@ ENTRYPOINT ["/usr/local/bin/hfl-frontend-dev"]
 FROM frontend-dependencies AS frontend-build
 
 COPY src/frontend/ ./
-ENV SENTRY_ENABLED=${SENTRY_ENABLED} \
-    SENTRY_DSN=${SENTRY_DSN} \
-    SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT} \
-    SENTRY_RELEASE=${SENTRY_RELEASE} \
-    SENTRY_TRACES_SAMPLE_RATE=${SENTRY_TRACES_SAMPLE_RATE} \
-    SENTRY_SEND_DEFAULT_PII=${SENTRY_SEND_DEFAULT_PII} \
-    VITE_SHOW_EULA=${VITE_SHOW_EULA}
-RUN npm run build
+ENV VITE_SHOW_EULA=${VITE_SHOW_EULA}
+RUN --mount=type=secret,id=sentry_auth_token \
+    SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" \
+    npm run build \
+ && find dist -type f -name '*.map' -delete
 
 # Serve the SPA, standalone Website artifact, and reverse proxy through Nginx.
 FROM nginx:stable-alpine

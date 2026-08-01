@@ -45,9 +45,14 @@ make_gzip "${sl}/images/11-sourcelens-lensnode.tar.gz" sourcelens-lensnode
 make_gzip "${sl}/images/12-nginx-stable-alpine.tar.gz" nginx
 mkdir -p "${sl}/sourcelens/deploy/postgresql/initdb.d" \
 	"${sl}/sourcelens/deploy/nginx/certs" \
+	"${sl}/sourcelens/deploy/sentry" \
 	"${sl}/payload/media/gateway-bootstrap"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${sl}/sourcelens/install.sh"
 printf '#!/usr/bin/env python3\n' >"${sl}/sourcelens/patch-env-runtime.py"
+printf '#!/usr/bin/env python3\n' >"${sl}/sourcelens/sync-sentry-runtime.py"
+mkdir -p "${sl}/sourcelens/deploy/nginx"
+printf '/* fixture */\n' >"${sl}/sourcelens/deploy/nginx/hfl-sentry-loader.js"
+printf '# fixture\n' >"${sl}/sourcelens/deploy/sentry/hfl-sentry-sitecustomize.py"
 printf 'services: {}\n' >"${sl}/sourcelens/docker-compose.yml"
 printf 'DJANGO_DEBUG=true\n' >"${sl}/sourcelens/.env.example"
 printf 'fixture\n' >"${sl}/sourcelens/deploy/postgresql/initdb.d/fixture.sh"

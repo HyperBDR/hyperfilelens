@@ -253,11 +253,16 @@ stage_runtime_tree() {
 	upstream_frontend_ref="$(sourcelens_upstream_image_ref frontend)"
 	upstream_lensnode_ref="$(sourcelens_upstream_image_ref lensnode)"
 
-	mkdir -p "${sl_root}/deploy/nginx/certs" "${sl_root}/deploy/postgresql/initdb.d"
+	mkdir -p "${sl_root}/deploy/nginx/certs" "${sl_root}/deploy/postgresql/initdb.d" \
+		"${sl_root}/deploy/sentry"
 
 	log "Using upstream SourceLens nginx configuration"
 	cp "${src}/docker/nginx/default.conf" "${sl_root}/deploy/nginx/default.conf"
 	sourcelens_patch_runtime_nginx "${sl_root}/deploy/nginx/default.conf"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-loader.js" \
+		"${sl_root}/deploy/nginx/hfl-sentry-loader.js"
+	printf '%s\n' 'window.__HFL_SOURCELENS_SENTRY__ = Object.freeze({ enabled: false })' \
+		>"${sl_root}/deploy/nginx/hfl-sentry-config.js"
 	if [[ -d "${src}/docker/postgresql" ]]; then
 		rsync -a "${src}/docker/postgresql/" "${sl_root}/deploy/postgresql/"
 	fi
@@ -269,7 +274,11 @@ stage_runtime_tree() {
 
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/install.sh" "${sl_root}/install.sh"
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/patch-env-runtime.py" "${sl_root}/patch-env-runtime.py"
-	chmod +x "${sl_root}/install.sh" "${sl_root}/patch-env-runtime.py"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/sync-sentry-runtime.py" "${sl_root}/sync-sentry-runtime.py"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-sitecustomize.py" \
+		"${sl_root}/deploy/sentry/hfl-sentry-sitecustomize.py"
+	chmod 644 "${sl_root}/deploy/sentry/hfl-sentry-sitecustomize.py"
+	chmod +x "${sl_root}/install.sh" "${sl_root}/patch-env-runtime.py" "${sl_root}/sync-sentry-runtime.py"
 
 	sourcelens_write_runtime_compose "${sl_root}/docker-compose.yml"
 

@@ -90,7 +90,10 @@ for required in \
 	images/10-sourcelens-app.tar.gz \
 	images/11-sourcelens-lensnode.tar.gz \
 	images/12-nginx-stable-alpine.tar.gz \
-	sourcelens/BUILD_INFO.json; do
+	sourcelens/BUILD_INFO.json \
+	sourcelens/sync-sentry-runtime.py \
+	sourcelens/deploy/sentry/hfl-sentry-sitecustomize.py \
+	sourcelens/deploy/nginx/hfl-sentry-loader.js; do
 	[[ -s "${pkg_root}/${required}" ]] || die "assembled package is missing ${required}"
 done
 
@@ -106,6 +109,9 @@ for script in \
 	cp "${ROOT}/deploy/bootstrap/${script}" "${gateway_dir}/${script}"
 	chmod 755 "${gateway_dir}/${script}"
 done
+cp "${ROOT}/deploy/installer/sourcelens/hfl-sentry-sitecustomize.py" \
+	"${gateway_dir}/hfl-sentry-sitecustomize.py"
+chmod 644 "${gateway_dir}/hfl-sentry-sitecustomize.py"
 
 log "Staging release runtime files"
 printf '%s\n' "${version}" >"${pkg_root}/VERSION"

@@ -16,6 +16,11 @@ func StartInstalledService(ctx context.Context) error {
 	return startWindowsService(ctx)
 }
 
+// RestartInstalledService reloads the persisted Agent runtime environment.
+func RestartInstalledService(ctx context.Context) error {
+	return startWindowsService(ctx)
+}
+
 func startWindowsService(ctx context.Context) error {
 	installRoot := filepath.Join(os.Getenv("ProgramFiles"), "HyperFileLens", "Agent")
 	agentBin := filepath.Join(installRoot, "hfl-agent.exe")

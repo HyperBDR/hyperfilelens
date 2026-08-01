@@ -224,6 +224,7 @@ jobs:
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-website-runtime-config.sh
           ./tools/quality/test-ga-runtime-config.sh
+          ./tools/quality/test-sentry-runtime-config.sh
           ./tools/quality/test-payload-tree-hash.sh
           ./tools/quality/test-ci-release-assembly.sh
           HFL_TEST_VERSION=main-0123456 ./tools/quality/test-ci-release-assembly.sh
@@ -329,12 +330,13 @@ jobs:
             IMAGE_VERSION=${{ needs.prepare.outputs.version }}
             IMAGE_REVISION=${{ needs.prepare.outputs.commit }}
             PIP_TIMEOUT=600
-            SENTRY_ENABLED=false
-            SENTRY_ENVIRONMENT=production
-            SENTRY_RELEASE=${{ needs.prepare.outputs.tag }}
-            SENTRY_TRACES_SAMPLE_RATE=0
-            SENTRY_SEND_DEFAULT_PII=false
+            SENTRY_URL=${{ vars.SENTRY_URL }}
+            SENTRY_ORG=${{ vars.SENTRY_ORG }}
+            SENTRY_FRONTEND_PROJECT=${{ vars.SENTRY_FRONTEND_PROJECT }}
+            SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.version }}
             VITE_SHOW_EULA=false
+          secrets: |
+            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
           cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=min
 
@@ -382,6 +384,10 @@ jobs:
       - name: Build and push bundled SourceLens component
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_FRONTEND_PROJECT: ${{ vars.SENTRY_FRONTEND_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           ./release/ci/build-sourcelens-image.sh \
             "${{ matrix.component }}" \
@@ -884,6 +890,7 @@ jobs:
       email_code_login_enabled: ${{ vars.TEST_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
       google_oauth_enabled: ${{ vars.TEST_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.TEST_GOOGLE_CLIENT_ID }}
+      sentry_enabled: ${{ vars.TEST_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.TEST_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.TEST_HFL_INSECURE_TLS }}
       smtp_host: ${{ vars.TEST_SMTP_HOST }}
@@ -901,6 +908,9 @@ jobs:
       google_client_secret: ${{ secrets.TEST_GOOGLE_CLIENT_SECRET }}
       ai_model_api_base: ${{ secrets.TEST_AI_MODEL_API_BASE }}
       ai_model_api_key: ${{ secrets.TEST_AI_MODEL_API_KEY }}
+      sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
+      sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
+      sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   deploy-preprod:
     name: Deploy · PREPROD
@@ -931,6 +941,7 @@ jobs:
       email_code_login_enabled: ${{ vars.PREPROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
       google_oauth_enabled: ${{ vars.PREPROD_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.PREPROD_GOOGLE_CLIENT_ID }}
+      sentry_enabled: ${{ vars.PREPROD_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}
       smtp_host: ${{ vars.PREPROD_SMTP_HOST }}
@@ -948,6 +959,9 @@ jobs:
       google_client_secret: ${{ secrets.PREPROD_GOOGLE_CLIENT_SECRET }}
       ai_model_api_base: ${{ secrets.PREPROD_AI_MODEL_API_BASE }}
       ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
+      sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
+      sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
+      sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   cleanup-main-builds:
     name: Cleanup · Main releases

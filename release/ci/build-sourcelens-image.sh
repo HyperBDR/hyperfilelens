@@ -90,6 +90,14 @@ else
 	docker push "${cache_ref}"
 fi
 
+if [[ "${component}" == "frontend" ]]; then
+	if ! SOURCELENS_BUILD_SOURCE_MAPS=1 \
+		"${ROOT}/release/ci/upload-sourcelens-sourcemaps.sh" \
+		"hyperfilelens-sourcelens-frontend@${hfl_version}-sl${SOURCELENS_VERSION}"; then
+		printf '::warning title=Sentry Source Maps::Bundled SourceLens symbol processing failed; the image build will continue.\n'
+	fi
+fi
+
 manifest_json="$(docker buildx imagetools inspect "${target_ref}" --format '{{json .Manifest}}')"
 digest="$(jq -r '.digest // empty' <<<"${manifest_json}")"
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {

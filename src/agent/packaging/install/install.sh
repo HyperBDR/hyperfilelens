@@ -619,6 +619,13 @@ merge_agent_env() {
 	local kopia_path="${INSTALL_DIR}/kopia"
 	local -a keys=(HFL_DATA_DIR HFL_KOPIA_PATH HFL_INSECURE_TLS)
 	local -a vals=("${data_dir}" "${kopia_path}" "1")
+	local optional
+	for optional in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
+		if [[ -n "${!optional:-}" && "${!optional}" != *$'\n'* && "${!optional}" != *$'\r'* ]]; then
+			keys+=("${optional}")
+			vals+=("${!optional}")
+		fi
+	done
 	local i key val added=()
 
 	if [[ ! -f "${env_file}" ]]; then
@@ -910,6 +917,7 @@ deploy_binaries() {
 write_agent_env() {
 	local env_file="$1"
 	local kopia_path="${INSTALL_DIR}/kopia"
+	local name
 	mkdir -p "$(dirname "$env_file")"
 	umask 077
 	{
@@ -922,6 +930,9 @@ write_agent_env() {
 		echo "HFL_NODE_ROLE=${NODE_ROLE}"
 		echo "HFL_KOPIA_PATH=${kopia_path}"
 		echo "HFL_INSECURE_TLS=${HFL_INSECURE_TLS:-1}"
+		for name in SENTRY_ENABLED SENTRY_BACKEND_DSN SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE HFL_SENTRY_LENSNODE_RELEASE; do
+			[[ -z "${!name:-}" ]] || echo "${name}=${!name}"
+		done
 	} >"${env_file}"
 	chmod 600 "${env_file}"
 	log_ok "wrote ${env_file}"

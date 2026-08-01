@@ -19,18 +19,15 @@ HFL_WEBSITE_CONFIG_OUTPUT="${website}" \
 
 grep -Fx "window.__HFL_WEBSITE_CONFIG__ = Object.freeze({ appUrl: 'https://app.hyperfilelens.com', gaMeasurementId: 'G-0RX9GZJCWF' })" \
 	"${website}" >/dev/null
-grep -Fx "window.__HFL_APP_CONFIG__ = Object.freeze({ gaMeasurementId: 'G-0RX9GZJCWF' })" \
-	"${tenant}" >/dev/null
-grep -Fx "window.__HFL_APP_CONFIG__ = Object.freeze({ gaMeasurementId: '' })" \
-	"${admin}" >/dev/null
+grep -F "gaMeasurementId: 'G-0RX9GZJCWF'" "${tenant}" >/dev/null
+grep -F "gaMeasurementId: ''" "${admin}" >/dev/null
 
 invalid_output="$(HFL_WEBSITE_CONFIG_OUTPUT="${website}" \
 	HFL_TENANT_CONFIG_OUTPUT="${tenant}" \
 	HFL_ADMIN_CONFIG_OUTPUT="${admin}" \
 	HFL_GA_MEASUREMENT_ID="G invalid" sh "${renderer}" 2>&1)"
 grep -F 'WARNING: invalid GA4 measurement ID' <<<"${invalid_output}" >/dev/null
-grep -Fx "window.__HFL_APP_CONFIG__ = Object.freeze({ gaMeasurementId: '' })" \
-	"${tenant}" >/dev/null
+grep -F "gaMeasurementId: ''" "${tenant}" >/dev/null
 
 grep -F 'alias /usr/share/nginx/runtime/tenant-app-runtime-config.js;' \
 	"${ROOT}/deploy/nginx/snippets/hfl-tenant-spa-locations.conf" >/dev/null
