@@ -3,6 +3,7 @@ package wire
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -269,7 +270,12 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 	go h.progressLoop(taskCtx, sink, cmd.TaskID, progressDone)
 	defer close(progressDone)
 
-	wsSink := websocketSink{sink: sink, taskID: cmd.TaskID}
+	wsSink := &websocketSink{
+		sink:      sink,
+		taskID:    cmd.TaskID,
+		tasks:     h.tasks,
+		resumable: model.IsResumableTaskKind(cmd.Kind),
+	}
 	out := eng.Run(taskCtx, engine.Command{
 		ID:      cmd.TaskID,
 		JobID:   cmd.JobID(),
@@ -361,10 +367,39 @@ func (h *Handler) aliveLoop(ctx context.Context, sink Sender, taskID string, don
 }
 
 type websocketSink struct {
-	sink   Sender
-	taskID string
+	sink        Sender
+	taskID      string
+	tasks       *database.TaskRepo
+	resumable   bool
+	persistMu   sync.Mutex
+	lastPersist time.Time
 }
 
-func (w websocketSink) OnProgress(ctx context.Context, progress map[string]any) error {
+func (w *websocketSink) OnProgress(ctx context.Context, progress map[string]any) error {
+	w.persistLatestProgress(ctx, progress)
 	return SendTaskProgress(ctx, w.sink, w.taskID, progress)
+}
+
+func (w *websocketSink) persistLatestProgress(ctx context.Context, progress map[string]any) {
+	if w == nil || w.tasks == nil || !w.resumable || len(progress) == 0 {
+		return
+	}
+	w.persistMu.Lock()
+	defer w.persistMu.Unlock()
+	if !w.lastPersist.IsZero() && time.Since(w.lastPersist) < TaskProgressInterval {
+		return
+	}
+	snapshot := make(map[string]any, len(progress))
+	for key, value := range progress {
+		snapshot[key] = value
+	}
+	if err := w.tasks.UpdateProgress(
+		context.WithoutCancel(ctx),
+		w.taskID,
+		snapshot,
+	); err != nil {
+		slog.Warn("persist latest task progress failed", "task_id", w.taskID, "err", err)
+		return
+	}
+	w.lastPersist = time.Now()
 }

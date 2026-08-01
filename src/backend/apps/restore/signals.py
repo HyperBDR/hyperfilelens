@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
 
 from apps.node.models import NodeTask
 from apps.restore.models import RestoreRecord, RestoreRecordItem
@@ -11,7 +13,12 @@ from apps.restore.services.task_events import append_restore_item_terminal_event
 from apps.protection.services.progress.orchestrated_progress import RESTORE_FINALIZE_START
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskStep
-from apps.task.services.interface import append_task_step_event, complete_task, start_task
+from apps.task.services.interface import (
+    TERMINAL_STATUSES,
+    append_task_step_event,
+    complete_task,
+    start_task,
+)
 
 _TERMINAL_NODE_STATUSES = {
     NodeTask.Status.SUCCESS,
@@ -22,6 +29,7 @@ _TERMINAL_NODE_STATUSES = {
 
 
 @receiver(post_save, sender=NodeTask)
+@transaction.atomic
 def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTask, **kwargs: Any) -> None:
     if instance.correlation_type == "restore.repository_server" and instance.correlation_id:
         _handle_restore_repository_server_task(node_task=instance)
@@ -45,11 +53,27 @@ def sync_restore_record_from_node_task(sender: type[NodeTask], instance: NodeTas
         or record.target_execution_node_id != instance.node_id
     ):
         return
-    product_task = Task.objects.filter(
+    product_task = Task.objects.select_for_update().filter(
         organization_id=record.organization_id,
         task_uuid=record.task_uuid,
     ).first()
     if product_task is None:
+        return
+    # Cancellation owns the product Task lock before mutating items. Following
+    # the same Task -> item lock order prevents a completion/cancel deadlock,
+    # and a late Agent result must never reverse a user-visible cancellation.
+    if product_task.status == Task.Status.CANCELLED:
+        _project_cancelled_restore_item(
+            record=record,
+            item_id=item_id,
+            node_task=instance,
+            product_task=product_task,
+        )
+        return
+    if (
+        product_task.status in TERMINAL_STATUSES
+        and instance.status not in _TERMINAL_NODE_STATUSES
+    ):
         return
     if instance.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
         _ensure_product_task_running(product_task)
@@ -89,7 +113,7 @@ def _handle_restore_repository_server_task(*, node_task: NodeTask) -> None:
     ).first()
     if record is None:
         return
-    product_task = Task.objects.filter(
+    product_task = Task.objects.select_for_update().filter(
         organization_id=record.organization_id,
         task_uuid=record.task_uuid,
     ).first()
@@ -136,23 +160,89 @@ def _handle_restore_repository_server_task(*, node_task: NodeTask) -> None:
         error_code="RESTORE_REPOSITORY_SERVER_FAILED",
         error_message=message,
     )
-    append_task_step_event(
+    if not TaskEvent.objects.filter(
         task=product_task,
-        step_name="dispatch_agent",
-        level=TaskEvent.Level.ERROR,
+        step__step_name="dispatch_agent",
         message="Restore repository server failed",
-        metadata={
-            "node_task_id": str(node_task.id),
-            "error_message": message,
-            "object_name": repository_name,
-        },
-    )
+        metadata__node_task_id=str(node_task.id),
+    ).exists():
+        append_task_step_event(
+            task=product_task,
+            step_name="dispatch_agent",
+            level=TaskEvent.Level.ERROR,
+            message="Restore repository server failed",
+            metadata={
+                "node_task_id": str(node_task.id),
+                "error_message": message,
+                "object_name": repository_name,
+            },
+        )
+    RestoreRecordItem.objects.filter(
+        restore_record=record,
+        terminal_projection_at__isnull=True,
+        status__in=[
+            RestoreRecordItem.Status.SUCCESS,
+            RestoreRecordItem.Status.FAILED,
+            RestoreRecordItem.Status.SKIPPED,
+            RestoreRecordItem.Status.CANCELLED,
+        ],
+    ).update(terminal_projection_at=timezone.now())
     _finalize_record_if_done(record=record, product_task=product_task)
 
 
 def _ensure_product_task_running(task: Task) -> None:
     if task.status == Task.Status.PENDING:
         start_task(task_uuid=task.task_uuid, organization_id=task.organization_id)
+
+
+def _project_cancelled_restore_item(
+    *,
+    record: RestoreRecord,
+    item_id: int,
+    node_task: NodeTask,
+    product_task: Task,
+) -> None:
+    """Complete a cancelled item projection without applying a late result."""
+    if not item_id:
+        return
+    item = RestoreRecordItem.objects.select_for_update().filter(
+        organization_id=record.organization_id,
+        restore_record=record,
+        id=item_id,
+    ).first()
+    if item is None:
+        return
+    previous_status = item.status
+    if item.status not in {
+        RestoreRecordItem.Status.SUCCESS,
+        RestoreRecordItem.Status.SKIPPED,
+        RestoreRecordItem.Status.CANCELLED,
+    }:
+        message = str(
+            product_task.error_message
+            or item.error_message
+            or "Restore stopped."
+        ).strip()[:2000]
+        item.status = RestoreRecordItem.Status.CANCELLED
+        item.error_code = "TASK_CANCELLED"
+        item.error_message = message
+        item.save(
+            update_fields=[
+                "status",
+                "error_code",
+                "error_message",
+                "updated_at",
+            ]
+        )
+    append_restore_item_terminal_event(
+        task=product_task,
+        item=item,
+        node_task_id=item.node_task_id or node_task.id,
+        previous_status=previous_status,
+    )
+    if item.terminal_projection_at is None:
+        item.terminal_projection_at = timezone.now()
+        item.save(update_fields=["terminal_projection_at", "updated_at"])
 
 
 def _sync_restore_item(
@@ -162,7 +252,7 @@ def _sync_restore_item(
     node_task: NodeTask,
     product_task: Task,
 ) -> None:
-    item = RestoreRecordItem.objects.filter(
+    item = RestoreRecordItem.objects.select_for_update().filter(
         organization_id=record.organization_id,
         restore_record=record,
         id=item_id,
@@ -200,10 +290,19 @@ def _sync_restore_item(
         node_task_id=node_task.id,
         previous_status=previous_status,
     )
+    if item.terminal_projection_at is None:
+        item.terminal_projection_at = timezone.now()
+        item.save(update_fields=["terminal_projection_at", "updated_at"])
 
 
+@transaction.atomic
 def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> None:
-    if product_task.status == Task.Status.CANCELLED:
+    # Serialize the final item callbacks and the periodic reconciler on the
+    # product task.  This protects TaskEvent sequence allocation and ensures
+    # repository cleanup is scheduled only once when several items finish at
+    # the same time.
+    product_task = Task.objects.select_for_update().get(pk=product_task.pk)
+    if product_task.status in TERMINAL_STATUSES:
         return
     statuses = list(record.items.values_list("status", flat=True))
     if not statuses or any(status in {RestoreRecordItem.Status.PENDING, RestoreRecordItem.Status.RUNNING} for status in statuses):
@@ -239,16 +338,12 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
             task_progress=RESTORE_FINALIZE_START,
             current_step="finalize",
         )
-        append_task_step_event(
+        _append_finalize_event_once(
             task=product_task,
-            step_name="finalize",
+            record=record,
             level=TaskEvent.Level.ERROR,
             message="Restore finished with failed items",
-            metadata={
-                **result_payload,
-                "error_message": error_message,
-                "object_name": record.restore_uid,
-            },
+            metadata={"error_message": error_message},
         )
         complete_task(
             task_uuid=product_task.task_uuid,
@@ -276,11 +371,10 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
         task_progress=100,
         current_step="finalize",
     )
-    append_task_step_event(
+    _append_finalize_event_once(
         task=product_task,
-        step_name="finalize",
+        record=record,
         message="Restore finished successfully",
-        metadata={**result_payload, "object_name": record.restore_uid},
     )
     complete_task(
         task_uuid=product_task.task_uuid,
@@ -288,6 +382,48 @@ def _finalize_record_if_done(*, record: RestoreRecord, product_task: Task) -> No
         status=Task.Status.SUCCESS,
         progress=100,
         result_payload=result_payload,
+    )
+
+
+def _append_finalize_event_once(
+    *,
+    task: Task,
+    record: RestoreRecord,
+    message: str,
+    level: str = TaskEvent.Level.INFO,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    if TaskEvent.objects.filter(
+        task=task,
+        step__step_name="finalize",
+        message=message,
+        metadata__restore_record_id=record.id,
+    ).exists():
+        return
+    statuses = list(record.items.values_list("status", flat=True))
+    event_metadata: dict[str, object] = {
+        "restore_record_id": record.id,
+        "item_count": len(statuses),
+        "failed_item_count": len(
+            [
+                status
+                for status in statuses
+                if status
+                not in {
+                    RestoreRecordItem.Status.SUCCESS,
+                    RestoreRecordItem.Status.CANCELLED,
+                }
+            ]
+        ),
+        "object_name": record.restore_uid,
+    }
+    event_metadata.update(metadata or {})
+    append_task_step_event(
+        task=task,
+        step_name="finalize",
+        level=level,
+        message=message,
+        metadata=event_metadata,
     )
 
 

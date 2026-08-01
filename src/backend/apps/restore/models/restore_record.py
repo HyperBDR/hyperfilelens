@@ -144,6 +144,7 @@ class RestoreRecordItem(models.Model):
     result_payload = models.JSONField(default=dict, blank=True)
     error_code = models.CharField(max_length=80, blank=True, default="")
     error_message = models.TextField(blank=True, default="")
+    terminal_projection_at = models.DateTimeField(blank=True, null=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 

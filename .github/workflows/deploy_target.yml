@@ -530,7 +530,7 @@ jobs:
             -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'cd /opt/hyperfilelens && docker compose exec -T api python manage.py ensure_deployment_identity_settings' \
+            '/opt/hyperfilelens/install.sh manage ensure_deployment_identity_settings' \
             2>&1)"
           command_status=$?
           set -e
@@ -559,7 +559,7 @@ jobs:
             -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'cd /opt/hyperfilelens && docker compose exec -T api python manage.py check_google_oauth_readiness' \
+            '/opt/hyperfilelens/install.sh manage check_google_oauth_readiness' \
             2>&1)"
           command_status=$?
           set -e
@@ -619,7 +619,7 @@ jobs:
             -o TCPKeepAlive=yes \
             -p "$DEPLOY_SSH_PORT" \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'cd /opt/hyperfilelens && docker compose exec -T api python manage.py ensure_platform_ai_model' \
+            '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
             < "$payload" 2>&1)"
           command_status=$?
           set -e

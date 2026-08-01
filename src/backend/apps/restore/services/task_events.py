@@ -18,6 +18,12 @@ _TERMINAL_ITEM_STATUSES = {
     RestoreRecordItem.Status.SKIPPED,
     RestoreRecordItem.Status.CANCELLED,
 }
+_TERMINAL_ITEM_MESSAGES = (
+    "Restore item completed",
+    "Restore item cancelled",
+    "Restore item skipped",
+    "Restore item failed",
+)
 
 
 def restore_step_events_enabled(*, task: Task) -> bool:
@@ -67,9 +73,17 @@ def append_restore_item_terminal_event(
     node_task_id: UUID | str | None,
     previous_status: str,
 ) -> TaskEvent | None:
+    _ = previous_status  # Kept for the transition-aware caller contract.
     if not restore_step_events_enabled(task=task):
         return None
-    if previous_status in _TERMINAL_ITEM_STATUSES or item.status not in _TERMINAL_ITEM_STATUSES:
+    if item.status not in _TERMINAL_ITEM_STATUSES:
+        return None
+    # The item update and event append normally share one transaction.  The
+    # lookup also repairs projections created by older releases where a worker
+    # could stop after persisting the terminal item but before appending its
+    # event.  Do not rely on ``previous_status`` for idempotency: during repair
+    # the durable previous status is already terminal.
+    if restore_item_terminal_event_exists(task=task, item_id=item.id):
         return None
 
     if item.status == RestoreRecordItem.Status.SUCCESS:
@@ -77,6 +91,9 @@ def append_restore_item_terminal_event(
         level = TaskEvent.Level.INFO
     elif item.status == RestoreRecordItem.Status.CANCELLED:
         message = "Restore item cancelled"
+        level = TaskEvent.Level.WARN
+    elif item.status == RestoreRecordItem.Status.SKIPPED:
+        message = "Restore item skipped"
         level = TaskEvent.Level.WARN
     else:
         message = "Restore item failed"
@@ -103,3 +120,13 @@ def append_restore_item_terminal_event(
         message=message,
         metadata=metadata,
     )
+
+
+def restore_item_terminal_event_exists(*, task: Task, item_id: int) -> bool:
+    """Return whether a durable terminal event already represents an item."""
+    return TaskEvent.objects.filter(
+        task=task,
+        step__step_name=_RESTORE_STEP_NAME,
+        message__in=_TERMINAL_ITEM_MESSAGES,
+        metadata__restore_record_item_id=item_id,
+    ).exists()

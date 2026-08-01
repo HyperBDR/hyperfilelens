@@ -234,7 +234,7 @@ for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
 	grep -F "secrets.PREPROD_${secret}" "${workflow}" >/dev/null
 	grep -F "secrets.PROD_${secret}" "${production_workflow}" >/dev/null
 done
-grep -F 'python manage.py ensure_platform_ai_model' \
+grep -F '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
@@ -269,9 +269,9 @@ grep -F 'SMTP settings are partial; deployment will preserve' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'No SMTP settings were staged' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F 'python manage.py ensure_deployment_identity_settings' \
+grep -F '/opt/hyperfilelens/install.sh manage ensure_deployment_identity_settings' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F 'python manage.py check_google_oauth_readiness' \
+grep -F '/opt/hyperfilelens/install.sh manage check_google_oauth_readiness' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'python manage.py check_google_oauth_readiness' \
 	"${ROOT}/deploy/installer/install.sh" "${ROOT}/dev/stack.sh" >/dev/null
@@ -472,6 +472,61 @@ if grep -F 'celery -A common inspect ping' <<<"${worker_healthcheck}" >/dev/null
 	exit 1
 fi
 
+# Production blue/green topology: stable entry owns every host port, while
+# scalable API/Web colors remain profile-scoped and container-name agnostic.
+release_compose="${ROOT}/deploy/docker-compose.yml"
+for service in api-blue api-green web-blue web-green migration; do
+	grep -Eq "^  ${service}:" "${release_compose}"
+done
+grep -F 'profiles: ["blue"]' "${release_compose}" >/dev/null
+grep -F 'profiles: ["green"]' "${release_compose}" >/dev/null
+grep -F 'stop_grace_period: 600s' "${release_compose}" >/dev/null
+grep -F "pgrep -f '[c]elery.* beat'" "${release_compose}" >/dev/null
+production_worker_entrypoint="$(sed -n '/^  worker)/,/^  worker-dev)/p' "${ROOT}/deploy/docker/backend-entrypoint.sh")"
+if grep -F 'run_migrations_and_register' <<<"${production_worker_entrypoint}" >/dev/null; then
+	printf 'ERROR: production worker must not run singleton migrations\n' >&2
+	exit 1
+fi
+if grep -F 'container_name:' "${release_compose}" >/dev/null; then
+	printf 'ERROR: scalable release services must not use fixed container_name values\n' >&2
+	exit 1
+fi
+[[ "$(grep -Fc '${HFL_TENANT_PORT:-11443}:11443' "${release_compose}")" -eq 1 ]]
+grep -F 'include /etc/nginx/snippets/hfl-active-upstreams.conf;' \
+	"${ROOT}/deploy/nginx/default.conf" >/dev/null
+grep -F 'api-blue:8000' \
+	"${ROOT}/deploy/nginx/snippets/hfl-active-upstreams.conf" >/dev/null
+grep -F 'cmd_manage()' "${ROOT}/deploy/installer/install.sh" >/dev/null
+if grep -F 'docker compose exec -T api python manage.py' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
+	printf 'ERROR: deployment workflow must use the active-color management command entrypoint\n' >&2
+	exit 1
+fi
+grep -F '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'deploy/nginx/web.conf' "${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'deploy/blue-green/active-color' "${ROOT}/release/build.sh" >/dev/null
+grep -F 'api:8000' "${ROOT}/deploy/nginx/development-upstreams.conf" >/dev/null
+grep -F 'ws_recovery_gate drain' "${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'args=(reattach --timeout' "${ROOT}/deploy/installer/install.sh" >/dev/null
+grep -F 'cutover_hfl_color' "${ROOT}/deploy/installer/install.sh" >/dev/null
+rollback_body="$(sed -n '/^restore_previous_hfl_color()/,/^begin_sourcelens_maintenance_gate()/p' "${ROOT}/deploy/installer/install.sh")"
+grep -F 'drain_api_color "${target}"' <<<"${rollback_body}" >/dev/null
+grep -F 'wait_for_active_task_reattach "${previous}"' <<<"${rollback_body}" >/dev/null
+grep -F 'remove_retired_color "${target}"' <<<"${rollback_body}" >/dev/null
+upgrade_body="$(sed -n '/^cmd_upgrade()/,/^main()/p' "${ROOT}/deploy/installer/install.sh")"
+if grep -F 'compose_in_root down' <<<"${upgrade_body}" >/dev/null; then
+	printf 'ERROR: blue/green upgrade must not stop the complete HFL stack\n' >&2
+	exit 1
+fi
+recovery_body="$(sed -n '/^recover_upgrade_services()/,/^print_config()/p' "${ROOT}/deploy/installer/install.sh")"
+if grep -E 'compose_color .* up .*api-' <<<"${recovery_body}" >/dev/null; then
+	printf 'ERROR: recovery must not recreate the previous color from target image metadata\n' >&2
+	exit 1
+fi
+grep -F 'compose_color "${recovery_color}" start' <<<"${recovery_body}" >/dev/null
+grep -F './tools/quality/test-blue-green-recovery.sh' "${workflow}" >/dev/null
+
 backend_dockerfile="${ROOT}/deploy/docker/backend.Dockerfile"
 frontend_dockerfile="${ROOT}/deploy/docker/frontend.Dockerfile"
 grep -F 'ARG KOPIA_BINARY=build/kopia/dist/linux/amd64/kopia' "${backend_dockerfile}" >/dev/null
@@ -640,7 +695,7 @@ grep -F 'values are hidden in non-interactive logs' "${installer}" >/dev/null
 grep -F 'validate_default_tls_bundle "${src_root}/deploy/nginx/certs"' "${installer}" >/dev/null
 grep -F 'sync_default_tls_bundle "${from_root}/deploy/nginx/certs"' "${installer}" >/dev/null
 grep -F 'Preserving existing TLS certificate directory' "${installer}" >/dev/null
-grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}"' "${installer}" >/dev/null
+grep -F 'apply_upgrade_files "${src_root}" "${remove_sourcelens}" "${upgrade_sourcelens}"' "${installer}" >/dev/null
 grep -F 'apply_runtime_configuration' "${installer}" >/dev/null
 backup_body="$(sed -n '/^backup_postgresql_dump()/,/^}/p' "${installer}")"
 grep -F 'COMPOSE=(docker compose)' <<<"${backup_body}" >/dev/null

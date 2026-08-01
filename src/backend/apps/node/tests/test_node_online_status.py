@@ -54,6 +54,26 @@ class _FakeRedis:
             if match == "*" or key.startswith(prefix):
                 yield key
 
+    def eval(self, script: str, key_count: int, key: str, session_id: str) -> int:
+        del script
+        if key_count != 1:
+            raise ValueError("fake Redis supports one-key scripts only")
+        raw = self.data.get(key)
+        if raw is None:
+            return 1
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = None
+        if (
+            isinstance(payload, dict)
+            and payload.get("session")
+            and str(payload["session"]) != session_id
+        ):
+            return 0
+        self.delete(key)
+        return 1
+
 
 class AgentNodeOnlineStatusTests(TestCase):
     def setUp(self):
@@ -184,6 +204,9 @@ class AgentNodeOnlineStatusTests(TestCase):
             effective_agent_node_status(self.node),
             Node.Status.ONLINE,
         )
+        raw = self.redis.get(redis_store.agent_loc_key(self.node.id))
+        assert raw is not None
+        self.assertEqual(json.loads(raw)["session"], "session-b")
 
     def test_effective_status_offline_without_ws_route(self):
         self.node.status = Node.Status.ONLINE

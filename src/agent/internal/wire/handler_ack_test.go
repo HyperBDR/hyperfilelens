@@ -182,3 +182,88 @@ func TestPersistenceFailureEmitsNoAcceptance(t *testing.T) {
 		t.Fatalf("frames=%d, want no ACK after persistence failure", len(sender.frames))
 	}
 }
+
+func TestWebsocketSinkPersistsLatestResumableProgress(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := database.NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, database.RecordInput{
+		TaskID: "backup-progress-1",
+		Kind:   "backup.run",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sink := &websocketSink{
+		sink:      &captureSender{},
+		taskID:    "backup-progress-1",
+		tasks:     repo,
+		resumable: true,
+	}
+	if err := sink.OnProgress(ctx, map[string]any{
+		"phase": "uploading",
+		"files": float64(42),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := repo.Get(ctx, "backup-progress-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, ok := task.Result["last_progress"].(map[string]any)
+	if !ok {
+		t.Fatalf("last_progress = %#v", task.Result["last_progress"])
+	}
+	if latest["phase"] != "uploading" || latest["files"] != float64(42) {
+		t.Fatalf("persisted progress = %#v", latest)
+	}
+}
+
+func TestWebsocketSinkDoesNotRegressTerminalTask(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := database.NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, database.RecordInput{
+		TaskID: "backup-progress-terminal",
+		Kind:   "backup.run",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Finish(
+		ctx,
+		"backup-progress-terminal",
+		model.TaskStatusSucceeded,
+		map[string]any{"snapshot_id": "snapshot-1"},
+		"",
+	); err != nil {
+		t.Fatal(err)
+	}
+	sink := &websocketSink{
+		sink:      &captureSender{},
+		taskID:    "backup-progress-terminal",
+		tasks:     repo,
+		resumable: true,
+	}
+	if err := sink.OnProgress(ctx, map[string]any{"phase": "late"}); err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := repo.Get(ctx, "backup-progress-terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusSucceeded {
+		t.Fatalf("status = %s, want succeeded", task.Status)
+	}
+	if task.Result["snapshot_id"] != "snapshot-1" {
+		t.Fatalf("terminal result was overwritten: %#v", task.Result)
+	}
+}

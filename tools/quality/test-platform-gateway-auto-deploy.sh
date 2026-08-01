@@ -84,6 +84,7 @@ run_as_root() { "$@"; }
 systemctl() { [[ "$*" == "is-active --quiet hyperfilelens-agent.service" ]]; }
 converge_local_platform_gateway_lensnode() { :; }
 wait_for_local_platform_gateway_online() { [[ "$1" == "99" ]]; }
+active_api_service() { printf 'api-blue'; }
 compose_in_root() {
 	printf 'HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT={"org_key":"%s","token":"fixture-token","api_base":"https://console.example:11443","wss_url":"wss://console.example:11443/ws/node/agent/","managed_node_ids":[99]}\n' "${ENROLLMENT_ORG}"
 }

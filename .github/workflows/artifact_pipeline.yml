@@ -215,6 +215,7 @@ jobs:
           ./tools/quality/test-docker-image-digest-alias.sh
           ./tools/quality/test-offline-docker-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
+          ./tools/quality/test-blue-green-recovery.sh
           ./tools/quality/test-redis-rdb-preflight.sh
           ./tools/quality/test-agent-release-retention.sh
           ./tools/quality/test-managed-image-retention.sh
