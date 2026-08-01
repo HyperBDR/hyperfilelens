@@ -60,6 +60,7 @@ print_config() {
 package_root=${PKG_ROOT:-<required>}
 images_dir=${IMAGES_DIR:-<required>}
 source_dir=${SOURCELENS_SOURCE_CACHE}
+build_source_dir=${SOURCELENS_BUILD_SOURCE}
 git_url=${SOURCELENS_GIT_URL}
 git_ref=${SOURCELENS_GIT_REF}
 version=${SOURCELENS_VERSION}
@@ -236,16 +237,18 @@ save_image_archives() {
 }
 
 stage_runtime_tree() {
-	local src="${SOURCELENS_SOURCE_CACHE}"
+	local src="${SOURCELENS_BUILD_SOURCE}"
 	local sl_root="${PKG_ROOT}/sourcelens"
 	local backend_ref frontend_ref lensnode_ref
 	local upstream_backend_ref upstream_frontend_ref upstream_lensnode_ref
-	local patch_file="${SOURCELENS_INSTALLER_DIR}/sourcelens/lensnode-tls.patch"
-	local commit_full commit7 patch_sha256
+	local commit_full commit7 patchset_sha256 patch_manifest build_adapter_sha256
+	local nginx_config
 
-	commit_full="$(git -C "${src}" rev-parse HEAD)"
-	commit7="$(git -C "${src}" rev-parse --short HEAD)"
-	patch_sha256="$(sha256sum "${patch_file}" | awk '{print $1}')"
+	commit_full="$(git -C "${SOURCELENS_SOURCE_CACHE}" rev-parse HEAD)"
+	commit7="$(git -C "${SOURCELENS_SOURCE_CACHE}" rev-parse --short HEAD)"
+	patchset_sha256="$(sourcelens_patchset_digest)"
+	patch_manifest="$(sourcelens_patch_manifest_json)"
+	build_adapter_sha256="$(sourcelens_build_adapter_digest)"
 	backend_ref="$(sourcelens_backend_image_ref)"
 	frontend_ref="$(sourcelens_frontend_image_ref)"
 	lensnode_ref="$(sourcelens_lensnode_image_ref)"
@@ -253,12 +256,16 @@ stage_runtime_tree() {
 	upstream_frontend_ref="$(sourcelens_upstream_image_ref frontend)"
 	upstream_lensnode_ref="$(sourcelens_upstream_image_ref lensnode)"
 
-	mkdir -p "${sl_root}/deploy/nginx/certs" "${sl_root}/deploy/postgresql/initdb.d" \
+	mkdir -p "${sl_root}/deploy/nginx/certs" "${sl_root}/deploy/nginx/hfl-maintenance" \
+		"${sl_root}/deploy/postgresql/initdb.d" \
 		"${sl_root}/deploy/sentry"
 
 	log "Using upstream SourceLens nginx configuration"
-	cp "${src}/docker/nginx/default.conf" "${sl_root}/deploy/nginx/default.conf"
+	nginx_config="$(sourcelens_upstream_nginx_config "${src}")"
+	cp "${nginx_config}" "${sl_root}/deploy/nginx/default.conf"
 	sourcelens_patch_runtime_nginx "${sl_root}/deploy/nginx/default.conf"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/run-creation-gate-off.conf" \
+		"${sl_root}/deploy/nginx/hfl-maintenance/run-creation-gate.conf"
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-loader.js" \
 		"${sl_root}/deploy/nginx/hfl-sentry-loader.js"
 	printf '%s\n' 'window.__HFL_SOURCELENS_SENTRY__ = Object.freeze({ enabled: false })' \
@@ -284,7 +291,9 @@ stage_runtime_tree() {
 
 	python3 - "${sl_root}/BUILD_INFO.json" \
 		"${SOURCELENS_GIT_URL}" "${SOURCELENS_GIT_REF}" "${commit_full}" "${commit7}" \
-		"${SOURCELENS_VERSION}" "${patch_sha256}" "${SOURCELENS_INSTALL_DIR}" \
+		"${SOURCELENS_VERSION}" "${patchset_sha256}" "${patch_manifest}" \
+		"${build_adapter_sha256}" "${SOURCELENS_BUILD_COMPOSE_FILE}" \
+		"${SOURCELENS_INSTALL_DIR}" \
 		"${SOURCELENS_LENSNODE_IMAGE}" "${SOURCELENS_EMBED_LENSNODE}" \
 		"${backend_ref}" "${frontend_ref}" "${lensnode_ref}" \
 		"${upstream_backend_ref}" "${upstream_frontend_ref}" "${upstream_lensnode_ref}" \
@@ -303,7 +312,10 @@ out = pathlib.Path(sys.argv[1])
     git_commit,
     git_commit_short,
     version,
-    patch_sha256,
+    patchset_sha256,
+    patch_manifest,
+    build_adapter_sha256,
+    build_compose_file,
     install_dir,
     lensnode_image,
     embed_local_lensnode,
@@ -317,7 +329,7 @@ out = pathlib.Path(sys.argv[1])
     frontend_digest,
     lensnode_digest,
     nginx_digest,
-) = sys.argv[2:21]
+) = sys.argv[2:24]
 embed = str(embed_local_lensnode).strip().lower() in {"1", "true", "yes", "on"}
 payload = {
     "enabled": True,
@@ -326,7 +338,10 @@ payload = {
     "git_commit": git_commit,
     "git_commit_short": git_commit_short,
     "version": version,
-    "patch_sha256": patch_sha256,
+    "patchset_sha256": patchset_sha256,
+    "patches": json.loads(patch_manifest),
+    "build_adapter_sha256": build_adapter_sha256,
+    "build_compose_file": build_compose_file,
     "network": "hyperfilelens-bridge",
     "install_dir": install_dir,
     "lensnode_image": lensnode_image,

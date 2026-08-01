@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from django.test import SimpleTestCase
 from rest_framework.exceptions import ValidationError
@@ -8,6 +8,12 @@ from apps.lens_bridge.services.provisioning import _lensnode_matches_workspace
 
 
 class SlClientErrorFormatTests(SimpleTestCase):
+    def tearDown(self):
+        sl_client._ADMIN_ACCESS_TOKEN = None
+        sl_client._ADMIN_REFRESH_TOKEN = None
+        sl_client._ADMIN_ACCESS_EXPIRES_AT = 0.0
+        super().tearDown()
+
     def test_format_non_field_errors(self):
         body = {"non_field_errors": ["selected_dirs path is not available on LensNode: /x"]}
         self.assertIn("selected_dirs", sl_client._format_sl_error(body))
@@ -15,6 +21,121 @@ class SlClientErrorFormatTests(SimpleTestCase):
     def test_format_field_errors(self):
         body = {"name": ["This field is required."]}
         self.assertIn("name", sl_client._format_sl_error(body))
+
+    def test_admin_login_uses_email_credential(self):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"access": "access", "refresh": "refresh"}
+        with (
+            patch.object(sl_client.deploy, "lens_bridge_configured", return_value=True),
+            patch.object(sl_client.deploy, "lens_base_url", return_value="http://lens"),
+            patch.object(
+                sl_client.deploy,
+                "lens_bridge_email",
+                return_value="admin@example.com",
+            ),
+            patch.object(
+                sl_client.deploy,
+                "lens_bridge_password",
+                return_value="secret",
+            ),
+            patch.object(
+                sl_client.deploy,
+                "lens_bridge_legacy_username",
+                return_value="",
+            ),
+            patch.object(sl_client.requests, "post", return_value=response) as post,
+        ):
+            sl_client._login()
+
+        post.assert_called_once_with(
+            "http://lens/api/v1/auth/login",
+            json={"email": "admin@example.com", "password": "secret"},
+            timeout=30,
+        )
+
+    def test_admin_login_falls_back_for_pre_email_sourcelens(self):
+        rejected = MagicMock(status_code=400, text="email unsupported")
+        accepted = MagicMock(status_code=200)
+        accepted.json.return_value = {"access": "access", "refresh": "refresh"}
+        with (
+            patch.object(sl_client.deploy, "lens_bridge_configured", return_value=True),
+            patch.object(sl_client.deploy, "lens_base_url", return_value="http://lens"),
+            patch.object(
+                sl_client.deploy,
+                "lens_bridge_email",
+                return_value="admin@example.com",
+            ),
+            patch.object(
+                sl_client.deploy,
+                "lens_bridge_legacy_username",
+                return_value="admin",
+            ),
+            patch.object(
+                sl_client.deploy,
+                "lens_bridge_password",
+                return_value="secret",
+            ),
+            patch.object(
+                sl_client.requests,
+                "post",
+                side_effect=[rejected, accepted],
+            ) as post,
+        ):
+            sl_client._login()
+
+        self.assertEqual(
+            post.call_args_list,
+            [
+                call(
+                    "http://lens/api/v1/auth/login",
+                    json={"email": "admin@example.com", "password": "secret"},
+                    timeout=30,
+                ),
+                call(
+                    "http://lens/api/v1/auth/login",
+                    json={"username": "admin", "password": "secret"},
+                    timeout=30,
+                ),
+            ],
+        )
+
+    def test_chat_user_login_falls_back_during_mixed_version_upgrade(self):
+        rejected = MagicMock(status_code=400, text="email unsupported")
+        accepted = MagicMock(status_code=200)
+        accepted.json.return_value = {"access": "chat-access"}
+        with (
+            patch.object(sl_client.deploy, "lens_base_url", return_value="http://lens"),
+            patch.object(
+                sl_client.requests,
+                "post",
+                side_effect=[rejected, accepted],
+            ) as post,
+        ):
+            token = sl_client.login_user(
+                email="hfl-u-7@users.hyperfilelens.invalid",
+                password="secret",
+                legacy_username="hfl-u-7",
+            )
+
+        self.assertEqual(token, "chat-access")
+        self.assertEqual(
+            post.call_args_list,
+            [
+                call(
+                    "http://lens/api/v1/auth/login",
+                    json={
+                        "email": "hfl-u-7@users.hyperfilelens.invalid",
+                        "password": "secret",
+                    },
+                    timeout=30,
+                ),
+                call(
+                    "http://lens/api/v1/auth/login",
+                    json={"username": "hfl-u-7", "password": "secret"},
+                    timeout=30,
+                ),
+            ],
+        )
 
 
 class BuildLensEnrollConfigTests(SimpleTestCase):

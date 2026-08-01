@@ -26,7 +26,7 @@ func TestSyncManagedSentryEnvPreservesCredentialsAndReplacesManagedValues(t *tes
 	t.Setenv("SENTRY_ENVIRONMENT", "hfl-production")
 	t.Setenv("SENTRY_RELEASE", "hyperfilelens-agent@0.1.8")
 	t.Setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
-	t.Setenv("HFL_SENTRY_LENSNODE_RELEASE", "hyperfilelens-lensnode@0.1.8-sl0.4.0")
+	t.Setenv("HFL_SENTRY_LENSNODE_RELEASE", "hyperfilelens-lensnode@0.1.8-sl0.20.0")
 
 	changed, err := syncManagedSentryEnv(path)
 	if err != nil {

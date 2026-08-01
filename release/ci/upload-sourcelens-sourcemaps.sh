@@ -20,9 +20,8 @@ fi
 sourcelens_load_config
 sourcelens_resolve_version
 SOURCELENS_BUILD_SOURCE_MAPS=1
-sourcelens_restore_source_dockerfiles "${SOURCELENS_SOURCE_CACHE}"
-sourcelens_patch_frontend_dockerfile_npm_registry "${SOURCELENS_SOURCE_CACHE}"
-sourcelens_patch_frontend_dockerfile_source_maps "${SOURCELENS_SOURCE_CACHE}"
+sourcelens_patch_frontend_dockerfile_npm_registry "${SOURCELENS_BUILD_SOURCE}"
+sourcelens_patch_frontend_dockerfile_source_maps "${SOURCELENS_BUILD_SOURCE}"
 
 tmp="$(mktemp -d)"
 image="hyperfilelens-sourcelens-symbols:${GITHUB_RUN_ID:-local}"
@@ -39,7 +38,7 @@ docker build \
 	--target builder \
 	--build-arg "NPM_REGISTRY=${SOURCELENS_NPM_REGISTRY}" \
 	-t "${image}" \
-	"${SOURCELENS_SOURCE_CACHE}/frontend"
+	"${SOURCELENS_BUILD_SOURCE}/frontend"
 container="$(docker create "${image}")"
 docker cp "${container}:/app/dist/." "${tmp}/"
 find "${tmp}" -type f -name '*.map' -print -quit | grep -q . || {

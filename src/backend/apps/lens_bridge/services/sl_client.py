@@ -74,11 +74,25 @@ def _login() -> None:
     response = requests.post(
         url,
         json={
-            "username": deploy.lens_bridge_username(),
+            "email": deploy.lens_bridge_email(),
             "password": deploy.lens_bridge_password(),
         },
         timeout=30,
     )
+    legacy_username = deploy.lens_bridge_legacy_username()
+    if response.status_code in {400, 401} and legacy_username:
+        logger.info(
+            "SourceLens email login was rejected; retrying the legacy "
+            "username credential for an in-place upgrade."
+        )
+        response = requests.post(
+            url,
+            json={
+                "username": legacy_username,
+                "password": deploy.lens_bridge_password(),
+            },
+            timeout=30,
+        )
     if response.status_code >= 400:
         logger.warning("SourceLens login failed: %s %s", response.status_code, response.text[:500])
         raise LensBridgeError("SourceLens authentication failed.")
@@ -114,18 +128,38 @@ def _refresh_access() -> None:
     _ADMIN_ACCESS_EXPIRES_AT = time.time() + 25 * 60
 
 
-def login_user(*, username: str, password: str) -> str:
-    """Authenticate one ordinary SourceLens user and return its access token."""
+def login_user(
+    *,
+    email: str,
+    password: str,
+    legacy_username: str = "",
+) -> str:
+    """Authenticate one ordinary SourceLens user and return its access token.
+
+    ``legacy_username`` keeps chat available during the short mixed-version
+    window where the new HFL API is live but pre-email SourceLens is still
+    draining. It is never attempted after email authentication succeeds.
+    """
     url = urljoin(_base_url() + "/", "api/v1/auth/login")
     response = requests.post(
         url,
-        json={"username": username, "password": password},
+        json={"email": email, "password": password},
         timeout=30,
     )
+    if response.status_code in {400, 401} and legacy_username:
+        logger.info(
+            "SourceLens chat user email login was rejected; retrying the "
+            "legacy username credential for an in-place upgrade."
+        )
+        response = requests.post(
+            url,
+            json={"username": legacy_username, "password": password},
+            timeout=30,
+        )
     if response.status_code >= 400:
         logger.warning(
-            "SourceLens chat user login failed username=%s status=%s",
-            username,
+            "SourceLens chat user login failed email=%s status=%s",
+            email,
             response.status_code,
         )
         raise LensBridgeError("SourceLens chat user authentication failed.")

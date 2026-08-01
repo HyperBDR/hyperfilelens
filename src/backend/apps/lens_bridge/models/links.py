@@ -533,6 +533,7 @@ class LensSlUserLink(models.Model):
     )
     sl_user_id = models.IntegerField(db_index=True)
     sl_username = models.CharField(max_length=150)
+    sl_email = models.EmailField(blank=True, default="")
     gateway_operator = models.BooleanField(default=False)
     provision_status = models.CharField(
         max_length=16,

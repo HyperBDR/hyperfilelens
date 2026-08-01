@@ -31,7 +31,7 @@ class PlatformOpsIntegrationsApiTest(TestCase):
     )
     @patch(
         "apps.platform_ops.api.views.platform.lens_deploy.sourcelens_version",
-        return_value="v0.4.0",
+        return_value="v0.20.0",
     )
     @patch(
         "apps.platform_ops.api.views.platform.sl_client.ping",
@@ -49,7 +49,7 @@ class PlatformOpsIntegrationsApiTest(TestCase):
         self.assertEqual(response.status_code, 200)
         integration = _payload(response)["integrations"][0]
         self.assertEqual(integration["key"], "sourcelens")
-        self.assertEqual(integration["version"], "v0.4.0")
+        self.assertEqual(integration["version"], "v0.20.0")
         self.assertEqual(
             integration["console_url"],
             "https://console.example.com:11445",

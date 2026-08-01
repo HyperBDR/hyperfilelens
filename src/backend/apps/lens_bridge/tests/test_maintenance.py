@@ -15,6 +15,9 @@ from apps.lens_bridge.services.maintenance import (
 )
 
 
+DIRECT_RUN_UUID = "8f5054d4-6c22-44c3-a050-dda74ad55204"
+
+
 class SourceLensUpgradeGateTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.maintenance.begin_sourcelens_maintenance")
     @patch("apps.lens_bridge.services.maintenance._acquire_run_gate_lock")
@@ -55,7 +58,12 @@ class SourceLensUpgradeGateTests(SimpleTestCase):
     )
     @patch(
         "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.sl_client.request_json",
-        return_value={"status": "done"},
+        side_effect=[
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            {"uuid": "run-uuid", "status": "done"},
+        ],
     )
     @patch(
         "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.LensSessionLink.objects"
@@ -76,15 +84,45 @@ class SourceLensUpgradeGateTests(SimpleTestCase):
                 "hfl_user": object(),
             },
         )()
-        objects.select_related.return_value.filter.return_value = [link]
+        objects.filter.return_value = [link]
 
         self.assertEqual(Command._active_run_count(), 0)
-        request_json.assert_called_once_with(
-            "GET",
-            "/api/lens/runs/run-uuid/",
-            hfl_user=link.hfl_user,
+        request_json.assert_has_calls(
+            [
+                call(
+                    "GET",
+                    "/api/lens/admin/runs/",
+                    params={
+                        "page": 1,
+                        "page_size": 100,
+                        "status": "queued",
+                    },
+                ),
+                call(
+                    "GET",
+                    "/api/lens/admin/runs/",
+                    params={
+                        "page": 1,
+                        "page_size": 100,
+                        "status": "running",
+                    },
+                ),
+                call(
+                    "GET",
+                    "/api/lens/admin/runs/",
+                    params={
+                        "page": 1,
+                        "page_size": 100,
+                        "status": "streaming",
+                    },
+                ),
+                call("GET", "/api/lens/admin/runs/run-uuid/"),
+            ]
         )
-        capture_usage.assert_called_once_with(link, {"status": "done"})
+        capture_usage.assert_called_once_with(
+            link,
+            {"uuid": "run-uuid", "status": "done"},
+        )
         clear_active_run.assert_called_once_with(link)
 
     @patch(
@@ -108,10 +146,89 @@ class SourceLensUpgradeGateTests(SimpleTestCase):
                 "hfl_user": object(),
             },
         )()
-        objects.select_related.return_value.filter.return_value = [link]
+        objects.filter.return_value = [link]
 
         self.assertEqual(Command._active_run_count(), 1)
         request_json.assert_called_once()
+
+    @patch(
+        "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.sl_client.request_json",
+        side_effect=[
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            None,
+        ],
+    )
+    @patch(
+        "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.LensSessionLink.objects"
+    )
+    def test_drain_treats_malformed_run_detail_as_active(
+        self,
+        objects,
+        _request_json,
+    ):
+        link = type(
+            "Link",
+            (),
+            {
+                "active_run_uuid": DIRECT_RUN_UUID,
+                "active_run_status": "running",
+            },
+        )()
+        objects.filter.return_value = [link]
+
+        self.assertEqual(Command._active_run_count(), 1)
+
+    @patch(
+        "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.sl_client.request_json",
+        side_effect=[
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+            {
+                "results": [{"uuid": DIRECT_RUN_UUID, "status": "running"}],
+                "total": 1,
+                "page": 1,
+                "page_size": 100,
+            },
+            {"results": [], "total": 0, "page": 1, "page_size": 100},
+        ],
+    )
+    @patch(
+        "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.LensSessionLink.objects"
+    )
+    def test_drain_includes_runs_created_directly_in_sourcelens(
+        self,
+        objects,
+        _request_json,
+    ):
+        objects.filter.return_value = []
+
+        self.assertEqual(Command._active_run_count(), 1)
+
+    def test_admin_run_scan_rejects_malformed_payloads(self):
+        malformed_payloads = (
+            {},
+            {"results": None, "total": 0},
+            {"results": {}, "total": 0},
+            {"results": [None], "total": 1},
+            {"results": [{"uuid": "not-a-uuid", "status": "running"}], "total": 1},
+            {"results": [{"uuid": DIRECT_RUN_UUID, "status": "unknown"}], "total": 1},
+            {"results": [], "total": None},
+            {"results": [], "total": True},
+            {"results": [], "total": -1},
+            {"results": [{"uuid": DIRECT_RUN_UUID, "status": "running"}], "total": 0},
+            {"results": [], "total": 1},
+            {"results": [{"uuid": DIRECT_RUN_UUID, "status": "running"}], "total": 101},
+            {"results": [{"uuid": DIRECT_RUN_UUID, "status": "done"}], "total": 1},
+        )
+
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload), patch(
+                "apps.lens_bridge.management.commands.sourcelens_upgrade_gate.sl_client.request_json",
+                return_value=payload,
+            ):
+                with self.assertRaises(sl_client.LensBridgeError):
+                    Command._active_admin_runs()
 
     @patch("apps.lens_bridge.services.maintenance.cache")
     def test_maintenance_gate_has_hard_kill_failsafe(self, cache):

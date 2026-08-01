@@ -1,3 +1,4 @@
+# Retired after SourceLens v0.9.1 added native configurable TLS verification.
 diff --git a/lensnode/lensnode/agent_runtime.py b/lensnode/lensnode/agent_runtime.py
 index 39c0df3ed7e1384276a8146b5e12c431336a432b..180fe3d4c31d1fe8e4ef8ea99c2ba00b9d855d0b 100644
 --- a/lensnode/lensnode/agent_runtime.py

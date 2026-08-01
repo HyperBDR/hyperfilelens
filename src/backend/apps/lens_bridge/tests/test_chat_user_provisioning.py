@@ -3,7 +3,9 @@ from unittest.mock import Mock, call, patch
 
 from django.test import SimpleTestCase, override_settings
 
+from apps.lens_bridge.models import LensSlUserLink
 from apps.lens_bridge.services import chat_user_provisioning
+from apps.lens_bridge.services.sl_client import LensBridgeError
 
 
 @override_settings(SECRET_KEY="test-hfl-secret")
@@ -16,9 +18,13 @@ class ChatUserProvisioningTests(SimpleTestCase):
     def test_provisions_chat_user_through_management_api(self, request_json):
         request_json.side_effect = [
             {"count": 0, "results": []},
-            {"id": 23, "username": "hfl-u-7"},
+            {
+                "id": 23,
+                "username": "hfl-u-7",
+                "email": "hfl-u-7@users.hyperfilelens.invalid",
+            },
         ]
-        link = Mock(sl_username="hfl-u-7")
+        link = Mock(sl_username="hfl-u-7", sl_email="")
 
         chat_user_provisioning._provision_remote(
             self.user,
@@ -39,7 +45,7 @@ class ChatUserProvisioningTests(SimpleTestCase):
                     "/api/v1/management/users/",
                     json_body={
                         "username": "hfl-u-7",
-                        "email": "",
+                        "email": "hfl-u-7@users.hyperfilelens.invalid",
                         "password": chat_user_provisioning._sl_password_for_hfl_user(
                             self.user
                         ),
@@ -51,7 +57,144 @@ class ChatUserProvisioningTests(SimpleTestCase):
             ],
         )
         self.assertEqual(link.sl_user_id, 23)
+        self.assertEqual(
+            link.sl_email,
+            "hfl-u-7@users.hyperfilelens.invalid",
+        )
         link.save.assert_called_once()
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_backfills_legacy_chat_user_email(self, request_json):
+        request_json.side_effect = [
+            {
+                "count": 1,
+                "results": [{"id": 23, "username": "hfl-u-7", "email": ""}],
+            },
+            {
+                "id": 23,
+                "username": "hfl-u-7",
+                "email": "hfl-u-7@users.hyperfilelens.invalid",
+            },
+        ]
+        link = Mock(sl_username="hfl-u-7", sl_email="")
+
+        chat_user_provisioning._provision_remote(
+            self.user,
+            link=link,
+            gateway_operator=False,
+        )
+
+        request_json.assert_has_calls(
+            [
+                call(
+                    "PATCH",
+                    "/api/v1/management/users/23/",
+                    json_body={"email": "hfl-u-7@users.hyperfilelens.invalid"},
+                )
+            ]
+        )
+        self.assertEqual(
+            link.sl_email,
+            "hfl-u-7@users.hyperfilelens.invalid",
+        )
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_rejects_unconfirmed_legacy_email_migration(self, request_json):
+        legacy_user = {"id": 23, "username": "hfl-u-7", "email": ""}
+        invalid_updates = (
+            None,
+            [],
+            {"id": 23, "username": "hfl-u-7", "email": "wrong@example.com"},
+        )
+
+        for invalid_update in invalid_updates:
+            with self.subTest(invalid_update=invalid_update):
+                request_json.reset_mock()
+                request_json.side_effect = [
+                    {"count": 1, "results": [legacy_user]},
+                    invalid_update,
+                ]
+                link = Mock(sl_username="hfl-u-7", sl_email="")
+
+                with self.assertRaises(LensBridgeError):
+                    chat_user_provisioning._provision_remote(
+                        self.user,
+                        link=link,
+                        gateway_operator=False,
+                    )
+
+                link.save.assert_not_called()
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.request_json")
+    def test_rejects_invalid_remote_user_identifiers_and_counts(self, request_json):
+        invalid_counts = (True, -1, "invalid", [])
+        for invalid_count in invalid_counts:
+            with self.subTest(invalid_count=invalid_count):
+                request_json.return_value = {
+                    "count": invalid_count,
+                    "results": [],
+                }
+                with self.assertRaises(LensBridgeError):
+                    chat_user_provisioning._find_remote_user("hfl-u-7")
+
+        for invalid_user_id in (True, -1, "invalid", []):
+            with self.subTest(invalid_user_id=invalid_user_id):
+                request_json.return_value = {
+                    "count": 1,
+                    "results": [
+                        {
+                            "id": invalid_user_id,
+                            "username": "hfl-u-7",
+                            "email": "hfl-u-7@users.hyperfilelens.invalid",
+                        }
+                    ],
+                }
+                link = Mock(sl_username="hfl-u-7", sl_email="")
+                with self.assertRaises(LensBridgeError):
+                    chat_user_provisioning._provision_remote(
+                        self.user,
+                        link=link,
+                        gateway_operator=False,
+                    )
+                link.save.assert_not_called()
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning._provision_remote")
+    @patch("apps.lens_bridge.services.chat_user_provisioning.LensSlUserLink.objects")
+    def test_error_link_is_retried(self, objects, provision_remote):
+        link = Mock(
+            provision_status=LensSlUserLink.ProvisionStatus.ERROR,
+            gateway_operator=False,
+            sl_email="hfl-u-7@users.hyperfilelens.invalid",
+        )
+        objects.filter.return_value.first.return_value = link
+
+        result = chat_user_provisioning.ensure_sl_chat_user(self.user)
+
+        self.assertIs(result, link)
+        provision_remote.assert_called_once_with(
+            self.user,
+            link=link,
+            gateway_operator=False,
+        )
+
+    @patch("apps.lens_bridge.services.chat_user_provisioning._provision_remote")
+    @patch("apps.lens_bridge.services.chat_user_provisioning.LensSlUserLink.objects")
+    def test_ready_link_with_current_email_is_not_reprovisioned(
+        self,
+        objects,
+        provision_remote,
+    ):
+        link = SimpleNamespace(
+            provision_status=chat_user_provisioning.LensSlUserLink.ProvisionStatus.READY,
+            gateway_operator=False,
+            sl_email="hfl-u-7@users.hyperfilelens.invalid",
+        )
+        objects.filter.return_value.first.return_value = link
+
+        result = chat_user_provisioning.ensure_sl_chat_user(self.user)
+
+        self.assertIs(result, link)
+        provision_remote.assert_not_called()
 
     @patch("apps.lens_bridge.services.chat_user_provisioning.sl_client.login_user")
     @patch("apps.lens_bridge.services.chat_user_provisioning.ensure_sl_chat_user")
@@ -59,6 +202,7 @@ class ChatUserProvisioningTests(SimpleTestCase):
         ensure_user.return_value = SimpleNamespace(
             sl_user_id=23,
             sl_username="hfl-u-7",
+            sl_email="hfl-u-7@users.hyperfilelens.invalid",
         )
         login_user.return_value = "chat-access-token"
 
@@ -66,6 +210,7 @@ class ChatUserProvisioningTests(SimpleTestCase):
 
         self.assertEqual(token, "chat-access-token")
         login_user.assert_called_once_with(
-            username="hfl-u-7",
+            email="hfl-u-7@users.hyperfilelens.invalid",
             password=chat_user_provisioning._sl_password_for_hfl_user(self.user),
+            legacy_username="hfl-u-7",
         )

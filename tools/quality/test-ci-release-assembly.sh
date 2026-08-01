@@ -45,6 +45,7 @@ make_gzip "${sl}/images/11-sourcelens-lensnode.tar.gz" sourcelens-lensnode
 make_gzip "${sl}/images/12-nginx-stable-alpine.tar.gz" nginx
 mkdir -p "${sl}/sourcelens/deploy/postgresql/initdb.d" \
 	"${sl}/sourcelens/deploy/nginx/certs" \
+	"${sl}/sourcelens/deploy/nginx/hfl-maintenance" \
 	"${sl}/sourcelens/deploy/sentry" \
 	"${sl}/payload/media/gateway-bootstrap"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${sl}/sourcelens/install.sh"
@@ -52,6 +53,9 @@ printf '#!/usr/bin/env python3\n' >"${sl}/sourcelens/patch-env-runtime.py"
 printf '#!/usr/bin/env python3\n' >"${sl}/sourcelens/sync-sentry-runtime.py"
 mkdir -p "${sl}/sourcelens/deploy/nginx"
 printf '/* fixture */\n' >"${sl}/sourcelens/deploy/nginx/hfl-sentry-loader.js"
+printf 'server { listen 443 ssl; }\n' >"${sl}/sourcelens/deploy/nginx/default.conf"
+cp "${ROOT}/deploy/installer/sourcelens/run-creation-gate-off.conf" \
+	"${sl}/sourcelens/deploy/nginx/hfl-maintenance/run-creation-gate.conf"
 printf '# fixture\n' >"${sl}/sourcelens/deploy/sentry/hfl-sentry-sitecustomize.py"
 printf 'services: {}\n' >"${sl}/sourcelens/docker-compose.yml"
 printf 'DJANGO_DEBUG=true\n' >"${sl}/sourcelens/.env.example"
@@ -62,18 +66,21 @@ cat >"${sl}/sourcelens/BUILD_INFO.json" <<JSON
 {
   "enabled": true,
   "git_url": "https://github.com/HyperBDR/sourcelens.git",
-  "git_ref": "v0.4.0",
+  "git_ref": "v0.20.0",
   "git_commit": "0000000000000000000000000000000000000000",
   "git_commit_short": "0000000",
-  "version": "0.4.0",
-  "patch_sha256": "fixture",
+  "version": "0.20.0",
+  "patchset_sha256": "fixture",
+  "patches": [],
+  "build_adapter_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "build_compose_file": "docker-compose.standalone.yml",
   "network": "hyperfilelens-bridge",
   "install_dir": "/opt/hyperfilelens/sourcelens",
   "lensnode_image": "hyperfilelens-sourcelens-lensnode:latest",
   "images": {
-    "backend": {"ref": "hyperfilelens-sourcelens-backend:${version}-sl0.4.0", "upstream_ref": "example/backend:v0.4.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
-    "frontend": {"ref": "hyperfilelens-sourcelens-frontend:${version}-sl0.4.0", "upstream_ref": "example/frontend:v0.4.0", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
-    "lensnode": {"ref": "hyperfilelens-sourcelens-lensnode:${version}-sl0.4.0", "upstream_ref": "example/lensnode:v0.4.0", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+    "backend": {"ref": "hyperfilelens-sourcelens-backend:${version}-sl0.20.0", "upstream_ref": "example/backend:v0.20.0", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+    "frontend": {"ref": "hyperfilelens-sourcelens-frontend:${version}-sl0.20.0", "upstream_ref": "example/frontend:v0.20.0", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+    "lensnode": {"ref": "hyperfilelens-sourcelens-lensnode:${version}-sl0.20.0", "upstream_ref": "example/lensnode:v0.20.0", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
     "nginx": {"ref": "hyperfilelens-sourcelens-nginx:stable-alpine", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"}
   }
 }
