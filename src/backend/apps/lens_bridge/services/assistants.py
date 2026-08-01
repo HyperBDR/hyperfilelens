@@ -604,9 +604,9 @@ def _require_manual_assistant_management(
 def _delete_sl_assistant(assistant_uuid: uuid_lib.UUID) -> None:
     """Retire an Assistant through SourceLens' supported DELETE contract.
 
-    Bundled SourceLens 0.4.0 implements this endpoint as a soft retirement by
-    setting the Assistant status to ``disabled``. HFL treats an existing 404 as
-    idempotent success but preserves every other error for durable retry.
+    SourceLens implements this endpoint as a soft retirement. HFL treats an
+    existing 404 as idempotent success but preserves every other error for
+    durable retry.
     """
 
     try:

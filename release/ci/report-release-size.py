@@ -8,6 +8,8 @@ import pathlib
 import sys
 from collections import defaultdict
 
+MAX_RELEASE_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+
 
 def category(relative: pathlib.PurePosixPath) -> str:
     value = relative.as_posix()
@@ -59,6 +61,13 @@ def main() -> int:
     if summary:
         with pathlib.Path(summary).open("a", encoding="utf-8") as stream:
             stream.write(report)
+    if archive_bytes > MAX_RELEASE_ARCHIVE_BYTES:
+        print(
+            "ERROR: offline release archive exceeds the 2 GiB product limit "
+            f"({archive_bytes} > {MAX_RELEASE_ARCHIVE_BYTES} bytes).",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

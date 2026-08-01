@@ -696,7 +696,7 @@ print_urls() {
 	local sl_env="${ROOT}/data/sourcelens/config/.env"
 	local seed seed_email seed_pass seed_org sourcelens_mode sourcelens_console_port
 	local website_bind website_port tenant_bind tenant_port admin_bind admin_port sourcelens_console_bind
-	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_user lens_pass
+	local pg_user pg_pass pg_db frontend_url lens_base lens_gw lens_email lens_pass
 	local sl_user sl_email sl_pass
 
 	seed="$(read_env_value_or SEED_INITIAL_DATA 1 "${env_file}")"
@@ -722,7 +722,7 @@ print_urls() {
 	else
 		lens_gw="$(read_env_value_or LENS_GATEWAY_BASE_URL "${frontend_url%/}/sourcelens" "${env_file}")"
 	fi
-	lens_user="$(read_env_value_or LENS_BRIDGE_USERNAME admin "${env_file}")"
+	lens_email="$(read_env_value_or LENS_BRIDGE_EMAIL admin@example.com "${env_file}")"
 	lens_pass="$(read_env_value_or LENS_BRIDGE_PASSWORD adminpassword "${env_file}")"
 
 	cat <<EOF
@@ -782,7 +782,7 @@ SourceLens
 
   HFL bridge       ${lens_base}
   Gateway URL      ${lens_gw}
-  Bridge account   ${lens_user} / ${lens_pass}  (LENS_BRIDGE_* in .env)
+  Bridge account   ${lens_email} / ${lens_pass}  (LENS_BRIDGE_* in .env)
 EOF
 		if [[ -f "${sl_env}" ]]; then
 			echo "  SL config        data/sourcelens/config/.env"
@@ -794,7 +794,7 @@ SourceLens
   Mode             external (not managed by stack.sh)
   Base URL         ${lens_base}
   Gateway URL      ${lens_gw}
-  Bridge account   ${lens_user} / ${lens_pass}  (LENS_BRIDGE_* in .env)
+  Bridge account   ${lens_email} / ${lens_pass}  (LENS_BRIDGE_* in .env)
 EOF
 	fi
 

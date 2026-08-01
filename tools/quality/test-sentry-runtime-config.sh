@@ -111,15 +111,15 @@ python3 "${ROOT}/deploy/installer/sourcelens/patch-env-runtime.py" "${sl_env}"
 grep -Fx 'SENTRY_ENABLED=true' "${sl_env}" >/dev/null
 grep -Fx 'SENTRY_DSN=https://backend@sentry.example.com/41' "${sl_env}" >/dev/null
 grep -Fx 'SENTRY_SEND_DEFAULT_PII=false' "${sl_env}" >/dev/null
-printf '%s\n' '{"version":"0.4.0"}' >"${tmp}/BUILD_INFO.json"
+printf '%s\n' '{"version":"0.20.0"}' >"${tmp}/BUILD_INFO.json"
 python3 "${ROOT}/deploy/installer/sourcelens/sync-sentry-runtime.py" \
 	--parent-env "${env_file}" \
 	--sourcelens-env "${sl_env}" \
 	--build-info "${tmp}/BUILD_INFO.json" \
 	--frontend-config "${tmp}/sl-sentry-config.js"
-grep -Fx 'SENTRY_RELEASE="hyperfilelens-sourcelens@unknown-sl0.4.0"' "${sl_env}" >/dev/null
+grep -Fx 'SENTRY_RELEASE="hyperfilelens-sourcelens@unknown-sl0.20.0"' "${sl_env}" >/dev/null
 grep -F '"enabled":true' "${tmp}/sl-sentry-config.js" >/dev/null
-grep -F 'hyperfilelens-sourcelens-frontend@unknown-sl0.4.0' "${tmp}/sl-sentry-config.js" >/dev/null
+grep -F 'hyperfilelens-sourcelens-frontend@unknown-sl0.20.0' "${tmp}/sl-sentry-config.js" >/dev/null
 [[ "$(stat -c '%a' "${sl_env}")" == "600" ]]
 [[ "$(stat -c '%a' "${tmp}/sl-sentry-config.js")" == "644" ]]
 python3 - "${ROOT}/deploy/installer/apply-runtime-config.py" \
@@ -245,7 +245,7 @@ global.window = {
     enabled: true,
     dsn: 'https://public@sentry.example.com/42',
     environment: 'hfl-test',
-    release: 'hyperfilelens-sourcelens-frontend@main-0123456-sl0.4.0',
+    release: 'hyperfilelens-sourcelens-frontend@main-0123456-sl0.20.0',
     tracesSampleRate: 0.1,
   },
   location: { origin: 'https://app.example.com' },

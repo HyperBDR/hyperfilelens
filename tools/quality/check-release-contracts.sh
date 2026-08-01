@@ -31,8 +31,13 @@ main_actual="$(release_package_basename_for_version main-69f809f 69F809F)"
 
 # shellcheck source=../sourcelens/common.sh
 source "${ROOT}/tools/sourcelens/common.sh"
+sourcelens_load_config
 for function_name in \
 	sourcelens_build_app_images \
+	sourcelens_build_adapter_digest \
+	sourcelens_component_build_identity \
+	sourcelens_effective_build_inputs_digest \
+	sourcelens_prepare_build_source \
 	sourcelens_patch_compose_npm_registry \
 	sourcelens_patch_runtime_nginx; do
 	declare -F "${function_name}" >/dev/null || {
@@ -44,7 +49,7 @@ done
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
-cat >"${tmp}/docker-compose.yml" <<'YAML'
+cat >"${tmp}/docker-compose.standalone.yml" <<'YAML'
 services:
   frontend:
     build:
@@ -55,21 +60,127 @@ services:
 YAML
 sourcelens_patch_compose_npm_registry "${tmp}"
 sourcelens_patch_compose_npm_registry "${tmp}"
-[[ "$(grep -c 'NPM_REGISTRY:' "${tmp}/docker-compose.yml")" -eq 1 ]] || {
+[[ "$(grep -c 'NPM_REGISTRY:' "${tmp}/docker-compose.standalone.yml")" -eq 1 ]] || {
 	printf 'ERROR: SourceLens npm registry Compose patch is not idempotent\n' >&2
 	exit 1
 }
-grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' "${tmp}/docker-compose.yml" >/dev/null
+grep -F 'NPM_REGISTRY: ${NPM_REGISTRY:-}' \
+	"${tmp}/docker-compose.standalone.yml" >/dev/null
 
 cat >"${tmp}/nginx.conf" <<'NGINX'
-ssl_certificate /etc/nginx/certs/nginx-selfsigned.crt;
-ssl_certificate_key /etc/nginx/certs/nginx-selfsigned.key;
-set $ui_upstream http://frontend:80;
+server {
+    listen 443 ssl;
+    ssl_certificate /etc/nginx/certs/nginx-selfsigned.crt;
+    ssl_certificate_key /etc/nginx/certs/nginx-selfsigned.key;
+    set $ui_upstream http://frontend:80;
+    location / {
+        proxy_pass $ui_upstream;
+    }
+}
 NGINX
+sourcelens_patch_runtime_nginx "${tmp}/nginx.conf"
 sourcelens_patch_runtime_nginx "${tmp}/nginx.conf"
 grep -F '/etc/nginx/certs/tls.crt' "${tmp}/nginx.conf" >/dev/null
 grep -F '/etc/nginx/certs/tls.key' "${tmp}/nginx.conf" >/dev/null
 grep -F 'set $ui_upstream http://ui:80;' "${tmp}/nginx.conf" >/dev/null
+[[ "$(grep -Fc 'include /etc/nginx/hfl-maintenance/run-creation-gate.conf;' "${tmp}/nginx.conf")" -eq 1 ]]
+[[ "$(grep -Fc 'if ($hfl_sourcelens_run_creation_blocked)' "${tmp}/nginx.conf")" -eq 1 ]]
+
+adapter_digest="$(sourcelens_build_adapter_digest)"
+[[ "${adapter_digest}" =~ ^[0-9a-f]{64}$ ]]
+stamp_amd64="$({
+	SOURCELENS_VERSION=0.20.0
+	SOURCELENS_DOCKER_PLATFORM=linux/amd64
+	SOURCELENS_BUILD_COMPOSE_FILE=docker-compose.standalone.yml
+	sourcelens_current_build_stamp
+})"
+stamp_arm64="$({
+	SOURCELENS_VERSION=0.20.0
+	SOURCELENS_DOCKER_PLATFORM=linux/arm64
+	SOURCELENS_BUILD_COMPOSE_FILE=docker-compose.standalone.yml
+	sourcelens_current_build_stamp
+})"
+[[ "${stamp_amd64}" != "${stamp_arm64}" ]]
+grep -F ':linux/amd64:docker-compose.standalone.yml:' <<<"${stamp_amd64}" >/dev/null
+while IFS='=' read -r input_name input_value; do
+	changed_stamp="$(
+		(
+			export "${input_name}=${input_value}"
+			SOURCELENS_VERSION=0.20.0
+			SOURCELENS_DOCKER_PLATFORM=linux/amd64
+			SOURCELENS_BUILD_COMPOSE_FILE=docker-compose.standalone.yml
+			sourcelens_current_build_stamp
+		)
+	)"
+	if [[ "${changed_stamp}" == "${stamp_amd64}" ]]; then
+		printf 'ERROR: SourceLens build input does not invalidate the reuse stamp: %s\n' \
+			"${input_name}" >&2
+		exit 1
+	fi
+done <<'BUILD_INPUTS'
+SOURCELENS_APT_MIRROR=https://mirror.example.invalid/debian
+SOURCELENS_PIP_INDEX_URL=https://packages.example.invalid/simple
+SOURCELENS_PIP_TRUSTED_HOST=packages.example.invalid
+SOURCELENS_UV_HTTP_TIMEOUT=321
+SOURCELENS_UV_CONCURRENT_DOWNLOADS=7
+SOURCELENS_PIP_RETRY_MAX=9
+SOURCELENS_PIP_RETRY_DELAY=11
+SOURCELENS_UV_VERSION=0.10.3
+SOURCELENS_NPM_REGISTRY=https://npm.example.invalid
+SOURCELENS_BUILD_SOURCE_MAPS=1
+SOURCELENS_UPSTREAM_IMAGE_PREFIX=example-build-prefix
+APP_RELEASE_DATE=2099-01-01
+VITE_API_BASE_URL=https://api.example.invalid
+VITE_TURNSTILE_SITE_KEY=site-key
+VITE_SENTRY_DSN=https://public@example.invalid/1
+VITE_SENTRY_ENVIRONMENT=contract
+VITE_SENTRY_TRACES_SAMPLE_RATE=0.75
+VITE_SENTRY_SEND_DEFAULT_PII=true
+VITE_GA_ID=G-CONTRACT
+BUILD_INPUTS
+backend_inputs="$(sourcelens_effective_build_inputs_digest backend)"
+frontend_inputs="$(sourcelens_effective_build_inputs_digest frontend)"
+npm_backend_inputs="$({
+	SOURCELENS_NPM_REGISTRY=https://npm.example.invalid
+	sourcelens_effective_build_inputs_digest backend
+})"
+npm_frontend_inputs="$({
+	SOURCELENS_NPM_REGISTRY=https://npm.example.invalid
+	sourcelens_effective_build_inputs_digest frontend
+})"
+pip_backend_inputs="$({
+	SOURCELENS_PIP_INDEX_URL=https://packages.example.invalid/simple
+	sourcelens_effective_build_inputs_digest backend
+})"
+pip_frontend_inputs="$({
+	SOURCELENS_PIP_INDEX_URL=https://packages.example.invalid/simple
+	sourcelens_effective_build_inputs_digest frontend
+})"
+[[ "${npm_backend_inputs}" == "${backend_inputs}" ]]
+[[ "${npm_frontend_inputs}" != "${frontend_inputs}" ]]
+[[ "${pip_backend_inputs}" != "${backend_inputs}" ]]
+[[ "${pip_frontend_inputs}" == "${frontend_inputs}" ]]
+
+component_identity="$({
+	SOURCELENS_VERSION=0.20.0
+	SOURCELENS_BUILD_COMPOSE_FILE=docker-compose.standalone.yml
+	sourcelens_component_build_identity backend 0123456789abcdef
+})"
+version_identity="$({
+	SOURCELENS_VERSION=0.20.1
+	SOURCELENS_BUILD_COMPOSE_FILE=docker-compose.standalone.yml
+	sourcelens_component_build_identity backend 0123456789abcdef
+})"
+compose_identity="$({
+	SOURCELENS_VERSION=0.20.0
+	SOURCELENS_BUILD_COMPOSE_FILE=docker-compose.alternate.yml
+	sourcelens_component_build_identity backend 0123456789abcdef
+})"
+[[ "${version_identity}" != "${component_identity}" ]]
+[[ "${compose_identity}" != "${component_identity}" ]]
+grep -F 'source_version=0.20.0' <<<"${component_identity}" >/dev/null
+grep -F 'build_compose_file=docker-compose.standalone.yml' \
+	<<<"${component_identity}" >/dev/null
 
 grep -F 'archive.extractall(destination, filter="data")' \
 	"${ROOT}/src/agent/scripts/package.sh" >/dev/null
@@ -87,16 +198,48 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.4.0}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.20.0}"' \
+	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
+grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
 grep -F 'SOURCELENS_UV_VERSION="${SOURCELENS_UV_VERSION:-0.10.2}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
 grep -F 'set_key("DJANGO_DEBUG", "true")' \
 	"${ROOT}/deploy/installer/sourcelens/patch-env-runtime.py" >/dev/null
+grep -F 'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+grep -F './deploy/nginx/hfl-maintenance:/etc/nginx/hfl-maintenance:ro' \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+grep -F 'map "$request_method:$uri" $hfl_sourcelens_run_creation_blocked' \
+	"${ROOT}/deploy/installer/sourcelens/run-creation-gate-off.conf" >/dev/null
+python3 - "${ROOT}/deploy/installer/install.sh" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+expected = """\
+\t\tbegin_sourcelens_maintenance_gate
+\t\tstop_bundled_sourcelens
+\t\tSOURCELENS_UPGRADE_STARTED=1
+\t\tinstall_bundled_sourcelens
+"""
+if expected not in text:
+    raise SystemExit(
+        "SourceLens replacement must be marked started only after shutdown succeeds"
+    )
+upgrade = text[text.index("cmd_upgrade() {") : text.index("\nmain() {")]
+if not (
+    upgrade.index("apply_upgrade_files")
+    < upgrade.index("configure_lens_bridge_env")
+    < upgrade.index('compose_color "${target_color}" up')
+):
+    raise SystemExit(
+        "SourceLens bridge environment must be finalized before candidate startup"
+    )
+PY
 
 sourcelens_common="${ROOT}/tools/sourcelens/common.sh"
 sourcelens_build_body="$(sed -n '/^sourcelens_build_app_images()/,/^}/p' "${sourcelens_common}")"
-grep -F 'http://archive.ubuntu.com/ubuntu' <<<"${sourcelens_build_body}" >/dev/null
 grep -F 'https://deb.debian.org/debian' <<<"${sourcelens_build_body}" >/dev/null
 grep -F 'https://pypi.org/simple' <<<"${sourcelens_build_body}" >/dev/null
 if grep -F 'mirrors.tuna.tsinghua.edu.cn' <<<"${sourcelens_build_body}" >/dev/null; then
@@ -120,14 +263,46 @@ for dockerfile in "${tmp}/source-patch/Dockerfile" "${tmp}/source-patch/lensnode
 	grep -F 'ARG UV_VERSION=0.10.2' "${dockerfile}" >/dev/null
 	grep -F '"uv==${UV_VERSION}"' "${dockerfile}" >/dev/null
 done
+cat >"${tmp}/source-patch/lensnode/Dockerfile" <<'DOCKERFILE'
+# syntax=docker/dockerfile:1.6
+FROM python:3.12-slim
+ARG PIP_TRUSTED_HOST=pypi.org
+ARG UV_HTTP_TIMEOUT=120
+ARG UV_CONCURRENT_DOWNLOADS=2
+ARG UV_VERSION=0.10.2
+ENV UV_HTTP_TIMEOUT=${UV_HTTP_TIMEOUT} \
+    UV_CONCURRENT_DOWNLOADS=${UV_CONCURRENT_DOWNLOADS}
+RUN pip install "uv==${UV_VERSION}"
+RUN uv pip install --system . \
+    && rm -rf /root/.cache /tmp/*
+DOCKERFILE
+sourcelens_patch_dockerfile_pip_resilience "${tmp}/source-patch" 5 5
+resilience_digest="$(sha256sum \
+	"${tmp}/source-patch/Dockerfile" \
+	"${tmp}/source-patch/lensnode/Dockerfile")"
+sourcelens_patch_dockerfile_pip_resilience "${tmp}/source-patch" 5 5
+[[ "${resilience_digest}" == "$(sha256sum \
+	"${tmp}/source-patch/Dockerfile" \
+	"${tmp}/source-patch/lensnode/Dockerfile")" ]]
+for dockerfile in "${tmp}/source-patch/Dockerfile" "${tmp}/source-patch/lensnode/Dockerfile"; do
+	grep -F -- '--mount=type=cache,target=/opt/hfl-build-cache/uv,sharing=locked' \
+		"${dockerfile}" >/dev/null
+	if grep -F -- '--mount=type=cache,target=/root/.cache/' "${dockerfile}" >/dev/null; then
+		printf 'ERROR: SourceLens cache mount conflicts with upstream /root/.cache cleanup\n' >&2
+		exit 1
+	fi
+	grep -F 'hfl_retry uv pip install' "${dockerfile}" >/dev/null
+done
+grep -F 'rm -rf /root/.cache /tmp/*' \
+	"${tmp}/source-patch/lensnode/Dockerfile" >/dev/null
 
-cat >"${tmp}/source-patch/docker-compose.yml" <<'YAML'
+cat >"${tmp}/source-patch/docker-compose.standalone.yml" <<'YAML'
 services:
   backend-api:
     build:
       context: .
       args:
-        APT_MIRROR_URL: ${APT_MIRROR_URL:-https://mirrors.tuna.tsinghua.edu.cn/ubuntu}
+        APT_MIRROR_URL: ${APT_MIRROR_URL:-https://mirrors.tuna.tsinghua.edu.cn/debian}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
   lensnode:
@@ -147,18 +322,80 @@ sourcelens_patch_compose_build_sources \
 	pypi.org
 sourcelens_patch_compose_uv_network "${tmp}/source-patch" 120 2 0.10.2
 if grep -F 'mirrors.tuna.tsinghua.edu.cn' \
-	"${tmp}/source-patch/docker-compose.yml" >/dev/null; then
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null; then
 	printf 'ERROR: patched SourceLens Compose still defaults to a third-party mirror\n' >&2
 	exit 1
 fi
-grep -F 'APT_MIRROR_URL: ${APT_MIRROR_URL:-http://archive.ubuntu.com/ubuntu}' \
-	"${tmp}/source-patch/docker-compose.yml" >/dev/null
+grep -F 'APT_MIRROR_URL: ${APT_MIRROR_URL:-https://deb.debian.org/debian}' \
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 grep -F 'APT_MIRROR_URL: ${DEBIAN_APT_MIRROR_URL:-https://deb.debian.org/debian}' \
-	"${tmp}/source-patch/docker-compose.yml" >/dev/null
+	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 [[ "$(grep -Fc 'PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}' \
-	"${tmp}/source-patch/docker-compose.yml")" -eq 2 ]]
+	"${tmp}/source-patch/docker-compose.standalone.yml")" -eq 2 ]]
 [[ "$(grep -Fc 'UV_VERSION: ${UV_VERSION:-0.10.2}' \
-	"${tmp}/source-patch/docker-compose.yml")" -eq 2 ]]
+	"${tmp}/source-patch/docker-compose.standalone.yml")" -eq 2 ]]
+
+grep -F '# SourceLens v0.20.0 requires no HFL functional patches.' \
+	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
+[[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
+if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \
+	|| -e "${ROOT}/tools/sourcelens/lensnode-patch.sh" ]]; then
+	printf 'ERROR: retired SourceLens TLS patch remains active\n' >&2
+	exit 1
+fi
+[[ "$(sourcelens_patch_manifest_json)" == "[]" ]]
+[[ "$(sourcelens_patchset_digest | wc -c)" -eq 65 ]]
+
+original_build_dir="${SOURCELENS_BUILD_DIR}"
+original_source_cache="${SOURCELENS_SOURCE_CACHE}"
+original_build_source="${SOURCELENS_BUILD_SOURCE}"
+original_patch_root="${SOURCELENS_PATCH_ROOT}"
+SOURCELENS_BUILD_DIR="${tmp}/disposable-source"
+SOURCELENS_SOURCE_CACHE="${SOURCELENS_BUILD_DIR}/source"
+SOURCELENS_BUILD_SOURCE="${SOURCELENS_BUILD_DIR}/worktree"
+mkdir -p "${SOURCELENS_SOURCE_CACHE}/nested"
+git -C "${SOURCELENS_SOURCE_CACHE}" init -q
+printf 'pristine\n' >"${SOURCELENS_SOURCE_CACHE}/tracked.txt"
+printf 'submodule payload\n' >"${SOURCELENS_SOURCE_CACHE}/nested/payload.txt"
+git -C "${SOURCELENS_SOURCE_CACHE}" add tracked.txt nested/payload.txt
+git -C "${SOURCELENS_SOURCE_CACHE}" \
+	-c user.name=contract -c user.email=contract@example.invalid \
+	commit -qm fixture
+sourcelens_prepare_build_source
+[[ -z "$(git -C "${SOURCELENS_SOURCE_CACHE}" status --porcelain)" ]]
+[[ "$(<"${SOURCELENS_BUILD_SOURCE}/nested/payload.txt")" == "submodule payload" ]]
+[[ ! -e "${SOURCELENS_BUILD_SOURCE}/.git" ]]
+mkdir -p "${tmp}/patches/active"
+printf 'active/fixture.patch\n' >"${tmp}/patches/series"
+printf 'patched\n' >"${SOURCELENS_SOURCE_CACHE}/tracked.txt"
+git -C "${SOURCELENS_SOURCE_CACHE}" diff --full-index -- tracked.txt \
+	>"${tmp}/patches/active/fixture.patch"
+git -C "${SOURCELENS_SOURCE_CACHE}" checkout -- tracked.txt
+sed -E -i \
+	's/^index ([0-9a-f]{12})[0-9a-f]*\.\.([0-9a-f]{12})[0-9a-f]*/index \1..\2/' \
+	"${tmp}/patches/active/fixture.patch"
+SOURCELENS_PATCH_ROOT="${tmp}/patches"
+sourcelens_apply_hfl_patch_series "${SOURCELENS_BUILD_SOURCE}"
+[[ "$(<"${SOURCELENS_BUILD_SOURCE}/tracked.txt")" == "patched" ]]
+[[ "$(<"${SOURCELENS_SOURCE_CACHE}/tracked.txt")" == "pristine" ]]
+[[ "$(sourcelens_patch_manifest_json)" == *'"file":"active/fixture.patch"'* ]]
+SOURCELENS_BUILD_DIR="${original_build_dir}"
+SOURCELENS_SOURCE_CACHE="${original_source_cache}"
+SOURCELENS_BUILD_SOURCE="${original_build_source}"
+SOURCELENS_PATCH_ROOT="${original_patch_root}"
+
+grep -F 'MAX_RELEASE_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024' \
+	"${ROOT}/release/ci/report-release-size.py" >/dev/null
+for data_dir in document-attachments deliverables; do
+	grep -F "./data/${data_dir}:/opt/${data_dir}" \
+		"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+done
+grep -F 'stop_grace_period: 270s' \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+grep -F 'LENSNODE_DRAIN_TIMEOUT_S: "240"' \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
+grep -F 'LENSNODE_TLS_SKIP_VERIFY: "${HFL_INSECURE_TLS}"' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 
 workflow="${ROOT}/.github/workflows/artifact_pipeline.yml"
 release_workflow="${ROOT}/.github/workflows/release.yml"

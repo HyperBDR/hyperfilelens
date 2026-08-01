@@ -177,8 +177,11 @@ download_bootstrap_file() {
 
 lensnode_image_supports_insecure_tls() {
 	local ref=$1
-	docker run --rm -e LENSNODE_INSECURE_TLS=1 "${ref}" \
-		python -c "from lensnode.tls import tls_insecure_enabled; raise SystemExit(0 if tls_insecure_enabled() else 1)" \
+	docker run --rm \
+		-e LENSNODE_TLS_SKIP_VERIFY=1 \
+		-e LENSNODE_INSECURE_TLS=1 \
+		"${ref}" python -c \
+		'import ssl; import lensnode.tls as tls; from lensnode.config import load_config; config = load_config(); native = getattr(config, "tls_skip_verify", False) and hasattr(tls, "create_ssl_context") and tls.create_ssl_context(skip_verify=True).verify_mode == ssl.CERT_NONE; legacy = hasattr(tls, "tls_insecure_enabled") and tls.tls_insecure_enabled(); raise SystemExit(0 if native or legacy else 1)' \
 		>/dev/null 2>&1
 }
 
@@ -194,7 +197,7 @@ load_lensnode_image() {
 		oneprocloud/sourcelens-lensnode:latest; do
 		if docker image inspect "${ref}" >/dev/null 2>&1; then
 			if ! lensnode_image_supports_insecure_tls "${ref}"; then
-				hfl_fail "LensNode image ${ref} is missing HFL TLS bypass support (lensnode.tls); republish gateway-bootstrap bundle from patched SourceLens LensNode on the console host" 5
+				hfl_fail "LensNode image ${ref} is missing configurable TLS verification support" 5
 			fi
 			return 0
 		fi

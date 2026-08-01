@@ -84,8 +84,13 @@ def local_platform_lens_gateway_base_url() -> str:
     return f"https://127.0.0.1:{port}{LENS_GATEWAY_PUBLIC_PATH}"
 
 
-def lens_bridge_username() -> str:
-    """SL service account login username."""
+def lens_bridge_email() -> str:
+    """SL service account login email."""
+    return env_str("LENS_BRIDGE_EMAIL", "")
+
+
+def lens_bridge_legacy_username() -> str:
+    """Legacy SL login used only while upgrading pre-email releases."""
     return env_str("LENS_BRIDGE_USERNAME", "")
 
 
@@ -94,4 +99,4 @@ def lens_bridge_password() -> str:
 
 
 def lens_bridge_configured() -> bool:
-    return bool(lens_base_url() and lens_bridge_username() and lens_bridge_password())
+    return bool(lens_base_url() and lens_bridge_email() and lens_bridge_password())

@@ -25,7 +25,9 @@ UPGRADE_PREVIOUS_COLOR=""
 UPGRADE_LEGACY_API_CID=""
 UPGRADE_TARGET_COLOR=""
 UPGRADE_TARGET_VERSION=""
+UPGRADE_BACKUP_DIR=""
 SOURCELENS_MAINTENANCE_ARMED=0
+SOURCELENS_PROXY_GATE_ARMED=0
 SOURCELENS_UPGRADE_STARTED=0
 UPGRADE_HFL_COMMITTED=0
 UPGRADE_HFL_CUTOVER_ATTEMPTED=0
@@ -183,6 +185,12 @@ cleanup_upgrade_and_finish() {
 			warn "SourceLens recovery did not become healthy; keeping the maintenance gate until its fail-safe lease expires"
 		fi
 	fi
+	# The Nginx gate has no cache lease. Always disarm its persisted file and
+	# reload/restart Nginx when possible, even when application recovery failed.
+	if [[ "${SOURCELENS_PROXY_GATE_ARMED}" == "1" ]]; then
+		clear_sourcelens_proxy_gate \
+			|| warn "SourceLens direct Run gate is disabled on disk, but Nginx could not be refreshed"
+	fi
 	cleanup_upgrade_tmp
 	finish_session "${rc}"
 }
@@ -253,6 +261,9 @@ recover_upgrade_services() {
 		ok "best-effort service recovery command completed; database backups were not restored automatically"
 		return 0
 	else
+		if [[ "${SOURCELENS_UPGRADE_STARTED}" == "1" && -n "${UPGRADE_BACKUP_DIR}" ]]; then
+			warn "bundled SourceLens recovery may require restoring sourcelens-postgresql.dump and config-and-data.tar.gz from ${UPGRADE_BACKUP_DIR}"
+		fi
 		warn "best-effort service recovery was incomplete; inspect container status and the managed backup before manual recovery"
 		return 1
 	fi
@@ -833,6 +844,8 @@ restore_previous_hfl_color() {
 
 begin_sourcelens_maintenance_gate() {
 	local timeout_seconds="${SOURCELENS_DRAIN_TIMEOUT_SECONDS:-600}"
+	arm_sourcelens_proxy_gate \
+		|| die "could not arm the SourceLens direct Run creation gate"
 	SOURCELENS_MAINTENANCE_ARMED=1
 	compose_in_root exec -T "$(active_api_service)" \
 		python manage.py sourcelens_upgrade_gate begin --timeout "${timeout_seconds}"
@@ -842,6 +855,104 @@ clear_sourcelens_maintenance_gate() {
 	compose_in_root exec -T "$(active_api_service)" \
 		python manage.py sourcelens_upgrade_gate end
 	SOURCELENS_MAINTENANCE_ARMED=0
+}
+
+sourcelens_proxy_gate_path() {
+	printf '%s/deploy/nginx/hfl-maintenance/run-creation-gate.conf' \
+		"${SOURCELENS_INSTALL_DIR}"
+}
+
+write_sourcelens_proxy_gate() {
+	local state=$1 path directory temporary rule=""
+	path="$(sourcelens_proxy_gate_path)"
+	directory="$(dirname "${path}")"
+	case "${state}" in
+	on)
+		rule='    "~^POST:/api/lens/sessions/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/runs/$" 1;'
+		;;
+	off) ;;
+	*) return 2 ;;
+	esac
+	mkdir -p "${directory}"
+	temporary="$(mktemp "${directory}/.run-creation-gate.XXXXXX")"
+	{
+		printf '%s\n' \
+			'# HFL-owned SourceLens maintenance gate; updated atomically by install.sh.' \
+			'map "$request_method:$uri" $hfl_sourcelens_run_creation_blocked {' \
+			'    default 0;'
+		[[ -n "${rule}" ]] && printf '%s\n' "${rule}"
+		printf '%s\n' '}'
+	} >"${temporary}"
+	chmod 644 "${temporary}"
+	mv -f "${temporary}" "${path}"
+}
+
+sourcelens_nginx_running() {
+	local container_id
+	container_id="$(sourcelens_compose ps -q nginx 2>/dev/null || true)"
+	[[ -n "${container_id}" ]] \
+		&& [[ "$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)" == "true" ]]
+}
+
+sourcelens_nginx_has_proxy_gate() {
+	sourcelens_compose exec -T nginx nginx -T 2>&1 \
+		| grep -F 'if ($hfl_sourcelens_run_creation_blocked)' >/dev/null
+}
+
+recreate_sourcelens_nginx_with_proxy_gate() {
+	local timeout_seconds="${SOURCELENS_PROXY_GATE_BOOTSTRAP_TIMEOUT_SECONDS:-120}"
+	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || return 2
+	warn "Legacy SourceLens Nginx has no direct Run gate; recreating only its proxy with the gate armed"
+	# Compose stops the old proxy before starting the replacement. During that
+	# short first-adoption window no direct client can create a Run, while the
+	# API, workers, scheduler, and LensNodes remain online to drain existing work.
+	sourcelens_compose up -d --no-deps --no-build --pull never --force-recreate nginx \
+		|| return 1
+	local deadline=$((SECONDS + timeout_seconds))
+	while ((SECONDS < deadline)); do
+		if sourcelens_nginx_running && sourcelens_nginx_has_proxy_gate; then
+			log "Legacy SourceLens Nginx adopted the HFL direct Run gate"
+			return 0
+		fi
+		sleep 2
+	done
+	return 1
+}
+
+reload_sourcelens_proxy_gate() {
+	sourcelens_compose exec -T nginx nginx -t >/dev/null \
+		&& sourcelens_compose exec -T nginx nginx -s reload >/dev/null
+}
+
+arm_sourcelens_proxy_gate() {
+	SOURCELENS_PROXY_GATE_ARMED=1
+	write_sourcelens_proxy_gate on || return 1
+	sourcelens_nginx_running || return 1
+	if ! sourcelens_nginx_has_proxy_gate; then
+		recreate_sourcelens_nginx_with_proxy_gate || return 1
+	fi
+	if ! reload_sourcelens_proxy_gate; then
+		write_sourcelens_proxy_gate off || true
+		reload_sourcelens_proxy_gate || true
+		return 1
+	fi
+	log "SourceLens direct Run creation gate armed"
+}
+
+clear_sourcelens_proxy_gate() {
+	# Writing the off state is authoritative for every future container start.
+	# Refresh the live process as well so an in-memory on state cannot linger.
+	write_sourcelens_proxy_gate off || return 1
+	if sourcelens_nginx_running; then
+		if ! reload_sourcelens_proxy_gate; then
+			warn "SourceLens Nginx reload failed while clearing the direct Run gate; restarting Nginx"
+			# Preserve SOURCELENS_PROXY_GATE_ARMED on failure so the upgrade
+			# exit trap retries instead of leaving old workers blocking Runs.
+			sourcelens_compose restart nginx >/dev/null || return 1
+		fi
+	fi
+	SOURCELENS_PROXY_GATE_ARMED=0
+	log "SourceLens direct Run creation gate cleared"
 }
 
 container_owned_by_installation() {
@@ -1367,27 +1478,45 @@ wait_for_hfl_health() {
 
 wait_for_sourcelens_health() {
 	[[ "$(configured_sourcelens_mode)" == "bundled" ]] || return 0
-	sourcelens_installed || return 0
-	local nginx_cid
-	nginx_cid="$(sourcelens_compose ps -q nginx 2>/dev/null | head -1)"
-	if [[ -z "${nginx_cid}" ]]; then
-		log "Bundled SourceLens is not running; skipping its health gate"
-		return 0
+	if ! sourcelens_installed; then
+		warn "Bundled SourceLens is configured but its runtime is not installed"
+		return 1
 	fi
 	local timeout_seconds="${SOURCELENS_HEALTH_TIMEOUT_SECONDS:-600}"
+	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] \
+		|| die "SOURCELENS_HEALTH_TIMEOUT_SECONDS must be positive"
 	local port
 	port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
 	[[ -n "${port}" ]] || port=11445
-	step "Waiting for bundled SourceLens HTTPS health (timeout ${timeout_seconds}s) ..."
+	local -a services=(api ui worker scheduler postgres redis nginx)
+	step "Waiting for bundled SourceLens service and HTTPS health (timeout ${timeout_seconds}s) ..."
 	local deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
-		if curl -kfsS "https://127.0.0.1:${port}/" >/dev/null 2>&1; then
+		local ready=1 service cid status service_count
+		for service in "${services[@]}"; do
+			service_count=0
+			while IFS= read -r cid; do
+				[[ -n "${cid}" ]] || continue
+				service_count=$((service_count + 1))
+				status="$(container_health_status "${cid}")"
+				if [[ "${status}" != "healthy" && "${status}" != "running" ]]; then
+					ready=0
+					break
+				fi
+			done < <(sourcelens_compose ps -q "${service}" 2>/dev/null)
+			if [[ "${service_count}" -eq 0 ]]; then
+				ready=0
+			fi
+			[[ "${ready}" -eq 1 ]] || break
+		done
+		if [[ "${ready}" -eq 1 ]] \
+			&& curl -kfsS "https://127.0.0.1:${port}/" >/dev/null 2>&1; then
 			ok "Bundled SourceLens health gate passed"
 			return 0
 		fi
 		sleep 5
 	done
-	warn "Bundled SourceLens health gate timed out"
+	warn "Bundled SourceLens service or HTTPS health gate timed out"
 	sourcelens_compose ps || true
 	return 1
 }
@@ -1803,6 +1932,10 @@ create_managed_backup() {
 	done
 	if [[ -f "${ROOT}/sourcelens/docker-compose.yml" ]]; then
 		install -m 0600 "${ROOT}/sourcelens/docker-compose.yml" "${partial}/sourcelens-docker-compose.yml" \
+			|| { rm -rf "${partial}"; return 1; }
+	fi
+	if [[ -f "${ROOT}/sourcelens/BUILD_INFO.json" ]]; then
+		install -m 0600 "${ROOT}/sourcelens/BUILD_INFO.json" "${partial}/sourcelens-BUILD_INFO.json" \
 			|| { rm -rf "${partial}"; return 1; }
 	fi
 	if [[ "${BACKUP_DATABASES_COMPLETE}" != "1" ]]; then
@@ -2245,7 +2378,7 @@ stop_bundled_sourcelens() {
 		return 0
 	fi
 	step "Stopping SourceLens stack ..."
-	sourcelens_compose down || true
+	sourcelens_compose down
 }
 
 remove_sourcelens_images() {
@@ -2359,13 +2492,27 @@ PY
 preflight_sourcelens_bundle() {
 	local src_root=$1
 	step "Checking SourceLens bundle in upgrade package ..."
-	[[ -f "${src_root}/sourcelens/BUILD_INFO.json" ]] || die "missing sourcelens/BUILD_INFO.json"
+	local -a runtime_files=(
+		sourcelens/BUILD_INFO.json
+		sourcelens/.env.example
+		sourcelens/docker-compose.yml
+		sourcelens/install.sh
+		sourcelens/patch-env-runtime.py
+		sourcelens/sync-sentry-runtime.py
+		sourcelens/deploy/nginx/default.conf
+		sourcelens/deploy/nginx/hfl-sentry-loader.js
+		sourcelens/deploy/nginx/hfl-maintenance/run-creation-gate.conf
+		sourcelens/deploy/sentry/hfl-sentry-sitecustomize.py
+	)
+	local rel
+	for rel in "${runtime_files[@]}"; do
+		[[ -f "${src_root}/${rel}" ]] || die "missing ${rel}"
+	done
 	local -a images=(
 		images/10-sourcelens-app.tar.gz
 		images/11-sourcelens-lensnode.tar.gz
 		images/12-nginx-stable-alpine.tar.gz
 	)
-	local rel
 	for rel in "${images[@]}"; do
 		[[ -f "${src_root}/${rel}" ]] || die "missing SourceLens image archive ${rel}"
 	done
@@ -2395,6 +2542,7 @@ sourcelens_bundle_fingerprint() {
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -2403,13 +2551,16 @@ paths = [
     ".env.example",
     "install.sh",
     "patch-env-runtime.py",
+    "sync-sentry-runtime.py",
 ]
 deploy = root / "deploy"
 if deploy.is_dir():
     paths.extend(
         path.relative_to(root).as_posix()
         for path in sorted(deploy.rglob("*"))
-        if path.is_file() and "certs" not in path.parts
+        if path.is_file()
+        and "certs" not in path.parts
+        and path.name != "hfl-sentry-config.js"
     )
 digest = hashlib.sha256()
 
@@ -2425,7 +2576,12 @@ if build_info_path.is_file():
         "git_ref": info.get("git_ref", ""),
         "git_commit": info.get("git_commit", ""),
         "version": info.get("version", ""),
-        "patch_sha256": info.get("patch_sha256", ""),
+        "patchset_sha256": info.get(
+            "patchset_sha256", info.get("patch_sha256", "")
+        ),
+        "patches": info.get("patches", []),
+        "build_adapter_sha256": info.get("build_adapter_sha256", ""),
+        "build_compose_file": info.get("build_compose_file", ""),
         "embed_local_lensnode": info.get("embed_local_lensnode", False),
     }
     digest.update(b"BUILD_INFO.identity\0")
@@ -2441,6 +2597,17 @@ for rel in sorted(set(paths)):
         digest.update(f"missing:{rel}\0".encode())
         continue
     digest.update(rel.encode() + b"\0")
+    if rel == "docker-compose.yml":
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(
+            r"(?m)^(\s*image:\s*)((?:[^\s\"']*/)?"
+            r"hyperfilelens-sourcelens-(?:backend|frontend|lensnode))"
+            r"(?::|@)[^\s\"']+\s*$",
+            r"\1\2:<distribution-tag>",
+            text,
+        )
+        digest.update(text.encode("utf-8"))
+        continue
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -2471,11 +2638,13 @@ should_remove_sourcelens() {
 }
 
 configure_lens_bridge_env() {
-	local host tenant_port
+	local host tenant_port build_info
 	host="$(resolve_console_host)"
 	tenant_port="$(read_env_value HFL_TENANT_PORT)"
 	[[ -n "${tenant_port}" ]] || tenant_port="11443"
-	python3 - "${ROOT}/.env" "${host}" "${tenant_port}" <<'PY'
+	build_info="${ROOT}/sourcelens/BUILD_INFO.json"
+	python3 - "${ROOT}/.env" "${host}" "${tenant_port}" "${build_info}" <<'PY'
+import json
 import pathlib
 import re
 import sys
@@ -2483,6 +2652,7 @@ import sys
 env_path = pathlib.Path(sys.argv[1])
 host = sys.argv[2]
 tenant_port = sys.argv[3]
+build_info_path = pathlib.Path(sys.argv[4])
 if not env_path.exists():
     raise SystemExit(0)
 text = env_path.read_text(encoding="utf-8")
@@ -2505,6 +2675,11 @@ updates = {
     "LENS_GATEWAY_BASE_URL": f"{frontend}/sourcelens",
     "NO_PROXY": ",".join(no_proxy),
 }
+if build_info_path.is_file():
+    build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    git_ref = str(build_info.get("git_ref") or "").strip()
+    if re.fullmatch(r"v\d+\.\d+\.\d+", git_ref):
+        updates["SOURCELENS_GIT_REF"] = git_ref
 
 def set_key(name: str, value: str) -> None:
     global text
@@ -2525,7 +2700,7 @@ PY
 install_bundled_sourcelens() {
 	local script="${ROOT}/sourcelens/install.sh"
 	local console_bind console_port
-	[[ -f "${script}" ]] || return 0
+	[[ -f "${script}" ]] || die "missing bundled SourceLens installer: ${script}"
 	console_bind="$(read_env_value SOURCELENS_CONSOLE_BIND_ADDRESS)"
 	[[ -n "${console_bind}" ]] || console_bind="0.0.0.0"
 	console_port="$(read_env_value SOURCELENS_CONSOLE_PORT)"
@@ -2977,7 +3152,11 @@ cmd_install() {
 	log "Log rotation: built into nginx container (hourly; daily or 500M; keep 30)"
 	start_hfl_stack || die "HyperFileLens active color failed to start"
 	wait_for_hfl_health || die "HyperFileLens failed its post-install health gate"
-	wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
+	if [[ "${sourcelens_mode}" -eq 0 ]]; then
+		skip "Bundled SourceLens health gate skipped by --hfl-only"
+	else
+		wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
+	fi
 	sync_optional_identity_settings
 	ensure_local_platform_gateway
 	prune_agent_release_media
@@ -3691,6 +3870,7 @@ cmd_upgrade() {
 	backup_stamp="$(date +%Y%m%d-%H%M%S)"
 	create_managed_backup "${backup_stamp}" 0 \
 		|| die "managed upgrade backup failed; existing services were not stopped"
+	UPGRADE_BACKUP_DIR="${ROOT}/backup/upgrade-${backup_stamp}"
 
 	step "[3/8] Validating upgrade package ..."
 	preflight_blue_green_source "${src_root}"
@@ -3757,6 +3937,11 @@ cmd_upgrade() {
 		safe_rm_file "$(active_color_file)"
 	fi
 	update_env_versions "${new_version}" "${new_channel}"
+	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] \
+		&& sourcelens_installed \
+		&& [[ "${remove_sourcelens}" -eq 0 ]]; then
+		configure_lens_bridge_env
+	fi
 	apply_runtime_configuration
 	validate_tls_pair "${ROOT}/deploy/nginx/certs"
 
@@ -3799,8 +3984,8 @@ cmd_upgrade() {
 		log "SourceLens application runtime removed from this host"
 	elif [[ "${upgrade_sourcelens}" -eq 1 ]]; then
 		begin_sourcelens_maintenance_gate
-		SOURCELENS_UPGRADE_STARTED=1
 		stop_bundled_sourcelens
+		SOURCELENS_UPGRADE_STARTED=1
 		install_bundled_sourcelens
 	fi
 	if [[ "$(configured_sourcelens_mode)" == "bundled" ]] \
@@ -3811,6 +3996,9 @@ cmd_upgrade() {
 	fi
 	if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" ]]; then
 		clear_sourcelens_maintenance_gate
+	fi
+	if [[ "${SOURCELENS_PROXY_GATE_ARMED}" == "1" ]]; then
+		clear_sourcelens_proxy_gate
 	fi
 	sync_optional_identity_settings
 	check_local_platform_gateway_continuity

@@ -912,7 +912,12 @@ if build_info.is_file():
         "git_commit": info.get("git_commit", ""),
         "git_commit_short": info.get("git_commit_short", ""),
         "version": info.get("version", ""),
-        "patch_sha256": info.get("patch_sha256", ""),
+        "patchset_sha256": info.get(
+            "patchset_sha256", info.get("patch_sha256", "")
+        ),
+        "patches": info.get("patches", []),
+        "build_adapter_sha256": info.get("build_adapter_sha256", ""),
+        "build_compose_file": info.get("build_compose_file", ""),
         "network": info.get("network", "hyperfilelens-bridge"),
         "install_dir": info.get("install_dir", "/opt/hyperfilelens/sourcelens"),
         "lensnode_image": info.get("lensnode_image", "sourcelens-lensnode:latest"),

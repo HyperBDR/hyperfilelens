@@ -25,6 +25,11 @@ def sl_username_for_hfl_user(user: AbstractBaseUser) -> str:
     return f"hfl-u-{user.pk}"
 
 
+def sl_email_for_hfl_user(user: AbstractBaseUser) -> str:
+    """Return the private email identifier used only by bundled SourceLens."""
+    return f"hfl-u-{user.pk}@users.hyperfilelens.invalid"
+
+
 def _sl_password_for_hfl_user(user: AbstractBaseUser) -> str:
     """Derive a stable server-only password for an HFL-managed SL account."""
     digest = hmac.new(
@@ -45,18 +50,24 @@ def _find_remote_user(username: str) -> dict[str, Any] | None:
             params={"page": page, "page_size": page_size},
         )
         if not isinstance(payload, dict):
-            raise sl_client.LensBridgeError(
-                "Unexpected SourceLens user list response."
-            )
+            raise sl_client.LensBridgeError("Unexpected SourceLens user list response.")
         rows = payload.get("results") or []
         if not isinstance(rows, list):
-            raise sl_client.LensBridgeError(
-                "Unexpected SourceLens user list results."
-            )
+            raise sl_client.LensBridgeError("Unexpected SourceLens user list results.")
         for row in rows:
             if isinstance(row, dict) and row.get("username") == username:
                 return row
-        total = int(payload.get("count") or 0)
+        raw_total = payload.get("count", 0)
+        if isinstance(raw_total, bool) or not isinstance(raw_total, (int, str)):
+            raise sl_client.LensBridgeError("Unexpected SourceLens user list count.")
+        try:
+            total = int(raw_total)
+        except (TypeError, ValueError):
+            raise sl_client.LensBridgeError(
+                "Unexpected SourceLens user list count."
+            ) from None
+        if total < 0:
+            raise sl_client.LensBridgeError("Unexpected SourceLens user list count.")
         if not rows or page * page_size >= total:
             return None
         page += 1
@@ -70,9 +81,13 @@ def ensure_sl_chat_user(
     """Idempotently provision an SL chat user for the given HFL user."""
 
     link = LensSlUserLink.objects.filter(hfl_user=user).first()
-    if link is not None and link.provision_status == LensSlUserLink.ProvisionStatus.READY:
-        if link.gateway_operator != gateway_operator:
-            _provision_remote(user, link=link, gateway_operator=gateway_operator)
+    desired_email = sl_email_for_hfl_user(user)
+    if (
+        link is not None
+        and link.provision_status == LensSlUserLink.ProvisionStatus.READY
+        and link.gateway_operator == gateway_operator
+        and link.sl_email == desired_email
+    ):
         return link
 
     if link is None:
@@ -80,6 +95,7 @@ def ensure_sl_chat_user(
             hfl_user=user,
             sl_user_id=0,
             sl_username=sl_username_for_hfl_user(user),
+            sl_email=desired_email,
             gateway_operator=gateway_operator,
             provision_status=LensSlUserLink.ProvisionStatus.PENDING,
         )
@@ -102,6 +118,7 @@ def _provision_remote(
     gateway_operator: bool,
 ) -> None:
     username = sl_username_for_hfl_user(user)
+    email = sl_email_for_hfl_user(user)
     payload = _find_remote_user(username)
     if payload is None:
         try:
@@ -110,7 +127,7 @@ def _provision_remote(
                 "/api/v1/management/users/",
                 json_body={
                     "username": username,
-                    "email": "",
+                    "email": email,
                     "password": _sl_password_for_hfl_user(user),
                     "is_staff": False,
                     "role_ids": [],
@@ -122,14 +139,41 @@ def _provision_remote(
             if payload is None:
                 raise
     if not isinstance(payload, dict):
-        raise sl_client.LensBridgeError("Unexpected provision response from SourceLens.")
+        raise sl_client.LensBridgeError(
+            "Unexpected provision response from SourceLens."
+        )
 
-    sl_user_id = int(payload.get("id") or 0)
+    raw_user_id = payload.get("id") or 0
+    if isinstance(raw_user_id, bool):
+        raise sl_client.LensBridgeError("SourceLens provision returned no user id.")
+    try:
+        sl_user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise sl_client.LensBridgeError(
+            "SourceLens provision returned no user id."
+        ) from None
     if sl_user_id <= 0:
         raise sl_client.LensBridgeError("SourceLens provision returned no user id.")
+    if str(payload.get("email") or "").strip().lower() != email.lower():
+        updated = sl_client.request_json(
+            "PATCH",
+            f"/api/v1/management/users/{sl_user_id}/",
+            json_body={"email": email},
+        )
+        if not isinstance(updated, dict):
+            raise sl_client.LensBridgeError(
+                "SourceLens email migration returned an invalid response."
+            )
+        payload = updated
+    confirmed_email = str(payload.get("email") or "").strip().lower()
+    if confirmed_email != email.lower():
+        raise sl_client.LensBridgeError(
+            "SourceLens did not confirm the migrated chat user email."
+        )
 
     link.sl_user_id = sl_user_id
     link.sl_username = str(payload.get("username") or link.sl_username)
+    link.sl_email = email
     link.gateway_operator = gateway_operator
     link.provision_status = LensSlUserLink.ProvisionStatus.READY
     link.last_error = ""
@@ -137,6 +181,7 @@ def _provision_remote(
         update_fields=[
             "sl_user_id",
             "sl_username",
+            "sl_email",
             "gateway_operator",
             "provision_status",
             "last_error",
@@ -158,8 +203,9 @@ def mint_sl_access_token(user: AbstractBaseUser) -> str:
             return cached[0]
 
     token = sl_client.login_user(
-        username=link.sl_username,
+        email=link.sl_email,
         password=_sl_password_for_hfl_user(user),
+        legacy_username=link.sl_username,
     )
     with _USER_TOKEN_LOCK:
         _USER_TOKENS[user.pk] = (token, now + 25 * 60)
@@ -171,7 +217,9 @@ def invalidate_user_token(user_id: int) -> None:
         _USER_TOKENS.pop(user_id, None)
 
 
-def enqueue_sl_chat_user_provision(*, user_id: int, gateway_operator: bool = False) -> None:
+def enqueue_sl_chat_user_provision(
+    *, user_id: int, gateway_operator: bool = False
+) -> None:
     """Best-effort async provisioning after registration."""
 
     from apps.lens_bridge.services.sync_queue import queue_sl_chat_user_provision

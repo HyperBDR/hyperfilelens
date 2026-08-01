@@ -202,6 +202,7 @@ services:
   lensnode:
     image: ${image}
     restart: unless-stopped
+    stop_grace_period: 270s
     labels:
       com.hyperfilelens.managed: "true"
       com.hyperfilelens.component: "gateway-lensnode"
@@ -211,8 +212,10 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_SERVER_URL: ${LENS_CONTAINER_URL}
       LENSNODE_WORKSPACE_PATH: ${HFL_WORKSPACE_ROOT}
       HFL_INSECURE_TLS: "${HFL_INSECURE_TLS}"
+      LENSNODE_TLS_SKIP_VERIFY: "${HFL_INSECURE_TLS}"
       LENSNODE_INSECURE_TLS: "${HFL_INSECURE_TLS}"
       LENSNODE_SSL_VERIFY: "${ssl_verify}"
+      LENSNODE_DRAIN_TIMEOUT_S: "240"
       PYTHONPATH: /opt/hfl-sentry
       SENTRY_COMPONENT: sourcelens-lensnode
       SENTRY_DEPLOYMENT_MODE: gateway

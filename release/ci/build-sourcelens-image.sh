@@ -52,20 +52,13 @@ sourcelens_sync_source
 target_ref="${registry_prefix}/hyperfilelens-sourcelens-${component}:${hfl_version}-sl${SOURCELENS_VERSION}"
 source_commit="$(git -C "${SOURCELENS_SOURCE_CACHE}" rev-parse HEAD)"
 fingerprint="$({
-	printf '%s\n' \
-		"component=${component}" \
-		"platform=${SOURCELENS_DOCKER_PLATFORM}" \
-		"source_commit=${source_commit}" \
-		"apt_mirror=${SOURCELENS_APT_MIRROR}" \
-		"pip_index=${SOURCELENS_PIP_INDEX_URL}" \
-		"pip_trusted_host=${SOURCELENS_PIP_TRUSTED_HOST}" \
-		"npm_registry=${SOURCELENS_NPM_REGISTRY}" \
-		"uv_version=${SOURCELENS_UV_VERSION}"
+	sourcelens_component_build_identity "${component}" "${source_commit}"
 	find \
 		"${ROOT}/tools/sourcelens" \
 		"${ROOT}/deploy/installer/sourcelens" \
 		"${ROOT}/release/build-sourcelens.sh" \
 		"${ROOT}/release/ci/build-sourcelens-image.sh" \
+		-path "${ROOT}/tools/sourcelens/patches/retired" -prune -o \
 		-type f -print0 \
 		| sort -z \
 		| xargs -0 sha256sum

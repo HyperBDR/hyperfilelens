@@ -274,6 +274,8 @@ ensure_data_dirs() {
 		"${data_dir}/logs/postgresql" \
 		"${data_dir}/logs/redis" \
 		"${data_dir}/storage" \
+		"${data_dir}/document-attachments" \
+		"${data_dir}/deliverables" \
 		"${data_dir}/workspace" \
 		"${data_dir}/django/staticfiles"
 }

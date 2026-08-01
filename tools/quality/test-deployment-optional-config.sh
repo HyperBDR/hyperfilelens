@@ -248,8 +248,12 @@ assert install.index("wait_for_hfl_health") < install.index("sync_optional_ident
 assert start.index("wait_for_hfl_health") < start.index("sync_optional_identity_settings")
 assert upgrade.index("apply_upgrade_files") < upgrade.index("apply_runtime_configuration")
 assert upgrade.index("apply_runtime_configuration") < upgrade.index("install_bundled_sourcelens")
-assert upgrade.index("apply_runtime_configuration") < upgrade.index("compose_in_root up -d postgres redis")
-assert upgrade.index("wait_for_hfl_health") < upgrade.index("sync_optional_identity_settings")
+assert upgrade.index("apply_runtime_configuration") < upgrade.index(
+    "compose_in_root up -d --no-recreate postgres redis"
+)
+assert upgrade.index("wait_for_services_health") < upgrade.index(
+    "sync_optional_identity_settings"
+)
 PY
 
 grep -F 'bash "${package_root}/install.sh" "${install_args[@]}"' \

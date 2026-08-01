@@ -23,6 +23,8 @@ services:
       - ./data/django/staticfiles:/opt/backend/core/staticfiles
       - ./data/logs/api:/var/log/gunicorn
       - ./data/storage:/opt/storage
+      - ./data/document-attachments:/opt/document-attachments
+      - ./data/deliverables:/opt/deliverables
       - ./data/workspace:/workspace
       - ./deploy/sentry/hfl-sentry-sitecustomize.py:/opt/backend/sitecustomize.py:ro
       - ${SOURCELENS_TLS_CERT_DIR:-./deploy/nginx/certs}:/opt/certs:ro
@@ -60,6 +62,8 @@ services:
     volumes:
       - ./data/logs/worker:/var/log/celery
       - ./data/storage:/opt/storage
+      - ./data/document-attachments:/opt/document-attachments
+      - ./data/deliverables:/opt/deliverables
       - ./data/workspace:/workspace
       - ./deploy/sentry/hfl-sentry-sitecustomize.py:/opt/backend/sitecustomize.py:ro
     networks:
@@ -112,12 +116,15 @@ services:
     image: __SOURCELENS_LENSNODE_IMAGE__
     pull_policy: never
     restart: unless-stopped
+    stop_grace_period: 270s
     env_file:
       - ./.env
     environment:
       LENSNODE_CONTROL_WS_URL: ws://api:8000/ws/lens/lensnodes/
       LENSNODE_AI_GATEWAY_URL: http://api:8000/api/lens/lensnode/ai-gateway/
       LENSNODE_WORKSPACE_PATH: /workspace
+      LENSNODE_DRAIN_TIMEOUT_S: "240"
+      LENSNODE_MAX_CONCURRENT_RUNS: "1"
       PYTHONPATH: /opt/hfl-sentry
       SENTRY_COMPONENT: sourcelens-lensnode
       SENTRY_RELEASE: ${SENTRY_LENSNODE_RELEASE:-${SENTRY_RELEASE:-}}
@@ -142,6 +149,7 @@ services:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf
       - ./deploy/nginx/hfl-sentry-config.js:/etc/nginx/hfl-sentry-config.js:ro
       - ./deploy/nginx/hfl-sentry-loader.js:/etc/nginx/hfl-sentry-loader.js:ro
+      - ./deploy/nginx/hfl-maintenance:/etc/nginx/hfl-maintenance:ro
       - ${SOURCELENS_TLS_CERT_DIR:-./deploy/nginx/certs}:/etc/nginx/certs:ro
       - ./data/django/staticfiles:/staticfiles:ro
       - ./data/storage:/opt/storage:ro

@@ -13,10 +13,12 @@ HFL_ROOT="$(cd "${_sourcelens_common_dir}/../.." && pwd)"
 SOURCELENS_INSTALLER_DIR="${HFL_ROOT}/deploy/installer"
 SOURCELENS_BUILD_DIR="${HFL_ROOT}/build/sourcelens"
 SOURCELENS_SOURCE_CACHE="${SOURCELENS_BUILD_DIR}/source"
+SOURCELENS_BUILD_SOURCE="${SOURCELENS_BUILD_DIR}/worktree"
 SOURCELENS_DEV_DIR="${SOURCELENS_BUILD_DIR}/dev"
 SOURCELENS_DATA_DIR="${HFL_ROOT}/data/sourcelens"
 SOURCELENS_DEV_ENV_FILE="${SOURCELENS_DATA_DIR}/config/.env"
 SOURCELENS_BUILD_ENV_FILE="${HFL_ROOT}/tools/sourcelens/defaults.env"
+SOURCELENS_PATCH_ROOT="${HFL_ROOT}/tools/sourcelens/patches"
 SOURCELENS_COMPOSE_PROJECT="${SOURCELENS_COMPOSE_PROJECT:-hyperfilelens-sourcelens}"
 SOURCELENS_SHARED_NETWORK="hyperfilelens-bridge"
 
@@ -28,6 +30,8 @@ source "${HFL_ROOT}/tools/lib/logging.sh"
 source "${HFL_ROOT}/tools/lib/docker-images.sh"
 sourcelens_log() { hfl_log_info "$@"; }
 sourcelens_die() { hfl_die "$1" "${2:-1}"; }
+# shellcheck source=patch-series.sh
+source "${HFL_ROOT}/tools/sourcelens/patch-series.sh"
 
 sourcelens_load_config() {
 	local console_port_override="${SOURCELENS_NGINX_HTTPS_PORT:-}"
@@ -40,7 +44,8 @@ sourcelens_load_config() {
 	fi
 	BUILD_SOURCELENS="${BUILD_SOURCELENS:-1}"
 	SOURCELENS_GIT_URL="${SOURCELENS_GIT_URL:-https://github.com/HyperBDR/sourcelens.git}"
-	SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.4.0}"
+	SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.20.0}"
+	SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"
 	SOURCELENS_UPSTREAM_IMAGE_PREFIX="${SOURCELENS_UPSTREAM_IMAGE_PREFIX:-oneprocloud}"
 	SOURCELENS_IMAGE_REGISTRY="${SOURCELENS_IMAGE_REGISTRY:-}"
 	SOURCELENS_IMAGE_REGISTRY="${SOURCELENS_IMAGE_REGISTRY%/}"
@@ -269,8 +274,11 @@ sourcelens_lensnode_image_id() {
 
 sourcelens_lensnode_supports_insecure_tls() {
 	local ref=$1
-	docker run --rm -e LENSNODE_INSECURE_TLS=1 "${ref}" \
-		python -c "from lensnode.tls import tls_insecure_enabled; raise SystemExit(0 if tls_insecure_enabled() else 1)" \
+	docker run --rm \
+		-e LENSNODE_TLS_SKIP_VERIFY=1 \
+		-e LENSNODE_INSECURE_TLS=1 \
+		"${ref}" python -c \
+		'import ssl; import lensnode.tls as tls; from lensnode.config import load_config; config = load_config(); native = getattr(config, "tls_skip_verify", False) and hasattr(tls, "create_ssl_context") and tls.create_ssl_context(skip_verify=True).verify_mode == ssl.CERT_NONE; legacy = hasattr(tls, "tls_insecure_enabled") and tls.tls_insecure_enabled(); raise SystemExit(0 if native or legacy else 1)' \
 		>/dev/null 2>&1
 }
 
@@ -364,11 +372,7 @@ sourcelens_sync_source() {
 	fi
 	git -C "${SOURCELENS_SOURCE_CACHE}" reset --hard HEAD >/dev/null
 	rm -f "${SOURCELENS_SOURCE_CACHE}/.hfl-built-commit"
-	git -C "${SOURCELENS_SOURCE_CACHE}" clean -fd -- \
-		backend/lens/bridge_views.py \
-		backend/lens/migrations/0018_lensnode_owner.py \
-		lensnode/lensnode/tls.py \
-		lensnode/tests/test_tls.py >/dev/null
+	git -C "${SOURCELENS_SOURCE_CACHE}" clean -fdx >/dev/null
 	sourcelens_log "Checking out SourceLens ref ${SOURCELENS_GIT_REF}..."
 	(
 		cd "${SOURCELENS_SOURCE_CACHE}"
@@ -392,11 +396,24 @@ sourcelens_sync_source() {
 			sourcelens_git checkout "${SOURCELENS_GIT_REF}"
 		fi
 		sourcelens_sync_submodules
+		sourcelens_git submodule foreach --recursive \
+			'git reset --hard HEAD >/dev/null && git clean -fdx >/dev/null'
 	)
-	# shellcheck source=sourcelens-lensnode-patch.sh
-	source "${HFL_ROOT}/tools/sourcelens/lensnode-patch.sh"
-	sourcelens_apply_lensnode_hfl_patches "${SOURCELENS_SOURCE_CACHE}"
 	sourcelens_restore_source_dockerfiles "${SOURCELENS_SOURCE_CACHE}"
+	if [[ -n "$(git -C "${SOURCELENS_SOURCE_CACHE}" status --porcelain)" ]]; then
+		sourcelens_die "SourceLens source cache is not pristine after synchronization"
+	fi
+	sourcelens_prepare_build_source
+}
+
+sourcelens_prepare_build_source() {
+	[[ "${SOURCELENS_BUILD_SOURCE}" == "${SOURCELENS_BUILD_DIR}/worktree" ]] \
+		|| sourcelens_die "unsafe SourceLens disposable build path"
+	rm -rf "${SOURCELENS_BUILD_SOURCE}"
+	mkdir -p "${SOURCELENS_BUILD_SOURCE}"
+	rsync -a --delete --exclude='.git' \
+		"${SOURCELENS_SOURCE_CACHE}/" "${SOURCELENS_BUILD_SOURCE}/"
+	sourcelens_apply_hfl_patch_series "${SOURCELENS_BUILD_SOURCE}"
 }
 
 sourcelens_built_commit_stamp() {
@@ -419,26 +436,181 @@ sourcelens_write_built_commit() {
 }
 
 sourcelens_current_build_stamp() {
-	local commit patch_file patch_digest="none"
+	local commit patch_digest adapter_digest build_inputs_digest
 	commit="$(git -C "${SOURCELENS_SOURCE_CACHE}" rev-parse HEAD 2>/dev/null || true)"
-	patch_file="${SOURCELENS_INSTALLER_DIR}/sourcelens/lensnode-tls.patch"
-	if [[ -f "${patch_file}" ]]; then
-		patch_digest="$(sha256sum "${patch_file}" | awk '{print $1}')"
+	patch_digest="$(sourcelens_patchset_digest)"
+	adapter_digest="$(sourcelens_build_adapter_digest)"
+	build_inputs_digest="$(sourcelens_effective_build_inputs_digest)"
+	printf 'v3:%s:%s:%s:%s:%s:%s' \
+		"${SOURCELENS_VERSION}" "${commit}" "${patch_digest}" \
+		"${SOURCELENS_DOCKER_PLATFORM}" "${SOURCELENS_BUILD_COMPOSE_FILE}:${adapter_digest}" \
+		"${build_inputs_digest}"
+}
+
+sourcelens_effective_build_inputs_digest() {
+	local scope="${1:-all}"
+	case "${scope}" in all | backend | frontend | lensnode) ;; *) return 2 ;; esac
+	local debian_apt_mirror_url="https://deb.debian.org/debian"
+	local pip_index_url="${SOURCELENS_PIP_INDEX_URL:-https://pypi.org/simple}"
+	local pip_trusted_host="${SOURCELENS_PIP_TRUSTED_HOST:-pypi.org}"
+	if [[ -n "${SOURCELENS_APT_MIRROR:-}" ]]; then
+		debian_apt_mirror_url="$(sourcelens_normalize_apt_mirror_url \
+			debian "${SOURCELENS_APT_MIRROR}" "${SOURCELENS_DOCKER_PLATFORM}")"
 	fi
-	printf '%s:%s:%s' "${SOURCELENS_VERSION}" "${commit}" "${patch_digest}"
+	python3 - \
+		"${scope}" \
+		"${debian_apt_mirror_url}" \
+		"${pip_index_url}" \
+		"${pip_trusted_host}" \
+		"${SOURCELENS_UV_HTTP_TIMEOUT}" \
+		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}" \
+		"${SOURCELENS_PIP_RETRY_MAX}" \
+		"${SOURCELENS_PIP_RETRY_DELAY}" \
+		"${SOURCELENS_UV_VERSION}" \
+		"${SOURCELENS_NPM_REGISTRY}" \
+		"${SOURCELENS_BUILD_SOURCE_MAPS}" \
+		"${SOURCELENS_UPSTREAM_IMAGE_PREFIX}" \
+		"${APP_RELEASE_DATE:-}" \
+		"${VITE_API_BASE_URL:-}" \
+		"${VITE_TURNSTILE_SITE_KEY:-}" \
+		"${VITE_SENTRY_DSN:-}" \
+		"${VITE_SENTRY_ENVIRONMENT:-}" \
+		"${VITE_SENTRY_TRACES_SAMPLE_RATE:-}" \
+		"${VITE_SENTRY_SEND_DEFAULT_PII:-}" \
+		"${VITE_GA_ID:-}" <<'PY'
+import hashlib
+import json
+import sys
+
+scope = sys.argv[1]
+names = (
+    "debian_apt_mirror_url",
+    "pip_index_url",
+    "pip_trusted_host",
+    "uv_http_timeout",
+    "uv_concurrent_downloads",
+    "pip_retry_max",
+    "pip_retry_delay",
+    "uv_version",
+    "npm_registry",
+    "build_source_maps",
+    "upstream_image_prefix",
+    "app_release_date",
+    "vite_api_base_url",
+    "vite_turnstile_site_key",
+    "vite_sentry_dsn",
+    "vite_sentry_environment",
+    "vite_sentry_traces_sample_rate",
+    "vite_sentry_send_default_pii",
+    "vite_ga_id",
+)
+values = sys.argv[2:]
+if len(values) != len(names):
+    raise SystemExit("unexpected SourceLens build input count")
+payload = dict(zip(names, values))
+scoped_names = {
+    "backend": {
+        "debian_apt_mirror_url",
+        "pip_index_url",
+        "pip_trusted_host",
+        "uv_http_timeout",
+        "uv_concurrent_downloads",
+        "pip_retry_max",
+        "pip_retry_delay",
+        "uv_version",
+        "upstream_image_prefix",
+    },
+    "lensnode": {
+        "debian_apt_mirror_url",
+        "pip_index_url",
+        "pip_trusted_host",
+        "uv_http_timeout",
+        "uv_concurrent_downloads",
+        "pip_retry_max",
+        "pip_retry_delay",
+        "uv_version",
+        "upstream_image_prefix",
+    },
+    "frontend": {
+        "npm_registry",
+        "build_source_maps",
+        "upstream_image_prefix",
+        "app_release_date",
+        "vite_api_base_url",
+        "vite_turnstile_site_key",
+        "vite_sentry_dsn",
+        "vite_sentry_environment",
+        "vite_sentry_traces_sample_rate",
+        "vite_sentry_send_default_pii",
+        "vite_ga_id",
+    },
+}
+if scope != "all":
+    payload = {name: payload[name] for name in scoped_names[scope]}
+canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+print(hashlib.sha256(canonical.encode("utf-8")).hexdigest())
+PY
+}
+
+sourcelens_component_build_identity() {
+	local component=$1 source_commit=$2
+	case "${component}" in backend | frontend | lensnode) ;; *) return 2 ;; esac
+	printf '%s\n' \
+		"component=${component}" \
+		"platform=${SOURCELENS_DOCKER_PLATFORM}" \
+		"source_commit=${source_commit}" \
+		"source_version=${SOURCELENS_VERSION}" \
+		"build_compose_file=${SOURCELENS_BUILD_COMPOSE_FILE}" \
+		"effective_build_inputs=$(sourcelens_effective_build_inputs_digest "${component}")"
+}
+
+sourcelens_build_adapter_digest() {
+	python3 - "${HFL_ROOT}" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = (
+    "tools/sourcelens/common.sh",
+    "tools/sourcelens/patch-series.sh",
+    "tools/sourcelens/defaults.env",
+    "release/build-sourcelens.sh",
+    "release/ci/build-sourcelens-image.sh",
+)
+digest = hashlib.sha256()
+for relative in files:
+    path = root / relative
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+}
+
+sourcelens_build_compose_path() {
+	local src=$1 relative="${SOURCELENS_BUILD_COMPOSE_FILE}"
+	case "${relative}" in
+	/* | *..*) sourcelens_die "invalid SourceLens build Compose path: ${relative}" ;;
+	esac
+	[[ -f "${src}/${relative}" ]] \
+		|| sourcelens_die "missing SourceLens build Compose file: ${relative}"
+	printf '%s' "${src}/${relative}"
 }
 
 sourcelens_restore_compose_file() {
-	local src=$1
+	local src=$1 compose
 	[[ -d "${src}/.git" ]] || return 0
-	git -C "${src}" checkout -- docker-compose.yml 2>/dev/null || true
+	compose="$(sourcelens_build_compose_path "${src}")"
+	git -C "${src}" checkout -- "${compose#${src}/}" 2>/dev/null || true
 }
 
 sourcelens_patch_compose_lensnode_apt_mirror() {
 	local src=$1
 	local debian_default=$2
-	local compose="${src}/docker-compose.yml"
-	[[ -f "${compose}" ]] || return 0
+	local compose
+	compose="$(sourcelens_build_compose_path "${src}")"
 	python3 - "${compose}" "${debian_default}" <<'PY'
 import pathlib
 import sys
@@ -495,20 +667,20 @@ sourcelens_patch_compose_build_sources() {
 	local debian_default=$3
 	local pip_index_default=$4
 	local pip_trusted_host_default=$5
-	local compose="${src}/docker-compose.yml"
-	[[ -f "${compose}" ]] || return 0
+	local compose
+	compose="$(sourcelens_build_compose_path "${src}")"
 	python3 - "${compose}" "${ubuntu_default}" "${debian_default}" \
 		"${pip_index_default}" "${pip_trusted_host_default}" <<'PY'
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
-ubuntu_default, debian_default, pip_index_default, pip_trusted_host_default = (
+_ubuntu_default, debian_default, pip_index_default, pip_trusted_host_default = (
     sys.argv[2:6]
 )
 service_settings = {
     "backend-api": {
-        "APT_MIRROR_URL": ("APT_MIRROR_URL", ubuntu_default),
+        "APT_MIRROR_URL": ("APT_MIRROR_URL", debian_default),
         "PIP_INDEX_URL": ("PIP_INDEX_URL", pip_index_default),
         "PIP_TRUSTED_HOST": ("PIP_TRUSTED_HOST", pip_trusted_host_default),
     },
@@ -570,6 +742,7 @@ sourcelens_patch_dockerfile_uv_network() {
 		[[ -f "${dockerfile}" ]] || continue
 		python3 - "${dockerfile}" "${timeout}" "${concurrent}" "${uv_version}" <<'PY'
 import pathlib
+import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
@@ -580,49 +753,34 @@ settings = [
     ("UV_VERSION", uv_version),
 ]
 text = path.read_text(encoding="utf-8")
-lines = text.splitlines(keepends=True)
-out = []
-for line in lines:
-    stripped = line.strip()
-    if stripped.startswith("ARG PIP_TRUSTED_HOST"):
-        out.append(line)
-        indent = line[: len(line) - len(line.lstrip())]
-        for name, default in settings:
-            if f"ARG {name}" not in text:
-                out.append(f"{indent}ARG {name}={default}\n")
-        continue
-    if "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}" in stripped:
-        if stripped.startswith("ENV "):
-            out.append(line)
-            indent = line[: len(line) - len(line.lstrip())]
-            for name, _ in settings:
-                if f"{name}=${{{name}}}" not in text:
-                    out.append(f"{indent}ENV {name}=${{{name}}}\n")
-            continue
-        missing = [name for name, _ in settings if f"{name}=${{{name}}}" not in text]
-        if not missing:
-            out.append(line)
-            continue
-        indent = line[: len(line) - len(line.lstrip())]
-        base = line[:-1] if line.endswith("\n") else line
-        if not base.rstrip().endswith("\\"):
-            base = f"{base.rstrip()} \\"
-        out.append(f"{base}\n")
-        for idx, name in enumerate(missing):
-            suffix = " \\\n" if idx < len(missing) - 1 else "\n"
-            out.append(f"{indent}{name}=${{{name}}}{suffix}")
-        continue
-    out.append(line)
+if "ARG UV_VERSION" not in text:
+    marker = re.search(r"(?m)^(?P<indent>[ \t]*)ARG PIP_TRUSTED_HOST[^\n]*\n", text)
+    if marker is None:
+        raise SystemExit(f"ERROR: could not find pip build arguments in {path}")
+    indent = marker.group("indent")
+    additions = "".join(
+        f"{indent}ARG {name}={default}\n" for name, default in settings
+    )
+    additions += (
+        f"{indent}ENV UV_HTTP_TIMEOUT=${{UV_HTTP_TIMEOUT}} \\\n"
+        f"{indent}    UV_CONCURRENT_DOWNLOADS=${{UV_CONCURRENT_DOWNLOADS}}\n"
+    )
+    text = text[: marker.end()] + additions + text[marker.end() :]
 
-updated = "".join(out)
-updated = updated.replace("        uv; \\\n", '        "uv==${UV_VERSION}"; \\\n')
-for name, default in settings:
-    if f"ARG {name}" not in updated or f"{name}=${{{name}}}" not in updated:
-        sys.stderr.write(f"ERROR: could not patch {name} in {path}\n")
-        sys.exit(1)
+updated = re.sub(
+    r'(?m)^(?P<indent>[ \t]*)uv(?P<suffix>;?[ \t]*\\)$',
+    r'\g<indent>"uv==${UV_VERSION}"\g<suffix>',
+    text,
+    count=1,
+)
+for name, _default in settings:
+    if f"ARG {name}" not in updated:
+        raise SystemExit(f"ERROR: could not patch {name} in {path}")
+for name in ("UV_HTTP_TIMEOUT", "UV_CONCURRENT_DOWNLOADS"):
+    if f"{name}=${{{name}}}" not in updated:
+        raise SystemExit(f"ERROR: could not expose {name} in {path}")
 if '"uv==${UV_VERSION}"' not in updated:
-    sys.stderr.write(f"ERROR: could not pin uv in {path}\n")
-    sys.exit(1)
+    raise SystemExit(f"ERROR: could not pin uv in {path}")
 
 path.write_text(updated, encoding="utf-8")
 PY
@@ -650,11 +808,11 @@ if not text.lstrip().startswith("# syntax="):
     text = "# syntax=docker/dockerfile:1.4\n# hfl-pip-resilience\n" + text
 
 mount_run = (
-    "RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked "
-    "--mount=type=cache,target=/root/.cache/pip,sharing=locked set -eux; \\\n"
+    "RUN --mount=type=cache,target=/opt/hfl-build-cache/uv,sharing=locked "
+    "set -eux; \\\n"
 )
 inject = (
-    f"    export UV_CACHE_DIR=/root/.cache/uv; \\\n"
+    f"    export UV_CACHE_DIR=/opt/hfl-build-cache/uv; \\\n"
     f"    export HFL_PIP_RETRY_MAX={retry_max}; \\\n"
     f"    export HFL_PIP_RETRY_DELAY={retry_delay}; \\\n"
     "    hfl_retry() { max=${HFL_PIP_RETRY_MAX}; delay=${HFL_PIP_RETRY_DELAY}; n=1; "
@@ -663,22 +821,19 @@ inject = (
     'n=$((n+1)); [ "$n" -le "$max" ] && sleep "$delay"; done; return 1; }; \\\n'
 )
 
-docker_instr = (
-    "FROM", "RUN", "CMD", "LABEL", "EXPOSE", "ENV", "ARG", "ENTRYPOINT", "COPY",
-    "WORKDIR", "SHELL", "HEALTHCHECK", "STOPSIGNAL", "USER", "VOLUME",
-)
-
 def is_run_start(line: str) -> bool:
-    stripped = line.lstrip()
-    return stripped.startswith("RUN set -eux;") or (
-        stripped.startswith("RUN --mount=") and " set -eux;" in stripped
-    )
+    return line.lstrip().startswith("RUN ")
 
-def is_docker_instruction(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
-        return False
-    return any(stripped.startswith(f"{name} ") or stripped == name for name in docker_instr)
+
+def instruction_end(lines, start):
+    """Return the exclusive end of one non-heredoc Docker instruction."""
+
+    idx = start
+    while idx < len(lines):
+        if not lines[idx].rstrip().endswith("\\"):
+            return idx + 1
+        idx += 1
+    return len(lines)
 
 lines = text.splitlines(keepends=True)
 out = []
@@ -686,14 +841,8 @@ idx = 0
 while idx < len(lines):
     line = lines[idx]
     if is_run_start(line):
-        block = [line]
-        j = idx + 1
-        while j < len(lines):
-            nxt = lines[j]
-            if is_docker_instruction(nxt):
-                break
-            block.append(nxt)
-            j += 1
+        j = instruction_end(lines, idx)
+        block = lines[idx:j]
         block_text = "".join(block)
         if "hfl-pip-resilience-applied" in block_text:
             out.append(block_text)
@@ -702,14 +851,19 @@ while idx < len(lines):
         if "uv pip install" in block_text or "uv pip compile" in block_text:
             if block[0].lstrip().startswith("RUN --mount="):
                 block.insert(1, inject)
-            else:
+            elif block[0].lstrip().startswith("RUN set -eux;"):
                 block[0] = mount_run
                 block.insert(1, inject)
+            else:
+                command = block[0].lstrip()[len("RUN ") :]
+                block[0] = mount_run
+                block.insert(1, inject)
+                block.insert(2, f"    {command}")
             block_text = "".join(block)
             block_text = block_text.replace("uv pip compile", "hfl_retry uv pip compile")
             block_text = block_text.replace("uv pip install", "hfl_retry uv pip install")
             if not block_text.rstrip().endswith("# hfl-pip-resilience-applied"):
-                block_text = block_text.rstrip("\n") + "\n    # hfl-pip-resilience-applied\n"
+                block_text = block_text.rstrip("\n") + "\n# hfl-pip-resilience-applied\n"
             out.append(block_text)
             idx = j
             continue
@@ -726,8 +880,8 @@ sourcelens_patch_compose_uv_network() {
 	local timeout=$2
 	local concurrent=$3
 	local uv_version=$4
-	local compose="${src}/docker-compose.yml"
-	[[ -f "${compose}" ]] || return 0
+	local compose
+	compose="$(sourcelens_build_compose_path "${src}")"
 	python3 - "${compose}" "${timeout}" "${concurrent}" "${uv_version}" <<'PY'
 import pathlib
 import sys
@@ -893,8 +1047,8 @@ PY
 
 sourcelens_patch_compose_npm_registry() {
 	local src=$1
-	local compose="${src}/docker-compose.yml"
-	[[ -f "${compose}" ]] || return 0
+	local compose
+	compose="$(sourcelens_build_compose_path "${src}")"
 	python3 - "${compose}" <<'PY'
 import pathlib
 import re
@@ -1049,12 +1203,12 @@ sourcelens_publish_gateway_lensnode_bundle() {
 		if [[ -n "${current_id}" && -n "${bundle_id}" && "${current_id}" != "${bundle_id}" ]]; then
 			sourcelens_log "Gateway LensNode bundle image ${bundle_id} differs from local ${current_id}; refreshing export"
 		else
-			sourcelens_log "Gateway LensNode bundle stale or missing HFL TLS patch; refreshing export"
+			sourcelens_log "Gateway LensNode bundle stale or missing configurable TLS support; refreshing export"
 		fi
 	fi
 
 	if ! sourcelens_lensnode_supports_insecure_tls "${primary_ref}"; then
-		sourcelens_die "LensNode image ${primary_ref} lacks HFL TLS bypass (lensnode.tls); rebuild SourceLens app images first"
+		sourcelens_die "LensNode image ${primary_ref} lacks configurable TLS verification support"
 	fi
 
 	sourcelens_log "Saving gateway LensNode bundle atomically -> ${dest#${HFL_ROOT}/}"
@@ -1110,15 +1264,13 @@ sourcelens_build_app_images() {
 		sourcelens_log "SourceLens app images present but source commit changed; rebuilding"
 	fi
 
-	local src="${SOURCELENS_SOURCE_CACHE}"
+	local src="${SOURCELENS_BUILD_SOURCE}"
 	local version="${SOURCELENS_VERSION}"
-	local ubuntu_apt_mirror_url="http://archive.ubuntu.com/ubuntu"
 	local debian_apt_mirror_url="https://deb.debian.org/debian"
 	local pip_index_url="${SOURCELENS_PIP_INDEX_URL:-https://pypi.org/simple}"
 	local pip_trusted_host="${SOURCELENS_PIP_TRUSTED_HOST:-pypi.org}"
 
 	if [[ -n "${SOURCELENS_APT_MIRROR:-}" ]]; then
-		ubuntu_apt_mirror_url="$(sourcelens_normalize_apt_mirror_url ubuntu "${SOURCELENS_APT_MIRROR}" "${SOURCELENS_DOCKER_PLATFORM}")"
 		debian_apt_mirror_url="$(sourcelens_normalize_apt_mirror_url debian "${SOURCELENS_APT_MIRROR}" "${SOURCELENS_DOCKER_PLATFORM}")"
 	fi
 	sourcelens_restore_source_dockerfiles "${src}"
@@ -1131,7 +1283,7 @@ sourcelens_build_app_images() {
 	sourcelens_patch_frontend_dockerfile_source_maps "${src}"
 	sourcelens_patch_compose_lensnode_apt_mirror "${src}" "${debian_apt_mirror_url}"
 	sourcelens_patch_compose_build_sources "${src}" \
-		"${ubuntu_apt_mirror_url}" "${debian_apt_mirror_url}" \
+		"${debian_apt_mirror_url}" "${debian_apt_mirror_url}" \
 		"${pip_index_url}" "${pip_trusted_host}"
 	sourcelens_patch_compose_uv_network "${src}" "${SOURCELENS_UV_HTTP_TIMEOUT}" \
 		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}" "${SOURCELENS_UV_VERSION}"
@@ -1142,10 +1294,9 @@ sourcelens_build_app_images() {
 		export APP_VERSION="${version}"
 		export DOCKER_DEFAULT_PLATFORM="${SOURCELENS_DOCKER_PLATFORM}"
 		sourcelens_log "Using SourceLens Docker platform: ${DOCKER_DEFAULT_PLATFORM}"
-		sourcelens_log "Using SourceLens Ubuntu apt source: ${ubuntu_apt_mirror_url}"
-		export APT_MIRROR_URL="${ubuntu_apt_mirror_url}"
+		export APT_MIRROR_URL="${debian_apt_mirror_url}"
 		export DEBIAN_APT_MIRROR_URL="${debian_apt_mirror_url}"
-		sourcelens_log "Using SourceLens Debian apt source: ${DEBIAN_APT_MIRROR_URL}"
+		sourcelens_log "Using SourceLens Debian apt source: ${APT_MIRROR_URL}"
 		export PIP_INDEX_URL="${pip_index_url}"
 		export PIP_TRUSTED_HOST="${pip_trusted_host}"
 		export UV_HTTP_TIMEOUT="${SOURCELENS_UV_HTTP_TIMEOUT}"
@@ -1161,7 +1312,8 @@ sourcelens_build_app_images() {
 		# shellcheck disable=SC2206
 		local -a services=(${requested_services})
 		build_args+=("${services[@]}")
-		DOCKER_BUILDKIT=1 "${SOURCELENS_COMPOSE[@]}" "${build_args[@]}"
+		DOCKER_BUILDKIT=1 "${SOURCELENS_COMPOSE[@]}" \
+			-f "${SOURCELENS_BUILD_COMPOSE_FILE}" "${build_args[@]}"
 	)
 	if [[ "${full_build}" -eq 0 ]]; then
 		sourcelens_log "Built requested SourceLens service(s): ${requested_services}"
@@ -1242,6 +1394,19 @@ path.write_text(text, encoding="utf-8")
 PY
 }
 
+sourcelens_upstream_nginx_config() {
+	local src=$1 candidate
+	for candidate in \
+		"${src}/docker/nginx/default.standalone.conf" \
+		"${src}/docker/nginx/default.conf"; do
+		if [[ -f "${candidate}" ]]; then
+			printf '%s' "${candidate}"
+			return 0
+		fi
+	done
+	sourcelens_die "SourceLens standalone Nginx configuration is missing"
+}
+
 sourcelens_patch_runtime_nginx() {
 	local path=$1
 	python3 - "${path}" <<'PY'
@@ -1250,6 +1415,9 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
+maintenance_include = "include /etc/nginx/hfl-maintenance/run-creation-gate.conf;"
+if maintenance_include not in text:
+    text = maintenance_include + "\n\n" + text
 sources = (
     "set $ui_upstream http://frontend:80;",
     "set $ui_upstream http://sourcelens-ui:80;",
@@ -1280,10 +1448,6 @@ assets = """    # HFL-owned runtime observability adapter; SourceLens source rem
     }
 
 """
-marker = "    # Frontend proxy to frontend container\n"
-if "location = /hfl-sentry-config.js" not in text:
-    if marker in text:
-        text = text.replace(marker, assets + marker)
 location_marker = """    location / {
         proxy_pass $ui_upstream;
 """
@@ -1293,9 +1457,36 @@ location_replacement = """    location / {
         sub_filter '</head>' '<script src="/hfl-sentry-config.js"></script><script src="/hfl-sentry-loader.js"></script></head>';
         proxy_pass $ui_upstream;
 """
+frontend_location_count = text.count("    location / {\n")
+location_count = text.count(location_marker)
+if not frontend_location_count:
+    raise SystemExit(f"SourceLens frontend location marker not found in {path}")
+if "location = /hfl-sentry-config.js" not in text:
+    if location_count != frontend_location_count:
+        raise SystemExit(f"SourceLens frontend proxy layout is unsupported in {path}")
+    text = text.replace(location_marker, assets + location_marker)
 if "hfl-sentry-loader.js\"></script></head>" not in text:
-    if location_marker in text:
-        text = text.replace(location_marker, location_replacement)
+    if location_count != frontend_location_count:
+        raise SystemExit(f"SourceLens frontend proxy layout is unsupported in {path}")
+    text = text.replace(location_marker, location_replacement)
+if text.count("location = /hfl-sentry-config.js") != frontend_location_count:
+    raise SystemExit(f"SourceLens Sentry asset routes were not injected into {path}")
+if text.count("hfl-sentry-loader.js\"></script></head>") != frontend_location_count:
+    raise SystemExit(f"SourceLens Sentry loader was not injected into {path}")
+server_marker = "server {\n"
+server_guard = """server {
+    # HFL-owned upgrade barrier for direct SourceLens Run creation.
+    if ($hfl_sourcelens_run_creation_blocked) {
+        return 503;
+    }
+"""
+server_count = text.count(server_marker)
+if not server_count:
+    raise SystemExit(f"SourceLens server blocks not found in {path}")
+if "$hfl_sourcelens_run_creation_blocked" not in text.replace(maintenance_include, ""):
+    text = text.replace(server_marker, server_guard)
+if text.count("if ($hfl_sourcelens_run_creation_blocked)") != server_count:
+    raise SystemExit(f"SourceLens maintenance guards were not injected into every server block in {path}")
 path.write_text(text, encoding="utf-8")
 PY
 }
@@ -1365,21 +1556,24 @@ sourcelens_ensure_dev_data_dirs() {
 		"${SOURCELENS_DATA_DIR}/logs/postgresql" \
 		"${SOURCELENS_DATA_DIR}/logs/redis" \
 		"${SOURCELENS_DATA_DIR}/storage" \
+		"${SOURCELENS_DATA_DIR}/document-attachments" \
+		"${SOURCELENS_DATA_DIR}/deliverables" \
 		"${SOURCELENS_DATA_DIR}/workspace" \
 		"${SOURCELENS_DATA_DIR}/django/staticfiles"
 }
 
 sourcelens_prepare_dev_runtime_tree() {
-	local src="${SOURCELENS_SOURCE_CACHE}"
+	local src="${SOURCELENS_BUILD_SOURCE}"
 	local dev_root="${SOURCELENS_DEV_DIR}"
-	local nginx_config="${src}/docker/nginx/default.conf"
-	[[ -f "${nginx_config}" ]] \
-		|| sourcelens_die "missing SourceLens nginx config: ${nginx_config}"
+	local nginx_config
+	nginx_config="$(sourcelens_upstream_nginx_config "${src}")"
 
-	mkdir -p "${dev_root}/deploy/nginx" "${dev_root}/deploy/postgresql" \
+	mkdir -p "${dev_root}/deploy/nginx/hfl-maintenance" "${dev_root}/deploy/postgresql" \
 		"${dev_root}/deploy/sentry"
 	cp "${nginx_config}" "${dev_root}/deploy/nginx/default.conf"
 	sourcelens_patch_runtime_nginx "${dev_root}/deploy/nginx/default.conf"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/run-creation-gate-off.conf" \
+		"${dev_root}/deploy/nginx/hfl-maintenance/run-creation-gate.conf"
 	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-loader.js" \
 		"${dev_root}/deploy/nginx/hfl-sentry-loader.js"
 	printf '%s\n' 'window.__HFL_SOURCELENS_SENTRY__ = Object.freeze({ enabled: false })' \
@@ -1396,7 +1590,7 @@ sourcelens_prepare_dev_runtime_tree() {
 
 	sourcelens_ensure_dev_data_dirs
 	mkdir -p "${dev_root}/data"
-	for subdir in postgresql redis logs storage workspace django; do
+	for subdir in postgresql redis logs storage document-attachments deliverables workspace django; do
 		ln -sfn "${SOURCELENS_DATA_DIR}/${subdir}" "${dev_root}/data/${subdir}"
 	done
 

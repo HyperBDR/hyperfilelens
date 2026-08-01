@@ -202,7 +202,7 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 		return nil
 	}
 	if dockerImageExists(defaultLensnodeImage) {
-		logWarn("Local LensNode image lacks HFL TLS bypass support; loading console bundle.")
+		logWarn("Local LensNode image lacks configurable TLS verification support; loading console bundle.")
 	}
 
 	workDir, err := os.MkdirTemp("", "hfl-lens-image-")
@@ -232,7 +232,7 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 	} {
 		if dockerImageExists(ref) {
 			if !lensnodeImageSupportsInsecureTLS(ref) {
-				return fmt.Errorf("lensnode image %s is missing HFL TLS bypass support; rebuild SourceLens with HFL patches and republish gateway-bootstrap bundle", ref)
+				return fmt.Errorf("lensnode image %s is missing configurable TLS verification support", ref)
 			}
 			return nil
 		}
@@ -241,11 +241,13 @@ func ensureLensnodeImage(ctx context.Context, cfg Config) error {
 }
 
 func lensnodeImageSupportsInsecureTLS(ref string) bool {
+	probe := `import ssl; import lensnode.tls as tls; from lensnode.config import load_config; config = load_config(); native = getattr(config, "tls_skip_verify", False) and hasattr(tls, "create_ssl_context") and tls.create_ssl_context(skip_verify=True).verify_mode == ssl.CERT_NONE; legacy = hasattr(tls, "tls_insecure_enabled") and tls.tls_insecure_enabled(); raise SystemExit(0 if native or legacy else 1)`
 	cmd := exec.Command(
 		"docker", "run", "--rm",
+		"-e", "LENSNODE_TLS_SKIP_VERIFY=1",
 		"-e", "LENSNODE_INSECURE_TLS=1",
 		ref,
-		"python", "-c", "from lensnode.tls import tls_insecure_enabled; raise SystemExit(0 if tls_insecure_enabled() else 1)",
+		"python", "-c", probe,
 	)
 	return cmd.Run() == nil
 }
