@@ -230,7 +230,12 @@ def context_for_workspace_binding(
     require_ready: bool = True,
     allow_deleting: bool = False,
 ) -> tuple[GatewayExecutionContext, LensWorkspaceBinding]:
-    """Resolve a trusted execution context from a persisted workspace binding."""
+    """Resolve a trusted execution context from a persisted workspace binding.
+
+    ``allow_deleting`` is reserved for identity-aware cleanup, which must also
+    converge after prepare failed before the identity became ready. Restore
+    callers retain the default READY-only checks.
+    """
 
     binding = (
         LensWorkspaceBinding.objects.select_related(
@@ -251,13 +256,21 @@ def context_for_workspace_binding(
     if binding.workspace_kind != LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE:
         raise ValidationError({"workspace_binding_id": "Gateway-local directories cannot receive managed restores."})
     allowed_states = (
-        {LensWorkspaceBinding.State.READY, LensWorkspaceBinding.State.DELETING}
+        {
+            LensWorkspaceBinding.State.PREPARING,
+            LensWorkspaceBinding.State.READY,
+            LensWorkspaceBinding.State.DELETING,
+            LensWorkspaceBinding.State.ERROR,
+        }
         if allow_deleting
         else {LensWorkspaceBinding.State.READY}
     )
     if binding.state not in allowed_states:
         raise ValidationError({"workspace_binding_id": "Workspace binding is not executable."})
-    if binding.identity_status != LensWorkspaceBinding.IdentityStatus.READY:
+    if (
+        not allow_deleting
+        and binding.identity_status != LensWorkspaceBinding.IdentityStatus.READY
+    ):
         raise ValidationError(
             {"workspace_binding_id": "Managed workspace identity is not verified."}
         )

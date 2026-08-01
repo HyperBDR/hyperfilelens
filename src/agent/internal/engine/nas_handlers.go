@@ -2,7 +2,12 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"hyperfilelens/agent/internal/service/nas"
 )
@@ -57,6 +62,83 @@ func (e *Engine) ensureNASMounted(ctx context.Context, p Payload) error {
 		return nil
 	}
 	return nas.NewService().EnsureMounted(ctx, spec)
+}
+
+func validateNASRestoreTarget(p Payload, targetPath string) error {
+	spec, ok, err := parseNASSpec(p.Extra["nas"])
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	mountRoot := filepath.Clean(strings.TrimSpace(spec.MountPoint))
+	target := filepath.Clean(strings.TrimSpace(targetPath))
+	_, relative, err := secureRelativePath(target, mountRoot, true)
+	if err != nil {
+		return errors.New("NAS restore target must be inside its mount point")
+	}
+	rootFD, _, err := secureOpenDirectory(
+		mountRoot,
+		mountRoot,
+		true,
+		uint64(os.O_RDONLY),
+	)
+	if err != nil {
+		return fmt.Errorf("NAS mount point is not a safe directory: %w", err)
+	}
+	rootDirectory := secureDirectoryFile(rootFD, mountRoot)
+	if rootDirectory == nil {
+		return errors.New("restricted Data Gateway filesystem operations require Linux")
+	}
+	_ = rootDirectory.Close()
+
+	current := mountRoot
+	for _, component := range strings.Split(relative, string(os.PathSeparator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if os.IsNotExist(statErr) {
+			break
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("NAS restore target contains a symlink: %s", current)
+		}
+	}
+	return nil
+}
+
+func resolveNASRestoreTarget(p Payload, logicalPath string) (string, string, error) {
+	spec, ok, err := parseNASSpec(p.Extra["nas"])
+	if err != nil {
+		return "", "", err
+	}
+	if !ok {
+		return strings.TrimSpace(logicalPath), "", nil
+	}
+	raw := strings.TrimSpace(logicalPath)
+	if raw == "" || strings.ContainsRune(raw, '\x00') || strings.Contains(raw, `\`) {
+		return "", "", errors.New("NAS restore target is invalid")
+	}
+	for _, component := range strings.Split(raw, "/") {
+		if component == "." || component == ".." {
+			return "", "", errors.New("NAS restore target contains an unsafe path component")
+		}
+	}
+	relative := strings.TrimPrefix(raw, "/")
+	if relative == "" {
+		relative = "."
+	}
+	target := filepath.Join(spec.MountPoint, filepath.FromSlash(relative))
+	if err := validateNASRestoreTarget(p, target); err != nil {
+		return "", "", err
+	}
+	return target, spec.MountPoint, nil
 }
 
 func (e *Engine) runNasMount(ctx context.Context, p Payload) (string, map[string]any, string) {

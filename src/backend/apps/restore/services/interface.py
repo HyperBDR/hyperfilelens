@@ -1440,6 +1440,23 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
         raise ValidationError({"target_ref_id": "Restore execution node not found."})
     if node.status != Node.Status.ONLINE:
         raise ValidationError({"target_ref_id": "Restore execution node is offline."})
+    target_nas_payload: dict[str, Any] = {}
+    if record.target_type == RestoreRecord.EndpointType.NAS:
+        target_nas = (
+            SourceResource.objects.filter(
+                organization_id=record.organization_id,
+                resource_type=ResourceType.NAS,
+                id=record.target_ref_id,
+                bound_node_id=node.id,
+                is_deleted=False,
+            )
+            .first()
+        )
+        if target_nas is None:
+            raise ValidationError({"target_ref_id": "Restore target NAS is not available."})
+        from apps.source.services.internal.nas_agent import nas_payload_for_resource
+
+        target_nas_payload = {"nas": nas_payload_for_resource(target_nas)}
     all_items = list(record.items.all())
     items = [
         item
@@ -1550,13 +1567,27 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
                 "repository": repository_payload,
                 "repository_reader_node_id": repository_access.node.id,
                 "restore_transfer_mode": restore_transfer_mode,
+                **target_nas_payload,
                 **managed_workspace_payload,
             }
+            persisted_payload = payload
+            if target_nas_payload:
+                from apps.source.services.internal.source_credentials import (
+                    scrub_source_secrets,
+                )
+
+                persisted_payload = {
+                    **payload,
+                    "nas": scrub_source_secrets(payload["nas"]),
+                }
             handle = run_agent_task_async(
                 organization_id=record.target_execution_organization_id,
                 node_id=node.id,
                 kind="restore.run",
                 payload=payload,
+                persisted_payload=(
+                    persisted_payload if target_nas_payload else None
+                ),
                 correlation_type="restore.record",
                 correlation_id=str(record.task_uuid),
                 requesting_organization_id=record.requesting_organization_id,

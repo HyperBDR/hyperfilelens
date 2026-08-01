@@ -227,6 +227,84 @@ class CopilotChatTeardownTests(TestCase):
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
     @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
     @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
+    def test_failed_provision_cleanup_keeps_chat_retryable(
+        self,
+        request_json,
+        run_agent_task,
+        _delete_assistant,
+        _soft_delete_assistant,
+    ):
+        request_json.side_effect = self._not_found()
+        run_agent_task.return_value = mock.MagicMock(
+            ok=True,
+            timed_out=False,
+            task=mock.MagicMock(id=uuid.uuid4(), last_error=""),
+        )
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.status = LensSessionLink.Status.ACTIVE
+        self.session.teardown_state_json = {
+            "intent": "reset_for_retry",
+            "provision_error": "LensNode was unavailable",
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "status",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+        result = chat_lifecycle.run_copilot_chat_teardown(
+            session_link_id=self.session.id
+        )
+
+        self.assertEqual(result["status"], "retryable")
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.session.lifecycle_status,
+            LensSessionLink.LifecycleStatus.FAILED,
+        )
+        self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
+        self.assertIsNone(self.session.knowledge_source_id)
+        self.assertIn("LensNode was unavailable", self.session.lifecycle_error)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "_queue_teardown_or_record_error"
+    )
+    def test_failed_provision_records_reset_for_retry_intent(self, queue_teardown):
+        claim_token = uuid.uuid4()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.PROVISIONING
+        self.session.provision_claim_token = claim_token
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "provision_claim_token",
+                "updated_at",
+            ]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            changed = chat_lifecycle._transition_failed_provision_to_teardown(
+                self.session.id,
+                str(claim_token),
+                message="workspace cleanup failed",
+            )
+
+        self.assertTrue(changed)
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.session.teardown_state_json["intent"],
+            "reset_for_retry",
+        )
+        self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
+        queue_teardown.assert_called_once_with(self.session.id)
+
+    @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
+    @mock.patch("apps.lens_bridge.services.chat_lifecycle.sl_client.request_json")
     def test_teardown_persists_partial_success_and_retry_converges(
         self,
         request_json,
@@ -647,6 +725,7 @@ class CopilotChatTeardownTests(TestCase):
         self.assertIsNone(result.provision_claim_token)
         self.assertIsNone(result.provision_claimed_at)
         self.assertIsNone(result.provision_next_retry_at)
+        self.assertEqual(result.teardown_state_json["intent"], "delete_session")
         queue_teardown.assert_called_once_with(self.session.id)
 
     @mock.patch(
@@ -662,6 +741,7 @@ class CopilotChatTeardownTests(TestCase):
         self.session.teardown_claim_token = teardown_token
         self.session.teardown_claimed_at = claimed_at
         self.session.teardown_next_retry_at = next_retry_at
+        self.session.teardown_state_json = {"intent": "delete_session"}
         self.session.save(
             update_fields=[
                 "lifecycle_status",
@@ -669,6 +749,7 @@ class CopilotChatTeardownTests(TestCase):
                 "teardown_claim_token",
                 "teardown_claimed_at",
                 "teardown_next_retry_at",
+                "teardown_state_json",
                 "updated_at",
             ]
         )
@@ -681,6 +762,56 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(result.teardown_claim_token, teardown_token)
         self.assertEqual(result.teardown_claimed_at, claimed_at)
         self.assertEqual(result.teardown_next_retry_at, next_retry_at)
+        queue_teardown.assert_called_once_with(self.session.id)
+
+    @mock.patch(
+        "apps.lens_bridge.services.chat_lifecycle."
+        "_queue_teardown_or_record_error"
+    )
+    def test_delete_overrides_retry_cleanup_and_fences_live_claim(
+        self,
+        queue_teardown,
+    ):
+        teardown_token = uuid.uuid4()
+        self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        self.session.status = LensSessionLink.Status.ACTIVE
+        self.session.teardown_attempts = 2
+        self.session.teardown_claim_token = teardown_token
+        self.session.teardown_claimed_at = timezone.now()
+        self.session.teardown_next_retry_at = timezone.now() + timedelta(minutes=5)
+        self.session.teardown_state_json = {
+            "intent": "reset_for_retry",
+            "provision_error": "prepare failed",
+        }
+        self.session.save(
+            update_fields=[
+                "lifecycle_status",
+                "status",
+                "teardown_attempts",
+                "teardown_claim_token",
+                "teardown_claimed_at",
+                "teardown_next_retry_at",
+                "teardown_state_json",
+                "updated_at",
+            ]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            result = chat_lifecycle.request_copilot_chat_teardown(self.session)
+
+        result.refresh_from_db()
+        self.assertEqual(result.status, LensSessionLink.Status.ARCHIVED)
+        self.assertEqual(result.teardown_attempts, 0)
+        self.assertIsNone(result.teardown_claim_token)
+        self.assertIsNone(result.teardown_claimed_at)
+        self.assertIsNone(result.teardown_next_retry_at)
+        self.assertEqual(result.teardown_state_json, {"intent": "delete_session"})
+        with self.assertRaises(chat_lifecycle.ChatTeardownIncompleteError):
+            chat_lifecycle._update_chat_claim(
+                result,
+                str(teardown_token),
+                "teardown_state_json",
+            )
         queue_teardown.assert_called_once_with(self.session.id)
 
     @mock.patch(

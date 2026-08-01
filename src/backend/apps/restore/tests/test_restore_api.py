@@ -29,6 +29,8 @@ from apps.restore.services.task_events import (
     append_restore_execution_started_event,
     append_restore_item_terminal_event,
 )
+from apps.source.constants import ResourceType
+from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.task.models import Task, TaskEvent, TaskResource
 
@@ -329,6 +331,57 @@ class RestoreApiTests(TestCase):
         )
         self.assertEqual(node_task.organization_id, self.org.id)
         self.assertEqual(node_task.requesting_organization_id, self.org.id)
+
+    def test_nas_restore_dispatches_mount_payload_and_execution_path(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="restore-nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.0.53",
+        )
+        target_nas = SourceResource.objects.create(
+            organization=self.org,
+            name="restore-target-nas",
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+            config={"server": "10.0.0.20", "share": "restore"},
+        )
+        target_nas.set_credentials(
+            {"username": "restore-user", "password": "nas-plain-secret"}
+        )
+        target_nas.save(update_fields=["credentials", "updated_at"])
+        payload = self._manual_restore_payload()
+        payload.update(
+            {
+                "target_type": "nas",
+                "target_ref_id": target_nas.id,
+                "target_path": "/restored/manual",
+            }
+        )
+
+        response = self.client.post(
+            "/api/v1/restore/records/",
+            payload,
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        node_task = NodeTask.objects.get(kind="restore.run")
+        mount_root = target_nas.effective_mount_point()
+        self.assertEqual(node_task.organization_id, self.org.id)
+        self.assertEqual(node_task.node_id, proxy.id)
+        self.assertEqual(node_task.payload["nas"]["mount_point"], mount_root)
+        self.assertNotIn("password", node_task.payload["nas"])
+        self.assertNotIn("nas-plain-secret", str(node_task.payload))
+        self.assertIn("_delivery_secret", node_task.payload)
+        self.assertEqual(
+            node_task.payload["target_path"],
+            "/restored/manual/file.txt",
+        )
+        record = RestoreRecord.objects.get(target_ref_id=target_nas.id)
+        self.assertEqual(record.target_path, "/restored/manual")
 
     def _active_restore_task(self, *, source_ref_id: int | None = None, status_value: str = Task.Status.RUNNING) -> Task:
         task = Task.objects.create(

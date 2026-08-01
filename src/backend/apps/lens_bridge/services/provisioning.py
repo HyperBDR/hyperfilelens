@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 import time
 import uuid
@@ -143,41 +144,47 @@ def require_gateway_node(org: Organization, gateway_id: int) -> Node:
     raise ValidationError({"gateway_id": "Data gateway not found."})
 
 
-def _lensnode_dir_paths(lensnode_data: dict[str, Any]) -> set[str]:
-    paths: set[str] = set()
-    for item in lensnode_data.get("available_dirs") or []:
-        if isinstance(item, str):
-            paths.add(item)
-            continue
-        if not isinstance(item, dict):
-            continue
-        path = item.get("path")
-        if path:
-            paths.add(str(path))
-        for child in item.get("children") or []:
-            if isinstance(child, dict) and child.get("path"):
-                paths.add(str(child["path"]))
-    return paths
-
-
-def wait_for_lensnode_dir(
+def _lensnode_matches_workspace(
+    lensnode_data: dict[str, Any],
     *,
     lensnode_uuid: uuid.UUID,
-    path: str,
+    workspace_root: str,
+) -> bool:
+    reported_uuid = str(lensnode_data.get("uuid") or "").strip().lower()
+    reported_status = str(lensnode_data.get("status") or "").strip().lower()
+    reported_root = posixpath.normpath(
+        str(lensnode_data.get("workspace_path") or "").strip()
+    )
+    expected_root = posixpath.normpath(str(workspace_root or "").strip())
+    return (
+        reported_uuid == str(lensnode_uuid).lower()
+        and reported_status == "online"
+        and reported_root == expected_root
+    )
+
+
+def wait_for_lensnode_ready(
+    *,
+    lensnode_uuid: uuid.UUID,
+    workspace_root: str,
     timeout_s: float = _LENSNODE_DIR_WAIT_SECONDS,
 ) -> None:
-    """Wait until a LensNode heartbeat reports the given workspace path."""
+    """Wait for the enrolled LensNode at its configured workspace root."""
 
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         data = sl_client.request_json("GET", f"/api/lens/admin/lensnodes/{lensnode_uuid}/")
-        if path in _lensnode_dir_paths(data):
+        if _lensnode_matches_workspace(
+            data,
+            lensnode_uuid=lensnode_uuid,
+            workspace_root=workspace_root,
+        ):
             return
         time.sleep(_LENSNODE_DIR_POLL_SECONDS)
     raise ValidationError(
         {
             "workspace": (
-                f"LensNode did not report workspace path in time: {path}. "
+                f"LensNode did not become ready at workspace root: {workspace_root}. "
                 "Ensure the AI engine is online and retry."
             )
         }
@@ -246,7 +253,7 @@ def ensure_ks_workspace_on_gateway(
         update_fields=["identity_status", "last_error", "updated_at"]
     )
 
-    wait_for_lensnode_dir(lensnode_uuid=lensnode_uuid, path=workspace_path)
+    wait_for_lensnode_ready(lensnode_uuid=lensnode_uuid, workspace_root=root)
 
 
 def pick_lensnode_task(lensnode_uuid: uuid.UUID) -> str:

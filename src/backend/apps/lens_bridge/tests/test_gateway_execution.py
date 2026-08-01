@@ -5,9 +5,16 @@ from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
+from apps.lens_bridge.models import (
+    LensGatewayLink,
+    LensKnowledgeSource,
+    LensWorkspaceBinding,
+)
 from apps.lens_bridge.services import platform_lens
-from apps.lens_bridge.services.gateway_execution import context_for_gateway_link
+from apps.lens_bridge.services.gateway_execution import (
+    context_for_gateway_link,
+    context_for_workspace_binding,
+)
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_workload import get_node_remove_blockers
@@ -119,3 +126,54 @@ class GatewayExecutionContextTests(TestCase):
         blockers = get_node_remove_blockers(node=node)
 
         self.assertIn("knowledge_source_bound", {blocker.code for blocker in blockers})
+
+    def test_cleanup_context_accepts_failed_identity_without_relaxing_restore(self):
+        node = Node.objects.create(
+            organization=self.tenant,
+            name="failed-prepare-gateway",
+            role=NodeRole.GATEWAY,
+        )
+        link = LensGatewayLink.objects.create(
+            organization=self.tenant,
+            gateway=node,
+            owner_user=self.user,
+            scope=LensGatewayLink.GatewayScope.USER,
+            workspace_root="/workspace/tenant/data",
+        )
+        knowledge_source = LensKnowledgeSource.objects.create(
+            organization=self.tenant,
+            name="Failed managed workspace",
+            gateway=node,
+            gateway_link=link,
+            source_path="/source/data",
+            created_by=self.user,
+        )
+        binding = LensWorkspaceBinding.objects.create(
+            organization=self.tenant,
+            knowledge_source=knowledge_source,
+            gateway_link=link,
+            execution_organization_id=self.tenant.id,
+            execution_node_id=node.id,
+            workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
+            workspace_root="/workspace/tenant/data",
+            relative_path="tenants/1/knowledge-sources/failed",
+            state=LensWorkspaceBinding.State.ERROR,
+            identity_status=LensWorkspaceBinding.IdentityStatus.ERROR,
+        )
+
+        with self.assertRaises(ValidationError):
+            context_for_workspace_binding(
+                tenant_organization=self.tenant,
+                workspace_binding_id=binding.id,
+                require_ready=False,
+            )
+
+        context, resolved = context_for_workspace_binding(
+            tenant_organization=self.tenant,
+            workspace_binding_id=binding.id,
+            require_ready=False,
+            allow_deleting=True,
+        )
+
+        self.assertEqual(context.gateway.id, node.id)
+        self.assertEqual(resolved.id, binding.id)

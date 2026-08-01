@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const lensWorkspaceIdentityKind = "managed_restore"
@@ -49,10 +51,11 @@ func lensWorkspaceIdentityFromPayload(p Payload) (lensWorkspaceIdentity, error) 
 	if identity.WorkspaceKind != lensWorkspaceIdentityKind {
 		return lensWorkspaceIdentity{}, errors.New("unsupported managed workspace kind")
 	}
-	if strings.ContainsAny(identity.WorkspaceUID, `/\\\x00`) ||
-		identity.WorkspaceUID == "." || identity.WorkspaceUID == ".." {
+	workspaceUID, err := uuid.Parse(identity.WorkspaceUID)
+	if err != nil || workspaceUID.String() != strings.ToLower(identity.WorkspaceUID) {
 		return lensWorkspaceIdentity{}, errors.New("managed workspace UID is invalid")
 	}
+	identity.WorkspaceUID = workspaceUID.String()
 	return identity, nil
 }
 
@@ -239,27 +242,44 @@ func (e *Engine) runLensKsPrepare(ctx context.Context, p Payload) (string, map[s
 	if err := ensureLensMetadataLayout(paths); err != nil {
 		return "failed", nil, err.Error()
 	}
-	cleanPath, created, err := secureEnsureDirectory(paths.Workspace, paths.Root, 0o755)
-	if err != nil {
-		return "failed", nil, err.Error()
-	}
 	existing, err := readLensWorkspaceIdentity(paths.Identity)
 	if err == nil {
 		if existing != identity {
 			return "failed", nil, "managed workspace identity does not match"
 		}
-		return "success", map[string]any{"path": cleanPath, "created": false}, ""
+		cleanPath, created, ensureErr := secureEnsureDirectory(
+			paths.Workspace,
+			paths.Root,
+			0o755,
+		)
+		if ensureErr != nil {
+			return "failed", nil, ensureErr.Error()
+		}
+		return "success", map[string]any{"path": cleanPath, "created": created}, ""
 	}
 	if !os.IsNotExist(err) {
 		return "failed", nil, err.Error()
 	}
+	if _, statErr := os.Lstat(paths.Workspace); statErr == nil {
+		return "failed", nil, "refusing to claim an existing workspace without identity"
+	} else if !os.IsNotExist(statErr) {
+		return "failed", nil, statErr.Error()
+	}
+	// The durable identity is the creation journal. If the process exits before
+	// the directory is created, a retry can safely complete the matching claim.
 	if err := writeLensWorkspaceIdentity(paths.Identity, identity); err != nil {
 		if os.IsExist(err) {
 			existing, readErr := readLensWorkspaceIdentity(paths.Identity)
-			if readErr == nil && existing == identity {
-				return "success", map[string]any{"path": cleanPath, "created": false}, ""
+			if readErr != nil || existing != identity {
+				return "failed", nil, "managed workspace identity does not match"
 			}
+		} else {
+			return "failed", nil, err.Error()
 		}
+	}
+	cleanPath, created, err := secureEnsureDirectory(paths.Workspace, paths.Root, 0o755)
+	if err != nil {
+		// Keep the matching identity as a recovery journal for the next retry.
 		return "failed", nil, err.Error()
 	}
 	return "success", map[string]any{"path": cleanPath, "created": created}, ""
