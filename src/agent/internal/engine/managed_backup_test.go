@@ -875,7 +875,7 @@ func TestPrepareRestoreTargetPathRemovesEmptyDirectoryForFileTarget(t *testing.T
 		t.Fatal(err)
 	}
 
-	if err := prepareRestoreTargetPath(root, target, true); err != nil {
+	if err := prepareRestoreTargetPath(root, target, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
@@ -893,7 +893,7 @@ func TestPrepareRestoreTargetPathRejectsNonEmptyDirectoryForFileTarget(t *testin
 		t.Fatal(err)
 	}
 
-	err := prepareRestoreTargetPath(root, target, true)
+	err := prepareRestoreTargetPath(root, target, true, "")
 	if err == nil {
 		t.Fatal("expected non-empty directory target to be rejected")
 	}

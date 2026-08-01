@@ -1492,6 +1492,16 @@ func (e *Engine) runManagedRestore(
 	if targetPath == "" {
 		return "failed", nil, "target_path is required"
 	}
+	if err := e.ensureNASMounted(ctx, p); err != nil {
+		return "failed", nil, err.Error()
+	}
+	targetPath, nasMountRoot, err := resolveNASRestoreTarget(p, targetPath)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	if err := validateNASRestoreTarget(p, targetPath); err != nil {
+		return "failed", nil, err.Error()
+	}
 	if err := validateLensManagedRestoreTarget(p, targetPath); err != nil {
 		return "failed", nil, err.Error()
 	}
@@ -1520,6 +1530,9 @@ func (e *Engine) runManagedRestore(
 	for pathIndex, selectedPath := range selectedPaths {
 		source := snapshotObjectPath(p.SnapshotID, selectedPath)
 		restoreTarget := restoreTargetPathForSelection(p, targetPath, selectedPath)
+		if err := validateNASRestoreTarget(p, restoreTarget); err != nil {
+			return "failed", result, err.Error()
+		}
 		if err := validateLensManagedRestoreTarget(p, restoreTarget); err != nil {
 			return "failed", result, err.Error()
 		}
@@ -1546,7 +1559,12 @@ func (e *Engine) runManagedRestore(
 		preparePath := restorePrepareTargetPathForSelection(p, targetPath, len(selectedPaths), sourceIsDir)
 		restoreEntry["prepare_path"] = preparePath
 		cleanupFileTargetDir := restoreTargetPathSemantics(p) == "final" && len(selectedPaths) == 1 && !sourceIsDir
-		if mkErr := prepareRestoreTargetPath(preparePath, restoreTarget, cleanupFileTargetDir); mkErr != nil {
+		if mkErr := prepareRestoreTargetPath(
+			preparePath,
+			restoreTarget,
+			cleanupFileTargetDir,
+			nasMountRoot,
+		); mkErr != nil {
 			restoreEntry["prepare_error"] = mkErr.Error()
 			restored = append(restored, restoreEntry)
 			result["restore_results"] = restored
@@ -1742,11 +1760,26 @@ func restoreTargetParentPath(targetPath string) string {
 	return parent
 }
 
-func prepareRestoreTargetPath(preparePath string, restoreTarget string, cleanupFileTargetDir bool) error {
+func prepareRestoreTargetPath(
+	preparePath string,
+	restoreTarget string,
+	cleanupFileTargetDir bool,
+	allowedRoot string,
+) error {
 	if cleanupFileTargetDir {
 		if err := removeEmptyRestoreTargetDirectory(restoreTarget); err != nil {
 			return err
 		}
+	}
+	if strings.TrimSpace(allowedRoot) != "" {
+		allowedRoot = filepath.Clean(strings.TrimSpace(allowedRoot))
+		if filepath.Clean(preparePath) == allowedRoot {
+			return nil
+		}
+		if _, _, err := secureEnsureDirectory(preparePath, allowedRoot, 0o755); err != nil {
+			return err
+		}
+		return nil
 	}
 	if err := os.MkdirAll(preparePath, 0o755); err != nil {
 		return err

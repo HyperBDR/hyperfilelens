@@ -4,7 +4,7 @@ from django.test import SimpleTestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.lens_bridge.services import sl_client
-from apps.lens_bridge.services.provisioning import _lensnode_dir_paths
+from apps.lens_bridge.services.provisioning import _lensnode_matches_workspace
 
 
 class SlClientErrorFormatTests(SimpleTestCase):
@@ -80,19 +80,46 @@ class BuildLensEnrollConfigTests(SimpleTestCase):
         )
 
 
-class LensnodeDirPathsTests(SimpleTestCase):
-    def test_collects_top_level_and_children(self):
+class LensnodeWorkspaceReadinessTests(SimpleTestCase):
+    lensnode_uuid = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
+
+    def test_accepts_online_lensnode_at_workspace_root_without_deep_dirs(self):
         data = {
-            "available_dirs": [
-                {
-                    "path": "/workspace/org-1/ks-1",
-                    "children": [{"path": "/workspace/org-1/ks-1/data"}],
-                }
-            ]
+            "uuid": self.lensnode_uuid,
+            "status": "online",
+            "workspace_path": "/workspace/org-1/",
+            "available_dirs": [],
         }
-        paths = _lensnode_dir_paths(data)
-        self.assertIn("/workspace/org-1/ks-1", paths)
-        self.assertIn("/workspace/org-1/ks-1/data", paths)
+        self.assertTrue(
+            _lensnode_matches_workspace(
+                data,
+                lensnode_uuid=self.lensnode_uuid,
+                workspace_root="/workspace/org-1",
+            )
+        )
+
+    def test_rejects_offline_or_wrong_workspace_lensnode(self):
+        base = {
+            "uuid": self.lensnode_uuid,
+            "status": "offline",
+            "workspace_path": "/workspace/org-1",
+        }
+        self.assertFalse(
+            _lensnode_matches_workspace(
+                base,
+                lensnode_uuid=self.lensnode_uuid,
+                workspace_root="/workspace/org-1",
+            )
+        )
+        base["status"] = "online"
+        base["workspace_path"] = "/workspace/another-root"
+        self.assertFalse(
+            _lensnode_matches_workspace(
+                base,
+                lensnode_uuid=self.lensnode_uuid,
+                workspace_root="/workspace/org-1",
+            )
+        )
 
 
 class SlLensnodeSnapshotTests(SimpleTestCase):
@@ -119,7 +146,7 @@ class SlLensnodeSnapshotTests(SimpleTestCase):
 
 class EnsureKsWorkspaceTests(SimpleTestCase):
     @patch("apps.lens_bridge.services.gateway_execution.context_for_gateway_link")
-    @patch("apps.lens_bridge.services.provisioning.wait_for_lensnode_dir")
+    @patch("apps.lens_bridge.services.provisioning.wait_for_lensnode_ready")
     @patch("apps.node.services.internal.agent_task.run_agent_task_sync")
     def test_dispatches_prepare_task(self, mock_sync, mock_wait, mock_context):
         from apps.lens_bridge.services import provisioning

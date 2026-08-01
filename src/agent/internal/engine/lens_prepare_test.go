@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+const testWorkspaceUID = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
+
 func newLensTestRoot(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "data")
@@ -30,7 +32,7 @@ func TestLensWorkspaceTrashStaysInsideWorkspaceFilesystem(t *testing.T) {
 	paths, err := resolveLensWorkspacePaths(
 		filepath.Join(root, "tenants", "61", "knowledge-sources", "workspace-42"),
 		root,
-		"workspace-42",
+		testWorkspaceUID,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +51,7 @@ func TestRunLensKsPrepareCreatesDirectory(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -66,7 +68,7 @@ func TestRunLensKsPrepareCreatesDirectory(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatalf("expected directory")
 	}
-	if _, err := os.Stat(testIdentityPath(root, "workspace-42")); err != nil {
+	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); err != nil {
 		t.Fatalf("workspace identity: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(target, ".hfl-workspace.json")); !os.IsNotExist(err) {
@@ -82,7 +84,7 @@ func TestRunLensKsPrepareRejectsPathOutsideRoot(t *testing.T) {
 		Path: "/tmp/outside",
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-outside",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -103,7 +105,7 @@ func TestRunLensKsPrepareRejectsManagedTrashPath(t *testing.T) {
 		Path: filepath.Join(root, lensWorkspaceTrashDirectory, "workspace-42"),
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -115,6 +117,82 @@ func TestRunLensKsPrepareRejectsManagedTrashPath(t *testing.T) {
 	}
 }
 
+func TestRunLensKsPrepareRejectsExistingDirectoryWithoutIdentity(t *testing.T) {
+	root := newLensTestRoot(t)
+	target := filepath.Join(root, "existing-user-data")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(target, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _, errMsg := New(nil).runLensKsPrepare(context.Background(), Payload{
+		Path: target,
+		Extra: map[string]any{
+			"workspace_root":         root,
+			"workspace_uid":          testWorkspaceUID,
+			"tenant_organization_id": 61,
+			"gateway_link_id":        7,
+			"knowledge_source_id":    42,
+			"workspace_kind":         "managed_restore",
+		},
+	})
+
+	if status != "failed" || errMsg == "" {
+		t.Fatalf("expected unowned workspace rejection, status=%q err=%q", status, errMsg)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("existing workspace was modified: %v", err)
+	}
+	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); !os.IsNotExist(err) {
+		t.Fatalf("unexpected identity claim, err=%v", err)
+	}
+}
+
+func TestRunLensKsPrepareRecoversIdentityWithoutDirectory(t *testing.T) {
+	root := newLensTestRoot(t)
+	target := filepath.Join(root, "interrupted-workspace")
+	payload := Payload{
+		Path: target,
+		Extra: map[string]any{
+			"workspace_root":         root,
+			"workspace_uid":          testWorkspaceUID,
+			"tenant_organization_id": 61,
+			"gateway_link_id":        7,
+			"knowledge_source_id":    42,
+			"workspace_kind":         "managed_restore",
+		},
+	}
+	identity, err := lensWorkspaceIdentityFromPayload(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := resolveLensWorkspacePaths(target, root, identity.WorkspaceUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLensMetadataLayout(paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLensWorkspaceIdentity(paths.Identity, identity); err != nil {
+		t.Fatal(err)
+	}
+
+	status, result, errMsg := New(nil).runLensKsPrepare(context.Background(), payload)
+
+	if status != "success" {
+		t.Fatalf("status=%q err=%q", status, errMsg)
+	}
+	if created, _ := result["created"].(bool); !created {
+		t.Fatalf("expected interrupted directory creation to resume: %v", result)
+	}
+	if info, statErr := os.Stat(target); statErr != nil || !info.IsDir() {
+		t.Fatalf("workspace was not recovered: info=%v err=%v", info, statErr)
+	}
+}
+
 func TestRunLensKsCleanupRemovesOnlyMatchingManagedWorkspace(t *testing.T) {
 	root := newLensTestRoot(t)
 	target := filepath.Join(root, "tenant-61-ks-42")
@@ -123,7 +201,7 @@ func TestRunLensKsCleanupRemovesOnlyMatchingManagedWorkspace(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -153,7 +231,7 @@ func TestRunLensKsCleanupRejectsUnmanagedDirectory(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-unmanaged",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -171,7 +249,7 @@ func TestRunLensKsCleanupRejectsUnmanagedDirectory(t *testing.T) {
 func TestRunLensKsCleanupRejectsUnverifiedTrashDirectory(t *testing.T) {
 	root := newLensTestRoot(t)
 	target := filepath.Join(root, "missing-workspace")
-	trash := testTrashPath(root, "workspace-42")
+	trash := testTrashPath(root, testWorkspaceUID)
 	if err := os.MkdirAll(trash, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +262,7 @@ func TestRunLensKsCleanupRejectsUnverifiedTrashDirectory(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -207,7 +285,7 @@ func TestRunLensKsPrepareRejectsIdentityOverwrite(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -222,7 +300,7 @@ func TestRunLensKsPrepareRejectsIdentityOverwrite(t *testing.T) {
 	if status != "failed" || errMsg == "" {
 		t.Fatalf("expected identity mismatch, status=%q err=%q", status, errMsg)
 	}
-	identity, err := readLensWorkspaceIdentity(testIdentityPath(root, "workspace-42"))
+	identity, err := readLensWorkspaceIdentity(testIdentityPath(root, testWorkspaceUID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +317,7 @@ func TestRunLensKsCleanupIdentityMismatchNeverDeletes(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -270,7 +348,7 @@ func TestRunLensKsPrepareRejectsSymlinkEscape(t *testing.T) {
 		Path: filepath.Join(root, "escape", "ks-42"),
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -292,7 +370,7 @@ func TestValidateLensManagedRestoreTargetRejectsWorkspaceEscapeAndSymlink(t *tes
 		Path: workspace,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -325,7 +403,7 @@ func TestRunLensKsPrepareRejectsTraversalComponents(t *testing.T) {
 		Path: filepath.Join(root, "tenant") + "/../../etc",
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -345,7 +423,7 @@ func TestRestoredLegacyMarkerCannotChangeExternalIdentity(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -371,7 +449,7 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 		Path: target,
 		Extra: map[string]any{
 			"workspace_root":         root,
-			"workspace_uid":          "workspace-42",
+			"workspace_uid":          testWorkspaceUID,
 			"tenant_organization_id": 61,
 			"gateway_link_id":        7,
 			"knowledge_source_id":    42,
@@ -397,14 +475,14 @@ func TestRunLensKsCleanupRetriesAfterPartialTrashRemoval(t *testing.T) {
 	if status != "failed" {
 		t.Fatalf("expected injected failure, got %q", status)
 	}
-	if _, err := os.Stat(testIdentityPath(root, "workspace-42")); err != nil {
+	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); err != nil {
 		t.Fatalf("identity must survive partial removal: %v", err)
 	}
 	status, _, errMsg := engine.runLensKsCleanup(context.Background(), payload)
 	if status != "success" {
 		t.Fatalf("retry status=%q err=%q", status, errMsg)
 	}
-	if _, err := os.Stat(testIdentityPath(root, "workspace-42")); !os.IsNotExist(err) {
+	if _, err := os.Stat(testIdentityPath(root, testWorkspaceUID)); !os.IsNotExist(err) {
 		t.Fatalf("identity should be removed last, err=%v", err)
 	}
 }

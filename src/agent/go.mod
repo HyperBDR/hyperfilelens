@@ -7,6 +7,7 @@ toolchain go1.25.10
 require (
 	github.com/getsentry/sentry-go v0.38.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/google/uuid v1.6.0
 	github.com/kardianos/service v1.2.4
 	github.com/mattn/go-isatty v0.0.20
 	github.com/shirou/gopsutil/v4 v4.26.4
@@ -19,7 +20,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect

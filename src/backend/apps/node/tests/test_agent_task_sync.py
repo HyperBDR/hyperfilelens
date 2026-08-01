@@ -14,7 +14,11 @@ from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_task import wait_for_agent_task
-from apps.node.services.internal.task import deliver_agent_task, redeliver_pending_agent_task
+from apps.node.services.internal.task import (
+    deliver_agent_task,
+    protect_task_delivery_payload,
+    redeliver_pending_agent_task,
+)
 
 
 class AgentTaskSyncWaitTests(TestCase):
@@ -232,6 +236,45 @@ class AgentTaskSyncWaitTests(TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task.status, NodeTask.Status.RUNNING)
         mock_send_task_command.assert_called_once()
+
+    @patch("apps.node.services.internal.task._send_task_command")
+    @patch("apps.node.services.internal.task.redis_store.get_agent_location")
+    @patch("apps.node.services.internal.task.redis_store.get_redis")
+    def test_redelivery_decrypts_delivery_payload_without_persisting_plaintext(
+        self,
+        mock_get_redis,
+        mock_get_agent_location,
+        mock_send_task_command,
+    ):
+        class RedisClient:
+            def exists(self, key):
+                return key != redis_store.ws_recovery_hold_key()
+
+            def set(self, *_args, **_kwargs):
+                return True
+
+        delivered_payload = {}
+
+        def capture_payload(*, task):
+            delivered_payload.update(task.payload)
+
+        self.task.status = NodeTask.Status.PENDING
+        self.task.payload = protect_task_delivery_payload(
+            delivery_payload={"nas": {"username": "user", "password": "plain-secret"}},
+            persisted_payload={"nas": {"username": "user"}},
+        )
+        self.task.save(update_fields=["status", "payload"])
+        mock_get_agent_location.return_value = "live-ws"
+        mock_get_redis.return_value = RedisClient()
+        mock_send_task_command.side_effect = capture_payload
+
+        task = redeliver_pending_agent_task(task_id=self.task.id)
+
+        self.assertIsNotNone(task)
+        self.assertEqual(delivered_payload["nas"]["password"], "plain-secret")
+        self.task.refresh_from_db()
+        self.assertNotIn("password", self.task.payload["nas"])
+        self.assertNotIn("plain-secret", str(self.task.payload))
 
     @patch("apps.node.services.internal.task._send_task_command")
     def test_redeliver_terminal_task_is_noop(self, mock_send_task_command):

@@ -28,6 +28,7 @@ from apps.node.services.internal.task import (
     create_agent_task,
     deliver_agent_task,
     dispatch_task,
+    protect_task_delivery_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ def run_agent_task_async(
     node_id: int,
     kind: str,
     payload: dict | None = None,
+    persisted_payload: dict | None = None,
     correlation_type: str = "",
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
@@ -123,11 +125,17 @@ def run_agent_task_async(
         "agent task async dispatch %s",
         task_log_context(node_id=node.id, kind=kind, correlation_type=correlation_type, correlation_id=correlation_id),
     )
+    task_payload = payload
+    if persisted_payload is not None:
+        task_payload = protect_task_delivery_payload(
+            delivery_payload=payload or {},
+            persisted_payload=persisted_payload,
+        )
     task = dispatch_task(
         org=org,
         node=node,
         kind=kind,
-        payload=payload,
+        payload=task_payload,
         correlation_type=correlation_type,
         correlation_id=correlation_id,
         requesting_organization_id=requesting_organization_id,

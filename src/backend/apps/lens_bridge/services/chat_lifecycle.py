@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 _ASSISTANT_CREATE_OPERATION = "assistant_create"
 _SESSION_CREATE_OPERATION = "session_create"
+_TEARDOWN_INTENT_DELETE = "delete_session"
+_TEARDOWN_INTENT_RESET_FOR_RETRY = "reset_for_retry"
 
 
 class ChatProvisionLeaseLostError(RuntimeError):
@@ -246,7 +248,14 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
     if locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETED:
         return locked
 
-    if locked.lifecycle_status != LensSessionLink.LifecycleStatus.DELETING:
+    teardown_intent = str(
+        (locked.teardown_state_json or {}).get("intent") or ""
+    )
+    delete_intent_already_active = (
+        locked.lifecycle_status == LensSessionLink.LifecycleStatus.DELETING
+        and teardown_intent == _TEARDOWN_INTENT_DELETE
+    )
+    if not delete_intent_already_active:
         locked.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
         locked.provision_phase = LensSessionLink.ProvisionPhase.DELETING
         locked.provision_detail = "Deleting chat resources."
@@ -259,7 +268,7 @@ def request_copilot_chat_teardown(link: LensSessionLink) -> LensSessionLink:
         locked.teardown_claim_token = None
         locked.teardown_claimed_at = None
         locked.teardown_next_retry_at = None
-        locked.teardown_state_json = {}
+        locked.teardown_state_json = {"intent": _TEARDOWN_INTENT_DELETE}
         locked.save(
             update_fields=[
                 "lifecycle_status",
@@ -1263,6 +1272,9 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
     critical_errors: list[str] = []
     warnings: list[str] = []
     teardown_state = dict(link.teardown_state_json or {})
+    teardown_intent = str(
+        teardown_state.get("intent") or _TEARDOWN_INTENT_DELETE
+    )
 
     if link.active_run_uuid:
         try:
@@ -1487,23 +1499,32 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
             error=dependency,
         )
 
-    link.lifecycle_status = (
-        LensSessionLink.LifecycleStatus.DELETING
-        if critical_errors
-        else LensSessionLink.LifecycleStatus.DELETED
-    )
-    link.status = LensSessionLink.Status.ARCHIVED
-    link.provision_phase = (
-        LensSessionLink.ProvisionPhase.CLEANING_UP
-        if critical_errors
-        else LensSessionLink.ProvisionPhase.DELETED
-    )
-    link.provision_detail = (
-        "Chat cleanup is incomplete and will be retried."
-        if critical_errors
-        else "Chat resources deleted."
-    )
-    link.lifecycle_error = "; ".join([*critical_errors, *warnings])[:2000]
+    reset_for_retry = teardown_intent == _TEARDOWN_INTENT_RESET_FOR_RETRY
+    if critical_errors:
+        link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
+        link.status = (
+            LensSessionLink.Status.ACTIVE
+            if reset_for_retry
+            else LensSessionLink.Status.ARCHIVED
+        )
+        link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
+        link.provision_detail = "Chat cleanup is incomplete and will be retried."
+        link.lifecycle_error = "; ".join([*critical_errors, *warnings])[:2000]
+    elif reset_for_retry:
+        link.lifecycle_status = LensSessionLink.LifecycleStatus.FAILED
+        link.status = LensSessionLink.Status.ACTIVE
+        link.provision_phase = LensSessionLink.ProvisionPhase.QUEUED
+        link.provision_detail = "Chat preparation failed. Retry to try again."
+        provision_error = str(teardown_state.get("provision_error") or "")
+        link.lifecycle_error = "; ".join(
+            item for item in [provision_error, *warnings] if item
+        )[:2000]
+    else:
+        link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETED
+        link.status = LensSessionLink.Status.ARCHIVED
+        link.provision_phase = LensSessionLink.ProvisionPhase.DELETED
+        link.provision_detail = "Chat resources deleted."
+        link.lifecycle_error = "; ".join(warnings)[:2000]
     link.active_run_uuid = None
     link.active_run_status = ""
     link.teardown_state_json = teardown_state
@@ -1542,7 +1563,7 @@ def run_copilot_chat_teardown(*, session_link_id: int) -> dict[str, Any]:
         raise ChatTeardownIncompleteError("; ".join(critical_errors))
     return {
         "session_link_id": link.id,
-        "status": "deleted",
+        "status": "retryable" if reset_for_retry else "deleted",
         "warnings": warnings,
         "gateway_untouched": True,
     }
@@ -1589,7 +1610,7 @@ def _transition_failed_provision_to_teardown(
     if link is None:
         return False
     link.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
-    link.status = LensSessionLink.Status.ARCHIVED
+    link.status = LensSessionLink.Status.ACTIVE
     link.provision_phase = LensSessionLink.ProvisionPhase.CLEANING_UP
     link.provision_detail = "Provisioning cleanup is incomplete and will be retried."
     link.lifecycle_error = message[:2000]
@@ -1600,6 +1621,10 @@ def _transition_failed_provision_to_teardown(
     link.teardown_claim_token = None
     link.teardown_claimed_at = None
     link.teardown_next_retry_at = None
+    link.teardown_state_json = {
+        "intent": _TEARDOWN_INTENT_RESET_FOR_RETRY,
+        "provision_error": message[:2000],
+    }
     link.save(
         update_fields=[
             "lifecycle_status",
@@ -1614,6 +1639,7 @@ def _transition_failed_provision_to_teardown(
             "teardown_claim_token",
             "teardown_claimed_at",
             "teardown_next_retry_at",
+            "teardown_state_json",
             "updated_at",
         ]
     )
@@ -1643,6 +1669,11 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
     locked.provision_claim_token = None
     locked.provision_claimed_at = None
     locked.provision_next_retry_at = None
+    locked.teardown_attempts = 0
+    locked.teardown_claim_token = None
+    locked.teardown_claimed_at = None
+    locked.teardown_next_retry_at = None
+    locked.teardown_state_json = {}
     locked.save(
         update_fields=[
             "lifecycle_status",
@@ -1652,6 +1683,11 @@ def retry_copilot_chat_provision(link: LensSessionLink) -> LensSessionLink:
             "provision_claim_token",
             "provision_claimed_at",
             "provision_next_retry_at",
+            "teardown_attempts",
+            "teardown_claim_token",
+            "teardown_claimed_at",
+            "teardown_next_retry_at",
+            "teardown_state_json",
             "updated_at",
         ]
     )

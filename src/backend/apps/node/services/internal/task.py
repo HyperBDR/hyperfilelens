@@ -4,6 +4,7 @@ NodeTask write path: create, deliver, progress, complete, and watchdog sweep.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_log import task_log_context
+from apps.storage.crypto import decrypt_text, encrypt_text
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ _TERMINAL_STATUSES = frozenset(
     },
 )
 _TASK_COMMAND_ACK_CAPABILITY = "task_command_ack_v1"
+_DELIVERY_SECRET_KEY = "_delivery_secret"
 _ACK_BACKUP_TASKS = frozenset(
     {
         ("protection.backup", "backup.run"),
@@ -52,6 +55,42 @@ class _RouteState(StrEnum):
     ONLINE = "online"
     RECONNECTING = "reconnecting"
     OFFLINE = "offline"
+
+
+def protect_task_delivery_payload(
+    *,
+    delivery_payload: dict[str, Any],
+    persisted_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist a redeliverable payload without storing its plaintext form."""
+
+    encoded = json.dumps(
+        delivery_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    protected = dict(persisted_payload)
+    protected[_DELIVERY_SECRET_KEY] = {
+        "alg": "fernet-json-v1",
+        "ciphertext": encrypt_text(encoded),
+    }
+    return protected
+
+
+def _resolve_task_delivery_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    envelope = payload.get(_DELIVERY_SECRET_KEY)
+    if envelope is None:
+        return None
+    if not isinstance(envelope, dict) or envelope.get("alg") != "fernet-json-v1":
+        raise RuntimeError("agent task delivery envelope is invalid")
+    try:
+        decoded = json.loads(decrypt_text(str(envelope.get("ciphertext") or "")))
+    except Exception as exc:
+        raise RuntimeError("agent task delivery envelope cannot be decrypted") from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError("agent task delivery envelope is invalid")
+    return decoded
 
 
 def _watchdog_deadline(*, from_time: datetime | None = None) -> datetime:
@@ -395,9 +434,12 @@ def deliver_agent_task(*, task: NodeTask, delivery_payload: dict | None = None) 
     )
     uses_ack = task_uses_command_ack(task)
     try:
+        ephemeral_delivery_payload = delivery_payload is not None
+        if delivery_payload is None:
+            delivery_payload = _resolve_task_delivery_payload(task.payload)
         route_state = _node_route_state(task=task)
         if route_state == _RouteState.RECONNECTING:
-            if delivery_payload is not None:
+            if ephemeral_delivery_payload:
                 return _fail_task_delivery(
                     task=task,
                     reason="agent websocket is reconnecting; retry the credential-bearing task",
