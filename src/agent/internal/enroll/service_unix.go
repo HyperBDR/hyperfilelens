@@ -21,6 +21,11 @@ func StartInstalledService(ctx context.Context) error {
 	return startSystemd(ctx)
 }
 
+// RestartInstalledService reloads the persisted Agent runtime environment.
+func RestartInstalledService(ctx context.Context) error {
+	return startUnixScript(ctx, "restart")
+}
+
 func startUnixScript(ctx context.Context, command string) error {
 	script := filepath.Join(install.DefaultInstallDir(), "install.sh")
 	cmd := exec.CommandContext(ctx, script, command)

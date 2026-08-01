@@ -61,6 +61,7 @@ sourcelens_load_config() {
 	SOURCELENS_PIP_RETRY_DELAY="${SOURCELENS_PIP_RETRY_DELAY:-${HFL_PIP_RETRY_DELAY:-${BUILD_PIP_RETRY_DELAY:-5}}}"
 	SOURCELENS_UV_VERSION="${SOURCELENS_UV_VERSION:-0.10.2}"
 	SOURCELENS_NPM_REGISTRY="${SOURCELENS_NPM_REGISTRY:-${NPM_REGISTRY:-${BUILD_NPM_REGISTRY:-}}}"
+	SOURCELENS_BUILD_SOURCE_MAPS="${SOURCELENS_BUILD_SOURCE_MAPS:-0}"
 	SOURCELENS_DOCKER_MIRROR="${SOURCELENS_DOCKER_MIRROR:-${DOCKER_DOWNLOAD_MIRROR:-}}"
 	SOURCELENS_DOCKER_PULL_TIMEOUT="${SOURCELENS_DOCKER_PULL_TIMEOUT:-${DOCKER_PULL_TIMEOUT_SECONDS:-180}}"
 	SOURCELENS_DOCKER_PULL_RETRIES="${SOURCELENS_DOCKER_PULL_RETRIES:-${DOCKER_PULL_RETRIES:-2}}"
@@ -859,6 +860,37 @@ path.write_text("".join(out), encoding="utf-8")
 PY
 }
 
+sourcelens_patch_frontend_dockerfile_source_maps() {
+	local src=$1
+	local dockerfile="${src}/frontend/Dockerfile"
+	[[ "${SOURCELENS_BUILD_SOURCE_MAPS:-0}" == "1" ]] || return 0
+	[[ -f "${dockerfile}" ]] || return 0
+	python3 - "${dockerfile}" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+if "# hfl-hidden-source-maps" in text:
+    raise SystemExit(0)
+build = "RUN npm run build"
+if text.count(build) != 1:
+    raise SystemExit(f"expected one SourceLens frontend build command in {path}")
+text = text.replace(
+    build,
+    "RUN npm run build -- --sourcemap hidden \\\n"
+    " && cp -a dist dist-runtime \\\n"
+    " && find dist-runtime -type f -name '*.map' -delete \\\n"
+    " && printf '%s\\n' '# hfl-hidden-source-maps' > /app/.hfl-source-maps",
+)
+source = "COPY --from=builder /app/dist /usr/share/nginx/html"
+target = "COPY --from=builder /app/dist-runtime /usr/share/nginx/html"
+if source not in text:
+    raise SystemExit(f"SourceLens frontend runtime copy command not found in {path}")
+path.write_text(text.replace(source, target), encoding="utf-8")
+PY
+}
+
 sourcelens_patch_compose_npm_registry() {
 	local src=$1
 	local compose="${src}/docker-compose.yml"
@@ -1096,6 +1128,7 @@ sourcelens_build_app_images() {
 	sourcelens_patch_dockerfile_pip_resilience "${src}" \
 		"${SOURCELENS_PIP_RETRY_MAX}" "${SOURCELENS_PIP_RETRY_DELAY}"
 	sourcelens_patch_frontend_dockerfile_npm_registry "${src}"
+	sourcelens_patch_frontend_dockerfile_source_maps "${src}"
 	sourcelens_patch_compose_lensnode_apt_mirror "${src}" "${debian_apt_mirror_url}"
 	sourcelens_patch_compose_build_sources "${src}" \
 		"${ubuntu_apt_mirror_url}" "${debian_apt_mirror_url}" \
@@ -1236,6 +1269,33 @@ text = text.replace(
 )
 if "/etc/nginx/certs/tls.crt" not in text or "/etc/nginx/certs/tls.key" not in text:
     raise SystemExit(f"SourceLens TLS certificate declarations not found in {path}")
+assets = """    # HFL-owned runtime observability adapter; SourceLens source remains unchanged.
+    location = /hfl-sentry-config.js {
+        alias /etc/nginx/hfl-sentry-config.js;
+        add_header Cache-Control "no-store" always;
+    }
+    location = /hfl-sentry-loader.js {
+        alias /etc/nginx/hfl-sentry-loader.js;
+        add_header Cache-Control "no-store" always;
+    }
+
+"""
+marker = "    # Frontend proxy to frontend container\n"
+if "location = /hfl-sentry-config.js" not in text:
+    if marker in text:
+        text = text.replace(marker, assets + marker)
+location_marker = """    location / {
+        proxy_pass $ui_upstream;
+"""
+location_replacement = """    location / {
+        proxy_set_header Accept-Encoding "";
+        sub_filter_once on;
+        sub_filter '</head>' '<script src="/hfl-sentry-config.js"></script><script src="/hfl-sentry-loader.js"></script></head>';
+        proxy_pass $ui_upstream;
+"""
+if "hfl-sentry-loader.js\"></script></head>" not in text:
+    if location_marker in text:
+        text = text.replace(location_marker, location_replacement)
 path.write_text(text, encoding="utf-8")
 PY
 }
@@ -1316,9 +1376,17 @@ sourcelens_prepare_dev_runtime_tree() {
 	[[ -f "${nginx_config}" ]] \
 		|| sourcelens_die "missing SourceLens nginx config: ${nginx_config}"
 
-	mkdir -p "${dev_root}/deploy/nginx" "${dev_root}/deploy/postgresql"
+	mkdir -p "${dev_root}/deploy/nginx" "${dev_root}/deploy/postgresql" \
+		"${dev_root}/deploy/sentry"
 	cp "${nginx_config}" "${dev_root}/deploy/nginx/default.conf"
 	sourcelens_patch_runtime_nginx "${dev_root}/deploy/nginx/default.conf"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-loader.js" \
+		"${dev_root}/deploy/nginx/hfl-sentry-loader.js"
+	printf '%s\n' 'window.__HFL_SOURCELENS_SENTRY__ = Object.freeze({ enabled: false })' \
+		>"${dev_root}/deploy/nginx/hfl-sentry-config.js"
+	cp "${SOURCELENS_INSTALLER_DIR}/sourcelens/hfl-sentry-sitecustomize.py" \
+		"${dev_root}/deploy/sentry/hfl-sentry-sitecustomize.py"
+	chmod 644 "${dev_root}/deploy/sentry/hfl-sentry-sitecustomize.py"
 	sourcelens_ensure_tls_certs "${HFL_ROOT}/deploy/nginx/certs"
 	rm -rf "${dev_root}/deploy/nginx/certs"
 	ln -s "${HFL_ROOT}/deploy/nginx/certs" "${dev_root}/deploy/nginx/certs"

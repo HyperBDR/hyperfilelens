@@ -18,6 +18,12 @@ RUNTIME_KEYS = {
     "HFL_GA_MEASUREMENT_ID",
     "HFL_INSECURE_TLS",
     "HFL_PLATFORM_GATEWAY_AUTO_DEPLOY",
+    "HFL_DEPLOY_TARGET",
+    "SENTRY_ENABLED",
+    "SENTRY_BACKEND_DSN",
+    "SENTRY_FRONTEND_DSN",
+    "SENTRY_ENVIRONMENT",
+    "SENTRY_TRACES_SAMPLE_RATE",
     "TURNSTILE_ENABLED",
     "TURNSTILE_SITE_KEY",
     "TURNSTILE_SECRET_KEY",
@@ -35,6 +41,7 @@ GOOGLE_CLIENT_ID_PATTERN = re.compile(
     r"^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$"
 )
 GA4_MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]+$")
+SENTRY_ENVIRONMENT_PATTERN = re.compile(r"^hfl-(test|preprod|production)$")
 
 
 def warn(message: str) -> None:
@@ -207,6 +214,80 @@ def analytics_runtime_update(values: Dict[str, str]) -> Tuple[bool, str]:
     return True, measurement_id
 
 
+def valid_sentry_dsn(value: str) -> bool:
+    """Return whether a staged value is a structurally valid Sentry DSN."""
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError:
+        return False
+    project_id = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname
+        and parsed.username
+        and not parsed.query
+        and not parsed.fragment
+        and project_id.isdigit()
+        and not re.search(r"[\x00\r\n\s]", value)
+    )
+
+
+def valid_frontend_sentry_dsn(value: str) -> bool:
+    """Return whether a DSN is safe to expose in browser runtime config."""
+    if not valid_sentry_dsn(value):
+        return False
+    return urlsplit(value).password is None
+
+
+def sentry_runtime_updates(
+    values: Dict[str, str],
+) -> Tuple[Dict[str, str], Set[str]]:
+    """Validate managed Sentry settings without blocking deployment."""
+    enabled = values.get("SENTRY_ENABLED", "").strip().lower()
+    if enabled not in {"true", "false"}:
+        warn("invalid Sentry enabled value; preserving installed Sentry settings")
+        return {}, set()
+
+    updates = {"SENTRY_ENABLED": enabled}
+    removals: Set[str] = set()
+    if enabled == "false":
+        removals.update({"SENTRY_BACKEND_DSN", "SENTRY_FRONTEND_DSN"})
+        return updates, removals
+
+    environment = values.get("SENTRY_ENVIRONMENT", "").strip()
+    if not SENTRY_ENVIRONMENT_PATTERN.fullmatch(environment):
+        warn("invalid Sentry environment; Sentry is disabled")
+        updates["SENTRY_ENABLED"] = "false"
+        removals.update({"SENTRY_BACKEND_DSN", "SENTRY_FRONTEND_DSN"})
+        return updates, removals
+    updates["SENTRY_ENVIRONMENT"] = environment
+
+    raw_rate = values.get("SENTRY_TRACES_SAMPLE_RATE", "").strip()
+    try:
+        rate = float(raw_rate)
+    except ValueError:
+        rate = -1.0
+    if not 0.0 <= rate <= 1.0:
+        warn("invalid Sentry trace sample rate; using 0")
+        rate = 0.0
+    updates["SENTRY_TRACES_SAMPLE_RATE"] = f"{rate:g}"
+
+    valid_dsn_count = 0
+    for name in ("SENTRY_BACKEND_DSN", "SENTRY_FRONTEND_DSN"):
+        dsn = values.get(name, "").strip()
+        validator = valid_frontend_sentry_dsn if name == "SENTRY_FRONTEND_DSN" else valid_sentry_dsn
+        if validator(dsn):
+            updates[name] = dsn
+            valid_dsn_count += 1
+        else:
+            removals.add(name)
+            warn(f"invalid or missing {name}; that Sentry surface is disabled")
+    if valid_dsn_count == 0:
+        updates["SENTRY_ENABLED"] = "false"
+    return updates, removals
+
+
 def turnstile_runtime_updates(values: Dict[str, str]) -> Dict[str, str]:
     """Apply Turnstile atomically without replacing usable installed credentials."""
     enabled = values.get("TURNSTILE_ENABLED", "").strip().lower()
@@ -303,6 +384,17 @@ def apply_configuration(
         updates["HFL_INSECURE_TLS"] = insecure_tls
         updates.update(smtp_runtime_updates(runtime_values))
         updates.update(google_runtime_updates(runtime_values))
+        sentry_updates, sentry_removals = sentry_runtime_updates(runtime_values)
+        updates.update(sentry_updates)
+        removals.update(sentry_removals)
+        removals.update(
+            {
+                "SENTRY_DSN",
+                "SENTRY_RELEASE",
+                "SENTRY_PROFILES_SAMPLE_RATE",
+                "SENTRY_SEND_DEFAULT_PII",
+            }
+        )
         analytics_staged, measurement_id = analytics_runtime_update(runtime_values)
         if analytics_staged:
             if measurement_id:
@@ -321,6 +413,12 @@ def apply_configuration(
             )
 
         updates.update(turnstile_runtime_updates(runtime_values))
+        deploy_target = runtime_values.get("HFL_DEPLOY_TARGET", "").strip()
+        if deploy_target in {"test", "preprod", "prod"}:
+            updates["HFL_DEPLOY_TARGET"] = deploy_target
+            updates["HFL_DEPLOYMENT_MODE"] = "managed"
+        else:
+            warn("invalid deployment target; preserving installed deployment identity")
 
     direct_host = direct_host.strip()
     if direct_host and (
@@ -396,7 +494,12 @@ def apply_configuration(
             continue
         if key in updates:
             value = updates[key]
-            if key in {"EMAIL_HOST_PASSWORD", "GOOGLE_CLIENT_SECRET"}:
+            if key in {
+                "EMAIL_HOST_PASSWORD",
+                "GOOGLE_CLIENT_SECRET",
+                "SENTRY_BACKEND_DSN",
+                "SENTRY_FRONTEND_DSN",
+            }:
                 value = compose_env_value(value)
             updated.append(f"{key}={value}")
             seen.add(key)
@@ -404,7 +507,12 @@ def apply_configuration(
             updated.append(line)
     for key, value in updates.items():
         if key not in seen:
-            if key in {"EMAIL_HOST_PASSWORD", "GOOGLE_CLIENT_SECRET"}:
+            if key in {
+                "EMAIL_HOST_PASSWORD",
+                "GOOGLE_CLIENT_SECRET",
+                "SENTRY_BACKEND_DSN",
+                "SENTRY_FRONTEND_DSN",
+            }:
                 value = compose_env_value(value)
             updated.append(f"{key}={value}")
     atomic_write(env_path, updated)

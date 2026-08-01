@@ -11,6 +11,7 @@ SOURCELENS_NGINX_HTTPS_PORT="${SOURCELENS_NGINX_HTTPS_PORT:-11445}"
 SOURCELENS_CONSOLE_BIND_ADDRESS="${SOURCELENS_CONSOLE_BIND_ADDRESS:-0.0.0.0}"
 SOURCELENS_CONSOLE_PORT="${SOURCELENS_CONSOLE_PORT:-${SOURCELENS_NGINX_HTTPS_PORT}}"
 HFL_BRIDGE_NETWORK="hyperfilelens-bridge"
+HFL_PARENT_ENV_FILE="${HFL_PARENT_ENV_FILE:-}"
 SKIP_IMAGE_LOAD=0
 LOG_FILE="${HFL_LOG_FILE:-}"
 VERBOSE="${HFL_LOG_VERBOSE:-0}"
@@ -71,7 +72,31 @@ bridge_network=${HFL_BRIDGE_NETWORK}
 skip_image_load=${SKIP_IMAGE_LOAD}
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
+hfl_parent_env_file=${HFL_PARENT_ENV_FILE:-<none>}
 EOF
+}
+
+sync_hfl_sentry_configuration() {
+	local root=$1 env_file="${SOURCELENS_CONFIG_DIR}/.env"
+	local parent_env="${HFL_PARENT_ENV_FILE:-$(dirname "${SOURCELENS_INSTALL_DIR}")/.env}"
+	local build_info="${root}/BUILD_INFO.json"
+	local output="${root}/deploy/nginx/hfl-sentry-config.js"
+	local sync_script="${root}/sync-sentry-runtime.py"
+	[[ -f "${parent_env}" && ! -L "${parent_env}" ]] || {
+		warn "HFL parent environment is unavailable; bundled SourceLens Sentry remains disabled"
+		printf '%s\n' 'window.__HFL_SOURCELENS_SENTRY__ = Object.freeze({ enabled: false })' \
+			| run_as_root tee "${output}" >/dev/null
+		return 0
+	}
+	[[ -f "${sync_script}" ]] || die "missing ${sync_script}"
+	run_as_root python3 "${sync_script}" \
+		--parent-env "${parent_env}" \
+		--sourcelens-env "${env_file}" \
+		--build-info "${build_info}" \
+		--frontend-config "${output}"
+	run_as_root chmod 600 "${env_file}"
+	run_as_root chmod 644 "${output}"
+	log "Synchronized HFL Sentry policy for bundled SourceLens (credentials redacted)"
 }
 
 resolve_bundle_root() {
@@ -214,6 +239,7 @@ PY
 		run_as_root rm -f "${root}/.env"
 	fi
 	run_as_root ln -sfn "${env_file}" "${root}/.env"
+	sync_hfl_sentry_configuration "${root}"
 	log "Applied SourceLens runtime env defaults (DJANGO_DEBUG=true)"
 }
 

@@ -11,6 +11,9 @@ services:
       - ./.env
     environment:
       API_WORKERS: "1"
+      SENTRY_COMPONENT: sourcelens-backend
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      SENTRY_SERVICE: api
 # HFL_EMBED_BACKEND_ENV_BEGIN
       LENSNODE_NAME: ${LENSNODE_NAME:-local-lensnode}
       LENSNODE_TOKEN: ${LENSNODE_TOKEN:-change-me-lensnode-token}
@@ -21,6 +24,7 @@ services:
       - ./data/logs/api:/var/log/gunicorn
       - ./data/storage:/opt/storage
       - ./data/workspace:/workspace
+      - ./deploy/sentry/hfl-sentry-sitecustomize.py:/opt/backend/sitecustomize.py:ro
       - ${SOURCELENS_TLS_CERT_DIR:-./deploy/nginx/certs}:/opt/certs:ro
     networks:
       sourcelens_network:
@@ -50,10 +54,14 @@ services:
       - ./.env
     environment:
       CELERY_CONCURRENCY: "1"
+      SENTRY_COMPONENT: sourcelens-backend
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      SENTRY_SERVICE: worker
     volumes:
       - ./data/logs/worker:/var/log/celery
       - ./data/storage:/opt/storage
       - ./data/workspace:/workspace
+      - ./deploy/sentry/hfl-sentry-sitecustomize.py:/opt/backend/sitecustomize.py:ro
     networks:
       - sourcelens_network
     depends_on:
@@ -70,8 +78,13 @@ services:
     stop_grace_period: 30s
     env_file:
       - ./.env
+    environment:
+      SENTRY_COMPONENT: sourcelens-backend
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      SENTRY_SERVICE: scheduler
     volumes:
       - ./data/logs/scheduler:/var/log/celery
+      - ./deploy/sentry/hfl-sentry-sitecustomize.py:/opt/backend/sitecustomize.py:ro
     networks:
       - sourcelens_network
     depends_on:
@@ -105,8 +118,13 @@ services:
       LENSNODE_CONTROL_WS_URL: ws://api:8000/ws/lens/lensnodes/
       LENSNODE_AI_GATEWAY_URL: http://api:8000/api/lens/lensnode/ai-gateway/
       LENSNODE_WORKSPACE_PATH: /workspace
+      PYTHONPATH: /opt/hfl-sentry
+      SENTRY_COMPONENT: sourcelens-lensnode
+      SENTRY_RELEASE: ${SENTRY_LENSNODE_RELEASE:-${SENTRY_RELEASE:-}}
+      SENTRY_SERVICE: lensnode
     volumes:
       - ./data/workspace:/workspace
+      - ./deploy/sentry/hfl-sentry-sitecustomize.py:/opt/hfl-sentry/sitecustomize.py:ro
     networks:
       - sourcelens_network
     depends_on:
@@ -122,6 +140,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./deploy/nginx/hfl-sentry-config.js:/etc/nginx/hfl-sentry-config.js:ro
+      - ./deploy/nginx/hfl-sentry-loader.js:/etc/nginx/hfl-sentry-loader.js:ro
       - ${SOURCELENS_TLS_CERT_DIR:-./deploy/nginx/certs}:/etc/nginx/certs:ro
       - ./data/django/staticfiles:/staticfiles:ro
       - ./data/storage:/opt/storage:ro

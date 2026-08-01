@@ -7,6 +7,7 @@ ENV_FILE="${HFL_LENS_ENV_FILE:-/etc/hyperfilelens/lensnode.env}"
 COMPOSE_DIR="/etc/hyperfilelens/lensnode"
 COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-hyperfilelens-sourcelens-lensnode:latest}"
+SENTRY_PRIVACY_FILE="${COMPOSE_DIR}/hfl-sentry-sitecustomize.py"
 
 hfl_now() {
 	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
@@ -94,6 +95,35 @@ chmod 0700 "${HFL_GATEWAY_STATE_ROOT}" \
 	"${HFL_GATEWAY_TRASH_ROOT}"
 
 mkdir -p "${COMPOSE_DIR}"
+chmod 0700 "${COMPOSE_DIR}"
+
+prepare_sentry_privacy_adapter() {
+	case "${SENTRY_ENABLED:-false}" in
+	1 | true | TRUE | yes | YES | on | ON) ;;
+	*) return 0 ;;
+	esac
+	local base="${HFL_API_BASE:-}" temporary="${SENTRY_PRIVACY_FILE}.tmp.$$"
+	if [[ -z "${base}" ]]; then
+		hfl_warn "Sentry privacy adapter URL is unavailable; LensNode reporting is disabled."
+		SENTRY_ENABLED=false
+		SENTRY_BACKEND_DSN=
+		return 0
+	fi
+	if ! curl "${CURL_TLS[@]}" -fsSL \
+		"${base%/}/media/gateway-bootstrap/hfl-sentry-sitecustomize.py" \
+		-o "${temporary}" \
+		|| ! grep -Fx '# HFL_SENTRY_PRIVACY_ADAPTER=1' "${temporary}" >/dev/null; then
+		rm -f "${temporary}"
+		hfl_warn "Sentry privacy adapter download failed; LensNode reporting is disabled."
+		SENTRY_ENABLED=false
+		SENTRY_BACKEND_DSN=
+		return 0
+	fi
+	chmod 0644 "${temporary}"
+	mv -f "${temporary}" "${SENTRY_PRIVACY_FILE}"
+}
+
+prepare_sentry_privacy_adapter
 
 resolve_lensnode_image() {
 	local candidate
@@ -142,6 +172,9 @@ remove_owned_legacy_gateway_containers() {
 install_docker_sidecar() {
 	local image="$1"
 	local ssl_verify="${LENSNODE_SSL_VERIFY:-}"
+	local sentry_volume_block=""
+	local compose_file="${COMPOSE_DIR}/docker-compose.yml"
+	local compose_temporary="${COMPOSE_DIR}/.docker-compose.yml.tmp.$$"
 	if [[ -z "${ssl_verify}" ]]; then
 		if [[ "${HFL_INSECURE_TLS}" == "1" ]]; then
 			ssl_verify="false"
@@ -157,7 +190,12 @@ install_docker_sidecar() {
 	if lens_url_needs_extra_hosts "${LENS_CONTAINER_URL}"; then
 		EXTRA_HOSTS_BLOCK=$'    extra_hosts:\n      - "host.docker.internal:host-gateway"\n'
 	fi
-	cat >"${COMPOSE_DIR}/docker-compose.yml" <<EOF
+	if [[ -f "${SENTRY_PRIVACY_FILE}" ]]; then
+		sentry_volume_block="      - ${SENTRY_PRIVACY_FILE}:/opt/hfl-sentry/sitecustomize.py:ro"
+	fi
+	(
+		umask 077
+		cat >"${compose_temporary}" <<EOF
 name: ${COMPOSE_PROJECT}
 
 services:
@@ -175,7 +213,18 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       HFL_INSECURE_TLS: "${HFL_INSECURE_TLS}"
       LENSNODE_INSECURE_TLS: "${HFL_INSECURE_TLS}"
       LENSNODE_SSL_VERIFY: "${ssl_verify}"
+      PYTHONPATH: /opt/hfl-sentry
+      SENTRY_COMPONENT: sourcelens-lensnode
+      SENTRY_DEPLOYMENT_MODE: gateway
+      SENTRY_ENABLED: "${SENTRY_ENABLED:-false}"
+      SENTRY_DSN: "${SENTRY_BACKEND_DSN:-}"
+      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT:-}"
+      SENTRY_RELEASE: "${HFL_SENTRY_LENSNODE_RELEASE:-}"
+      SENTRY_TRACES_SAMPLE_RATE: "${SENTRY_TRACES_SAMPLE_RATE:-0}"
+      SENTRY_SEND_DEFAULT_PII: "false"
+      SENTRY_SERVICE: lensnode
     volumes:
+${sentry_volume_block}
       # LensNode only indexes managed data. The host Agent is the sole writer
       # and lifecycle owner for this filesystem boundary.
       - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro
@@ -185,6 +234,10 @@ ${EXTRA_HOSTS_BLOCK}    environment:
     mem_limit: 512m
     cpus: 0.50
 EOF
+	)
+	chmod 0600 "${compose_temporary}"
+	mv -f "${compose_temporary}" "${compose_file}"
+	chmod 0600 "${compose_file}"
 	if docker compose version >/dev/null 2>&1; then
 		remove_owned_legacy_gateway_containers
 		(

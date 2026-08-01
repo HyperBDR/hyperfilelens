@@ -26,6 +26,9 @@ services:
     environment:
       TZ: UTC
       LOG_FILE: /var/log/hyperfilelens/worker.log
+      SENTRY_COMPONENT: hfl-backend
+      SENTRY_SERVICE: worker
+      SENTRY_RELEASE: hyperfilelens-backend@${APP_VERSION:-unknown}
     volumes:
       - ./data/lang-packs:/opt/backend/lang-packs:ro
       - ./data/media:/opt/backend/media
@@ -59,6 +62,9 @@ services:
     environment:
       TZ: UTC
       LOG_FILE: /var/log/hyperfilelens/scheduler.log
+      SENTRY_COMPONENT: hfl-backend
+      SENTRY_SERVICE: scheduler
+      SENTRY_RELEASE: hyperfilelens-backend@${APP_VERSION:-unknown}
     volumes:
       - ./data/lang-packs:/opt/backend/lang-packs:ro
       - ./data/media:/opt/backend/media
@@ -95,6 +101,9 @@ services:
       TZ: UTC
       LOG_FILE: /var/log/hyperfilelens/api.log
       API_WORKERS: "1"
+      SENTRY_COMPONENT: hfl-backend
+      SENTRY_SERVICE: api
+      SENTRY_RELEASE: hyperfilelens-backend@${APP_VERSION:-unknown}
     volumes:
       - ./data/lang-packs:/opt/backend/lang-packs:ro
       - ./data/media:/opt/backend/media
@@ -183,6 +192,11 @@ services:
       TZ: UTC
       HFL_WEBSITE_APP_URL: ${FRONTEND_URL:-}
       HFL_GA_MEASUREMENT_ID: ${HFL_GA_MEASUREMENT_ID:-}
+      HFL_SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
+      HFL_SENTRY_DSN: ${SENTRY_FRONTEND_DSN:-}
+      HFL_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      HFL_SENTRY_RELEASE: hyperfilelens-frontend@${APP_VERSION:-unknown}
+      HFL_SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0}
       LOGROTATE_INTERVAL_SECONDS: "3600"
       LOGROTATE_STATE: /var/log/hyperfilelens/.logrotate.status
       LOGROTATE_LOCK: /var/log/hyperfilelens/.logrotate.lock

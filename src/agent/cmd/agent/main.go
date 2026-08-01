@@ -12,6 +12,7 @@ import (
 	"hyperfilelens/agent/internal/app"
 	"hyperfilelens/agent/internal/cli"
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/infra/observability"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/svcwrap"
 	"hyperfilelens/agent/internal/selfupdate"
@@ -26,13 +27,19 @@ func main() {
 		}
 		return
 	}
+	shutdownSentry := observability.Initialize()
+	defer shutdownSentry()
+	defer observability.RecoverPanic()
 
 	// Explicit `run` subcommand or bare flags / no args (systemd compatibility).
 	if len(args) > 0 && args[0] == "run" {
 		args = args[1:]
 	}
 	if err := runDaemon(args); err != nil {
+		observability.CaptureException(err)
 		_, _ = fmt.Fprintf(os.Stderr, "%s\n", err)
+		// os.Exit skips deferred functions, so flush the fatal event explicitly.
+		shutdownSentry()
 		os.Exit(1)
 	}
 }

@@ -64,7 +64,8 @@ normalize_release_permissions() {
 	chmod 755 "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py"
 	if [[ -d "${pkg_root}/sourcelens" ]]; then
 		chmod 755 "${pkg_root}/sourcelens/install.sh" \
-			"${pkg_root}/sourcelens/patch-env-runtime.py"
+			"${pkg_root}/sourcelens/patch-env-runtime.py" \
+			"${pkg_root}/sourcelens/sync-sentry-runtime.py"
 		find "${pkg_root}/sourcelens/deploy/postgresql/initdb.d" \
 			-type f -name '*.sh' -exec chmod 755 {} +
 	fi
@@ -149,9 +150,7 @@ load_repo_env_defaults() {
 		KOPIA_ARTIFACT_MODE KOPIA_GIT_URL KOPIA_GIT_REF \
 		SOURCELENS_GIT_REF SOURCELENS_GIT_URL SOURCELENS_GIT_TIMEOUT_SECONDS \
 		SOURCELENS_GIT_RETRIES SOURCELENS_GIT_FALLBACK_TIMEOUT_SECONDS \
-		SENTRY_ENABLED SENTRY_DSN \
-		SENTRY_ENVIRONMENT SENTRY_RELEASE SENTRY_TRACES_SAMPLE_RATE \
-		SENTRY_SEND_DEFAULT_PII VITE_SHOW_EULA; do
+		VITE_SHOW_EULA; do
 		hfl_env_load_default "${key}"
 	done
 }
@@ -649,12 +648,6 @@ build_control_plane_images() {
 		-t "hyperfilelens-frontend:${HFL_VERSION}" \
 		-t hyperfilelens-frontend:latest \
 		--build-arg "NPM_REGISTRY=${NPM_REGISTRY:-}" \
-		--build-arg "SENTRY_ENABLED=${SENTRY_ENABLED:-false}" \
-		--build-arg "SENTRY_DSN=${SENTRY_DSN:-}" \
-		--build-arg "SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}" \
-		--build-arg "SENTRY_RELEASE=${SENTRY_RELEASE:-}" \
-		--build-arg "SENTRY_TRACES_SAMPLE_RATE=${SENTRY_TRACES_SAMPLE_RATE:-0}" \
-		--build-arg "SENTRY_SEND_DEFAULT_PII=${SENTRY_SEND_DEFAULT_PII:-false}" \
 		--build-arg "VITE_SHOW_EULA=${VITE_SHOW_EULA:-false}" \
 		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
@@ -1035,6 +1028,7 @@ validate_release_publish_artifacts() {
 		gateway-install-lensnode-sidecar.sh
 		gateway-lifecycle.sh
 		gateway-install-docker-ubuntu-amd64.sh
+		hfl-sentry-sitecustomize.py
 		docker-debs-ubuntu2004-amd64.tar.gz
 		docker-debs-ubuntu2204-amd64.tar.gz
 		docker-debs-ubuntu2404-amd64.tar.gz

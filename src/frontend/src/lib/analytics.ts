@@ -6,7 +6,6 @@ type AppAnalyticsParameters = { method: 'email' | 'google' }
 
 declare global {
   interface Window {
-    __HFL_APP_CONFIG__?: { gaMeasurementId?: string }
     dataLayer?: unknown[]
     gtag?: GoogleTag
   }

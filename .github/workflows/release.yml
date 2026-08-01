@@ -93,6 +93,7 @@ jobs:
       email_code_login_enabled: ${{ vars.PREPROD_EMAIL_CODE_LOGIN_ENABLED != 'false' }}
       google_oauth_enabled: ${{ vars.PREPROD_GOOGLE_OAUTH_ENABLED == 'true' }}
       google_client_id: ${{ vars.PREPROD_GOOGLE_CLIENT_ID }}
+      sentry_enabled: ${{ vars.PREPROD_SENTRY_ENABLED == 'true' }}
       platform_gateway_auto_deploy: ${{ vars.PREPROD_PLATFORM_GATEWAY_AUTO_DEPLOY == 'true' }}
       hfl_insecure_tls: ${{ vars.PREPROD_HFL_INSECURE_TLS }}
       smtp_host: ${{ vars.PREPROD_SMTP_HOST }}
@@ -110,3 +111,6 @@ jobs:
       google_client_secret: ${{ secrets.PREPROD_GOOGLE_CLIENT_SECRET }}
       ai_model_api_base: ${{ secrets.PREPROD_AI_MODEL_API_BASE }}
       ai_model_api_key: ${{ secrets.PREPROD_AI_MODEL_API_KEY }}
+      sentry_backend_dsn: ${{ secrets.SENTRY_BACKEND_DSN }}
+      sentry_frontend_dsn: ${{ secrets.SENTRY_FRONTEND_DSN }}
+      sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}

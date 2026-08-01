@@ -18,11 +18,11 @@ import (
 
 // LensSidecarConfig holds SourceLens LensNode credentials for gateway sidecar install.
 type LensSidecarConfig struct {
-	LensBaseURL       string
-	LensnodeUUID      string
-	LensnodeToken     string
-	LensnodeName      string
-	WorkspaceRoot     string
+	LensBaseURL   string
+	LensnodeUUID  string
+	LensnodeToken string
+	LensnodeName  string
+	WorkspaceRoot string
 }
 
 // RunGatewayInstall installs the HFL agent and SourceLens LensNode sidecar for role=gateway.
@@ -40,6 +40,17 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 
 	if err := RunInstall(ctx, opts); err != nil {
 		return err
+	}
+	// Re-enrollment may short-circuit for an already healthy Agent. Converge
+	// only HFL-managed observability keys; never replace working node credentials.
+	sentryChanged, err := SyncManagedSentryEnv()
+	if err != nil {
+		return fmt.Errorf("refresh Gateway Agent configuration: %w", err)
+	}
+	if sentryChanged {
+		if err := RestartInstalledService(ctx); err != nil {
+			return fmt.Errorf("restart Gateway Agent after configuration refresh: %w", err)
+		}
 	}
 
 	logStep("Continuing Data Gateway setup (AI engine).")
@@ -126,11 +137,11 @@ func FetchGatewayLensConfig(ctx context.Context, cfg Config, nodeID string) (Len
 	}
 
 	cfgOut := LensSidecarConfig{
-		LensBaseURL:       stringField(lensRaw, "lens_base_url"),
-		LensnodeUUID:      stringField(lensRaw, "lensnode_uuid"),
-		LensnodeToken:     stringField(lensRaw, "lensnode_token"),
-		LensnodeName:      stringField(lensRaw, "lensnode_name"),
-		WorkspaceRoot:     stringField(lensRaw, "workspace_root"),
+		LensBaseURL:   stringField(lensRaw, "lens_base_url"),
+		LensnodeUUID:  stringField(lensRaw, "lensnode_uuid"),
+		LensnodeToken: stringField(lensRaw, "lensnode_token"),
+		LensnodeName:  stringField(lensRaw, "lensnode_name"),
+		WorkspaceRoot: stringField(lensRaw, "workspace_root"),
 	}
 	if cfgOut.LensBaseURL == "" || cfgOut.LensnodeToken == "" || cfgOut.LensnodeUUID == "" {
 		return LensSidecarConfig{}, fmt.Errorf("incomplete lens configuration from console")

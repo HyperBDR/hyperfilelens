@@ -1,21 +1,48 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
+import { sentryVitePlugin } from '@sentry/vite-plugin'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://api:8000'
 const devWebSocketTarget = process.env.VITE_DEV_WEBSOCKET_TARGET || 'http://api:8001'
+const sentrySourceMapUpload = Boolean(
+  process.env.SENTRY_AUTH_TOKEN
+  && process.env.SENTRY_URL
+  && process.env.SENTRY_ORG
+  && process.env.SENTRY_FRONTEND_PROJECT
+  && process.env.SENTRY_RELEASE,
+)
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
   envDir: repoRoot,
-  // Share repo-root SENTRY_* with backend (.env); VITE_* remains for other frontend-only keys.
-  envPrefix: ['VITE_', 'SENTRY_'],
-  plugins: [vue(), tailwindcss()],
+  plugins: [
+    vue(),
+    tailwindcss(),
+    ...(sentrySourceMapUpload
+      ? [sentryVitePlugin({
+          url: process.env.SENTRY_URL,
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+          org: process.env.SENTRY_ORG,
+          project: process.env.SENTRY_FRONTEND_PROJECT,
+          telemetry: false,
+          release: { name: process.env.SENTRY_RELEASE },
+          sourcemaps: {
+            assets: './dist/**',
+            filesToDeleteAfterUpload: './dist/**/*.map',
+          },
+          errorHandler: (error) => {
+            console.warn(`[sentry] Source Map upload failed; continuing build: ${error.message}`)
+          },
+        })]
+      : []),
+  ],
   build: {
     target: 'es2022',
+    sourcemap: sentrySourceMapUpload ? 'hidden' : false,
   },
   optimizeDeps: {
     esbuildOptions: {

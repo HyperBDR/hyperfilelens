@@ -168,6 +168,17 @@ func writeLensEnvFile(lens LensSidecarConfig) error {
 	if lens.LensnodeName != "" {
 		lines = append(lines, "LENSNODE_NAME="+quoteEnv(lens.LensnodeName))
 	}
+	for _, name := range []string{
+		"SENTRY_ENABLED",
+		"SENTRY_BACKEND_DSN",
+		"SENTRY_ENVIRONMENT",
+		"SENTRY_TRACES_SAMPLE_RATE",
+		"HFL_SENTRY_LENSNODE_RELEASE",
+	} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" && !strings.ContainsAny(value, "\r\n") {
+			lines = append(lines, name+"="+quoteEnv(value))
+		}
+	}
 	content := strings.Join(lines, "\n") + "\n"
 	if err := os.WriteFile(lensEnvFilePath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", lensEnvFilePath, err)

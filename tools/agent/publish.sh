@@ -281,6 +281,7 @@ GATEWAY_BOOTSTRAP_LINUX_SCRIPT=gateway-bootstrap-linux.sh
 GATEWAY_SIDECAR_SCRIPT=gateway-install-lensnode-sidecar.sh
 GATEWAY_LIFECYCLE_SCRIPT=gateway-lifecycle.sh
 GATEWAY_DOCKER_INSTALL_SCRIPT=gateway-install-docker-ubuntu-amd64.sh
+GATEWAY_SENTRY_ADAPTER=hfl-sentry-sitecustomize.py
 GATEWAY_LENSNODE_IMAGE=lensnode-image-linux-amd64.tar.gz
 ENROLL_BOOTSTRAP_DIR="${RELEASES_DIR%/agent-releases}/enroll-bootstrap"
 GATEWAY_BOOTSTRAP_DIR="${RELEASES_DIR%/agent-releases}/gateway-bootstrap"
@@ -338,6 +339,9 @@ if [[ ! -f "${BOOTSTRAP_DIR}/${GATEWAY_LIFECYCLE_SCRIPT}" ]]; then
 fi
 if [[ ! -f "${BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}" ]]; then
 	hfl_die "Missing bootstrap template ${BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}" 3
+fi
+if [[ ! -f "${ROOT}/deploy/installer/sourcelens/${GATEWAY_SENTRY_ADAPTER}" ]]; then
+	hfl_die "Missing Sentry privacy adapter ${GATEWAY_SENTRY_ADAPTER}" 3
 fi
 
 validate_matrix() {
@@ -528,6 +532,10 @@ publish_archives() {
 	cp -f "${docker_install_src}" "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}"
 	chmod 755 "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_DOCKER_INSTALL_SCRIPT}"
 	hfl_log_ok "Published ${GATEWAY_DOCKER_INSTALL_SCRIPT}"
+	privacy_adapter_src="${ROOT}/deploy/installer/sourcelens/${GATEWAY_SENTRY_ADAPTER}"
+	cp -f "${privacy_adapter_src}" "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_SENTRY_ADAPTER}"
+	chmod 644 "${GATEWAY_BOOTSTRAP_DIR}/${GATEWAY_SENTRY_ADAPTER}"
+	hfl_log_ok "Published ${GATEWAY_SENTRY_ADAPTER}"
 	local ubuntu_release release_id host_debs_dir docker_debs_archive
 	for ubuntu_release in 20.04 22.04 24.04; do
 		case "${ubuntu_release}" in 20.04) release_id=2004 ;; 22.04) release_id=2204 ;; 24.04) release_id=2404 ;; esac

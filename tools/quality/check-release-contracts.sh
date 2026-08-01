@@ -610,6 +610,9 @@ grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ga-runtime-config.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-sentry-runtime-config.sh' "${workflow}" >/dev/null
+grep -F 'hfl-sentry-sitecustomize.py' \
+	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
@@ -860,5 +863,11 @@ grep -F 'target: prod' "${production_workflow}" >/dev/null
 grep -F 'channel: release' "${production_workflow}" >/dev/null
 grep -F 'Production deployment requires a manual workflow_dispatch event' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'if ! SOURCELENS_BUILD_SOURCE_MAPS=1' \
+	"${ROOT}/release/ci/build-sourcelens-image.sh" >/dev/null
+grep -F 'chmod 0700 "${COMPOSE_DIR}"' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+grep -F 'chmod 0600 "${compose_file}"' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 
 printf 'Release contract checks passed.\n'
