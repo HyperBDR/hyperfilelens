@@ -29,6 +29,7 @@ UPGRADE_BACKUP_DIR=""
 SOURCELENS_MAINTENANCE_ARMED=0
 SOURCELENS_PROXY_GATE_ARMED=0
 SOURCELENS_UPGRADE_STARTED=0
+SOURCELENS_GATE_ADOPTION_SOURCE=""
 UPGRADE_HFL_COMMITTED=0
 UPGRADE_HFL_CUTOVER_ATTEMPTED=0
 INSTALLER_LOCK_ACQUIRED=0
@@ -901,13 +902,31 @@ sourcelens_nginx_has_proxy_gate() {
 
 recreate_sourcelens_nginx_with_proxy_gate() {
 	local timeout_seconds="${SOURCELENS_PROXY_GATE_BOOTSTRAP_TIMEOUT_SECONDS:-120}"
+	local adoption_dir adoption_config adoption_override
 	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || return 2
 	warn "Legacy SourceLens Nginx has no direct Run gate; recreating only its proxy with the gate armed"
 	# Compose stops the old proxy before starting the replacement. During that
 	# short first-adoption window no direct client can create a Run, while the
 	# API, workers, scheduler, and LensNodes remain online to drain existing work.
-	sourcelens_compose up -d --no-deps --no-build --pull never --force-recreate nginx \
-		|| return 1
+	if [[ -n "${SOURCELENS_GATE_ADOPTION_SOURCE}" \
+		&& -f "${SOURCELENS_GATE_ADOPTION_SOURCE}/deploy/nginx/default.conf" ]]; then
+		adoption_dir="${SOURCELENS_INSTALL_DIR}/deploy/nginx/hfl-maintenance"
+		adoption_config="${adoption_dir}/adoption-default.conf"
+		adoption_override="${adoption_dir}/adoption-compose.yml"
+		cp "${SOURCELENS_GATE_ADOPTION_SOURCE}/deploy/nginx/default.conf" "${adoption_config}"
+		cat >"${adoption_override}" <<'YAML'
+services:
+  nginx:
+    volumes:
+      - ./deploy/nginx/hfl-maintenance/adoption-default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/hfl-maintenance:/etc/nginx/hfl-maintenance:ro
+YAML
+		sourcelens_compose -f docker-compose.yml -f "${adoption_override}" \
+			up -d --no-deps --no-build --pull never --force-recreate nginx || return 1
+	else
+		sourcelens_compose up -d --no-deps --no-build --pull never --force-recreate nginx \
+			|| return 1
+	fi
 	local deadline=$((SECONDS + timeout_seconds))
 	while ((SECONDS < deadline)); do
 		if sourcelens_nginx_running && sourcelens_nginx_has_proxy_gate; then
@@ -3896,6 +3915,7 @@ cmd_upgrade() {
 	fi
 	if should_upgrade_sourcelens "${sourcelens_mode}" "${src_root}"; then
 		upgrade_sourcelens=1
+		SOURCELENS_GATE_ADOPTION_SOURCE="${src_root}/sourcelens"
 	fi
 	if [[ "${remove_sourcelens}" -eq 1 ]]; then
 		upgrade_sourcelens=0

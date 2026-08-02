@@ -140,6 +140,10 @@ fi
 # A pre-gate SourceLens release must adopt the guard by replacing only Nginx.
 # The old proxy is stopped before the replacement starts, so direct Run
 # creation stays fail-closed throughout the one-time adoption window.
+SOURCELENS_GATE_ADOPTION_SOURCE="${tmp}/target-sourcelens"
+mkdir -p "${SOURCELENS_GATE_ADOPTION_SOURCE}/deploy/nginx"
+printf '%s\n' 'if ($hfl_sourcelens_run_creation_blocked) { return 503; }' \
+	>"${SOURCELENS_GATE_ADOPTION_SOURCE}/deploy/nginx/default.conf"
 legacy_gate_present=0
 sourcelens_nginx_has_proxy_gate() { [[ "${legacy_gate_present}" == "1" ]]; }
 sourcelens_compose() {
@@ -150,7 +154,9 @@ sourcelens_compose() {
 }
 calls=()
 arm_sourcelens_proxy_gate
-[[ " ${calls[*]} " == *" sourcelens:up -d --no-deps --no-build --pull never --force-recreate nginx "* ]]
+[[ " ${calls[*]} " == *" sourcelens:-f docker-compose.yml -f "*"adoption-compose.yml up -d --no-deps --no-build --pull never --force-recreate nginx "* ]]
+grep -F 'adoption-default.conf:/etc/nginx/conf.d/default.conf:ro' \
+	"${SOURCELENS_INSTALL_DIR}/deploy/nginx/hfl-maintenance/adoption-compose.yml" >/dev/null
 [[ " ${calls[*]} " == *" sourcelens-gate-reload "* ]]
 [[ "${legacy_gate_present}" == "1" ]]
 clear_sourcelens_proxy_gate
