@@ -1,6 +1,8 @@
 # Gateway image: hyperfilelens-frontend (SPA build + nginx reverse proxy).
 # Development targets keep dependencies in the image and bind-mount source.
-FROM node:22-alpine AS frontend-dependencies
+ARG FRONTEND_NODE_BASE_IMAGE=node:22-alpine
+ARG FRONTEND_NGINX_BASE_IMAGE=nginx:stable-alpine
+FROM ${FRONTEND_NODE_BASE_IMAGE} AS frontend-dependencies
 
 LABEL org.opencontainers.image.title="hyperfilelens-frontend"
 
@@ -37,7 +39,7 @@ RUN --mount=type=secret,id=sentry_auth_token \
  && find dist -type f -name '*.map' -delete
 
 # Serve the SPA, standalone Website artifact, and reverse proxy through Nginx.
-FROM nginx:stable-alpine
+FROM ${FRONTEND_NGINX_BASE_IMAGE}
 
 ARG IMAGE_VERSION=dev
 ARG IMAGE_REVISION=unknown

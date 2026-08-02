@@ -119,11 +119,17 @@ def probe_celery() -> dict:
         celery_status = "error"
         celery_error = str(exc)
 
+    from common.ops.runtime_backlog import runtime_backlog_snapshot
+
+    backlog = runtime_backlog_snapshot()
+    if celery_status == "ok" and backlog["status"] != "ok":
+        celery_status = "degraded"
     return {
         "status": celery_status,
         "worker_count": worker_count,
         "active_tasks": active_tasks,
         "error": celery_error,
+        "backlog": backlog,
     }
 
 

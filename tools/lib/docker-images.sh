@@ -28,6 +28,19 @@ hfl_docker_mirror_image_ref() {
 	fi
 }
 
+hfl_docker_export_build_base_images() {
+	local mirror_host
+	mirror_host="$(hfl_docker_normalize_mirror_host "${1:-}")"
+	export HFL_BACKEND_BASE_IMAGE
+	export HFL_FRONTEND_NODE_BASE_IMAGE
+	export HFL_FRONTEND_NGINX_BASE_IMAGE
+	export HFL_WEBSITE_BASE_IMAGE
+	HFL_BACKEND_BASE_IMAGE="$(hfl_docker_mirror_image_ref 'ubuntu:24.04' "${mirror_host}")"
+	HFL_FRONTEND_NODE_BASE_IMAGE="$(hfl_docker_mirror_image_ref 'node:22-alpine' "${mirror_host}")"
+	HFL_FRONTEND_NGINX_BASE_IMAGE="$(hfl_docker_mirror_image_ref 'nginx:stable-alpine' "${mirror_host}")"
+	HFL_WEBSITE_BASE_IMAGE="${HFL_FRONTEND_NODE_BASE_IMAGE}"
+}
+
 hfl_docker_validate_pull_settings() {
 	local timeout_seconds=${1:-180} retries=${2:-2} retry_delay=${3:-10}
 	[[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || return 1

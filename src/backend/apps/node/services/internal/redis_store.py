@@ -6,6 +6,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 import redis
@@ -28,14 +34,15 @@ def get_redis() -> redis.Redis | None:
     if _client is not None:
         return _client
     try:
-        _client = redis.Redis.from_url(
+        client = redis.Redis.from_url(
             _broker_url(),
             decode_responses=True,
             socket_connect_timeout=5,
             socket_timeout=None,
         )
-        _client.ping()
-        return _client
+        client.ping()
+        _client = client
+        return client
     except Exception as exc:
         logger.warning("node redis unavailable: %s", exc)
         return None
@@ -267,6 +274,279 @@ def task_stream_key(task_id: str) -> str:
 
 def task_info_key(task_id: str) -> str:
     return f"task_info:{task_id}"
+
+
+def task_uplink_activity_key(task_id: str) -> str:
+    """Return the short-lived marker key for queued Agent task uplink."""
+    return f"task_uplink_activity:{task_id}"
+
+
+def periodic_lease_key(name: str) -> str:
+    """Return the Redis key used to coalesce one periodic task family."""
+    return f"periodic_lease:{name}"
+
+
+@dataclass
+class PeriodicLease:
+    """Token-owned Redis lease that can be safely renewed by long sweeps."""
+
+    client: redis.Redis | None
+    name: str
+    key: str
+    token: str
+    ttl_seconds: int
+    acquired: bool = False
+    _closed: bool = field(default=False, init=False, repr=False)
+    _state_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
+    _stop_event: threading.Event = field(
+        default_factory=threading.Event,
+        init=False,
+        repr=False,
+    )
+    _heartbeat_thread: threading.Thread | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def __bool__(self) -> bool:
+        with self._state_lock:
+            return self.acquired and not self._closed
+
+    def refresh(self) -> bool:
+        """Extend this lease only while its token still owns the key."""
+        with self._state_lock:
+            if not self.acquired or self._closed or self.client is None:
+                return False
+            client = self.client
+        try:
+            renewed = bool(
+                client.eval(
+                    """
+                    if redis.call('get', KEYS[1]) == ARGV[1] then
+                        return redis.call('expire', KEYS[1], ARGV[2])
+                    end
+                    return 0
+                    """,
+                    1,
+                    self.key,
+                    self.token,
+                    self.ttl_seconds,
+                )
+            )
+        except redis.RedisError as exc:
+            logger.warning("periodic lease refresh failed name=%s: %s", self.name, exc)
+            renewed = False
+        with self._state_lock:
+            if self._closed:
+                return False
+            self.acquired = renewed
+            return renewed
+
+    def start_heartbeat(self) -> None:
+        """Renew this lease in the background while its protected body runs."""
+        if not self:
+            return
+        interval = max(0.25, self.ttl_seconds / 3)
+
+        def heartbeat() -> None:
+            while not self._stop_event.wait(interval):
+                if not self.refresh():
+                    return
+
+        self._heartbeat_thread = threading.Thread(
+            target=heartbeat,
+            name=f"periodic-lease-{self.name}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def release(self) -> None:
+        """Release this lease without deleting a successor's token."""
+        with self._state_lock:
+            self._closed = True
+            client = self.client
+        self._stop_event.set()
+        heartbeat_thread = self._heartbeat_thread
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1)
+        if client is None:
+            return
+        try:
+            client.eval(
+                """
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                end
+                return 0
+                """,
+                1,
+                self.key,
+                self.token,
+            )
+        except redis.RedisError as exc:
+            logger.warning("periodic lease release failed name=%s: %s", self.name, exc)
+        finally:
+            with self._state_lock:
+                self.acquired = False
+
+
+@contextmanager
+def periodic_lease(*, name: str, ttl_seconds: int) -> Iterator[PeriodicLease]:
+    """Acquire a crash-safe periodic-task lease, failing closed without Redis."""
+    r = get_redis()
+    lease = PeriodicLease(
+        client=r,
+        name=name,
+        key=periodic_lease_key(name),
+        token=uuid.uuid4().hex,
+        ttl_seconds=max(1, int(ttl_seconds)),
+    )
+    if r is None:
+        yield lease
+        return
+
+    try:
+        lease.acquired = bool(
+            r.set(
+                lease.key,
+                lease.token,
+                nx=True,
+                ex=lease.ttl_seconds,
+            )
+        )
+    except redis.RedisError as exc:
+        logger.warning("periodic lease unavailable name=%s: %s", name, exc)
+        yield lease
+        return
+
+    try:
+        lease.start_heartbeat()
+        yield lease
+    finally:
+        lease.release()
+
+
+def enqueue_uplink_with_activity(
+    client: redis.Redis,
+    *,
+    stream_name: str,
+    fields: dict[str, str],
+    task_id: str,
+    message_type: str,
+    marker_token: str,
+) -> None:
+    """Atomically enqueue task uplink and publish its projection marker."""
+    pipeline = client.pipeline(transaction=True)
+    pipeline.xadd(stream_name, fields)
+    stage_task_uplink_activity(
+        pipeline,
+        task_id=task_id,
+        message_type=message_type,
+        marker_token=marker_token,
+    )
+    pipeline.execute()
+
+
+def stage_task_uplink_activity(
+    pipeline,
+    *,
+    task_id: str,
+    message_type: str,
+    marker_token: str,
+) -> None:
+    """Stage a task marker in an existing Redis transaction pipeline."""
+    payload, ttl_seconds = task_uplink_activity_record(
+        message_type=message_type,
+        marker_token=marker_token,
+    )
+    pipeline.set(
+        task_uplink_activity_key(task_id),
+        payload,
+        ex=ttl_seconds,
+    )
+
+
+def task_uplink_activity_record(
+    *,
+    message_type: str,
+    marker_token: str,
+) -> tuple[str, int]:
+    """Return the serialized marker and TTL shared by enqueue and replay."""
+    payload = {
+        "marker_token": str(marker_token),
+        "message_type": str(message_type),
+        "received_at": time.time(),
+    }
+    return (
+        json.dumps(payload, ensure_ascii=False),
+        max(60, node_conf.TASK_RESULT_UPLINK_PROJECTION_GRACE_SECONDS * 2),
+    )
+
+
+def clear_task_uplink_activity(*, task_id: str, marker_token: str) -> None:
+    """Clear a task marker only when it still belongs to this stream entry."""
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        r.eval(
+            """
+            local raw = redis.call('get', KEYS[1])
+            if not raw then return 0 end
+            local decoded, payload = pcall(cjson.decode, raw)
+            if decoded and type(payload) == 'table'
+                and tostring(payload['marker_token'] or '') == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            task_uplink_activity_key(task_id),
+            str(marker_token),
+        )
+    except redis.RedisError as exc:
+        logger.warning("task uplink marker cleanup failed task=%s: %s", task_id, exc)
+
+
+def get_task_uplink_activity(*, task_id: str) -> dict[str, Any] | None:
+    """Return queued Agent task activity, if its short-lived marker exists."""
+    return get_task_uplink_activities(task_ids=[task_id]).get(str(task_id))
+
+
+def get_task_uplink_activities(
+    *, task_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Batch-read queued Agent task activity without holding database locks."""
+    normalized_ids = [str(task_id) for task_id in task_ids if task_id]
+    if not normalized_ids:
+        return {}
+    r = get_redis()
+    if r is None:
+        return {}
+    try:
+        pipeline = r.pipeline(transaction=False)
+        for task_id in normalized_ids:
+            pipeline.get(task_uplink_activity_key(task_id))
+        values = pipeline.execute()
+    except redis.RedisError as exc:
+        logger.warning("task uplink marker batch read failed: %s", exc)
+        return {}
+    activities: dict[str, dict[str, Any]] = {}
+    for task_id, raw in zip(normalized_ids, values, strict=True):
+        if not raw:
+            continue
+        try:
+            payload = json.loads(str(raw))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            activities[task_id] = payload
+    return activities
 
 
 def push_task_stream(*, task_id: str, message: dict[str, Any]) -> None:

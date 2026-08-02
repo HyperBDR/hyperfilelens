@@ -116,7 +116,7 @@ SourceLens options (default: enabled for up/restart):
 Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
   --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
-  --docker-download-mirror URL     Docker Hub mirror for NAS ubuntu:24.04 (env: DOCKER_DOWNLOAD_MIRROR)
+  --docker-download-mirror URL     Docker Hub mirror for builds and runtime images (env: DOCKER_DOWNLOAD_MIRROR)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
   --ubuntu2404-arch ARCH           NAS deb arch for agent bundle: amd64 | arm64 | all (default: amd64)
   --kopia-mode MODE                build or download
@@ -200,6 +200,7 @@ apply_mirror_env_defaults() {
 	export PIP_INDEX_URL="${OPT_PIP_INDEX_URL}"
 	export PIP_TRUSTED_HOST="${OPT_PIP_TRUSTED_HOST}"
 	export NPM_REGISTRY="${OPT_NPM_REGISTRY}"
+	hfl_docker_export_build_base_images "${MIRROR_DOCKER_DOWNLOAD}"
 	[[ -z "${OPT_GO_PROXY}" ]] || export GOPROXY="${OPT_GO_PROXY}"
 	[[ -z "${OPT_GO_SUMDB}" ]] || export GOSUMDB="${OPT_GO_SUMDB}"
 }
@@ -451,7 +452,8 @@ cache_update() {
 prepare_website_static() {
 	local force=$1 fingerprint app_url
 	WEBSITE_ARTIFACT_REBUILT=0
-	fingerprint="$(cache_fingerprint website -- "npm=${OPT_NPM_REGISTRY}" "platform=linux/amd64")"
+	fingerprint="$(cache_fingerprint website -- "npm=${OPT_NPM_REGISTRY}" \
+		"platform=linux/amd64" "base=${HFL_WEBSITE_BASE_IMAGE}")"
 	if [[ "${force}" -eq 1 ]] || [[ ! -f "${WEBSITE_OUTPUT}/public/en/index.html" ]] \
 		|| ! cache_matches website-static "${fingerprint}"; then
 		[[ "${DEV_OFFLINE}" -eq 0 ]] \
@@ -467,6 +469,7 @@ prepare_website_static() {
 			--output "${WEBSITE_OUTPUT}"
 			--image-tag "${WEBSITE_BUILDER_IMAGE}"
 			--platform linux/amd64
+			--base-image "${HFL_WEBSITE_BASE_IMAGE}"
 		)
 		[[ -z "${OPT_NPM_REGISTRY}" ]] || args+=(--npm-registry "${OPT_NPM_REGISTRY}")
 		[[ "${force}" -eq 0 ]] || args+=(--no-cache)
@@ -493,14 +496,18 @@ refresh_website_nginx_mount() {
 build_dev_images() {
 	local force=$1 backend_fingerprint frontend_fingerprint
 	backend_fingerprint="$(cache_fingerprint \
-		.dockerignore deploy/docker/backend.Dockerfile deploy/docker/backend-entrypoint.sh deploy/bootstrap \
+		.dockerignore deploy/docker/backend.Dockerfile deploy/docker/backend-entrypoint.sh \
+		deploy/docker/dev-process-supervisor.py deploy/bootstrap \
 		pyproject.toml uv.lock build/kopia/KOPIA_INFO.json build/kopia/dist/linux/amd64/kopia -- \
 		"apt=${MIRROR_APT}" "pip=${OPT_PIP_INDEX_URL}" \
-		"pip_host=${OPT_PIP_TRUSTED_HOST}" "kopia=${KOPIA_GIT_REF}" "kopia_mode=${KOPIA_ARTIFACT_MODE}")"
+		"pip_host=${OPT_PIP_TRUSTED_HOST}" "kopia=${KOPIA_GIT_REF}" \
+		"kopia_mode=${KOPIA_ARTIFACT_MODE}" "base=${HFL_BACKEND_BASE_IMAGE}")"
 	frontend_fingerprint="$(cache_fingerprint \
 		.dockerignore deploy/docker/frontend.Dockerfile deploy/docker/frontend-dev-entrypoint.sh \
 		src/frontend/package.json \
-		src/frontend/package-lock.json -- "npm=${OPT_NPM_REGISTRY}")"
+		src/frontend/package-lock.json -- "npm=${OPT_NPM_REGISTRY}" \
+		"node_base=${HFL_FRONTEND_NODE_BASE_IMAGE}" \
+		"nginx_base=${HFL_FRONTEND_NGINX_BASE_IMAGE}")"
 
 	if [[ "${force}" -eq 1 ]] || ! docker image inspect hyperfilelens-backend:dev >/dev/null 2>&1 \
 		|| ! cache_matches backend-image "${backend_fingerprint}"; then

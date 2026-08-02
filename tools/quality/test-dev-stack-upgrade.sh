@@ -56,6 +56,10 @@ prepare_sourcelens_dev 0
 [[ "${GITHUB_DOWNLOAD_MIRROR}" == "https://github-mirror.example.test" ]]
 [[ "${GITHUB_TOKEN}" == "test-token" ]]
 [[ "${DOCKER_DOWNLOAD_MIRROR}" == "docker-mirror.example.test" ]]
+[[ "${HFL_BACKEND_BASE_IMAGE}" == "docker-mirror.example.test/library/ubuntu:24.04" ]]
+[[ "${HFL_FRONTEND_NODE_BASE_IMAGE}" == "docker-mirror.example.test/library/node:22-alpine" ]]
+[[ "${HFL_FRONTEND_NGINX_BASE_IMAGE}" == "docker-mirror.example.test/library/nginx:stable-alpine" ]]
+[[ "${HFL_WEBSITE_BASE_IMAGE}" == "${HFL_FRONTEND_NODE_BASE_IMAGE}" ]]
 [[ "${APT_MIRROR}" == "https://apt-mirror.example.test" ]]
 [[ "${GOPROXY}" == "https://go-proxy.example.test,direct" ]]
 [[ "${GOSUMDB}" == "sumdb.example.test" ]]
@@ -141,6 +145,14 @@ grep -F 'refresh_website_nginx_mount' <<<"${cmd_restart_body}" >/dev/null
 backend_entrypoint="${ROOT_REPO}/deploy/docker/backend-entrypoint.sh"
 grep -F 'DEV_WATCH_IGNORE_PATHS="/opt/backend/media,/opt/backend/staticfiles,/opt/backend/lang-packs"' \
 	"${backend_entrypoint}" >/dev/null
-[[ "$(grep -Fc -- '--ignore-paths "${DEV_WATCH_IGNORE_PATHS}"' "${backend_entrypoint}")" -eq 3 ]]
+grep -F 'python /dev-process-supervisor.py' "${backend_entrypoint}" >/dev/null
+grep -F 'deploy/docker/dev-process-supervisor.py deploy/bootstrap' \
+	"${ROOT_REPO}/dev/stack.sh" >/dev/null
+[[ "$(grep -Fc -- '--ignore-paths "${DEV_WATCH_IGNORE_PATHS}"' "${backend_entrypoint}")" -eq 2 ]]
+
+# Development Nginx must re-resolve API/UI after Compose recreates containers.
+dev_upstreams="${ROOT_REPO}/deploy/nginx/development-upstreams.conf"
+[[ "$(grep -Ec 'server (api|ui):[0-9]+ resolve;' "${dev_upstreams}")" -eq 5 ]]
+grep -F 'zone hfl_api_http 64k' "${dev_upstreams}" >/dev/null
 
 printf 'Development stack upgrade regression checks passed.\n'

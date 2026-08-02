@@ -7,6 +7,7 @@ OUTPUT=""
 IMAGE_TAG="${HFL_WEBSITE_BUILDER_IMAGE:-hyperfilelens-website-builder:dev}"
 PLATFORM="${HFL_WEBSITE_BUILD_PLATFORM:-linux/amd64}"
 NPM_REGISTRY="${NPM_REGISTRY:-}"
+BASE_IMAGE="${HFL_WEBSITE_BASE_IMAGE:-node:22-alpine}"
 NO_CACHE=0
 PULL=0
 
@@ -19,6 +20,7 @@ Options:
   --image-tag IMAGE    Local builder image tag
   --platform PLATFORM  Docker build platform (default: linux/amd64)
   --npm-registry URL   Optional npm registry used only while building
+  --base-image IMAGE   Optional Dockerfile base image (default: node:22-alpine)
   --no-cache           Rebuild the Website builder without Docker cache
   --pull               Refresh the Website builder base image
 USAGE
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
 	--image-tag) IMAGE_TAG=${2:-}; shift 2 ;;
 	--platform) PLATFORM=${2:-}; shift 2 ;;
 	--npm-registry) NPM_REGISTRY=${2:-}; shift 2 ;;
+	--base-image) BASE_IMAGE=${2:-}; shift 2 ;;
 	--no-cache) NO_CACHE=1; shift ;;
 	--pull) PULL=1; shift ;;
 	-h | --help) usage; exit 0 ;;
@@ -66,6 +69,7 @@ build_args=(
 	--file "${SCRIPT_DIR}/Dockerfile"
 	--tag "${IMAGE_TAG}"
 	--build-arg "NPM_REGISTRY=${NPM_REGISTRY}"
+	--build-arg "WEBSITE_BASE_IMAGE=${BASE_IMAGE}"
 )
 [[ "${NO_CACHE}" -eq 0 ]] || build_args+=(--no-cache)
 [[ "${PULL}" -eq 0 ]] || build_args+=(--pull)

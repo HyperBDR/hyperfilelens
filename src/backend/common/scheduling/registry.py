@@ -3,7 +3,8 @@ Registry for periodic tasks.
 
 Apps register entries via ``register_periodic_tasks()`` and this registry
 writes them into ``django_celery_beat``. Existing rows are left untouched so
-database-side customisations are preserved.
+database-side customisations are preserved, except for explicitly managed
+delivery-safety fields such as ``expire_seconds``.
 """
 
 import json
@@ -77,7 +78,10 @@ class TaskRegistry:
         kwargs: dict | None = None,
         queue: str | None = None,
         enabled: bool = True,
+        expire_seconds: int | None = None,
     ) -> None:
+        if expire_seconds is not None and int(expire_seconds) < 1:
+            raise ValueError("expire_seconds must be positive when configured")
         self._entries[name] = {
             "task": task,
             "schedule": schedule,
@@ -85,6 +89,9 @@ class TaskRegistry:
             "kwargs": dict(kwargs) if kwargs else {},
             "queue": queue,
             "enabled": enabled,
+            "expire_seconds": (
+                int(expire_seconds) if expire_seconds is not None else None
+            ),
         }
 
     def _apply_one(self, name: str, entry: dict) -> bool:
@@ -114,6 +121,8 @@ class TaskRegistry:
             "queue": entry["queue"],
             "enabled": entry["enabled"],
         }
+        if entry["expire_seconds"] is not None:
+            defaults["expire_seconds"] = entry["expire_seconds"]
         if crontab_schedule is not None:
             defaults["crontab"] = crontab_schedule
             defaults["interval"] = None
@@ -125,8 +134,17 @@ class TaskRegistry:
             name=name, defaults=defaults
         )
         if not created:
-            logger.debug("Periodic task exists, skipping update: %s", name)
-            return False
+            expire_seconds = entry["expire_seconds"]
+            if expire_seconds is None or obj.expire_seconds == expire_seconds:
+                logger.debug("Periodic task exists, skipping update: %s", name)
+                return False
+            obj.expire_seconds = expire_seconds
+            obj.save(update_fields=["expire_seconds"])
+            logger.info(
+                "Updated periodic task expiry: %s expire_seconds=%s",
+                name,
+                expire_seconds,
+            )
 
         PeriodicTasks.update_changed()
         return True
@@ -168,4 +186,3 @@ def remove_periodic_tasks(*, names=(), task_names=()) -> int:
     if deleted_count:
         PeriodicTasks.update_changed()
     return deleted_count
-
