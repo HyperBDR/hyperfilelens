@@ -24,6 +24,8 @@ source "${ROOT}/tools/lib/logging.sh"
 source "${ROOT}/tools/lib/env-file.sh"
 # shellcheck source=../tools/lib/archive.sh
 source "${ROOT}/tools/lib/archive.sh"
+# shellcheck source=../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
 # shellcheck source=../tools/kopia/common.sh
 source "${ROOT}/tools/kopia/common.sh"
 # shellcheck source=../tools/dependencies/versions/runtime-images.env
@@ -183,6 +185,7 @@ export_build_mirror_env() {
 	export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-${BUILD_UV_HTTP_TIMEOUT:-120}}"
 	export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-${BUILD_UV_CONCURRENT_DOWNLOADS:-2}}"
 	export NPM_REGISTRY="${NPM_REGISTRY:-${BUILD_NPM_REGISTRY:-}}"
+	hfl_docker_export_build_base_images "${MIRROR_DOCKER_DOWNLOAD}"
 }
 
 mirror_args() {
@@ -623,6 +626,7 @@ build_control_plane_images() {
 		-t "hyperfilelens-backend:${HFL_VERSION}" \
 		-t hyperfilelens-backend:latest \
 		--build-arg "APT_MIRROR=${APT_MIRROR:-}" \
+		--build-arg "BACKEND_BASE_IMAGE=${HFL_BACKEND_BASE_IMAGE}" \
 		--build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-}" \
 		--build-arg "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST:-}" \
 		--build-arg "PIP_TIMEOUT=${PIP_TIMEOUT:-600}" \
@@ -636,6 +640,7 @@ build_control_plane_images() {
 		--output "${ROOT}/build/website"
 		--image-tag "hyperfilelens-website-builder:${HFL_VERSION}"
 		--platform linux/amd64
+		--base-image "${HFL_WEBSITE_BASE_IMAGE}"
 	)
 	[[ -z "${NPM_REGISTRY:-}" ]] || website_args+=(--npm-registry "${NPM_REGISTRY}")
 	[[ "${NO_CACHE}" -eq 0 ]] || website_args+=(--no-cache)
@@ -648,6 +653,8 @@ build_control_plane_images() {
 		-t "hyperfilelens-frontend:${HFL_VERSION}" \
 		-t hyperfilelens-frontend:latest \
 		--build-arg "NPM_REGISTRY=${NPM_REGISTRY:-}" \
+		--build-arg "FRONTEND_NODE_BASE_IMAGE=${HFL_FRONTEND_NODE_BASE_IMAGE}" \
+		--build-arg "FRONTEND_NGINX_BASE_IMAGE=${HFL_FRONTEND_NGINX_BASE_IMAGE}" \
 		--build-arg "VITE_SHOW_EULA=${VITE_SHOW_EULA:-false}" \
 		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \

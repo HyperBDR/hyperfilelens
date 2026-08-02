@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from celery import shared_task
 
 from apps.node.constants import TASK_INGEST_NODE_UPLINK_STREAMS
+from apps.node import conf as node_conf
+from apps.node.services.internal import redis_store
 from apps.node.ws.uplink import handle_uplink
 from apps.node.ws.uplink_queue import (
     UPLINK_INGEST_CONSUMER,
@@ -29,10 +32,40 @@ logger = logging.getLogger(__name__)
 )
 @logged_celery_task(name=TASK_INGEST_NODE_UPLINK_STREAMS)
 def ingest_node_uplink_streams(self) -> dict[str, int]:
-    processed = drain_uplink_stream()
-    if processed:
-        logger.debug("ingest_node_uplink_streams processed=%s", processed)
-    return {"processed": processed}
+    del self
+    with redis_store.periodic_lease(
+        name="node_uplink_ingest",
+        ttl_seconds=node_conf.UPLINK_INGEST_LOCK_SECONDS,
+    ) as lease:
+        if not lease:
+            return {"processed": 0, "coalesced": 1}
+
+        processed = 0
+        batches = 0
+        deadline = time.monotonic() + node_conf.UPLINK_INGEST_DRAIN_SECONDS
+        while time.monotonic() < deadline:
+            if not lease:
+                logger.warning(
+                    "ingest_node_uplink_streams stopped after lease loss processed=%s",
+                    processed,
+                )
+                return {
+                    "processed": processed,
+                    "coalesced": 0,
+                    "lease_lost": 1,
+                }
+            batch_processed = drain_uplink_stream()
+            processed += batch_processed
+            batches += 1
+            if batch_processed < node_conf.UPLINK_INGEST_BATCH_SIZE:
+                break
+        if processed:
+            logger.debug(
+                "ingest_node_uplink_streams processed=%s batches=%s",
+                processed,
+                batches,
+            )
+        return {"processed": processed, "coalesced": 0}
 
 
 @shared_task(

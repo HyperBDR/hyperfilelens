@@ -72,6 +72,7 @@ def register_periodic_tasks() -> None:
         kwargs={},
         queue="node.lifecycle",
         enabled=True,
+        expire_seconds=node_conf.LIFECYCLE_ADVANCE_EXPIRE_SECONDS,
     )
     TASK_REGISTRY.add(
         name="node_ingest_uplink_streams",
@@ -81,4 +82,5 @@ def register_periodic_tasks() -> None:
         kwargs={},
         queue="node.ingest",
         enabled=True,
+        expire_seconds=node_conf.UPLINK_INGEST_EXPIRE_SECONDS,
     )

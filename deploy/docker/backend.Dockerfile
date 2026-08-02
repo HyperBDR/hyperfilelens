@@ -1,5 +1,6 @@
 # Application runtime on Ubuntu LTS. Dependencies use a virtual environment to avoid system Python conflicts (PEP 668).
-FROM ubuntu:24.04 AS backend-dependencies
+ARG BACKEND_BASE_IMAGE=ubuntu:24.04
+FROM ${BACKEND_BASE_IMAGE} AS backend-dependencies
 
 LABEL org.opencontainers.image.base.name="ubuntu:24.04" \
     org.opencontainers.image.title="hyperfilelens-backend"
@@ -78,8 +79,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY deploy/bootstrap /opt/bootstrap
 COPY deploy/docker/backend-entrypoint.sh /entrypoint.sh
+COPY deploy/docker/dev-process-supervisor.py /dev-process-supervisor.py
 
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /dev-process-supervisor.py
 
 EXPOSE 8000 8001
 

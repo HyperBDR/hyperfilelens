@@ -268,6 +268,9 @@ class PlatformOpsPlatformIntegrationsView(APIView):
                         "configured": bool(health.get("configured")),
                         "reachable": bool(health.get("reachable")),
                         "authenticated": bool(health.get("authenticated")),
+                        "business_ready": bool(health.get("business_ready")),
+                        "status": health.get("status", "degraded"),
+                        "warning": health.get("warning", ""),
                         "managed_by": "deployment",
                         "checked_at": checked_at,
                     }

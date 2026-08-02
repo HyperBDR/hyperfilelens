@@ -22,5 +22,8 @@ def metrics(_request) -> HttpResponse:
     except Exception:
         return HttpResponse(status=501)
 
-    return HttpResponse(generate_latest(), content_type=CONTENT_TYPE_LATEST)
+    from common.ops.runtime_metrics import collect_runtime_metrics
 
+    collect_runtime_metrics()
+
+    return HttpResponse(generate_latest(), content_type=CONTENT_TYPE_LATEST)

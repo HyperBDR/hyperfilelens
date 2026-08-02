@@ -39,6 +39,9 @@ class PlatformOpsIntegrationsApiTest(TestCase):
             "configured": True,
             "reachable": True,
             "authenticated": True,
+            "business_ready": True,
+            "status": "ready",
+            "warning": "",
         },
     )
     def test_sourcelens_entry_exposes_console_metadata(
@@ -56,4 +59,6 @@ class PlatformOpsIntegrationsApiTest(TestCase):
         )
         self.assertTrue(integration["reachable"])
         self.assertTrue(integration["authenticated"])
+        self.assertTrue(integration["business_ready"])
+        self.assertEqual(integration["status"], "ready")
         self.assertTrue(integration["checked_at"])

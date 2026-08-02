@@ -42,6 +42,7 @@ services:
       target: backend-development
       network: host
       args:
+        BACKEND_BASE_IMAGE: ${HFL_BACKEND_BASE_IMAGE:-ubuntu:24.04}
         APT_MIRROR: ${APT_MIRROR:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
@@ -97,6 +98,7 @@ services:
 
   api:
     <<: *backend-image
+    restart: unless-stopped
     environment:
       <<: *backend-environment
       LOG_FILE: /var/log/hyperfilelens/api.log
@@ -184,6 +186,8 @@ services:
       target: frontend-development
       network: host
       args:
+        FRONTEND_NODE_BASE_IMAGE: ${HFL_FRONTEND_NODE_BASE_IMAGE:-node:22-alpine}
+        FRONTEND_NGINX_BASE_IMAGE: ${HFL_FRONTEND_NGINX_BASE_IMAGE:-nginx:stable-alpine}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
     environment:
       TZ: UTC

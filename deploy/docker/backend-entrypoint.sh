@@ -110,9 +110,16 @@ run_api_dev() {
   ensure_log_dir
   wait_for_postgres
   require_watchfiles
-  echo "[entrypoint] watch backend source and restart HTTP/WebSocket API"
-  exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \
-    "/entrypoint.sh api" /opt/backend
+  echo "[entrypoint] supervise backend HTTP/WebSocket API with hot reload"
+  exec python /dev-process-supervisor.py \
+    --watch /opt/backend \
+    --ignore /opt/backend/media \
+    --ignore /opt/backend/staticfiles \
+    --ignore /opt/backend/lang-packs \
+    --max-restarts "${DEV_API_MAX_RESTARTS:-5}" \
+    --stable-seconds "${DEV_API_STABLE_SECONDS:-30}" \
+    --base-delay "${DEV_API_RESTART_DELAY_SECONDS:-1}" \
+    -- /entrypoint.sh api
 }
 
 run_worker_dev() {

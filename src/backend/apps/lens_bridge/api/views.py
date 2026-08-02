@@ -75,6 +75,19 @@ class SourceLensMaintenanceUnavailable(APIException):
     default_code = "sourcelens_maintenance"
 
 
+def _lens_error_response(exc: sl_client.LensBridgeError) -> Response:
+    """Preserve retryable SourceLens status codes at the HFL API boundary."""
+    response_status = (
+        status.HTTP_503_SERVICE_UNAVAILABLE
+        if isinstance(exc, sl_client.LensBridgeUnavailable)
+        else status.HTTP_502_BAD_GATEWAY
+    )
+    return Response(
+        {"detail": str(exc)},
+        status=response_status,
+    )
+
+
 def health(request):
     ping = sl_client.ping()
     return JsonResponse({"app": "lens_bridge", "status": "ok", "lens": ping})
@@ -468,7 +481,7 @@ class LensCopilotBindingView(OrgScopedMixin, APIView):
         except ValidationError:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(
             {"binding": chat_binding_service.serialize_chat_binding(binding)},
             status=status.HTTP_201_CREATED,
@@ -495,7 +508,7 @@ class LensCopilotAssistantView(OrgScopedMixin, APIView):
                 membership=membership,
             )
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(rows)
 
 
@@ -534,7 +547,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
                 can_manage_all=can_manage_all,
             )
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(rows)
 
     def retrieve(self, request, pk=None):
@@ -550,7 +563,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def create(self, request):
@@ -559,7 +572,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         except ValidationError:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, pk=None):
@@ -578,7 +591,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         except ValidationError:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def destroy(self, request, pk=None):
@@ -594,7 +607,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=["get"], url_path="form-options")
@@ -602,7 +615,7 @@ class LensAssistantViewSet(OrgScopedMixin, viewsets.ViewSet):
         try:
             data = assistant_form_options(self.org, user=request.user)
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
 
@@ -618,7 +631,7 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
         try:
             rows = list_org_skills(self.org)
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(rows)
 
     def retrieve(self, request, pk=None):
@@ -627,7 +640,7 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def create(self, request):
@@ -636,7 +649,7 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
                 self.org, dict(request.data), created_by=request.user
             )
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, pk=None):
@@ -645,7 +658,7 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def destroy(self, request, pk=None):
@@ -654,7 +667,7 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=["post"], url_path="beautify")
@@ -662,7 +675,7 @@ class LensSkillViewSet(OrgScopedMixin, viewsets.ViewSet):
         try:
             data = beautify_skill(dict(request.data))
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
 
@@ -678,7 +691,7 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
         try:
             rows = list_org_mcp_servers(self.org)
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(rows)
 
     def retrieve(self, request, pk=None):
@@ -687,7 +700,7 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def create(self, request):
@@ -696,7 +709,7 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
                 self.org, dict(request.data), created_by=request.user
             )
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, pk=None):
@@ -707,7 +720,7 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def destroy(self, request, pk=None):
@@ -716,7 +729,7 @@ class LensMcpServerViewSet(OrgScopedMixin, viewsets.ViewSet):
         except NotFound:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -791,7 +804,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         except ValidationError:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(
             LensSessionLinkSerializer(link).data, status=status.HTTP_201_CREATED
         )
@@ -951,7 +964,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         try:
             data = copilot_service.sync_copilot_session(link)
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         data["lifecycle_status"] = link.lifecycle_status
         data["lifecycle_error"] = link.lifecycle_error
         data["last_assistant_message_at"] = link.last_assistant_message_at
@@ -970,7 +983,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         try:
             payload = copilot_service.get_active_run_payload(link)
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response({"active_run": payload})
 
     @action(
@@ -985,7 +998,7 @@ class LensCopilotSessionViewSet(OrgScopedMixin, viewsets.ViewSet):
         except ValidationError:
             raise
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
         return Response(data)
 
     def _get_user_link(self, pk) -> LensSessionLink:
@@ -1024,7 +1037,7 @@ class LensCopilotUsageView(OrgScopedMixin, APIView):
                 usage.usage_overview(self.org, request.user, request.query_params)
             )
         except sl_client.LensBridgeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _lens_error_response(exc)
 
 
 class LensCopilotRunStreamView(APIView):

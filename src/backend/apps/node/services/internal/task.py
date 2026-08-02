@@ -1026,6 +1026,9 @@ def sweep_watchdog_timeouts(*, queryset: QuerySet[NodeTask] | None = None, limit
     ids = list(
         qs.order_by("watchdog_deadline_at", "pk").values_list("pk", flat=True)[: int(limit)]
     )
+    uplink_activities = redis_store.get_task_uplink_activities(
+        task_ids=[str(task_id) for task_id in ids]
+    )
 
     marked = 0
     for pk in ids:
@@ -1040,6 +1043,39 @@ def sweep_watchdog_timeouts(*, queryset: QuerySet[NodeTask] | None = None, limit
                 .first()
             )
             if task is None:
+                continue
+            uplink_activity = uplink_activities.get(str(task.id))
+            try:
+                received_at = float((uplink_activity or {}).get("received_at", 0))
+            except (TypeError, ValueError):
+                received_at = 0
+            activity_age = max(0.0, timezone.now().timestamp() - received_at)
+            message_type = str((uplink_activity or {}).get("message_type", ""))
+            projection_grace = (
+                node_conf.TASK_RESULT_UPLINK_PROJECTION_GRACE_SECONDS
+                if "result" in message_type.lower()
+                else node_conf.TASK_UPLINK_PROJECTION_GRACE_SECONDS
+            )
+            if received_at > 0 and activity_age < projection_grace:
+                remaining_grace = max(
+                    1,
+                    int(projection_grace - activity_age),
+                )
+                task.watchdog_deadline_at = timezone.now() + timezone.timedelta(
+                    seconds=remaining_grace
+                )
+                task.save(update_fields=["watchdog_deadline_at", "updated_at"])
+                logger.info(
+                    "agent task watchdog deferred for queued uplink %s "
+                    "message_type=%s remaining_grace_seconds=%s",
+                    task_log_context(
+                        node_id=task.node_id,
+                        task_id=str(task.id),
+                        kind=task.kind,
+                    ),
+                    message_type or "unknown",
+                    remaining_grace,
+                )
                 continue
             task.status = NodeTask.Status.TIMEOUT
             task.last_error = "watchdog timeout (no progress)"

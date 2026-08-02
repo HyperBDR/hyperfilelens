@@ -35,6 +35,17 @@ class LensBridgeNotConfigured(LensBridgeError):
     default_code = "lens_bridge_not_configured"
 
 
+class LensBridgeUnavailable(LensBridgeError):
+    status_code = 503
+    default_detail = "SourceLens is temporarily unavailable."
+    default_code = "lens_bridge_unavailable"
+
+
+def _transport_error(exc: requests.RequestException) -> LensBridgeUnavailable:
+    logger.warning("SourceLens transport failed: %s", exc)
+    return LensBridgeUnavailable()
+
+
 def _base_url() -> str:
     base = deploy.lens_base_url()
     if not base:
@@ -53,7 +64,11 @@ def _unwrap_sl_body(body: Any) -> Any:
     if isinstance(body, dict) and "data" in body and "code" in body:
         code = body.get("code")
         if code not in (0, "0", None):
-            message = body.get("message") or body.get("detail") or "SourceLens request failed."
+            message = (
+                body.get("message")
+                or body.get("detail")
+                or "SourceLens request failed."
+            )
             raise LensBridgeError(str(message))
         return body.get("data")
     return body
@@ -67,36 +82,55 @@ def _extract_tokens(payload: dict[str, Any]) -> tuple[str, str | None]:
     return str(access), str(refresh) if refresh else None
 
 
+def _decode_login_payload(response: requests.Response) -> Any:
+    """Decode an authentication response without exposing upstream content."""
+    try:
+        return _unwrap_sl_body(response.json())
+    except ValueError as exc:
+        logger.warning("SourceLens authentication returned invalid JSON.")
+        raise LensBridgeUnavailable() from exc
+
+
 def _login() -> None:
     global _ADMIN_ACCESS_TOKEN, _ADMIN_REFRESH_TOKEN, _ADMIN_ACCESS_EXPIRES_AT
     _ensure_credentials()
     url = urljoin(_base_url() + "/", "api/v1/auth/login")
-    response = requests.post(
-        url,
-        json={
-            "email": deploy.lens_bridge_email(),
-            "password": deploy.lens_bridge_password(),
-        },
-        timeout=30,
-    )
+    try:
+        response = requests.post(
+            url,
+            json={
+                "email": deploy.lens_bridge_email(),
+                "password": deploy.lens_bridge_password(),
+            },
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
     legacy_username = deploy.lens_bridge_legacy_username()
     if response.status_code in {400, 401} and legacy_username:
         logger.info(
             "SourceLens email login was rejected; retrying the legacy "
             "username credential for an in-place upgrade."
         )
-        response = requests.post(
-            url,
-            json={
-                "username": legacy_username,
-                "password": deploy.lens_bridge_password(),
-            },
-            timeout=30,
-        )
+        try:
+            response = requests.post(
+                url,
+                json={
+                    "username": legacy_username,
+                    "password": deploy.lens_bridge_password(),
+                },
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            raise _transport_error(exc) from exc
     if response.status_code >= 400:
-        logger.warning("SourceLens login failed: %s %s", response.status_code, response.text[:500])
+        if response.status_code >= 500:
+            raise LensBridgeUnavailable()
+        logger.warning(
+            "SourceLens login failed: %s %s", response.status_code, response.text[:500]
+        )
         raise LensBridgeError("SourceLens authentication failed.")
-    payload = _unwrap_sl_body(response.json())
+    payload = _decode_login_payload(response)
     if not isinstance(payload, dict):
         raise LensBridgeError("SourceLens login returned unexpected payload.")
     access, refresh = _extract_tokens(payload)
@@ -112,12 +146,24 @@ def _refresh_access() -> None:
         _login()
         return
     url = urljoin(_base_url() + "/", "api/v1/auth/token/refresh")
-    response = requests.post(url, json={"refresh": _ADMIN_REFRESH_TOKEN}, timeout=30)
+    try:
+        response = requests.post(
+            url,
+            json={"refresh": _ADMIN_REFRESH_TOKEN},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
     if response.status_code >= 400:
         logger.info("SourceLens token refresh failed; re-login.")
         _login()
         return
-    payload = _unwrap_sl_body(response.json())
+    try:
+        payload = _decode_login_payload(response)
+    except LensBridgeUnavailable:
+        logger.info("SourceLens token refresh returned invalid JSON; re-login.")
+        _login()
+        return
     if not isinstance(payload, dict):
         _login()
         return
@@ -141,22 +187,30 @@ def login_user(
     draining. It is never attempted after email authentication succeeds.
     """
     url = urljoin(_base_url() + "/", "api/v1/auth/login")
-    response = requests.post(
-        url,
-        json={"email": email, "password": password},
-        timeout=30,
-    )
+    try:
+        response = requests.post(
+            url,
+            json={"email": email, "password": password},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
     if response.status_code in {400, 401} and legacy_username:
         logger.info(
             "SourceLens chat user email login was rejected; retrying the "
             "legacy username credential for an in-place upgrade."
         )
-        response = requests.post(
-            url,
-            json={"username": legacy_username, "password": password},
-            timeout=30,
-        )
+        try:
+            response = requests.post(
+                url,
+                json={"username": legacy_username, "password": password},
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            raise _transport_error(exc) from exc
     if response.status_code >= 400:
+        if response.status_code >= 500:
+            raise LensBridgeUnavailable()
         logger.warning(
             "SourceLens chat user login failed email=%s status=%s",
             email,
@@ -170,9 +224,7 @@ def login_user(
             "SourceLens chat user login returned invalid JSON."
         ) from exc
     if not isinstance(payload, dict):
-        raise LensBridgeError(
-            "SourceLens chat user login returned unexpected payload."
-        )
+        raise LensBridgeError("SourceLens chat user login returned unexpected payload.")
     access, _refresh = _extract_tokens(payload)
     return access
 
@@ -192,7 +244,9 @@ def _get_admin_access_token() -> str:
 
 def _get_access_token(*, hfl_user: AbstractBaseUser | None = None) -> str:
     if hfl_user is not None:
-        from apps.lens_bridge.services.chat_user_provisioning import mint_sl_access_token
+        from apps.lens_bridge.services.chat_user_provisioning import (
+            mint_sl_access_token,
+        )
 
         return mint_sl_access_token(hfl_user)
     return _get_admin_access_token()
@@ -248,6 +302,9 @@ def _raise_for_response(response: requests.Response) -> Any:
         except ValueError:
             return response.text
         return _unwrap_sl_body(body)
+    if response.status_code >= 500:
+        logger.warning("SourceLens upstream returned status=%s", response.status_code)
+        raise LensBridgeUnavailable()
     detail = response.text[:2000]
     try:
         body = response.json()
@@ -283,17 +340,22 @@ def request_json(
     headers = _auth_headers({"Accept": "application/json"}, hfl_user=hfl_user)
     if json_body is not None:
         headers["Content-Type"] = "application/json"
-    response = requests.request(
-        method.upper(),
-        url,
-        headers=headers,
-        params=params,
-        json=json_body,
-        timeout=timeout,
-    )
+    try:
+        response = requests.request(
+            method.upper(),
+            url,
+            headers=headers,
+            params=params,
+            json=json_body,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
     if response.status_code == 401:
         if hfl_user is not None:
-            from apps.lens_bridge.services.chat_user_provisioning import invalidate_user_token
+            from apps.lens_bridge.services.chat_user_provisioning import (
+                invalidate_user_token,
+            )
 
             invalidate_user_token(hfl_user.pk)
         else:
@@ -303,14 +365,17 @@ def request_json(
         headers = _auth_headers({"Accept": "application/json"}, hfl_user=hfl_user)
         if json_body is not None:
             headers["Content-Type"] = "application/json"
-        response = requests.request(
-            method.upper(),
-            url,
-            headers=headers,
-            params=params,
-            json=json_body,
-            timeout=timeout,
-        )
+        try:
+            response = requests.request(
+                method.upper(),
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise _transport_error(exc) from exc
     return _raise_for_response(response)
 
 
@@ -325,20 +390,32 @@ def stream_sse(
     if not path.startswith("/"):
         path = f"/{path}"
     url = urljoin(_base_url() + "/", path.lstrip("/"))
-    response = requests.get(
-        url,
-        headers=_auth_headers({"Accept": "text/event-stream"}, hfl_user=hfl_user),
-        stream=True,
-        timeout=timeout,
-    )
+    try:
+        response = requests.get(
+            url,
+            headers=_auth_headers(
+                {"Accept": "text/event-stream"},
+                hfl_user=hfl_user,
+            ),
+            stream=True,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise _transport_error(exc) from exc
     if response.status_code >= 400:
-        _raise_for_response(response)
+        try:
+            _raise_for_response(response)
+        finally:
+            response.close()
 
     def _iter() -> Iterator[bytes]:
         try:
-            for chunk in response.iter_content(chunk_size=512):
-                if chunk:
-                    yield chunk
+            try:
+                for chunk in response.iter_content(chunk_size=512):
+                    if chunk:
+                        yield chunk
+            except requests.RequestException as exc:
+                raise _transport_error(exc) from exc
         finally:
             response.close()
 
@@ -346,7 +423,7 @@ def stream_sse(
 
 
 def ping(*, timeout: int = 10) -> dict[str, Any]:
-    """Lightweight connectivity check."""
+    """Check base health, bridge authentication, and a real business endpoint."""
 
     if not deploy.lens_bridge_configured():
         return {"configured": False, "reachable": False}
@@ -359,15 +436,39 @@ def ping(*, timeout: int = 10) -> dict[str, Any]:
     except requests.RequestException:
         reachable = False
     token_ok = False
+    business_ready = False
+    readiness_error = ""
     if reachable:
         try:
             _get_admin_access_token()
             token_ok = True
-        except (LensBridgeError, ImproperlyConfigured):
-            token_ok = False
+        except (LensBridgeError, ImproperlyConfigured) as exc:
+            logger.warning(
+                "SourceLens readiness authentication failed error_type=%s",
+                type(exc).__name__,
+            )
+            readiness_error = "SourceLens authentication is unavailable."
+        if token_ok:
+            try:
+                request_json(
+                    "GET",
+                    "/api/lens/admin/lensnodes/",
+                    params={"page": 1, "page_size": 1},
+                    timeout=timeout,
+                )
+                business_ready = True
+            except (LensBridgeError, ImproperlyConfigured) as exc:
+                logger.warning(
+                    "SourceLens business readiness failed error_type=%s",
+                    type(exc).__name__,
+                )
+                readiness_error = "SourceLens business API is temporarily unavailable."
     return {
         "configured": True,
         "reachable": reachable,
         "authenticated": token_ok,
+        "business_ready": business_ready,
+        "status": "ready" if business_ready else "degraded",
+        "warning": readiness_error,
         "base_url": deploy.lens_base_url(),
     }
