@@ -2,6 +2,11 @@
 # Install one offline Docker CE dependency asset in its matching Ubuntu image.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
+
 [[ $# -eq 2 ]] || {
 	printf 'Usage: %s UBUNTU_RELEASE HOST_DEBS_ASSET\n' "$0" >&2
 	exit 2
@@ -28,7 +33,8 @@ compgen -G "${tmp}/debs/*.deb" >/dev/null \
 	|| { printf 'ERROR: Docker deb archive contains no packages\n' >&2; exit 1; }
 
 image="ubuntu:${ubuntu_release}"
-docker image inspect "${image}" >/dev/null 2>&1 || docker pull "${image}"
+docker image inspect "${image}" >/dev/null 2>&1 \
+	|| hfl_docker_pull_with_retry "${image}" linux/amd64 180 2 10
 docker run --rm --pull=never --network none \
 	-v "${tmp}/debs:/offline-debs:ro" \
 	"${image}" bash -euo pipefail -c '

@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
 # shellcheck source=../../tools/dependencies/versions/runtime-images.env
 source "${ROOT}/tools/dependencies/versions/runtime-images.env"
 export SOURCELENS_NGINX_SOURCE_IMAGE="${NGINX_IMAGE}"
@@ -15,6 +17,7 @@ export SOURCELENS_NGINX_SOURCE_IMAGE="${NGINX_IMAGE}"
 metadata_dir=$1
 hfl_version=${2#v}
 output=$3
+hfl_docker_start_pull_budget "${HFL_DOCKER_PULL_BUDGET_SECONDS:-480}"
 
 # shellcheck source=../../tools/lib/version.sh
 source "${ROOT}/tools/lib/version.sh"
@@ -36,7 +39,7 @@ for component in backend frontend lensnode; do
 	[[ -s "${metadata}" ]] || { printf 'ERROR: missing metadata: %s\n' "${metadata}" >&2; exit 1; }
 	ref="$(jq -r '.ref' "${metadata}")"
 	digest="$(jq -r '.digest' "${metadata}")"
-	docker pull --platform linux/amd64 "${ref%@*}@${digest}"
+	hfl_docker_pull_with_retry "${ref%@*}@${digest}" linux/amd64 180 2 10
 	docker tag "${ref%@*}@${digest}" "$(sourcelens_distribution_image_ref "${component}")"
 	docker tag "${ref%@*}@${digest}" "$(sourcelens_distribution_image_ref "${component}" latest)"
 done

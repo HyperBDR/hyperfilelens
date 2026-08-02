@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=../../tools/lib/archive.sh
 source "${ROOT}/tools/lib/archive.sh"
+# shellcheck source=../../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
 
 [[ $# -eq 3 ]] || {
 	printf 'Usage: %s METADATA_DIR VERSION OUTPUT_TAR\n' "$0" >&2
@@ -15,6 +17,7 @@ source "${ROOT}/tools/lib/archive.sh"
 metadata_dir=$1
 version=${2#v}
 output=$3
+hfl_docker_start_pull_budget "${HFL_DOCKER_PULL_BUDGET_SECONDS:-480}"
 backend_meta="${metadata_dir}/hfl-backend.json"
 frontend_meta="${metadata_dir}/hfl-frontend.json"
 
@@ -32,7 +35,7 @@ pull_and_tag() {
 	ref="$(jq -r '.ref' "${metadata}")"
 	digest="$(jq -r '.digest' "${metadata}")"
 	[[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
-	docker pull --platform linux/amd64 "${ref%@*}@${digest}"
+	hfl_docker_pull_with_retry "${ref%@*}@${digest}" linux/amd64 180 2 10
 	docker tag "${ref%@*}@${digest}" "${local_repo}:${version}"
 	docker tag "${ref%@*}@${digest}" "${local_repo}:latest"
 }

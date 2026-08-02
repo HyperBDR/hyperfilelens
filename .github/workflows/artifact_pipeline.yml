@@ -14,10 +14,20 @@ on:
         type: boolean
 
 concurrency:
-  group: hyperfilelens-${{ inputs.channel == 'main' && 'main' || 'release' }}
+  group: >-
+    ${{
+      inputs.channel == 'main' &&
+      (
+        github.run_attempt == 1 &&
+        'hyperfilelens-main' ||
+        format('hyperfilelens-main-rerun-{0}-{1}', github.run_id, github.run_attempt)
+      ) ||
+      format('hyperfilelens-release-{0}', github.ref_name)
+    }}
   # Main is a moving development target, while formal release builds must
-  # always run to completion once a version tag has been accepted.
-  cancel-in-progress: ${{ inputs.channel == 'main' }}
+  # always run to completion once a version tag has been accepted. A stale
+  # Main retry must never cancel the active build for a newer commit.
+  cancel-in-progress: ${{ inputs.channel == 'main' && github.run_attempt == 1 }}
 
 permissions:
   contents: read
@@ -70,7 +80,15 @@ jobs:
               exit 2
               ;;
           esac
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          if [[ "$REQUESTED_CHANNEL" == "main" ]]; then
+            latest_main="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+            [[ "$GITHUB_SHA" == "$latest_main" ]] || {
+              echo "Main build $GITHUB_SHA is superseded by $latest_main; stale retries stop before package construction" >&2
+              exit 1
+            }
+          else
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          fi
           {
             echo "version=$VERSION"
             echo "tag=$TAG"
@@ -103,7 +121,16 @@ jobs:
               exit 1
             }
           fi
-          if gh release view "$ARTIFACT_ID" --json isDraft,isPrerelease >/tmp/hfl-release.json 2>/dev/null; then
+          if gh release view "$ARTIFACT_ID" \
+            --json isDraft,isPrerelease,targetCommitish \
+            >/tmp/hfl-release.json 2>/dev/null; then
+            if [[ "$ARTIFACT_CHANNEL" == "main" ]]; then
+              release_target="$(jq -r .targetCommitish /tmp/hfl-release.json)"
+              [[ "$release_target" == "$GITHUB_SHA" ]] || {
+                echo "Main artifact target mismatch: $ARTIFACT_ID targets $release_target, expected $GITHUB_SHA" >&2
+                exit 1
+              }
+            fi
             if [[ "$ARTIFACT_CHANNEL" == "release" ]]; then
               [[ "$(jq -r .isDraft /tmp/hfl-release.json)" == "true" ]] || {
                 echo "Refusing to overwrite an already-published release" >&2
@@ -214,6 +241,7 @@ jobs:
           ./tools/quality/test-installer-image-refresh.sh
           ./tools/quality/test-language-pack-runtime-index.sh
           ./tools/quality/test-docker-image-digest-alias.sh
+          ./tools/quality/test-docker-pull-retry.sh
           ./tools/quality/test-offline-docker-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-blue-green-recovery.sh
@@ -223,8 +251,12 @@ jobs:
           ./tools/quality/test-agent-release-retention.sh
           ./tools/quality/test-managed-image-retention.sh
           ./tools/quality/test-main-channel-contracts.sh
+          ./tools/quality/test-main-release-freshness.sh
+          ./tools/quality/test-main-release-cleanup.sh
+          ./tools/quality/test-release-freshness.sh
           ./tools/quality/test-shared-host-guard.sh
           ./tools/quality/test-release-download-proxy.sh
+          ./tools/quality/test-public-endpoint-check.sh
           ./tools/quality/test-deployment-optional-config.sh
           ./tools/quality/test-website-runtime-config.sh
           ./tools/quality/test-ga-runtime-config.sh
@@ -301,8 +333,8 @@ jobs:
         with:
           go-version-file: src/agent/go.mod
           cache: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -322,7 +354,7 @@ jobs:
 
       - name: Build and push image
         id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -340,8 +372,7 @@ jobs:
             SENTRY_FRONTEND_PROJECT=${{ vars.SENTRY_FRONTEND_PROJECT }}
             SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.version }}
             VITE_SHOW_EULA=false
-          secrets: |
-            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
+          secrets: ${{ matrix.component == 'hfl-frontend' && secrets.SENTRY_AUTH_TOKEN != '' && format('sentry_auth_token={0}', secrets.SENTRY_AUTH_TOKEN) || '' }}
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
           cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=min
 
@@ -379,8 +410,8 @@ jobs:
         component: [backend, frontend, lensnode]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -635,7 +666,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -668,7 +699,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -703,7 +734,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -837,14 +868,43 @@ jobs:
     needs: [prepare, verify-release]
     permissions:
       contents: write
+    outputs:
+      deployable: ${{ steps.publish.outputs.deployable }}
+      disposition: ${{ steps.publish.outputs.disposition }}
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Remove internal assets and publish release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
+          release_freshness=not-applicable
+          if [[ "$ARTIFACT_CHANNEL" == "main" ]]; then
+            freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"
+            if [[ "$freshness" == "superseded" ]]; then
+              if gh release view "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
+                >/dev/null 2>&1; then
+                gh release delete "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" --yes
+              fi
+              if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ARTIFACT_ID}" \
+                --silent >/dev/null 2>&1; then
+                gh api --method DELETE \
+                  "repos/${GITHUB_REPOSITORY}/git/refs/tags/${ARTIFACT_ID}" --silent
+              fi
+              {
+                echo 'deployable=false'
+                echo 'disposition=superseded'
+              } >> "$GITHUB_OUTPUT"
+              printf '### Main publish\n\nSkipped `%s`: origin/main advanced beyond `%s`; a stale rerun cannot publish or deploy.\n' \
+                "$ARTIFACT_ID" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            [[ "$freshness" == "current" ]]
+          fi
           while IFS= read -r asset; do
             [[ -n "$asset" ]] || continue
             gh release delete-asset "${{ needs.prepare.outputs.tag }}" "$asset" \
@@ -856,9 +916,30 @@ jobs:
             gh release edit "${{ needs.prepare.outputs.tag }}" \
               --repo "${GITHUB_REPOSITORY}" --draft=false --prerelease
           else
-            gh release edit "${{ needs.prepare.outputs.tag }}" \
-              --repo "${GITHUB_REPOSITORY}" --draft=false --latest
+            release_api_url="$(gh release view "$ARTIFACT_ID" \
+              --repo "$GITHUB_REPOSITORY" --json apiUrl --jq '.apiUrl')"
+            release_api_prefix="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/"
+            [[ "$release_api_url" == "$release_api_prefix"* ]]
+            release_id="${release_api_url#"$release_api_prefix"}"
+            [[ "$release_id" =~ ^[0-9]+$ ]]
+            gh api --method PATCH \
+              "$release_api_url" \
+              -F draft=false -F prerelease=false -f make_latest=legacy --silent
+            release_freshness="$(./.github/scripts/check-release-freshness.sh "$ARTIFACT_ID")"
+            [[ "$release_freshness" == "current" || "$release_freshness" == "superseded" ]]
           fi
+          deployable=true
+          disposition=published
+          if [[ "$ARTIFACT_CHANNEL" == "release" && "$release_freshness" == "superseded" ]]; then
+            deployable=false
+            disposition=published-superseded
+            printf '### Release publish\n\nPublished historical release `%s`; a higher SemVer tag exists, so PREPROD deployment was skipped.\n' \
+              "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo "deployable=$deployable"
+            echo "disposition=$disposition"
+          } >> "$GITHUB_OUTPUT"
 
   deploy-test:
     name: Deploy · TEST
@@ -870,7 +951,10 @@ jobs:
         vars.TEST_DEPLOY_ENABLED == 'true' &&
         needs.prepare.result == 'success' &&
         (
-          needs.publish-release.result == 'success' ||
+          (
+            needs.publish-release.result == 'success' &&
+            needs.publish-release.outputs.deployable == 'true'
+          ) ||
           (
             needs.prepare.outputs.build_required == 'false' &&
             needs.publish-release.result == 'skipped'
@@ -926,7 +1010,8 @@ jobs:
         needs.prepare.outputs.channel == 'release' &&
         vars.PREPROD_DEPLOY_ENABLED == 'true' &&
         needs.prepare.result == 'success' &&
-        needs.publish-release.result == 'success'
+        needs.publish-release.result == 'success' &&
+        needs.publish-release.outputs.deployable == 'true'
       }}
     uses: ./.github/workflows/deploy_target.yml
     with:
@@ -982,50 +1067,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Retain only the current successful Main build
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Retain retryable draft or current successful Main build
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_ID: ${{ needs.prepare.outputs.tag }}
+          MAIN_COMMIT: ${{ needs.prepare.outputs.commit }}
           BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}
           PUBLISH_RESULT: ${{ needs.publish-release.result }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          delete_main_artifact() {
-            local artifact_id=$1
-            if gh release view "$artifact_id" --repo "$GITHUB_REPOSITORY" \
-              >/dev/null 2>&1; then
-              gh release delete "$artifact_id" --repo "$GITHUB_REPOSITORY" --yes
-            fi
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${artifact_id}" \
-              --silent >/dev/null 2>&1; then
-              gh api --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${artifact_id}" --silent
-            fi
-          }
-
-          retained_id="$ARTIFACT_ID"
-          if [[ "$PUBLISH_RESULT" != "success" ]] \
-            && [[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]; then
-            if gh release view "$ARTIFACT_ID" --repo "$GITHUB_REPOSITORY" \
-              --json isDraft --jq '.isDraft' 2>/dev/null \
-              | grep -Fx true >/dev/null; then
-              delete_main_artifact "$ARTIFACT_ID"
-            fi
-            retained_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
-              --jq '.[] | select(.draft == false and .prerelease == true and (.tag_name | test("^main-[0-9a-f]{7}$"))) | [.created_at, .tag_name] | @tsv' \
-              | sort -r | head -1 | cut -f2)"
-          fi
-
-          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
-            --jq '.[] | select(.tag_name | test("^main-[0-9a-f]{7}$")) | .tag_name' \
-            > "$RUNNER_TEMP/all-main-builds.txt"
-          : > "$RUNNER_TEMP/expired-main-builds.txt"
-          while IFS= read -r artifact_id; do
-            [[ -n "$artifact_id" && "$artifact_id" != "$retained_id" ]] || continue
-            printf '%s\n' "$artifact_id" >> "$RUNNER_TEMP/expired-main-builds.txt"
-          done < "$RUNNER_TEMP/all-main-builds.txt"
-          while IFS= read -r artifact_id; do
-            [[ -n "$artifact_id" ]] || continue
-            delete_main_artifact "$artifact_id"
-          done < "$RUNNER_TEMP/expired-main-builds.txt"
+          PUBLISH_DISPOSITION: ${{ needs.publish-release.outputs.disposition }}
+        run: ./.github/scripts/cleanup-main-builds.sh

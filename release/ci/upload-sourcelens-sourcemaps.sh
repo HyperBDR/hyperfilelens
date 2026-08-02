@@ -13,7 +13,7 @@ if [[ -z "${release}" ]]; then
 fi
 if [[ -z "${SENTRY_AUTH_TOKEN:-}" || -z "${SENTRY_URL:-}" \
 	|| -z "${SENTRY_ORG:-}" || -z "${SENTRY_FRONTEND_PROJECT:-}" ]]; then
-	printf '::warning title=Sentry Source Maps::Bundled SourceLens Source Map upload is not configured; continuing.\n'
+	printf '::notice title=Sentry Source Maps::Bundled SourceLens Source Map upload is skipped until organization, project, and token settings are complete; runtime DSN reporting is unaffected.\n'
 	exit 0
 fi
 

@@ -307,5 +307,24 @@ grep -F 'TEST_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" 
 grep -F 'PREPROD_SENTRY_ENABLED' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
 grep -F 'PROD_SENTRY_ENABLED' "${ROOT}/.github/workflows/production_deploy.yml" >/dev/null
 grep -F 'SENTRY_AUTH_TOKEN' "${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+grep -F "secrets.SENTRY_AUTH_TOKEN != ''" \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null
+if grep -F 'sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null; then
+	printf 'ERROR: an empty Sentry token can still be passed as a BuildKit secret\n' >&2
+	exit 1
+fi
+
+sourcemap_notice="$(env -u SENTRY_AUTH_TOKEN -u SENTRY_ORG -u SENTRY_FRONTEND_PROJECT \
+	SENTRY_URL=https://sentry.example.com \
+	"${ROOT}/release/ci/upload-sourcelens-sourcemaps.sh" test-release)"
+grep -F '::notice title=Sentry Source Maps::Bundled SourceLens Source Map upload is skipped' \
+	<<<"${sourcemap_notice}" >/dev/null
+if grep -F '::warning' <<<"${sourcemap_notice}" >/dev/null; then
+	printf 'ERROR: incomplete optional Source Map settings emitted a warning\n' >&2
+	exit 1
+fi
+grep -F '::notice title=Sentry deployment::Deployment markers are skipped' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 
 printf 'Runtime Sentry configuration checks passed.\n'
