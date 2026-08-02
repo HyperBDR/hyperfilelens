@@ -135,7 +135,9 @@ describe('EmailCodeLoginForm', () => {
     expect(wrapper.get('#email-code-login-code').attributes('disabled')).toBeDefined()
     expect(codeInput.element.value).toBe('')
     expect(wrapper.get('button.submit-btn').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('.email-code-login-form__send').attributes('disabled')).toBeUndefined()
+    await vi.waitFor(() => {
+      expect(wrapper.get('.email-code-login-form__send').attributes('disabled')).toBeUndefined()
+    })
 
     wrapper.unmount()
   })
