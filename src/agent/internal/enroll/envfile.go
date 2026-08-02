@@ -14,6 +14,7 @@ import (
 )
 
 var managedSentryEnvKeys = []string{
+	"HFL_SENTRY_POLICY_MANAGED",
 	"SENTRY_ENABLED",
 	"SENTRY_BACKEND_DSN",
 	"SENTRY_ENVIRONMENT",
@@ -79,11 +80,6 @@ func WriteEnrollmentEnv(cfg Config) error {
 		"HFL_KOPIA_PATH=" + kopiaPath,
 		"HFL_INSECURE_TLS=" + insecure,
 	}
-	for _, name := range managedSentryEnvKeys {
-		if value := strings.TrimSpace(os.Getenv(name)); value != "" && !strings.ContainsAny(value, "\r\n") {
-			lines = append(lines, name+"="+value)
-		}
-	}
 	if existing := ReadNodeID(envPath); existing != "" {
 		lines = append(lines, "HFL_NODE_ID="+existing)
 	}
@@ -94,31 +90,21 @@ func WriteEnrollmentEnv(cfg Config) error {
 	return os.WriteFile(envPath, []byte(content), 0o600)
 }
 
-// SyncManagedSentryEnv converges only HFL-managed observability settings.
-// Existing node credentials and user-managed Agent settings remain unchanged.
-func SyncManagedSentryEnv() (bool, error) {
-	return syncManagedSentryEnv(EnvFilePath())
+// SyncManagedObservabilityPolicy converges a server-verified platform policy.
+// A disabled/private policy removes all previously managed Sentry credentials.
+func SyncManagedObservabilityPolicy(policy ObservabilityPolicy) (bool, error) {
+	return SyncManagedObservabilityPolicyAt(EnvFilePath(), policy)
 }
 
-func syncManagedSentryEnv(envPath string) (bool, error) {
-	rawEnabled := strings.TrimSpace(os.Getenv("SENTRY_ENABLED"))
-	if rawEnabled == "" {
-		return false, nil
-	}
-	enabled := "false"
-	if sentryEnabledValue(rawEnabled) {
-		enabled = "true"
-	}
-	desired := map[string]string{"SENTRY_ENABLED": enabled}
-	if sentryEnabledValue(enabled) {
-		for _, name := range managedSentryEnvKeys[1:] {
-			value := strings.TrimSpace(os.Getenv(name))
-			if value != "" && !strings.ContainsAny(value, "\r\n") {
-				desired[name] = value
-			}
-		}
-	}
+// SyncManagedObservabilityPolicyAt converges policy in a resolved Agent env file.
+func SyncManagedObservabilityPolicyAt(
+	envPath string,
+	policy ObservabilityPolicy,
+) (bool, error) {
+	return syncManagedSentryValues(envPath, policy.agentEnvValues())
+}
 
+func syncManagedSentryValues(envPath string, desired map[string]string) (bool, error) {
 	current, err := os.ReadFile(envPath)
 	if err != nil {
 		return false, err
@@ -153,15 +139,6 @@ func syncManagedSentryEnv(envPath string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func sentryEnabledValue(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func writePrivateEnvAtomically(path string, content []byte) error {

@@ -445,7 +445,8 @@ jobs:
                       "prod": "hfl-production",
                   }.get(target, "")
               elif name == "SENTRY_TRACES_SAMPLE_RATE":
-                  value = "0.05" if os.environ.get("DEPLOY_TARGET") == "prod" else "0.1"
+                  # Error tracking is enabled by default; performance tracing is opt-in.
+                  value = "0"
               if name == "HFL_GA_MEASUREMENT_ID":
                   if os.environ.get("DEPLOY_TARGET") != "prod":
                       value = ""

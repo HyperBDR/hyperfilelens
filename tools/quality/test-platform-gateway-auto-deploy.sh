@@ -34,6 +34,9 @@ set -euo pipefail
 [[ "$HFL_API_BASE" == "https://127.0.0.1:11443" ]]
 [[ "$HFL_WSS_URL" == "wss://127.0.0.1:11443/ws/node/agent/" ]]
 [[ "$HFL_FORCE_SIDECAR_INSTALL" == "1" ]]
+[[ -z "${SENTRY_ENABLED+x}" ]]
+[[ -z "${SENTRY_BACKEND_DSN+x}" ]]
+[[ -z "${HFL_SENTRY_POLICY_MANAGED+x}" ]]
 [[ "$1" == "gateway-install" && "$2" == "--yes" ]]
 mkdir -p "$TEST_AGENT_INSTALL_DIR" "$TEST_AGENT_DATA_DIR"
 if [[ ! -f "$TEST_AGENT_INSTALL_DIR/INSTALLED_VERSION" ]]; then
@@ -63,6 +66,9 @@ export TEST_PLATFORM_GATEWAY_MARKER="${marker}"
 export TEST_AGENT_UPGRADE_MARKER="${tmp}/agent-upgrade-ran"
 export TEST_AGENT_INSTALL_DIR="${LOCAL_PLATFORM_AGENT_INSTALL_DIR}"
 export TEST_AGENT_DATA_DIR="${LOCAL_PLATFORM_AGENT_DATA_DIR}"
+export SENTRY_ENABLED=true
+export SENTRY_BACKEND_DSN=https://untrusted@sentry.example.com/25
+export HFL_SENTRY_POLICY_MANAGED=true
 
 AUTO_DEPLOY=false
 TLS_MODE=1

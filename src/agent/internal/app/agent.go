@@ -6,19 +6,24 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"os"
 	"strings"
 	"time"
 
 	"hyperfilelens/agent/internal/controller"
+	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
 	"hyperfilelens/agent/internal/infra/monitor"
+	"hyperfilelens/agent/internal/infra/observability"
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/remote"
 	"hyperfilelens/agent/internal/selfupdate"
 	"hyperfilelens/agent/internal/wire"
 )
 
 const controlPlanePollInterval = 5 * time.Second
+const gatewayObservabilityRefreshInterval = 10 * time.Minute
 
 // Agent is the runtime composition root coordinating module startup and shutdown.
 type Agent struct {
@@ -154,6 +159,9 @@ func (a *Agent) Run(ctx context.Context) error {
 					return err
 				}
 				go a.deferredLifecycleRepair(context.WithoutCancel(ctx))
+				if a.store.Current().Role == model.RoleGateway {
+					go a.gatewayObservabilityLoop(ctx)
+				}
 				return nil
 			},
 		)
@@ -166,6 +174,72 @@ func (a *Agent) Run(ctx context.Context) error {
 
 		if strings.TrimSpace(a.store.Current().WSSURL) == "" {
 			a.connector = nil
+		}
+	}
+}
+
+func (a *Agent) gatewayObservabilityLoop(ctx context.Context) {
+	agentEnvPath, _ := a.store.Paths()
+	refresh := func() {
+		current := a.store.Current()
+		if current.Role != model.RoleGateway {
+			if err := observability.Configure(observability.Policy{}); err != nil {
+				slog.Warn("gateway Agent Sentry disable failed; continuing", "err", err)
+			}
+			return
+		}
+		cfg := enroll.Config{
+			OrgKey:      current.OrgKey,
+			NodeRole:    current.Role,
+			NodeToken:   current.NodeToken,
+			APIBase:     current.APIBaseURL,
+			WSSURL:      current.WSSURL,
+			InsecureTLS: strings.TrimSpace(strings.ToLower(os.Getenv("HFL_INSECURE_TLS"))) != "0",
+		}
+		nodeID := strings.TrimSpace(current.NodeID)
+		if nodeID == "" {
+			nodeID = strings.TrimSpace(enroll.ReadNodeID(agentEnvPath))
+		}
+		lens, err := enroll.FetchGatewayLensConfig(ctx, cfg, nodeID)
+		if err != nil {
+			slog.Warn("gateway observability refresh failed; preserving current policy", "err", err)
+			return
+		}
+		agentChanged, persistErr := enroll.SyncManagedObservabilityPolicyAt(
+			agentEnvPath,
+			lens.Observability,
+		)
+		if persistErr != nil {
+			slog.Warn("gateway Agent observability persistence failed; continuing", "err", persistErr)
+		}
+		configureErr := observability.Configure(observability.Policy{
+			Enabled:          lens.Observability.Enabled,
+			BackendDSN:       lens.Observability.BackendDSN,
+			Environment:      lens.Observability.Environment,
+			Release:          lens.Observability.AgentRelease,
+			TracesSampleRate: lens.Observability.TracesSampleRate,
+		})
+		if configureErr != nil {
+			slog.Warn("gateway Agent Sentry reconfiguration failed; continuing", "err", configureErr)
+		}
+		lensChanged, lensErr := enroll.ConvergeGatewayLensObservability(ctx, cfg, lens)
+		if lensErr != nil {
+			slog.Warn("gateway LensNode observability convergence failed; continuing", "err", lensErr)
+		}
+		if persistErr == nil && configureErr == nil && lensErr == nil && (agentChanged || lensChanged) {
+			slog.Info("gateway observability policy converged", "enabled", lens.Observability.Enabled)
+		}
+	}
+
+	refresh()
+	ticker := time.NewTicker(gatewayObservabilityRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
 		}
 	}
 }

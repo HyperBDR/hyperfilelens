@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LIFECYCLE="${ROOT}/deploy/bootstrap/gateway-lifecycle.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
+export HFL_GATEWAY_SIDECAR_LOCK_FILE="${tmp}/sidecar.lock"
 
 test_resume_after_interruption() (
 	# shellcheck disable=SC1090

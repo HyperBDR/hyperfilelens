@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestSyncManagedSentryEnvPreservesCredentialsAndReplacesManagedValues(t *testing.T) {
+func TestSyncManagedObservabilityPolicyPreservesCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.env")
 	original := strings.Join([]string{
 		"HFL_NODE_ID=42",
@@ -21,19 +21,20 @@ func TestSyncManagedSentryEnvPreservesCredentialsAndReplacesManagedValues(t *tes
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SENTRY_ENABLED", "true")
-	t.Setenv("SENTRY_BACKEND_DSN", "https://new@sentry.example.com/2")
-	t.Setenv("SENTRY_ENVIRONMENT", "hfl-production")
-	t.Setenv("SENTRY_RELEASE", "hyperfilelens-agent@0.1.8")
-	t.Setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
-	t.Setenv("HFL_SENTRY_LENSNODE_RELEASE", "hyperfilelens-lensnode@0.1.8-sl0.20.0")
-
-	changed, err := syncManagedSentryEnv(path)
+	policy := ObservabilityPolicy{
+		Enabled:          true,
+		BackendDSN:       "https://new@sentry.example.com/2",
+		Environment:      "hfl-production",
+		AgentRelease:     "hyperfilelens-agent@0.1.8",
+		LensnodeRelease:  "hyperfilelens-lensnode@0.1.8-sl0.20.0",
+		TracesSampleRate: 0,
+	}
+	changed, err := SyncManagedObservabilityPolicyAt(path, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("syncManagedSentryEnv() changed = false, want true")
+		t.Fatal("SyncManagedObservabilityPolicyAt() changed = false, want true")
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -44,6 +45,7 @@ func TestSyncManagedSentryEnvPreservesCredentialsAndReplacesManagedValues(t *tes
 		"HFL_NODE_ID=42",
 		"HFL_NODE_TOKEN=working-token",
 		"USER_MANAGED=value",
+		"HFL_SENTRY_POLICY_MANAGED=true",
 		"SENTRY_BACKEND_DSN=https://new@sentry.example.com/2",
 		"SENTRY_ENVIRONMENT=hfl-production",
 		"SENTRY_RELEASE=hyperfilelens-agent@0.1.8",
@@ -56,16 +58,16 @@ func TestSyncManagedSentryEnvPreservesCredentialsAndReplacesManagedValues(t *tes
 		t.Fatalf("updated agent.env retained old Sentry DSN:\n%s", text)
 	}
 
-	changed, err = syncManagedSentryEnv(path)
+	changed, err = SyncManagedObservabilityPolicyAt(path, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if changed {
-		t.Fatal("second syncManagedSentryEnv() changed = true, want false")
+		t.Fatal("second SyncManagedObservabilityPolicyAt() changed = true, want false")
 	}
 }
 
-func TestSyncManagedSentryEnvDisablesAndRemovesCredentials(t *testing.T) {
+func TestDisabledObservabilityPolicyRemovesCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.env")
 	if err := os.WriteFile(path, []byte(
 		"HFL_NODE_TOKEN=working-token\nSENTRY_ENABLED=true\n"+
@@ -73,20 +75,18 @@ func TestSyncManagedSentryEnvDisablesAndRemovesCredentials(t *testing.T) {
 	), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SENTRY_ENABLED", "false")
-
-	changed, err := syncManagedSentryEnv(path)
+	changed, err := SyncManagedObservabilityPolicyAt(path, ObservabilityPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("syncManagedSentryEnv() changed = false, want true")
+		t.Fatal("SyncManagedObservabilityPolicyAt() changed = false, want true")
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(content); got != "HFL_NODE_TOKEN=working-token\nSENTRY_ENABLED=false\n" {
+	if got := string(content); got != "HFL_NODE_TOKEN=working-token\nSENTRY_ENABLED=false\nHFL_SENTRY_POLICY_MANAGED=true\n" {
 		t.Fatalf("updated agent.env = %q", got)
 	}
 }

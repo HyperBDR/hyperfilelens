@@ -12,6 +12,15 @@ func InstallLensSidecar(ctx context.Context, cfg Config, lens LensSidecarConfig)
 	return fmt.Errorf("AI engine install is Linux-only")
 }
 
+// ConvergeGatewayLensObservability is Linux-only because full Data Gateways are Linux-only.
+func ConvergeGatewayLensObservability(
+	ctx context.Context,
+	cfg Config,
+	lens LensSidecarConfig,
+) (bool, error) {
+	return false, fmt.Errorf("Gateway observability is Linux-only")
+}
+
 func ensureGatewayDocker(ctx context.Context, cfg Config) error {
 	return fmt.Errorf("gateway-install requires Linux")
 }

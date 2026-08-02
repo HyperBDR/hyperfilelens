@@ -14,6 +14,7 @@ HFL_NODE_ID=""
 HFL_INSECURE_TLS="${HFL_INSECURE_TLS:-1}"
 PURGE_ALL=0
 HFL_LAST_ERROR=""
+SIDECAR_LOCK_FILE="${HFL_GATEWAY_SIDECAR_LOCK_FILE:-/run/lock/hyperfilelens-gateway-sidecar.lock}"
 
 DOWNLOAD_MAX_ATTEMPTS="${HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5}"
 DOWNLOAD_RETRY_DELAY_SECONDS="${HFL_GATEWAY_DOWNLOAD_RETRY_DELAY_SECONDS:-2}"
@@ -36,6 +37,19 @@ hfl_fail() {
 	HFL_LAST_ERROR=$1
 	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$1" >&2
 	exit "${2:-1}"
+}
+
+acquire_sidecar_lock() {
+	[[ "${HFL_GATEWAY_SIDECAR_LOCK_HELD:-0}" == "1" ]] && return 0
+	command -v flock >/dev/null 2>&1 \
+		|| hfl_fail "The flock command is required for Gateway lifecycle serialization." 1
+	mkdir -p "$(dirname "${SIDECAR_LOCK_FILE}")" \
+		|| hfl_fail "Could not create the Gateway lifecycle lock directory." 1
+	if ! exec 9>"${SIDECAR_LOCK_FILE}"; then
+		hfl_fail "Could not open the Gateway lifecycle lock." 1
+	fi
+	flock -x 9 || hfl_fail "Could not acquire the Gateway lifecycle lock." 1
+	export HFL_GATEWAY_SIDECAR_LOCK_HELD=1
 }
 
 curl_tls=(-k)
@@ -246,6 +260,7 @@ run_sidecar_install_script() {
 
 cmd_upgrade_sidecar() {
 	local tmp="" script
+	acquire_sidecar_lock
 	load_agent_credentials
 	report_lifecycle_status "sidecar_upgrade" "running"
 	trap 'gateway_upgrade_exit "$?" "${tmp}"' EXIT
@@ -323,6 +338,7 @@ purge_sidecar_artifacts() {
 }
 
 cmd_uninstall_sidecar() {
+	acquire_sidecar_lock
 	if ! load_agent_credentials_optional; then
 		hfl_log "Agent credentials are unavailable; continuing local LensNode cleanup without status reporting."
 	fi

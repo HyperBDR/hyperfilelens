@@ -8,10 +8,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.models import Organization
+from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import provisioning
 from apps.node.api import permissions as node_permissions
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
+from apps.node.services.internal.gateway_observability import (
+    gateway_observability_policy,
+    is_platform_gateway,
+)
 
 
 class GatewayLensConfigView(APIView):
@@ -52,6 +58,21 @@ class GatewayLensConfigView(APIView):
         ).first()
         if node is None:
             return Response({"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND)
+        expected_scope = (
+            LensGatewayLink.GatewayScope.PLATFORM
+            if is_platform_gateway(node)
+            else None
+        )
+        if not validate_agent_ws_credentials(
+            node.id,
+            node_token,
+            expected_role=NodeRole.GATEWAY,
+            expected_gateway_scope=expected_scope,
+        ):
+            return Response(
+                {"error": "invalid node credentials"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         lens = provisioning.provision_gateway_lens_on_register(org=org, gateway=node)
         if lens is None:
@@ -65,4 +86,12 @@ class GatewayLensConfigView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        return Response({"node_id": node.id, "lens": lens})
+        response = Response(
+            {
+                "node_id": node.id,
+                "lens": lens,
+                "observability": gateway_observability_policy(node),
+            }
+        )
+        response["Cache-Control"] = "no-store"
+        return response
