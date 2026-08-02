@@ -30,9 +30,9 @@ grep -F 'WARNING: invalid GA4 measurement ID' <<<"${invalid_output}" >/dev/null
 grep -F "gaMeasurementId: ''" "${tenant}" >/dev/null
 
 grep -F 'alias /usr/share/nginx/runtime/tenant-app-runtime-config.js;' \
-	"${ROOT}/deploy/nginx/snippets/hfl-tenant-spa-locations.conf" >/dev/null
+	"${ROOT}/deploy/nginx/web.conf" >/dev/null
 grep -F 'alias /usr/share/nginx/runtime/admin-app-runtime-config.js;' \
-	"${ROOT}/deploy/nginx/snippets/hfl-ops-spa-locations.conf" >/dev/null
+	"${ROOT}/deploy/nginx/web.conf" >/dev/null
 grep -F '<script src="/app-runtime-config.js"></script>' \
 	"${ROOT}/src/frontend/index.html" >/dev/null
 grep -F 'PROD_GA_MEASUREMENT_ID' \
