@@ -208,6 +208,7 @@ jobs:
           ./tools/quality/test-default-certificates.sh
           ./tools/quality/test-bootstrap-download-progress.sh
           ./tools/quality/test-gateway-bootstrap-health.sh
+          ./tools/quality/test-gateway-lifecycle-upgrade.sh
           ./tools/quality/test-platform-gateway-auto-deploy.sh
           ./tools/quality/test-agent-gateway-uninstall.sh
           ./tools/quality/test-installer-image-refresh.sh

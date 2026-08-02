@@ -19,19 +19,23 @@ run_gateway_sidecar_upgrade_if_needed() {
   }
   curl_tls=()
   [[ "$insecure" != "0" ]] && curl_tls=(-k)
-  bootstrap="${api_base%/}/media/gateway-bootstrap"
-  tmp="$(mktemp -d)"
-  script="${tmp}/gateway-lifecycle.sh"
-  if ! curl "${curl_tls[@]}" -fsSL "${bootstrap}/gateway-lifecycle.sh" -o "$script"; then
-    log "FAIL " "Failed to download gateway-lifecycle.sh for sidecar upgrade."
-    rm -rf "$tmp"
-    return 1
+  script="${INSTALL_SH%/install.sh}/libexec/gateway-lifecycle.sh"
+  tmp=""
+  if [[ ! -x "$script" ]]; then
+    bootstrap="${api_base%/}/media/gateway-bootstrap"
+    tmp="$(mktemp -d)"
+    script="${tmp}/gateway-lifecycle.sh"
+    if ! curl "${curl_tls[@]}" -fsSL "${bootstrap}/gateway-lifecycle.sh" -o "$script"; then
+      log "FAIL " "Failed to obtain gateway-lifecycle.sh for sidecar upgrade."
+      rm -rf "$tmp"
+      return 1
+    fi
+    chmod +x "$script"
   fi
-  chmod +x "$script"
   log "INFO " "Running gateway sidecar upgrade."
   HFL_AGENT_ENV_FILE="$env_file" HFL_INSECURE_TLS="${insecure:-1}" bash "$script" upgrade-sidecar
   local rc=$?
-  rm -rf "$tmp"
+  [[ -z "$tmp" ]] || rm -rf "$tmp"
   return $rc
 }
 `
