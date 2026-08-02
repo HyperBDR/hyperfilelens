@@ -2117,6 +2117,44 @@ PY
 	done
 }
 
+repair_sourcelens_runtime_bindings() {
+	local runtime_env="${SOURCELENS_INSTALL_DIR}/.env"
+	local runtime_data="${SOURCELENS_INSTALL_DIR}/data"
+	local persisted_env="${ROOT}/data/sourcelens/config/.env"
+	local persisted_data="${ROOT}/data/sourcelens"
+	local repaired=0
+
+	[[ -f "${SOURCELENS_INSTALL_DIR}/docker-compose.yml" ]] || return 0
+	# A staged bundle is not an installed SourceLens runtime.  Only repair the
+	# bindings when the persistent configuration proves that this host already
+	# owns (or previously owned) a bundled installation.
+	[[ -f "${persisted_env}" ]] || return 0
+
+	if [[ -L "${runtime_env}" ]]; then
+		if [[ "$(readlink "${runtime_env}")" != "${persisted_env}" ]]; then
+			ln -sfn "${persisted_env}" "${runtime_env}"
+			repaired=1
+		fi
+	elif [[ ! -e "${runtime_env}" ]]; then
+		ln -s "${persisted_env}" "${runtime_env}"
+		repaired=1
+	fi
+
+	if [[ -L "${runtime_data}" ]]; then
+		if [[ "$(readlink "${runtime_data}")" != "${persisted_data}" ]]; then
+			ln -sfn "${persisted_data}" "${runtime_data}"
+			repaired=1
+		fi
+	elif [[ ! -e "${runtime_data}" ]]; then
+		ln -s "${persisted_data}" "${runtime_data}"
+		repaired=1
+	fi
+
+	if [[ "${repaired}" -eq 1 ]]; then
+		log "Repaired bundled SourceLens runtime bindings before its maintenance gate"
+	fi
+}
+
 apply_upgrade_files() {
 	local from_root=$1
 	local remove_sourcelens=${2:-0}
@@ -2135,7 +2173,13 @@ apply_upgrade_files() {
 		safe_assert_path_under_dir "${ROOT}/sourcelens" "${ROOT}" "SourceLens runtime path"
 		safe_rm_dir "${ROOT}/sourcelens"
 	elif [[ "${sync_sourcelens}" -eq 1 && -d "${from_root}/sourcelens" ]]; then
-		rsync -aH --delete "${from_root}/sourcelens/" "${ROOT}/sourcelens/"
+		# SourceLens application files are replaceable, while these two root
+		# bindings point at installation-owned persistent configuration/data.
+		# Protect them from --delete so the still-running legacy proxy remains
+		# addressable until its independent maintenance gate has been armed.
+		rsync -aH --delete --exclude '/.env' --exclude '/data' \
+			"${from_root}/sourcelens/" "${ROOT}/sourcelens/"
+		repair_sourcelens_runtime_bindings
 	fi
 	cp "${from_root}/docker-compose.yml" "${ROOT}/docker-compose.yml"
 	mkdir -p "${ROOT}/deploy/nginx/snippets"
@@ -3889,6 +3933,9 @@ cmd_upgrade() {
 
 	step "[1/8] Validating persisted Redis recovery requirements ..."
 	require_docker
+	# Heal runtime links before backup/running-state discovery. This also makes a
+	# host recoverable when an older failed upgrade already removed the links.
+	repair_sourcelens_runtime_bindings
 	preflight_redis_recovery
 
 	step "[2/8] Backing up current config and data ..."
