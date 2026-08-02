@@ -275,7 +275,8 @@ async function verifyResponsiveConsoles(browser, storageState, tenantBaseUrl, ad
 async function waitForSourceLensLogin(page, baseUrl) {
   await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' })
   const username = page.locator(
-    'input[name="username"], input[autocomplete="username"], input[type="text"]',
+    'input[name="username"], input[name="email"], input[autocomplete="username"], '
+    + 'input[autocomplete="email"], input[type="email"], input[type="text"]',
   ).first()
   if (!(await username.isVisible())) {
     const switchButton = page.locator('button.block.w-full.text-center')

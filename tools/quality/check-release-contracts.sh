@@ -1122,6 +1122,8 @@ grep -F 'HFL_LOGIN_PORT="${login_port}"' "${smoke_runner}" >/dev/null
 smoke_script="${ROOT}/tools/dev/browser-smoke.mjs"
 grep -F 'host.docker.internal' "${smoke_script}" >/dev/null
 grep -F "submit.waitFor({ state: 'visible'" "${smoke_script}" >/dev/null
+grep -F 'input[autocomplete="email"]' "${smoke_script}" >/dev/null
+grep -F 'input[type="email"]' "${smoke_script}" >/dev/null
 if grep -F 'captchaImage' "${smoke_script}" >/dev/null; then
 	printf 'ERROR: local browser smoke must not depend on image captcha\n' >&2
 	exit 1
