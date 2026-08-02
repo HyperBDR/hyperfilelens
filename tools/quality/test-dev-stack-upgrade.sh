@@ -136,4 +136,11 @@ cmd_restart_body="$(sed -n '/^cmd_restart()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")
 grep -F 'refresh_website_nginx_mount' <<<"${cmd_up_body}" >/dev/null
 grep -F 'refresh_website_nginx_mount' <<<"${cmd_restart_body}" >/dev/null
 
+# Runtime artifacts are mounted below the backend source root in development.
+# Publishing Python helpers into media must not restart API or Celery processes.
+backend_entrypoint="${ROOT_REPO}/deploy/docker/backend-entrypoint.sh"
+grep -F 'DEV_WATCH_IGNORE_PATHS="/opt/backend/media,/opt/backend/staticfiles,/opt/backend/lang-packs"' \
+	"${backend_entrypoint}" >/dev/null
+[[ "$(grep -Fc -- '--ignore-paths "${DEV_WATCH_IGNORE_PATHS}"' "${backend_entrypoint}")" -eq 3 ]]
+
 printf 'Development stack upgrade regression checks passed.\n'

@@ -28,7 +28,7 @@ from apps.node.models.node import Node
 
 logger = logging.getLogger(__name__)
 
-_LENSNODE_DIR_WAIT_SECONDS = 30.0
+_LENSNODE_DIR_WAIT_SECONDS = 60.0
 _LENSNODE_DIR_POLL_SECONDS = 0.5
 LENSNODE_PROVISION_CLAIM_TTL_SECONDS = 300
 
@@ -149,6 +149,7 @@ def _lensnode_matches_workspace(
     *,
     lensnode_uuid: uuid.UUID,
     workspace_root: str,
+    selected_dir: str | None = None,
 ) -> bool:
     reported_uuid = str(lensnode_data.get("uuid") or "").strip().lower()
     reported_status = str(lensnode_data.get("status") or "").strip().lower()
@@ -156,20 +157,35 @@ def _lensnode_matches_workspace(
         str(lensnode_data.get("workspace_path") or "").strip()
     )
     expected_root = posixpath.normpath(str(workspace_root or "").strip())
-    return (
+    matches = (
         reported_uuid == str(lensnode_uuid).lower()
         and reported_status == "online"
         and reported_root == expected_root
     )
+    if not matches or not selected_dir:
+        return matches
+    expected_dir = posixpath.normpath(str(selected_dir).strip())
+    available_dirs = lensnode_data.get("available_dirs") or []
+    reported_dirs = {
+        posixpath.normpath(
+            str(
+                item if isinstance(item, str) else item.get("path") or ""
+            ).strip()
+        )
+        for item in available_dirs
+        if isinstance(item, (str, dict))
+    }
+    return expected_dir in reported_dirs
 
 
 def wait_for_lensnode_ready(
     *,
     lensnode_uuid: uuid.UUID,
     workspace_root: str,
+    selected_dir: str | None = None,
     timeout_s: float = _LENSNODE_DIR_WAIT_SECONDS,
 ) -> None:
-    """Wait for the enrolled LensNode at its configured workspace root."""
+    """Wait for the LensNode and, when provided, one selectable directory."""
 
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -178,16 +194,17 @@ def wait_for_lensnode_ready(
             data,
             lensnode_uuid=lensnode_uuid,
             workspace_root=workspace_root,
+            selected_dir=selected_dir,
         ):
             return
         time.sleep(_LENSNODE_DIR_POLL_SECONDS)
+    detail = (
+        f"LensNode did not advertise selectable workspace: {selected_dir}."
+        if selected_dir
+        else f"LensNode did not become ready at workspace root: {workspace_root}."
+    )
     raise ValidationError(
-        {
-            "workspace": (
-                f"LensNode did not become ready at workspace root: {workspace_root}. "
-                "Ensure the AI engine is online and retry."
-            )
-        }
+        {"workspace": f"{detail} Ensure the AI engine is online and retry."}
     )
 
 
@@ -253,7 +270,11 @@ def ensure_ks_workspace_on_gateway(
         update_fields=["identity_status", "last_error", "updated_at"]
     )
 
-    wait_for_lensnode_ready(lensnode_uuid=lensnode_uuid, workspace_root=root)
+    wait_for_lensnode_ready(
+        lensnode_uuid=lensnode_uuid,
+        workspace_root=root,
+        selected_dir=workspace_path,
+    )
 
 
 def pick_lensnode_task(lensnode_uuid: uuid.UUID) -> str:

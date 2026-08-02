@@ -76,6 +76,16 @@ def on_agent_disconnected(*, node_id: int, session_id: str) -> None:
         node_id,
         session_id,
     )
+    from apps.node.services.internal.node_lifecycle import record_upgrade_disconnect
+
+    try:
+        record_upgrade_disconnect(node_id=node_id)
+    except DatabaseError:
+        logger.warning(
+            "agent upgrade disconnect marker failed node_id=%s",
+            node_id,
+            exc_info=True,
+        )
     _schedule_lifecycle_advance(node_id=node_id)
 
 

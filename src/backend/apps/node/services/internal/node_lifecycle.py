@@ -17,12 +17,20 @@ from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.selectors.interface import get_node_task_runtime_info
 from apps.node.selectors.internal.node_task_query import node_tasks_queryset
-from apps.node.services.internal.agent_release import agent_version_compare, is_agent_artifact_id
+from apps.node.services.internal.agent_release import (
+    agent_release_commit,
+    agent_version_compare,
+    is_agent_artifact_id,
+)
 from apps.node.services.internal.agent_task import run_agent_task_async
 from apps.node.services.internal.agent_uninstall import (
     _purge_agent_server_records,
 )
-from apps.node.services.internal.agent_upgrade import validate_agent_upgrade
+from apps.node.services.internal.agent_upgrade import (
+    node_os_version,
+    node_platform_arch,
+    validate_agent_upgrade,
+)
 from apps.node.services.internal.node_registry import agent_session_registered, agent_ws_routable
 from apps.node.services.internal.node_workload import (
     assert_node_available_for_lifecycle,
@@ -102,6 +110,15 @@ def _target_version_from_task(task: NodeTask) -> str:
     return str(payload.get("target_version") or "").strip()
 
 
+def _target_commit_from_task(task: NodeTask) -> str:
+    result = task.result if isinstance(task.result, dict) else {}
+    target = str(result.get("target_commit") or "").strip().lower()
+    if target:
+        return target
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    return str(payload.get("target_commit") or "").strip().lower()
+
+
 def _node_installed_version(node: Node) -> str:
     version = str(node.version or "").strip()
     if version:
@@ -111,6 +128,14 @@ def _node_installed_version(node: Node) -> str:
     if isinstance(inv, dict):
         return str(inv.get("agent_version") or "").strip()
     return str(meta.get("agent_version") or "").strip()
+
+
+def _node_installed_commit(node: Node) -> str:
+    meta = node.metadata if isinstance(node.metadata, dict) else {}
+    inv = meta.get("inventory")
+    if isinstance(inv, dict):
+        return str(inv.get("agent_commit") or "").strip().lower()
+    return str(meta.get("agent_commit") or "").strip().lower()
 
 
 def _node_capabilities(node: Node) -> set[str]:
@@ -165,11 +190,19 @@ def _force_purge_without_remote_uninstall(
     }
 
 
-def _version_matches_target(*, node: Node, target_version: str) -> bool:
+def _version_matches_target(
+    *,
+    node: Node,
+    target_version: str,
+    target_commit: str = "",
+) -> bool:
     current = _node_installed_version(node)
     if not is_agent_artifact_id(target_version) or not is_agent_artifact_id(current):
         return False
-    return agent_version_compare(current, target_version) >= 0
+    if agent_version_compare(current, target_version) < 0:
+        return False
+    expected_commit = str(target_commit or "").strip().lower()
+    return not expected_commit or _node_installed_commit(node) == expected_commit
 
 
 def _is_detached_lifecycle_task(task: NodeTask) -> bool:
@@ -305,10 +338,44 @@ def _upgrade_verify_ready(*, node: Node, task: NodeTask) -> bool:
         return False
     if node.status != Node.Status.ONLINE:
         return False
+    result = task.result if isinstance(task.result, dict) else {}
+    if not result.get("disconnect_observed_at"):
+        return False
     target_version = _target_version_from_task(task)
     if not target_version:
         return False
-    return _version_matches_target(node=node, target_version=target_version)
+    return _version_matches_target(
+        node=node,
+        target_version=target_version,
+        target_commit=_target_commit_from_task(task),
+    )
+
+
+def record_upgrade_disconnect(*, node_id: int) -> bool:
+    """Durably record the effective WS break required by detached upgrade."""
+
+    with transaction.atomic():
+        node = Node.objects.select_related("organization").filter(pk=node_id).first()
+        if node is None:
+            return False
+        candidate = _running_lifecycle_task(
+            org=node.organization,
+            node=node,
+            kind=LIFECYCLE_KIND_UPGRADE,
+        )
+        if candidate is None:
+            return False
+        task = NodeTask.objects.select_for_update().get(pk=candidate.pk)
+        if task.status not in _ACTIVE_TASK_STATUSES or not _is_detached_lifecycle_task(
+            task
+        ):
+            return False
+        result = dict(task.result or {})
+        result["disconnect_observed_at"] = timezone.now().isoformat()
+        result.pop("verify_started_at", None)
+        task.result = result
+        task.save(update_fields=["result", "updated_at"])
+        return True
 
 
 def _advance_upgrade_verify(*, node: Node, task: NodeTask) -> bool:
@@ -379,7 +446,11 @@ def _fail_stale_upgrade_task(*, node: Node, task: NodeTask) -> bool:
     ):
         return False
     target_version = _target_version_from_task(task)
-    if target_version and _version_matches_target(node=node, target_version=target_version):
+    if target_version and _version_matches_target(
+        node=node,
+        target_version=target_version,
+        target_commit=_target_commit_from_task(task),
+    ):
         if _advance_upgrade_verify(node=node, task=task):
             return True
 
@@ -427,10 +498,7 @@ def _upgrade_lifecycle_payload(
         phase = _task_progress_phase(task) or "dispatching"
         if _is_detached_lifecycle_task(task):
             if agent_session_registered(agent_id=node.id):
-                if target_version and _version_matches_target(
-                    node=node,
-                    target_version=target_version,
-                ):
+                if _upgrade_verify_ready(node=node, task=task):
                     return {**base, "state": "verifying", "phase": "waiting_for_version"}
                 return {**base, "state": "upgrading", "phase": phase}
             return {
@@ -455,7 +523,11 @@ def _upgrade_lifecycle_payload(
     if task.status != NodeTask.Status.SUCCESS:
         return None
 
-    if target_version and _version_matches_target(node=node, target_version=target_version):
+    if target_version and _version_matches_target(
+        node=node,
+        target_version=target_version,
+        target_commit=_target_commit_from_task(task),
+    ):
         return None
 
     return {**base, "state": "verifying", "phase": "waiting_for_version"}
@@ -736,11 +808,22 @@ def start_node_upgrade(
         target_version = validate_agent_upgrade(node=node)
     except AgentUpgradeError as exc:
         raise NodeLifecycleError(str(exc), code=exc.code) from exc
+    platform, arch = node_platform_arch(node)
+    target_commit = agent_release_commit(
+        target_version,
+        platform,
+        arch,
+        role=node.role,
+        os_version=node_os_version(node),
+    )
+    payload = {"target_version": target_version}
+    if target_commit:
+        payload["target_commit"] = target_commit
     handle = run_agent_task_async(
         org=org,
         node_id=node.id,
         kind="agent.upgrade",
-        payload={"target_version": target_version},
+        payload=payload,
         correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
         correlation_id=_correlation_id(node_id=node.id, kind=LIFECYCLE_KIND_UPGRADE),
     )
@@ -760,6 +843,7 @@ def start_node_upgrade(
         "state": "upgrading",
         "phase": "dispatching",
         "target_version": target_version,
+        "target_commit": target_commit,
     }
 
 

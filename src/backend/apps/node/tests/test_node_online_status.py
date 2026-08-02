@@ -192,6 +192,29 @@ class AgentNodeOnlineStatusTests(TestCase):
         self.assertEqual(task.status, NodeTask.Status.RUNNING)
         self.assertEqual(task.last_error, "")
 
+    def test_ws_disconnect_is_recorded_for_detached_upgrade(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            result={
+                "target_version": "1.0.0",
+                "mode": "local_detached",
+                "detached_at": timezone.now().isoformat(),
+            },
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        on_agent_disconnected(node_id=self.node.id, session_id="session-a")
+
+        task.refresh_from_db()
+        self.assertIn("disconnect_observed_at", task.result or {})
+
     def test_stale_disconnect_after_reconnect_stays_online(self):
         self._mark_ws_alive()
         on_agent_connected(node_id=self.node.id, session_id="session-a")

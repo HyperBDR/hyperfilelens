@@ -187,6 +187,14 @@ class RestoreApiTests(TestCase):
             origin=LensGatewayLink.Origin.PLATFORM,
         )
         workspace_binding = self._workspace_binding(gateway_link)
+        self.assertEqual(
+            workspace_binding.relative_path,
+            f"hfl-ks-{workspace_binding.workspace_uid}",
+        )
+        self.assertEqual(
+            workspace_binding.resolved_path(),
+            f"{gateway_link.resolved_workspace_root()}/hfl-ks-{workspace_binding.workspace_uid}",
+        )
         payload = self._manual_restore_payload()
         payload.update(
             {

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import io
+import json
+import tarfile
 
 import pytest
 
 from apps.node.services.internal.agent_release import (
+    agent_release_commit,
     agent_version_compare,
     is_main_build,
     latest_published_agent_version,
@@ -82,3 +86,20 @@ def test_main_build_identity_comparison_uses_exact_commit():
     assert agent_version_compare("main-123abcd", "main-123abcd") == 0
     assert agent_version_compare("main-7654321", "main-123abcd") < 0
     assert agent_version_compare("1.0.0", "main-123abcd") < 0
+
+
+def test_agent_release_commit_reads_bundle_manifest(releases_root):
+    version = "1.0.0"
+    commit = "a" * 40
+    version_dir = releases_root / version
+    version_dir.mkdir()
+    archive = version_dir / f"hfl-agent-{version}-linux-amd64.tar.gz"
+    raw = json.dumps(
+        {"agent_version": version, "agent_commit": commit}
+    ).encode()
+    info = tarfile.TarInfo(f"hfl-agent-{version}-linux-amd64/MANIFEST.json")
+    info.size = len(raw)
+    with tarfile.open(archive, "w:gz") as bundle:
+        bundle.addfile(info, io.BytesIO(raw))
+
+    assert agent_release_commit(version, "linux", "amd64") == commit

@@ -99,7 +99,11 @@ class PushAssistantPhaseTests(SimpleTestCase):
         sync_assistant,
     ):
         organization = MagicMock()
-        knowledge_source = MagicMock()
+        knowledge_source = MagicMock(
+            backup_source_snapshot_id=1,
+            backup_snapshot_directory_id=1,
+            workspace_path_on_lensnode="/workspace/org-34/data/hfl-ks-ready",
+        )
         gateway_link = MagicMock()
         gateway_link.sl_lensnode_uuid = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
         gateway_link.resolved_workspace_root.return_value = "/workspace/org-34/data"
@@ -114,6 +118,7 @@ class PushAssistantPhaseTests(SimpleTestCase):
         wait_for_ready.assert_called_once_with(
             lensnode_uuid=gateway_link.sl_lensnode_uuid,
             workspace_root="/workspace/org-34/data",
+            selected_dir="/workspace/org-34/data/hfl-ks-ready",
         )
         sync_assistant.assert_called_once_with(
             org=organization,

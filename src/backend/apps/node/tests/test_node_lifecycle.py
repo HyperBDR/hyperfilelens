@@ -347,6 +347,24 @@ class NodeLifecycleTests(TestCase):
         self.node.version = "1.2.1"
         self.assertTrue(_version_matches_target(node=self.node, target_version="1.2.0"))
 
+    def test_release_identity_requires_target_commit_when_supplied(self):
+        self.node.version = "1.2.0"
+        self.node.metadata = {"inventory": {"agent_commit": "a" * 40}}
+        self.assertTrue(
+            _version_matches_target(
+                node=self.node,
+                target_version="1.2.0",
+                target_commit="a" * 40,
+            )
+        )
+        self.assertFalse(
+            _version_matches_target(
+                node=self.node,
+                target_version="1.2.0",
+                target_commit="b" * 40,
+            )
+        )
+
     @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=False)
     def test_same_version_running_task_not_finalized_on_enrich(self, _session):
         task = NodeTask.objects.create(
@@ -380,6 +398,7 @@ class NodeLifecycleTests(TestCase):
                 "target_version": "1.0.0",
                 "mode": "local_detached",
                 "detached_at": timezone.now().isoformat(),
+                "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": verify_started.isoformat(),
             },
             watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
@@ -389,6 +408,34 @@ class NodeLifecycleTests(TestCase):
         advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
         task.refresh_from_db()
         self.assertEqual(task.status, NodeTask.Status.SUCCESS)
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True)
+    def test_same_version_does_not_verify_before_disconnect(self, _session):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.RUNNING,
+            payload={"target_version": "1.0.0"},
+            result={
+                "target_version": "1.0.0",
+                "mode": "local_detached",
+                "detached_at": timezone.now().isoformat(),
+                "verify_started_at": (
+                    timezone.now()
+                    - timezone.timedelta(seconds=node_conf.UPGRADE_STABLE_SECONDS + 1)
+                ).isoformat(),
+            },
+            watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+
+        advance_node_lifecycle(org=self.org, node=self.node, user=self.user)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, NodeTask.Status.RUNNING)
+        self.assertNotIn("verify_started_at", task.result or {})
 
     @patch("apps.node.services.internal.node_lifecycle.agent_session_registered", return_value=True)
     def test_upgrade_verify_waits_for_stable_window(self, _session):
@@ -402,6 +449,7 @@ class NodeLifecycleTests(TestCase):
                 "target_version": "1.0.0",
                 "mode": "local_detached",
                 "detached_at": timezone.now().isoformat(),
+                "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": timezone.now().isoformat(),
             },
             watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
@@ -426,6 +474,7 @@ class NodeLifecycleTests(TestCase):
                 "target_version": "1.0.0",
                 "mode": "local_detached",
                 "detached_at": timezone.now().isoformat(),
+                "disconnect_observed_at": timezone.now().isoformat(),
             },
             watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
             correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
@@ -450,6 +499,7 @@ class NodeLifecycleTests(TestCase):
                 "target_version": "1.0.0",
                 "mode": "local_detached",
                 "detached_at": timezone.now().isoformat(),
+                "disconnect_observed_at": timezone.now().isoformat(),
                 "verify_started_at": timezone.now().isoformat(),
             },
             watchdog_deadline_at=timezone.now() + timezone.timedelta(hours=1),
