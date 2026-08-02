@@ -158,6 +158,7 @@ HFL_CI_RELEASE_BUILD_DIR="${output}" \
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.crt$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/tls\.key$' >/dev/null
 	tar -tzf "${archive}" | grep -E '/deploy/nginx/certs/root-ca\.crt$' >/dev/null
+	tar -tzf "${archive}" | grep -E '/deploy/nginx/web\.conf$' >/dev/null
 	key_mode="$(tar -tvzf "${archive}" | awk '$NF ~ /\/deploy\/nginx\/certs\/tls\.key$/ {mode=$1} END {print mode}')"
 	[[ "${key_mode}" == "-rw-------" ]]
 	tar -tzf "${archive}" | grep -F "/hfl-agent-${version}-linux-amd64-ubuntu2004.tar.gz" >/dev/null

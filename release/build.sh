@@ -1020,6 +1020,8 @@ validate_release_publish_artifacts() {
 	local pkg_root=$1
 	local releases="${pkg_root}/payload/media/agent-releases"
 	local enroll="${pkg_root}/payload/media/enroll-bootstrap"
+	[[ -f "${pkg_root}/deploy/nginx/web.conf" ]] \
+		|| die "release package missing internal Web pool configuration"
 	[[ -d "${releases}" && -n "$(ls -A "${releases}" 2>/dev/null)" ]] \
 		|| die "release package missing agent-releases artifacts"
 	[[ -d "${enroll}" && -n "$(ls -A "${enroll}" 2>/dev/null)" ]] \
