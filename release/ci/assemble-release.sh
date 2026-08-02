@@ -118,11 +118,16 @@ printf '%s\n' "${version}" >"${pkg_root}/VERSION"
 cp "${ROOT}/deploy/docker-compose.yml" "${pkg_root}/docker-compose.yml"
 cp "${ROOT}/.env.example" "${pkg_root}/.env.example"
 cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
-mkdir -p "${pkg_root}/deploy/nginx/certs" "${pkg_root}/deploy/nginx/snippets" "${pkg_root}/deploy/logrotate"
+mkdir -p \
+	"${pkg_root}/deploy/nginx/certs" \
+	"${pkg_root}/deploy/nginx/snippets" \
+	"${pkg_root}/deploy/blue-green" \
+	"${pkg_root}/deploy/logrotate"
 stage_default_tls_bundle "${pkg_root}"
 cp "${ROOT}/deploy/nginx/default.conf" "${pkg_root}/deploy/nginx/default.conf"
 cp "${ROOT}/deploy/nginx/web.conf" "${pkg_root}/deploy/nginx/web.conf"
 rsync -a "${ROOT}/deploy/nginx/snippets/" "${pkg_root}/deploy/nginx/snippets/"
+cp "${ROOT}/deploy/blue-green/active-color" "${pkg_root}/deploy/blue-green/active-color"
 cp "${ROOT}/deploy/logrotate/hyperfilelens.conf" "${pkg_root}/deploy/logrotate/hyperfilelens.conf"
 cp "${ROOT}/deploy/installer/install.sh" "${pkg_root}/install.sh"
 cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"
