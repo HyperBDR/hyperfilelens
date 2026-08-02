@@ -602,17 +602,17 @@ def _require_manual_assistant_management(
 
 
 def _delete_sl_assistant(assistant_uuid: uuid_lib.UUID) -> None:
-    """Retire an Assistant through SourceLens' supported DELETE contract.
+    """Retire an Assistant through SourceLens' supported archive contract.
 
-    SourceLens implements this endpoint as a soft retirement. HFL treats an
-    existing 404 as idempotent success but preserves every other error for
-    durable retry.
+    SourceLens 0.20.0 removed DELETE from Assistant CRUD and exposes a POST
+    archive action instead. HFL treats an already archived/missing 404 as
+    idempotent success but preserves every other error for durable retry.
     """
 
     try:
         sl_client.request_json(
-            "DELETE",
-            f"/api/lens/assistants/{assistant_uuid}/",
+            "POST",
+            f"/api/lens/assistants/{assistant_uuid}/archive/",
         )
     except sl_client.LensBridgeError as exc:
         status = getattr(exc, "status_code", None)

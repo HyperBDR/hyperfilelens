@@ -82,8 +82,8 @@ class SourceLensAssistantRetirementTests(SimpleTestCase):
         assistants._delete_sl_assistant(assistant_uuid)
 
         request_json.assert_called_once_with(
-            "DELETE",
-            f"/api/lens/assistants/{assistant_uuid}/",
+            "POST",
+            f"/api/lens/assistants/{assistant_uuid}/archive/",
         )
 
     @patch("apps.lens_bridge.services.assistants.sl_client.request_json")
@@ -97,6 +97,6 @@ class SourceLensAssistantRetirementTests(SimpleTestCase):
             assistants._delete_sl_assistant(assistant_uuid)
 
         request_json.assert_called_once_with(
-            "DELETE",
-            f"/api/lens/assistants/{assistant_uuid}/",
+            "POST",
+            f"/api/lens/assistants/{assistant_uuid}/archive/",
         )
