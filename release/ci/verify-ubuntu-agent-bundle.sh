@@ -2,6 +2,11 @@
 # Execute one Ubuntu-specific Agent bundle with its debs and networking disabled.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
+
 [[ $# -eq 3 ]] || {
 	printf 'Usage: %s INTERNAL_AGENT_BUNDLE VERSION UBUNTU_RELEASE\n' "$0" >&2
 	exit 2
@@ -36,7 +41,8 @@ compgen -G "${deps}/*.deb" >/dev/null \
 	|| { printf 'ERROR: Ubuntu-specific Agent debs are missing\n' >&2; exit 1; }
 
 image="ubuntu:${ubuntu_release}"
-docker image inspect "${image}" >/dev/null 2>&1 || docker pull "${image}"
+docker image inspect "${image}" >/dev/null 2>&1 \
+	|| hfl_docker_pull_with_retry "${image}" linux/amd64 180 2 10
 docker run --rm --pull=never --network none \
 	-v "${root}:/agent:ro" \
 	"${image}" bash -euo pipefail -c '

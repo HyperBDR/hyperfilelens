@@ -77,8 +77,17 @@ remote_deploy="${ROOT_REPO}/.github/scripts/remote-deploy.sh"
 export_sourcelens="${ROOT_REPO}/release/ci/export-sourcelens-bundle.sh"
 
 grep -F 'TAG="main-${GITHUB_SHA:0:7}"' "${workflow}" >/dev/null
+grep -F '[[ "$GITHUB_SHA" == "$latest_main" ]]' "${workflow}" >/dev/null
+grep -F 'stale retries stop before package construction' "${workflow}" >/dev/null
+grep -F "format('hyperfilelens-main-rerun-{0}-{1}', github.run_id, github.run_attempt)" \
+	"${workflow}" >/dev/null
+grep -F "format('hyperfilelens-release-{0}', github.ref_name)" "${workflow}" >/dev/null
 grep -F 'needs.prepare.outputs.channel == '\''release'\''' "${workflow}" >/dev/null
 grep -F 'Main artifact ID collision:' "${workflow}" >/dev/null
+grep -F 'Main artifact target mismatch:' "${workflow}" >/dev/null
+grep -F 'targetCommitish' "${workflow}" >/dev/null
+grep -F 'check-main-freshness.sh "$GITHUB_SHA"' "${workflow}" >/dev/null
+grep -F "needs.publish-release.outputs.deployable == 'true'" "${workflow}" >/dev/null
 grep -F 'gh release delete "$ARTIFACT_ID" --cleanup-tag --yes' "${workflow}" >/dev/null
 grep -F 'channel: main' "${main_workflow}" >/dev/null
 grep -F 'refs/heads/main' "${main_workflow}" >/dev/null
@@ -86,6 +95,28 @@ grep -F 'vars.TEST_DEPLOY_ENABLED' "${main_workflow}" >/dev/null
 grep -F 'target: test' "${workflow}" >/dev/null
 grep -F "needs.prepare.outputs.build_required == 'false'" "${workflow}" >/dev/null
 grep -F 'test:main|preprod:release|prod:release' "${deploy_workflow}" >/dev/null
+python3 - "${deploy_workflow}" <<'PY'
+import pathlib
+import sys
+
+workflow = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+guard = workflow.index("- name: Guard Current Main Deployment")
+credentials = workflow.index("- name: Install SSH Credentials")
+revalidate = workflow.index("- name: Revalidate Current Main Deployment")
+install = workflow.index("- name: Download and Install Release")
+guard_block = workflow[guard:credentials]
+revalidate_block = workflow[revalidate:install]
+
+if not guard < credentials:
+    raise SystemExit("Main freshness guard must run before SSH credentials are installed")
+if not revalidate < install:
+    raise SystemExit("Main freshness must be revalidated immediately before installation")
+for label, block in (("initial", guard_block), ("pre-install", revalidate_block)):
+    if "if: ${{ inputs.channel == 'main' }}" not in block:
+        raise SystemExit(f"{label} freshness guard must only apply to Main deployments")
+    if 'check-main-freshness.sh "$GITHUB_SHA"' not in block:
+        raise SystemExit(f"{label} Main deployment freshness check is missing")
+PY
 grep -F 'channel: release' "${release_workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${production_workflow}" >/dev/null
 grep -F 'target: prod' "${production_workflow}" >/dev/null

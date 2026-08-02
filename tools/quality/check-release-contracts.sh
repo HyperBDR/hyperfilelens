@@ -583,20 +583,55 @@ for job in build-hfl-images build-sourcelens-images build-host-debs export-runti
 		exit 1
 	}
 done
-grep -F 'cancel-in-progress: ${{ inputs.channel == '\''main'\'' }}' "${workflow}" >/dev/null
-grep -F 'Retain only the current successful Main build' "${workflow}" >/dev/null
+grep -F "'hyperfilelens-main'" "${workflow}" >/dev/null
+grep -F "format('hyperfilelens-main-rerun-{0}-{1}', github.run_id, github.run_attempt)" \
+	"${workflow}" >/dev/null
+grep -F "format('hyperfilelens-release-{0}', github.ref_name)" "${workflow}" >/dev/null
+grep -F 'cancel-in-progress: ${{ inputs.channel == '\''main'\'' && github.run_attempt == 1 }}' \
+	"${workflow}" >/dev/null
+grep -F '[[ "$GITHUB_SHA" == "$latest_main" ]]' "${workflow}" >/dev/null
+grep -F 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' "${workflow}" >/dev/null
+grep -F 'Retain retryable draft or current successful Main build' "${workflow}" >/dev/null
 grep -F 'needs: [prepare, publish-release]' "${workflow}" >/dev/null
 grep -F 'BUILD_REQUIRED: ${{ needs.prepare.outputs.build_required }}' "${workflow}" >/dev/null
-grep -F '[[ "$BUILD_REQUIRED" != "false" || "$PUBLISH_RESULT" != "skipped" ]]' "${workflow}" >/dev/null
+grep -F 'MAIN_COMMIT: ${{ needs.prepare.outputs.commit }}' "${workflow}" >/dev/null
+grep -F 'PUBLISH_DISPOSITION: ${{ needs.publish-release.outputs.disposition }}' \
+	"${workflow}" >/dev/null
+grep -F 'freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"' \
+	"${workflow}" >/dev/null
+grep -F "needs.publish-release.outputs.deployable == 'true'" "${workflow}" >/dev/null
 cleanup_body="$(sed -n '/^  cleanup-main-builds:/,$p' "${workflow}")"
-grep -F 'delete_main_artifact()' <<<"${cleanup_body}" >/dev/null
-grep -F 'gh release delete "$artifact_id" --repo "$GITHUB_REPOSITORY" --yes' \
-  <<<"${cleanup_body}" >/dev/null
-grep -F 'git/ref/tags/${artifact_id}' <<<"${cleanup_body}" >/dev/null
-grep -F 'git/refs/tags/${artifact_id}' <<<"${cleanup_body}" >/dev/null
+grep -F 'run: ./.github/scripts/cleanup-main-builds.sh' <<<"${cleanup_body}" >/dev/null
 if grep -F -- '--cleanup-tag' <<<"${cleanup_body}" >/dev/null; then
   printf 'ERROR: idempotent Main cleanup must not fail when a Release has no Git tag\n' >&2
   exit 1
+fi
+cleanup_script="${ROOT}/.github/scripts/cleanup-main-builds.sh"
+grep -F 'Retaining retryable Main draft' "${cleanup_script}" >/dev/null
+grep -F '"${PUBLISH_DISPOSITION}" == "superseded"' "${cleanup_script}" >/dev/null
+grep -F 'check-main-freshness.sh" "${MAIN_COMMIT}"' "${cleanup_script}" >/dev/null
+grep -F 'compare/${target_commit}...${MAIN_COMMIT}' "${cleanup_script}" >/dev/null
+grep -F '"${BUILD_REQUIRED}" == "false" && "${PUBLISH_RESULT}" == "skipped"' \
+	"${cleanup_script}" >/dev/null
+grep -F 'gh release delete "${artifact_id}" --repo "${GITHUB_REPOSITORY}" --yes' \
+	"${cleanup_script}" >/dev/null
+grep -F 'git/ref/tags/${artifact_id}' "${cleanup_script}" >/dev/null
+grep -F 'git/refs/tags/${artifact_id}' "${cleanup_script}" >/dev/null
+grep -F 'check-release-freshness.sh "$ARTIFACT_ID"' "${workflow}" >/dev/null
+grep -F 'make_latest=legacy' "${workflow}" >/dev/null
+grep -F -- '--json apiUrl --jq '\''.apiUrl'\''' "${workflow}" >/dev/null
+grep -F 'release_api_prefix="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/"' \
+	"${workflow}" >/dev/null
+if grep -F 'releases/tags/${ARTIFACT_ID}' "${workflow}" >/dev/null; then
+	printf 'ERROR: formal publishing cannot resolve a draft Release through the tag endpoint\n' >&2
+	exit 1
+fi
+grep -F "needs.publish-release.outputs.deployable == 'true'" "${workflow}" >/dev/null
+grep -F "inputs.target == 'preprod' && inputs.channel == 'release'" \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+if grep -F -- '--cleanup-tag' "${cleanup_script}" >/dev/null; then
+	printf 'ERROR: idempotent Main cleanup must not fail when a Release has no Git tag\n' >&2
+	exit 1
 fi
 grep -F 'ubuntu_release: "22.04"' "${workflow}" >/dev/null
 grep -F 'asset: ubuntu2204' "${workflow}" >/dev/null
@@ -604,6 +639,34 @@ grep -F 'asset: ubuntu2204' "${workflow}" >/dev/null
 grep -F 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6' "${workflow}" >/dev/null
 grep -F 'actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6' "${workflow}" >/dev/null
 grep -F 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6' "${workflow}" >/dev/null
+grep -F 'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0' \
+	"${workflow}" >/dev/null
+grep -F 'docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0' \
+	"${workflow}" >/dev/null
+grep -F 'docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0' \
+	"${workflow}" >/dev/null
+[[ "$(grep -c 'uses: docker/setup-buildx-action@' "${workflow}")" -eq \
+	"$(grep -c 'uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0' "${workflow}")" ]]
+[[ "$(grep -c 'uses: docker/login-action@' "${workflow}")" -eq \
+	"$(grep -c 'uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0' "${workflow}")" ]]
+[[ "$(grep -c 'uses: docker/build-push-action@' "${workflow}")" -eq \
+	"$(grep -c 'uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0' "${workflow}")" ]]
+
+for export_script in \
+	"${ROOT}/release/ci/export-hfl-images.sh" \
+	"${ROOT}/release/ci/export-runtime-images.sh" \
+	"${ROOT}/release/ci/export-sourcelens-bundle.sh"; do
+	grep -F 'hfl_docker_start_pull_budget "${HFL_DOCKER_PULL_BUDGET_SECONDS:-480}"' \
+		"${export_script}" >/dev/null
+	grep -F 'hfl_docker_pull_with_retry' "${export_script}" >/dev/null
+	if grep -E '^[[:space:]]*docker pull ' "${export_script}" >/dev/null; then
+		printf 'ERROR: release export bypasses bounded Docker pull retry: %s\n' \
+			"${export_script}" >&2
+		exit 1
+	fi
+done
+grep -F -- '--kill-after="${kill_after_seconds}s"' \
+	"${ROOT}/tools/lib/docker-images.sh" >/dev/null
 
 grep -F '_internal-hfl-images.tar' "${workflow}" >/dev/null
 if grep -E '_internal-[^[:space:]"'\'']*\.tar\.gz' "${workflow}" >/dev/null; then
@@ -935,8 +998,12 @@ grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11442/en/' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
-grep -F '::warning::Public endpoint is not ready' \
+grep -F 'run: ./.github/scripts/check-public-endpoint.sh' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'address.is_global' \
+	"${ROOT}/.github/scripts/check-public-endpoint.sh" >/dev/null
+grep -F '::warning title=Public endpoint check::Public endpoint is not ready' \
+	"${ROOT}/.github/scripts/check-public-endpoint.sh" >/dev/null
 if grep -F 'APP_PUBLIC_HOST' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null; then
 	printf 'ERROR: deployment checks must not append internal ports to a public hostname\n' >&2
 	exit 1
@@ -1037,9 +1104,17 @@ if grep -F 'upstream_ref' <<<"${fingerprint_body}" >/dev/null; then
 fi
 
 for executable in \
+	"${ROOT}/.github/scripts/check-main-freshness.sh" \
+	"${ROOT}/.github/scripts/check-release-freshness.sh" \
+	"${ROOT}/.github/scripts/check-public-endpoint.sh" \
+	"${ROOT}/.github/scripts/cleanup-main-builds.sh" \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
+	"${ROOT}/tools/quality/test-docker-pull-retry.sh" \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
+	"${ROOT}/tools/quality/test-main-release-freshness.sh" \
+	"${ROOT}/tools/quality/test-main-release-cleanup.sh" \
+	"${ROOT}/tools/quality/test-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-language-pack-runtime-index.sh" \
 	"${ROOT}/tools/quality/test-upgrade-backup-retention.sh" \
 	"${ROOT}/tools/quality/test-redis-rdb-preflight.sh" \
@@ -1047,6 +1122,7 @@ for executable in \
 	"${ROOT}/tools/quality/test-managed-image-retention.sh" \
 	"${ROOT}/tools/quality/test-shared-host-guard.sh" \
 	"${ROOT}/tools/quality/test-release-download-proxy.sh" \
+	"${ROOT}/tools/quality/test-public-endpoint-check.sh" \
 	"${ROOT}/tools/quality/test-sourcelens-git-mirror.sh" \
 	"${ROOT}/tools/quality/test-sourcelens-submodule-recovery.sh" \
 	"${ROOT}"/release/ci/*.sh \

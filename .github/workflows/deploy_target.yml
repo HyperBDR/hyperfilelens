@@ -186,6 +186,35 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
+      - name: Guard Current Main Deployment
+        if: ${{ inputs.channel == 'main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"
+          if [[ "$freshness" != "current" ]]; then
+            echo '::error title=Superseded Main deployment::A newer origin/main commit exists; this deployment will not contact the TEST host.'
+            printf '### Main deployment\n\nBlocked stale Main commit `%s` before any target-host operation.\n' \
+              "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Guard Current PREPROD Release
+        if: ${{ inputs.target == 'preprod' && inputs.channel == 'release' }}
+        env:
+          ARTIFACT_ID: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          freshness="$(./.github/scripts/check-release-freshness.sh "$ARTIFACT_ID")"
+          if [[ "$freshness" != "current" ]]; then
+            echo '::error title=Superseded PREPROD release::A higher SemVer tag exists; this deployment will not contact the PREPROD host.'
+            printf '### PREPROD deployment\n\nBlocked historical release `%s` before any target-host operation.\n' \
+              "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
       - name: Validate Deployment Inputs
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
@@ -457,6 +486,35 @@ jobs:
             "umask 077 && cat > /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env && chmod 0600 /var/tmp/hyperfilelens-runtime-${GITHUB_RUN_ID}.env" \
             < "$runtime_env"
 
+      - name: Revalidate Current Main Deployment
+        if: ${{ inputs.channel == 'main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          freshness="$(./.github/scripts/check-main-freshness.sh "$GITHUB_SHA")"
+          if [[ "$freshness" != "current" ]]; then
+            echo '::error title=Superseded Main deployment::origin/main advanced while this deployment was being prepared; installation is blocked.'
+            printf '### Main deployment\n\nBlocked stale Main commit `%s` immediately before installation.\n' \
+              "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Revalidate Current PREPROD Release
+        if: ${{ inputs.target == 'preprod' && inputs.channel == 'release' }}
+        env:
+          ARTIFACT_ID: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          freshness="$(./.github/scripts/check-release-freshness.sh "$ARTIFACT_ID")"
+          if [[ "$freshness" != "current" ]]; then
+            echo '::error title=Superseded PREPROD release::A higher SemVer tag appeared while deployment was being prepared; installation is blocked.'
+            printf '### PREPROD deployment\n\nBlocked historical release `%s` immediately before installation.\n' \
+              "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
       - name: Download and Install Release
         shell: bash
         run: |
@@ -636,22 +694,7 @@ jobs:
           fi
 
       - name: Check Public Endpoint
-        shell: bash
-        run: |
-          set +e
-          if [[ -z "$APP_PUBLIC_URL" ]]; then
-            echo '::warning::Public URL is not configured; skipping external availability check'
-            printf '### Public endpoint check\n\nSkipped: the target public URL is empty. Core deployment is healthy.\n' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          endpoint="${APP_PUBLIC_URL%/}/health/ready"
-          if ! curl -fsS --connect-timeout 10 --max-time 30 --retry 2 "$endpoint" >/dev/null; then
-            echo "::warning::Public endpoint is not ready: $endpoint"
-            printf '### Public endpoint check\n\nWarning: `%s` is not ready. Core deployment and host-local checks passed.\n' "$endpoint" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf '### Public endpoint check\n\nPassed: `%s`\n' "$endpoint" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          exit 0
+        run: ./.github/scripts/check-public-endpoint.sh
 
       - name: Record Sentry Deployment
         env:
@@ -684,7 +727,7 @@ jobs:
           frontend_project = os.environ.get("SENTRY_FRONTEND_PROJECT", "")
           token = os.environ.get("SENTRY_AUTH_TOKEN", "")
           if not all((url, org, backend_project, frontend_project, token)):
-              print("::warning title=Sentry deployment::Deployment marker configuration is incomplete; continuing.")
+              print("::notice title=Sentry deployment::Deployment markers are skipped until organization, project, and token settings are complete; runtime DSN reporting is unaffected.")
               raise SystemExit(0)
 
           artifact = os.environ.get("ARTIFACT_ID", "").removeprefix("v")

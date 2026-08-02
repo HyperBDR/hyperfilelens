@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=../../tools/lib/archive.sh
 source "${ROOT}/tools/lib/archive.sh"
+# shellcheck source=../../tools/lib/docker-images.sh
+source "${ROOT}/tools/lib/docker-images.sh"
 # shellcheck source=../../tools/dependencies/versions/runtime-images.env
 source "${ROOT}/tools/dependencies/versions/runtime-images.env"
 
@@ -14,13 +16,14 @@ source "${ROOT}/tools/dependencies/versions/runtime-images.env"
 	exit 2
 }
 output=$1
+hfl_docker_start_pull_budget "${HFL_DOCKER_PULL_BUDGET_SECONDS:-480}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/images" "${tmp}/metadata"
 
 export_one() {
 	local image=$1 local_ref=$2 archive=$3 key=$4 source_name
-	docker pull --platform linux/amd64 "${image}"
+	hfl_docker_pull_with_retry "${image}" linux/amd64 180 2 10
 	local digest
 	source_name="${image%@*}"
 	source_name="${source_name%%:*}"
