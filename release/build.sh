@@ -1022,6 +1022,10 @@ validate_release_publish_artifacts() {
 	local enroll="${pkg_root}/payload/media/enroll-bootstrap"
 	[[ -f "${pkg_root}/deploy/nginx/web.conf" ]] \
 		|| die "release package missing internal Web pool configuration"
+	[[ -f "${pkg_root}/deploy/nginx/snippets/hfl-active-upstreams.conf" ]] \
+		|| die "release package missing blue/green upstream configuration"
+	[[ -f "${pkg_root}/deploy/blue-green/active-color" ]] \
+		|| die "release package missing blue/green initial state"
 	[[ -d "${releases}" && -n "$(ls -A "${releases}" 2>/dev/null)" ]] \
 		|| die "release package missing agent-releases artifacts"
 	[[ -d "${enroll}" && -n "$(ls -A "${enroll}" 2>/dev/null)" ]] \
