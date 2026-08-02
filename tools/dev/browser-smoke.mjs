@@ -278,12 +278,21 @@ async function waitForSourceLensLogin(page, baseUrl) {
     'input[name="username"], input[name="email"], input[autocomplete="username"], '
     + 'input[autocomplete="email"], input[type="email"], input[type="text"]',
   ).first()
-  if (!(await username.isVisible())) {
+  const password = page.locator(
+    'input[name="password"], input[autocomplete="current-password"], input[type="password"]',
+  ).first()
+  // SourceLens v0.20 opens in email-code mode, where the email field is already
+  // visible.  Password visibility is the stable signal that password mode is
+  // active across old and new SourceLens releases.
+  if (!(await password.isVisible())) {
     const switchButton = page.locator('button.block.w-full.text-center')
     await switchButton.click()
   }
   try {
-    await username.waitFor({ state: 'visible', timeout: 10_000 })
+    await Promise.all([
+      username.waitFor({ state: 'visible', timeout: 10_000 }),
+      password.waitFor({ state: 'visible', timeout: 10_000 }),
+    ])
   } catch {
     const buttons = await page.locator('button').allTextContents()
     const body = (await page.locator('body').innerText()).slice(0, 1_500)
@@ -293,9 +302,7 @@ async function waitForSourceLensLogin(page, baseUrl) {
     )
   }
   await username.fill(sourceLensUser)
-  await page.locator(
-    'input[name="password"], input[autocomplete="current-password"], input[type="password"]',
-  ).first().fill(sourceLensPassword)
+  await password.fill(sourceLensPassword)
   await page.locator('form button[type="submit"]').click()
   await page.waitForURL(url => !url.pathname.startsWith('/login'), { timeout: 60_000 })
 }
