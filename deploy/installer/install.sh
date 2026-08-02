@@ -3072,49 +3072,6 @@ wait_for_local_platform_gateway_online() {
 	die "installer-managed local platform Gateway did not reconnect its WebSocket"
 }
 
-read_platform_gateway_sentry_values() {
-	python3 - "${ROOT}/.env" "${ROOT}/sourcelens/BUILD_INFO.json" <<'PY'
-import json
-import pathlib
-import shlex
-import sys
-
-env_path = pathlib.Path(sys.argv[1])
-build_info_path = pathlib.Path(sys.argv[2])
-values = {}
-if env_path.is_file():
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        value = value.strip()
-        if value[:1] in {"'", '"'}:
-            try:
-                decoded = shlex.split(value)
-            except ValueError:
-                decoded = []
-            value = decoded[0] if len(decoded) == 1 else ""
-        values[key.strip()] = value.replace("$$", "$")
-
-sl_version = "unknown"
-if build_info_path.is_file():
-    try:
-        sl_version = str(json.loads(build_info_path.read_text(encoding="utf-8")).get("version") or "unknown")
-    except (OSError, json.JSONDecodeError):
-        pass
-hfl_version = values.get("APP_VERSION", "unknown")
-for value in (
-    values.get("SENTRY_ENABLED", "false"),
-    values.get("SENTRY_BACKEND_DSN", ""),
-    values.get("SENTRY_ENVIRONMENT", ""),
-    values.get("SENTRY_TRACES_SAMPLE_RATE", "0"),
-    f"hyperfilelens-agent@{hfl_version}",
-    f"hyperfilelens-lensnode@{hfl_version}-sl{sl_version}",
-):
-    print(value)
-PY
-}
-
 ensure_local_platform_gateway() {
 	if ! platform_gateway_auto_deploy_enabled; then
 		skip "Local platform Gateway auto-deploy is disabled"
@@ -3167,10 +3124,6 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	wss_url="wss://127.0.0.1:${tenant_port}/ws/node/agent/"
 
 	local existing_org existing_role existing_node_id existing_token desired_version installed_version
-	local -a sentry_values=()
-	mapfile -t sentry_values < <(read_platform_gateway_sentry_values)
-	((${#sentry_values[@]} == 6)) \
-		|| die "unable to resolve local Platform Gateway Sentry configuration"
 	existing_org="$(read_agent_env_value HFL_ORG_KEY)"
 	existing_role="$(read_agent_env_value HFL_NODE_ROLE)"
 	existing_node_id="$(read_agent_env_value HFL_NODE_ID)"
@@ -3196,18 +3149,19 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	fi
 
 	run_as_root env \
+		-u SENTRY_ENABLED \
+		-u SENTRY_BACKEND_DSN \
+		-u SENTRY_ENVIRONMENT \
+		-u SENTRY_RELEASE \
+		-u SENTRY_TRACES_SAMPLE_RATE \
+		-u HFL_SENTRY_LENSNODE_RELEASE \
+		-u HFL_SENTRY_POLICY_MANAGED \
 		HFL_ORG_KEY="${org_key}" \
 		HFL_NODE_ROLE="gateway" \
 		HFL_NODE_TOKEN="${token}" \
 		HFL_API_BASE="${api_base}" \
 		HFL_WSS_URL="${wss_url}" \
 		HFL_INSECURE_TLS=1 \
-		SENTRY_ENABLED="${sentry_values[0]}" \
-		SENTRY_BACKEND_DSN="${sentry_values[1]}" \
-		SENTRY_ENVIRONMENT="${sentry_values[2]}" \
-		SENTRY_TRACES_SAMPLE_RATE="${sentry_values[3]}" \
-		SENTRY_RELEASE="${sentry_values[4]}" \
-		HFL_SENTRY_LENSNODE_RELEASE="${sentry_values[5]}" \
 		HFL_FORCE_SIDECAR_INSTALL=1 \
 		"${helper}" gateway-install --yes
 	desired_version="$(read_version)"

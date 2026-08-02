@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -13,8 +14,31 @@ import (
 
 const flushTimeout = 2 * time.Second
 
+// Policy is the runtime-safe subset delivered to a platform Gateway Agent.
+type Policy struct {
+	Enabled          bool
+	BackendDSN       string
+	Environment      string
+	Release          string
+	TracesSampleRate float64
+}
+
+var (
+	policyMu      sync.Mutex
+	currentPolicy Policy
+	configured    bool
+)
+
 func enabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("SENTRY_ENABLED"))) {
+	if !truthy(os.Getenv("HFL_SENTRY_POLICY_MANAGED")) ||
+		strings.TrimSpace(strings.ToLower(os.Getenv("HFL_NODE_ROLE"))) != "gateway" {
+		return false
+	}
+	return truthy(os.Getenv("SENTRY_ENABLED"))
+}
+
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":
 		return true
 	default:
@@ -30,24 +54,40 @@ func sampleRate() float64 {
 	return value
 }
 
-// Initialize enables Sentry for an explicitly configured Platform Gateway Agent.
-// It returns a shutdown function that flushes pending events without blocking exit.
-func Initialize() func() {
-	if !enabled() {
-		return func() {}
+// Configure applies a changed server-verified policy without restarting the Agent.
+func Configure(policy Policy) error {
+	policy.Enabled = policy.Enabled && strings.TrimSpace(policy.BackendDSN) != ""
+	policy.BackendDSN = strings.TrimSpace(policy.BackendDSN)
+	policy.Environment = strings.TrimSpace(policy.Environment)
+	policy.Release = strings.TrimSpace(policy.Release)
+	if policy.TracesSampleRate < 0 || policy.TracesSampleRate > 1 {
+		policy.TracesSampleRate = 0
 	}
-	dsn := strings.TrimSpace(os.Getenv("SENTRY_BACKEND_DSN"))
-	if dsn == "" {
-		_, _ = fmt.Fprintln(os.Stderr, "[sentry] backend DSN is missing; Agent reporting is disabled")
-		return func() {}
+	if !policy.Enabled {
+		policy = Policy{}
+	}
+
+	policyMu.Lock()
+	defer policyMu.Unlock()
+	if configured && policy == currentPolicy {
+		return nil
+	}
+	if configured {
+		sentry.Flush(flushTimeout)
+	}
+	if !policy.Enabled {
+		sentry.CurrentHub().BindClient(nil)
+		currentPolicy = Policy{}
+		configured = true
+		return nil
 	}
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn:              dsn,
-		Environment:      strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
-		Release:          strings.TrimSpace(os.Getenv("SENTRY_RELEASE")),
+		Dsn:              policy.BackendDSN,
+		Environment:      policy.Environment,
+		Release:          policy.Release,
 		ServerName:       "hfl-platform-gateway",
-		EnableTracing:    sampleRate() > 0,
-		TracesSampleRate: sampleRate(),
+		EnableTracing:    policy.TracesSampleRate > 0,
+		TracesSampleRate: policy.TracesSampleRate,
 		SendDefaultPII:   false,
 		AttachStacktrace: true,
 		MaxBreadcrumbs:   20,
@@ -65,8 +105,28 @@ func Initialize() func() {
 		},
 	})
 	if err != nil {
+		return err
+	}
+	currentPolicy = policy
+	configured = true
+	return nil
+}
+
+// Initialize enables Sentry for an explicitly configured Platform Gateway Agent.
+// It returns a shutdown function that flushes pending events without blocking exit.
+func Initialize() func() {
+	policy := Policy{
+		Enabled:          enabled(),
+		BackendDSN:       strings.TrimSpace(os.Getenv("SENTRY_BACKEND_DSN")),
+		Environment:      strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+		Release:          strings.TrimSpace(os.Getenv("SENTRY_RELEASE")),
+		TracesSampleRate: sampleRate(),
+	}
+	if policy.Enabled && policy.BackendDSN == "" {
+		_, _ = fmt.Fprintln(os.Stderr, "[sentry] backend DSN is missing; Agent reporting is disabled")
+	}
+	if err := Configure(policy); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "[sentry] Agent initialization failed; continuing: %v\n", err)
-		return func() {}
 	}
 	return func() { sentry.Flush(flushTimeout) }
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -23,6 +22,7 @@ type LensSidecarConfig struct {
 	LensnodeToken string
 	LensnodeName  string
 	WorkspaceRoot string
+	Observability ObservabilityPolicy
 }
 
 // RunGatewayInstall installs the HFL agent and SourceLens LensNode sidecar for role=gateway.
@@ -41,18 +41,6 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 	if err := RunInstall(ctx, opts); err != nil {
 		return err
 	}
-	// Re-enrollment may short-circuit for an already healthy Agent. Converge
-	// only HFL-managed observability keys; never replace working node credentials.
-	sentryChanged, err := SyncManagedSentryEnv()
-	if err != nil {
-		return fmt.Errorf("refresh Gateway Agent configuration: %w", err)
-	}
-	if sentryChanged {
-		if err := RestartInstalledService(ctx); err != nil {
-			return fmt.Errorf("restart Gateway Agent after configuration refresh: %w", err)
-		}
-	}
-
 	logStep("Continuing Data Gateway setup (AI engine).")
 
 	nodeID := strings.TrimSpace(ReadNodeID(EnvFilePath()))
@@ -66,18 +54,21 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
 		logFail("LensNode configuration is unavailable: "+err.Error(), 6)
 	}
+	// The authenticated console response is authoritative. Platform Gateways
+	// receive the deployment Sentry policy; private Gateways receive disabled.
+	// Observability convergence must never block enrollment or data operations.
+	if changed, syncErr := SyncManagedObservabilityPolicy(lensCfg.Observability); syncErr != nil {
+		logWarn("Could not persist Gateway Agent observability policy; continuing.")
+	} else if changed {
+		if restartErr := RestartInstalledService(ctx); restartErr != nil {
+			logWarn("Could not restart Gateway Agent after observability refresh; the policy will apply on the next restart.")
+		}
+	}
 
 	logStep("Installing AI engine.")
 	if err := ensureGatewayDocker(ctx, cfg); err != nil {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
 		logFail("Docker setup failed: "+err.Error(), 7)
-	}
-	if lensSidecarHealthy() && os.Getenv("HFL_FORCE_SIDECAR_INSTALL") != "1" {
-		logOK("AI engine is already running.")
-		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "success", "")
-		info := summaryFromState(cfg.APIBase, nodeID, "", serviceState(ctx))
-		printGatewayInstallSuccess(info, lensCfg)
-		return nil
 	}
 	if err := InstallLensSidecar(ctx, cfg, lensCfg); err != nil {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
@@ -123,6 +114,10 @@ func FetchGatewayLensConfig(ctx context.Context, cfg Config, nodeID string) (Len
 		return LensSidecarConfig{}, fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
 
+	return parseGatewayLensConfig(raw)
+}
+
+func parseGatewayLensConfig(raw []byte) (LensSidecarConfig, error) {
 	var parsed map[string]any
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return LensSidecarConfig{}, fmt.Errorf("parse response: %w", err)
@@ -142,6 +137,16 @@ func FetchGatewayLensConfig(ctx context.Context, cfg Config, nodeID string) (Len
 		LensnodeToken: stringField(lensRaw, "lensnode_token"),
 		LensnodeName:  stringField(lensRaw, "lensnode_name"),
 		WorkspaceRoot: stringField(lensRaw, "workspace_root"),
+	}
+	if observabilityRaw, ok := data["observability"].(map[string]any); ok {
+		cfgOut.Observability = ObservabilityPolicy{
+			Enabled:          boolField(observabilityRaw, "enabled"),
+			BackendDSN:       stringField(observabilityRaw, "backend_dsn"),
+			Environment:      stringField(observabilityRaw, "environment"),
+			AgentRelease:     stringField(observabilityRaw, "agent_release"),
+			LensnodeRelease:  stringField(observabilityRaw, "lensnode_release"),
+			TracesSampleRate: floatField(observabilityRaw, "traces_sample_rate"),
+		}.Normalized()
 	}
 	if cfgOut.LensBaseURL == "" || cfgOut.LensnodeToken == "" || cfgOut.LensnodeUUID == "" {
 		return LensSidecarConfig{}, fmt.Errorf("incomplete lens configuration from console")
@@ -208,6 +213,30 @@ func stringField(m map[string]any, key string) string {
 		return strings.TrimSpace(s)
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func boolField(m map[string]any, key string) bool {
+	value, ok := m[key]
+	if !ok {
+		return false
+	}
+	result, _ := value.(bool)
+	return result
+}
+
+func floatField(m map[string]any, key string) float64 {
+	value, ok := m[key]
+	if !ok {
+		return 0
+	}
+	switch number := value.(type) {
+	case float64:
+		return number
+	case float32:
+		return float64(number)
+	default:
+		return 0
 	}
 }
 

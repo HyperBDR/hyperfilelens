@@ -3,18 +3,26 @@
 package enroll
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"hyperfilelens/agent/internal/platform/install"
 )
 
 const (
 	lensEnvFilePath            = "/etc/hyperfilelens/lensnode.env"
+	lensAppliedFingerprintPath = "/etc/hyperfilelens/lensnode/.hfl-applied-config.sha256"
+	lensSidecarLockPath        = "/run/lock/hyperfilelens-gateway-sidecar.lock"
+	lensSidecarLockHeldEnv     = "HFL_GATEWAY_SIDECAR_LOCK_HELD"
 	lensSidecarScript          = "gateway-install-lensnode-sidecar.sh"
 	lensnodeImageArchive       = "lensnode-image-linux-amd64.tar.gz"
 	gatewayDockerInstallScript = "gateway-install-docker-ubuntu-amd64.sh"
@@ -23,39 +31,57 @@ const (
 	gatewayMinDockerCompose    = "2.20.0"
 )
 
+type lensSidecarRuntime struct {
+	envPath        string
+	appliedPath    string
+	lockPath       string
+	healthy        func() bool
+	ensureImage    func(context.Context, Config) error
+	installSidecar func(context.Context, Config) error
+}
+
+func defaultLensSidecarRuntime() lensSidecarRuntime {
+	return lensSidecarRuntime{
+		envPath:        lensEnvFilePath,
+		appliedPath:    lensAppliedFingerprintPath,
+		lockPath:       lensSidecarLockPath,
+		healthy:        lensSidecarHealthy,
+		ensureImage:    ensureLensnodeImage,
+		installSidecar: runLensSidecarInstaller,
+	}
+}
+
 // InstallLensSidecar writes LensNode credentials and runs the bundled sidecar install script.
 func InstallLensSidecar(ctx context.Context, cfg Config, lens LensSidecarConfig) error {
-	if err := writeLensEnvFile(lens); err != nil {
-		return err
-	}
+	return defaultLensSidecarRuntime().install(ctx, cfg, lens)
+}
 
-	if lensSidecarHealthy() && os.Getenv("HFL_FORCE_SIDECAR_INSTALL") != "1" {
-		logStep("LensNode sidecar is already running.")
-		return nil
-	}
+func (runtime lensSidecarRuntime) install(
+	ctx context.Context,
+	cfg Config,
+	lens LensSidecarConfig,
+) error {
+	return withFileLock(ctx, runtime.lockPath, func() error {
+		_, fingerprint, err := writeLensEnvFileAt(runtime.envPath, lens)
+		if err != nil {
+			return err
+		}
 
-	if err := ensureLensnodeImage(ctx, cfg); err != nil {
-		return err
-	}
+		if runtime.healthy() &&
+			os.Getenv("HFL_FORCE_SIDECAR_INSTALL") != "1" &&
+			lensConfigurationApplied(runtime.appliedPath, fingerprint) {
+			logStep("LensNode sidecar is already running.")
+			return nil
+		}
 
-	scriptPath, cleanup, err := downloadSidecarInstallScript(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
-	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
-	cmd.Env = append(os.Environ(),
-		"HFL_LENS_ENV_FILE="+lensEnvFilePath,
-		"HFL_INSECURE_TLS="+insecureTLSEnv(),
-		"LENSNODE_IMAGE="+defaultLensnodeImage,
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("sidecar install script: %w", err)
-	}
-	return nil
+		if err := runtime.ensureImage(ctx, cfg); err != nil {
+			return err
+		}
+		if err := runtime.installSidecar(ctx, cfg); err != nil {
+			return err
+		}
+		return markLensConfigurationApplied(runtime.appliedPath, fingerprint)
+	})
 }
 
 func ensureGatewayDocker(ctx context.Context, cfg Config) error {
@@ -152,10 +178,10 @@ func lensSidecarHealthy() bool {
 	return false
 }
 
-func writeLensEnvFile(lens LensSidecarConfig) error {
-	dir := filepath.Dir(lensEnvFilePath)
+func writeLensEnvFileAt(path string, lens LensSidecarConfig) (bool, string, error) {
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
+		return false, "", fmt.Errorf("create %s: %w", dir, err)
 	}
 
 	lines := []string{
@@ -168,6 +194,7 @@ func writeLensEnvFile(lens LensSidecarConfig) error {
 	if lens.LensnodeName != "" {
 		lines = append(lines, "LENSNODE_NAME="+quoteEnv(lens.LensnodeName))
 	}
+	policyValues := lens.Observability.lensnodeEnvValues()
 	for _, name := range []string{
 		"SENTRY_ENABLED",
 		"SENTRY_BACKEND_DSN",
@@ -175,13 +202,126 @@ func writeLensEnvFile(lens LensSidecarConfig) error {
 		"SENTRY_TRACES_SAMPLE_RATE",
 		"HFL_SENTRY_LENSNODE_RELEASE",
 	} {
-		if value := strings.TrimSpace(os.Getenv(name)); value != "" && !strings.ContainsAny(value, "\r\n") {
+		if value, present := policyValues[name]; present {
 			lines = append(lines, name+"="+quoteEnv(value))
 		}
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(lensEnvFilePath, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", lensEnvFilePath, err)
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	current, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(current, []byte(content)) {
+		return false, fingerprint, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, "", fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := writePrivateEnvAtomically(path, []byte(content)); err != nil {
+		return false, "", fmt.Errorf("write %s: %w", path, err)
+	}
+	return true, fingerprint, nil
+}
+
+// ConvergeGatewayLensObservability refreshes only LensNode Sentry settings.
+// Missing/unhealthy LensNode workloads are left to the explicit Gateway lifecycle.
+func ConvergeGatewayLensObservability(
+	ctx context.Context,
+	cfg Config,
+	lens LensSidecarConfig,
+) (bool, error) {
+	return defaultLensSidecarRuntime().convergeObservability(ctx, cfg, lens)
+}
+
+func (runtime lensSidecarRuntime) convergeObservability(
+	ctx context.Context,
+	cfg Config,
+	lens LensSidecarConfig,
+) (bool, error) {
+	changed := false
+	err := withFileLock(ctx, runtime.lockPath, func() error {
+		var fingerprint string
+		var err error
+		changed, fingerprint, err = writeLensEnvFileAt(runtime.envPath, lens)
+		if err != nil {
+			return err
+		}
+		if lensConfigurationApplied(runtime.appliedPath, fingerprint) ||
+			!runtime.healthy() {
+			return nil
+		}
+		if err := runtime.installSidecar(ctx, cfg); err != nil {
+			return fmt.Errorf("refresh LensNode observability: %w", err)
+		}
+		if err := markLensConfigurationApplied(runtime.appliedPath, fingerprint); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+func lensConfigurationApplied(path, fingerprint string) bool {
+	content, err := os.ReadFile(path)
+	return err == nil && strings.TrimSpace(string(content)) == fingerprint
+}
+
+func markLensConfigurationApplied(path, fingerprint string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create LensNode state directory: %w", err)
+	}
+	if err := writePrivateEnvAtomically(path, []byte(fingerprint+"\n")); err != nil {
+		return fmt.Errorf("record applied LensNode configuration: %w", err)
+	}
+	return nil
+}
+
+func withFileLock(ctx context.Context, path string, action func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create sidecar lock directory: %w", err)
+	}
+	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("open sidecar lock: %w", err)
+	}
+	defer lock.Close()
+
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("lock sidecar lifecycle: %w", err)
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+	return action()
+}
+
+func runLensSidecarInstaller(ctx context.Context, cfg Config) error {
+	scriptPath, cleanup, err := downloadSidecarInstallScript(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
+	cmd.Env = append(os.Environ(),
+		"HFL_LENS_ENV_FILE="+lensEnvFilePath,
+		"HFL_INSECURE_TLS="+insecureTLSEnv(),
+		"LENSNODE_IMAGE="+defaultLensnodeImage,
+		lensSidecarLockHeldEnv+"=1",
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sidecar install script: %w", err)
 	}
 	return nil
 }

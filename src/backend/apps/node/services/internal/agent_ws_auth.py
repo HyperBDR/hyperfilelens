@@ -15,8 +15,14 @@ from django.utils import timezone
 from apps.node.models import Node, NodeToken
 
 
-def validate_agent_ws_credentials(node_pk: int | None, token: str) -> bool:
-    """True when token matches an enrollment token row for the node's organization."""
+def validate_agent_ws_credentials(
+    node_pk: int | None,
+    token: str,
+    *,
+    expected_role: str | None = None,
+    expected_gateway_scope: str | None = None,
+) -> bool:
+    """True when token matches the node organization and requested token bounds."""
     if not token or node_pk is None:
         return False
     node = Node.objects.filter(pk=int(node_pk)).first()
@@ -24,8 +30,22 @@ def validate_agent_ws_credentials(node_pk: int | None, token: str) -> bool:
         return False
     now = timezone.now()
     qs = NodeToken.objects.filter(organization_id=node.organization_id)
-    for row in qs.only("token", "is_active", "expires_at", "used_at").iterator():
+    for row in qs.only(
+        "token",
+        "role",
+        "gateway_scope",
+        "is_active",
+        "expires_at",
+        "used_at",
+    ).iterator():
         if not secrets.compare_digest(row.token, token):
+            continue
+        if expected_role is not None and row.role != expected_role:
+            continue
+        if (
+            expected_gateway_scope is not None
+            and row.gateway_scope != expected_gateway_scope
+        ):
             continue
         if row.is_active:
             if row.expires_at and row.expires_at <= now:

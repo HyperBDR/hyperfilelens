@@ -8,6 +8,7 @@ COMPOSE_DIR="/etc/hyperfilelens/lensnode"
 COMPOSE_PROJECT="hyperfilelens-gateway"
 DEFAULT_LENSNODE_IMAGE="${LENSNODE_IMAGE:-hyperfilelens-sourcelens-lensnode:latest}"
 SENTRY_PRIVACY_FILE="${COMPOSE_DIR}/hfl-sentry-sitecustomize.py"
+SIDECAR_LOCK_FILE="${HFL_GATEWAY_SIDECAR_LOCK_FILE:-/run/lock/hyperfilelens-gateway-sidecar.lock}"
 
 hfl_now() {
 	date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
@@ -30,9 +31,24 @@ hfl_fail() {
 	exit "${2:-1}"
 }
 
+acquire_sidecar_lock() {
+	[[ "${HFL_GATEWAY_SIDECAR_LOCK_HELD:-0}" == "1" ]] && return 0
+	command -v flock >/dev/null 2>&1 \
+		|| hfl_fail "The flock command is required for Gateway lifecycle serialization." 1
+	mkdir -p "$(dirname "${SIDECAR_LOCK_FILE}")" \
+		|| hfl_fail "Could not create the Gateway lifecycle lock directory." 1
+	if ! exec 9>"${SIDECAR_LOCK_FILE}"; then
+		hfl_fail "Could not open the Gateway lifecycle lock." 1
+	fi
+	flock -x 9 || hfl_fail "Could not acquire the Gateway lifecycle lock." 1
+	export HFL_GATEWAY_SIDECAR_LOCK_HELD=1
+}
+
 if [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required." 1
 fi
+
+acquire_sidecar_lock
 
 if [[ ! -f "${ENV_FILE}" ]]; then
 	hfl_fail "Missing ${ENV_FILE} (run hfl-enroll gateway-install first)." 2
