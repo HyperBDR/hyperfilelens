@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/selfupdate"
 )
 
 // Run dispatches `hfl-agent <command> ...` subcommands.
@@ -16,6 +17,17 @@ func Run(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "version":
+		if len(args) != 1 {
+			return fmt.Errorf("version does not accept arguments")
+		}
+		_, _ = fmt.Fprintf(
+			os.Stdout,
+			"hyperfilelens-agent %s (%s)\n",
+			selfupdate.Version,
+			selfupdate.Commit,
+		)
+		return nil
 	case "config":
 		return config.RunCLI(context.Background(), args[1:])
 	case "tasks":
@@ -38,6 +50,7 @@ func printRootHelp() {
 
 Usage:
   hfl-agent run [flags]             Run agent daemon (WebSocket control plane)
+  hfl-agent version                 Print version and exit
   hfl-agent help                    Show this help
   hfl-agent config show|set|paths   Manage hot-reloadable configuration
   hfl-agent fs ls [path]            List local directory entries
@@ -117,7 +130,7 @@ func parseWireStatus(s string) (string, error) {
 // IsSubcommand reports whether arg is a CLI subcommand (not daemon flags).
 func IsSubcommand(arg string) bool {
 	switch arg {
-	case "help", "-h", "--help", "config", "tasks", "fs", "snapshot", "restore", "repo":
+	case "help", "-h", "--help", "version", "config", "tasks", "fs", "snapshot", "restore", "repo":
 		return true
 	default:
 		return false

@@ -558,8 +558,10 @@ def _run_phase_push_assistant(
     ).gateway_link
     lensnode_uuid = gateway_link.sl_lensnode_uuid
     if lensnode_uuid:
-        for path in indexed_dir_paths(ks):
-            provisioning.wait_for_lensnode_dir(lensnode_uuid=lensnode_uuid, path=path)
+        provisioning.wait_for_lensnode_ready(
+            lensnode_uuid=lensnode_uuid,
+            workspace_root=gateway_link.resolved_workspace_root(),
+        )
     provisioning.sync_linked_assistant_for_ks(
         org=org,
         ks=ks,

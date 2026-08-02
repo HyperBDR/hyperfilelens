@@ -63,6 +63,12 @@ func runDaemon(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf(
+			"unexpected daemon argument %q; use 'hfl-agent help' for supported commands",
+			fs.Arg(0),
+		)
+	}
 
 	if *printVersion {
 		fmt.Printf("hyperfilelens-agent %s (%s)\n", selfupdate.Version, selfupdate.Commit)
