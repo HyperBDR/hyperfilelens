@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock, patch
+
 from django.test import SimpleTestCase
 
 from apps.lens_bridge.services.knowledge_source_sync import (
+    _run_phase_push_assistant,
     _restore_selected_paths,
     map_scope_to_workspace,
 )
@@ -71,4 +74,49 @@ class MapScopeToWorkspaceTests(SimpleTestCase):
                 scope_path="/data",
             ),
             [],
+        )
+
+
+class PushAssistantPhaseTests(SimpleTestCase):
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "provisioning.sync_linked_assistant_for_ks"
+    )
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "provisioning.wait_for_lensnode_ready"
+    )
+    @patch(
+        "apps.lens_bridge.services.knowledge_source_sync."
+        "context_for_knowledge_source"
+    )
+    @patch("apps.lens_bridge.services.knowledge_source_sync._update_sync_phase")
+    def test_waits_for_authoritative_gateway_workspace_root(
+        self,
+        _update_phase,
+        context_for_source,
+        wait_for_ready,
+        sync_assistant,
+    ):
+        organization = MagicMock()
+        knowledge_source = MagicMock()
+        gateway_link = MagicMock()
+        gateway_link.sl_lensnode_uuid = "de240f46-eccd-4e4b-868f-b1f504fbe67b"
+        gateway_link.resolved_workspace_root.return_value = "/workspace/org-34/data"
+        context_for_source.return_value = MagicMock(gateway_link=gateway_link)
+
+        _run_phase_push_assistant(
+            org=organization,
+            ks=knowledge_source,
+            sync_state={},
+        )
+
+        wait_for_ready.assert_called_once_with(
+            lensnode_uuid=gateway_link.sl_lensnode_uuid,
+            workspace_root="/workspace/org-34/data",
+        )
+        sync_assistant.assert_called_once_with(
+            org=organization,
+            ks=knowledge_source,
+            gateway_link=gateway_link,
         )
