@@ -835,8 +835,11 @@ for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
 done
 grep -F -- '--fail --show-error --location --progress-bar' "${gateway_lifecycle}" >/dev/null
-grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${gateway_lifecycle}" >/dev/null
+grep -F -- '--continue-at -' "${gateway_lifecycle}" >/dev/null
+grep -F 'HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5' "${gateway_lifecycle}" >/dev/null
 grep -F 'partial="${2}.part"' "${gateway_lifecycle}" >/dev/null
+grep -F 'script="${INSTALL_SH%/install.sh}/libexec/gateway-lifecycle.sh"' \
+	"${ROOT}/src/agent/internal/platform/install/gateway_hooks_unix.go" >/dev/null
 grep -F 'Docker CE offline bundle' "${gateway_docker_installer}" >/dev/null
 grep -F -- "'--progress-bar'" "${agent_bootstrap_windows}" >/dev/null
 grep -F 'Write-HflDownloadProgress' "${agent_bootstrap_windows}" >/dev/null
@@ -903,6 +906,7 @@ grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-release-download-proxy.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-gateway-lifecycle-upgrade.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-release-retention.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null

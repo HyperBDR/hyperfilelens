@@ -13,6 +13,10 @@ HFL_NODE_TOKEN=""
 HFL_NODE_ID=""
 HFL_INSECURE_TLS="${HFL_INSECURE_TLS:-1}"
 PURGE_ALL=0
+HFL_LAST_ERROR=""
+
+DOWNLOAD_MAX_ATTEMPTS="${HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5}"
+DOWNLOAD_RETRY_DELAY_SECONDS="${HFL_GATEWAY_DOWNLOAD_RETRY_DELAY_SECONDS:-2}"
 
 LENSNODE_IMAGE_ARCHIVE="lensnode-image-linux-amd64.tar.gz"
 SIDECAR_INSTALL_SCRIPT="gateway-install-lensnode-sidecar.sh"
@@ -29,7 +33,8 @@ hfl_log() {
 }
 
 hfl_fail() {
-	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$*" >&2
+	HFL_LAST_ERROR=$1
+	printf '[%s] [FAIL ] %s\n' "$(hfl_now)" "$1" >&2
 	exit "${2:-1}"
 }
 
@@ -161,18 +166,42 @@ compose_down_sidecar() {
 
 download_bootstrap_file() {
 	local name=$1 dest=$2 partial="${2}.part"
-	rm -f "${partial}"
+	local attempt curl_rc delay
+	[[ "${DOWNLOAD_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
+		|| hfl_fail "HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS must be a positive integer" 2
+	[[ "${DOWNLOAD_RETRY_DELAY_SECONDS}" =~ ^[0-9]+$ ]] \
+		|| hfl_fail "HFL_GATEWAY_DOWNLOAD_RETRY_DELAY_SECONDS must be a non-negative integer" 2
+	mkdir -p "$(dirname "${dest}")"
 	hfl_log "Downloading ${name} from console."
-	if ! curl "${curl_tls[@]}" \
-		--fail --show-error --location --progress-bar \
-		--retry 3 --retry-connrefused --retry-delay 2 \
-		"${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${partial}"; then
-		rm -f "${partial}"
-		hfl_fail "failed to download ${name}" 3
-	fi
-	mv -f "${partial}" "${dest}"
-	hfl_log "Downloaded ${name} ($(wc -c <"${dest}") bytes)."
-	chmod +x "${dest}" 2>/dev/null || true
+	for ((attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++)); do
+		curl_rc=0
+		if curl "${curl_tls[@]}" \
+			--fail --show-error --location --progress-bar \
+			--continue-at - \
+			"${GATEWAY_BOOTSTRAP_BASE}/${name}" -o "${partial}"; then
+			if [[ ! -s "${partial}" ]]; then
+				hfl_log "warning: ${name} download produced an empty file (attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS})"
+			else
+				mv -f "${partial}" "${dest}"
+				hfl_log "Downloaded ${name} ($(wc -c <"${dest}") bytes)."
+				chmod +x "${dest}" 2>/dev/null || true
+				return 0
+			fi
+		else
+			curl_rc=$?
+			hfl_log "warning: ${name} download interrupted (attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS}, curl=${curl_rc}, partial=$(wc -c <"${partial}" 2>/dev/null || printf 0) bytes)"
+		fi
+
+		if [[ ("${curl_rc}" -eq 33 || "${curl_rc}" -eq 36) && -s "${partial}" ]]; then
+			hfl_log "warning: server rejected the resume request for ${name}; retrying once from byte zero"
+			rm -f "${partial}"
+		fi
+		if ((attempt < DOWNLOAD_MAX_ATTEMPTS)); then
+			delay=$((DOWNLOAD_RETRY_DELAY_SECONDS * attempt))
+			((delay == 0)) || sleep "${delay}"
+		fi
+	done
+	hfl_fail "failed to download ${name} after ${DOWNLOAD_MAX_ATTEMPTS} attempts" 3
 }
 
 lensnode_image_supports_insecure_tls() {
@@ -216,19 +245,34 @@ run_sidecar_install_script() {
 }
 
 cmd_upgrade_sidecar() {
-	local tmp script
+	local tmp="" script
 	load_agent_credentials
 	report_lifecycle_status "sidecar_upgrade" "running"
-	ensure_docker_ready
+	trap 'gateway_upgrade_exit "$?" "${tmp}"' EXIT
 	tmp="$(mktemp -d)"
-	load_lensnode_image "${tmp}"
-	compose_down_sidecar
+	ensure_docker_ready
 	script="${tmp}/${SIDECAR_INSTALL_SCRIPT}"
 	download_bootstrap_file "${SIDECAR_INSTALL_SCRIPT}" "${script}"
+	load_lensnode_image "${tmp}"
+	compose_down_sidecar
 	run_sidecar_install_script "${script}"
 	rm -rf "${tmp}"
 	report_lifecycle_status "sidecar_upgrade" "success"
+	trap - EXIT
 	hfl_log "LensNode sidecar upgrade completed."
+}
+
+gateway_upgrade_exit() {
+	local rc=$1 tmp=${2:-}
+	trap - EXIT
+	if [[ "${rc}" -ne 0 ]]; then
+		report_lifecycle_status \
+			"sidecar_upgrade" \
+			"failed" \
+			"${HFL_LAST_ERROR:-LensNode sidecar upgrade failed (exit ${rc})}"
+	fi
+	[[ -z "${tmp}" ]] || rm -rf "${tmp}"
+	return "${rc}"
 }
 
 remove_lensnode_images() {
