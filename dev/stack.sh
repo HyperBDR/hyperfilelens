@@ -77,6 +77,7 @@ STATE_FILE="${ROOT}/build/state/dev-stack.json"
 WEBSITE_OUTPUT="${ROOT}/build/website"
 WEBSITE_BUILDER_IMAGE="hyperfilelens-website-builder:dev"
 WEBSITE_BASE_IMAGE="node:22-alpine"
+WEBSITE_ARTIFACT_REBUILT=0
 
 usage() {
 	cat <<'USAGE'
@@ -449,6 +450,7 @@ cache_update() {
 
 prepare_website_static() {
 	local force=$1 fingerprint app_url
+	WEBSITE_ARTIFACT_REBUILT=0
 	fingerprint="$(cache_fingerprint website -- "npm=${OPT_NPM_REGISTRY}" "platform=linux/amd64")"
 	if [[ "${force}" -eq 1 ]] || [[ ! -f "${WEBSITE_OUTPUT}/public/en/index.html" ]] \
 		|| ! cache_matches website-static "${fingerprint}"; then
@@ -470,6 +472,7 @@ prepare_website_static() {
 		[[ "${force}" -eq 0 ]] || args+=(--no-cache)
 		[[ "${FORCE_PULL}" -eq 0 ]] || args+=(--pull)
 		"${ROOT}/website/build.sh" "${args[@]}"
+		WEBSITE_ARTIFACT_REBUILT=1
 		cache_update website-static "${fingerprint}"
 	else
 		log "Website static fingerprint unchanged; reusing build/website"
@@ -479,6 +482,12 @@ prepare_website_static() {
 	HFL_WEBSITE_CONFIG_OUTPUT="${WEBSITE_OUTPUT}/public/website-runtime-config.js" \
 		HFL_WEBSITE_APP_URL="${app_url}" \
 		sh "${WEBSITE_OUTPUT}/runtime-config.sh"
+}
+
+refresh_website_nginx_mount() {
+	[[ "${WEBSITE_ARTIFACT_REBUILT}" -eq 1 ]] || return 0
+	log "Website artifact directory replaced; recreating Nginx to refresh its bind mount"
+	compose up -d --no-deps --no-build --pull never --force-recreate nginx
 }
 
 build_dev_images() {
@@ -867,6 +876,7 @@ cmd_up() {
 	prepare_dev 0
 	log "Starting hot-reload HFL stack from explicitly prepared images"
 	compose up -d --no-build --pull never --remove-orphans
+	refresh_website_nginx_mount
 	sync_optional_identity_settings
 	print_urls
 }
@@ -899,6 +909,7 @@ cmd_restart() {
 	else
 		log "Restarting only services whose image or configuration changed"
 		compose up -d --no-build --pull never --remove-orphans
+		refresh_website_nginx_mount
 	fi
 	sync_optional_identity_settings
 	print_urls

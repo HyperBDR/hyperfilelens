@@ -118,4 +118,22 @@ grep -F 'find "${temporary}" -type f -exec chmod 0644 {} +' \
 grep -F 'chmod 0755 "${temporary}/runtime-config.sh"' \
 	"${ROOT_REPO}/website/build.sh" >/dev/null
 
+# Replacing the Website artifact directory leaves an existing Docker bind mount
+# attached to the old inode. Recreate only Nginx when a rebuild occurred.
+compose_calls=()
+compose() { compose_calls+=("$*"); }
+WEBSITE_ARTIFACT_REBUILT=0
+refresh_website_nginx_mount
+[[ "${#compose_calls[@]}" -eq 0 ]]
+
+WEBSITE_ARTIFACT_REBUILT=1
+refresh_website_nginx_mount
+[[ "${#compose_calls[@]}" -eq 1 ]]
+[[ "${compose_calls[0]}" == "up -d --no-deps --no-build --pull never --force-recreate nginx" ]]
+
+cmd_up_body="$(sed -n '/^cmd_up()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
+cmd_restart_body="$(sed -n '/^cmd_restart()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
+grep -F 'refresh_website_nginx_mount' <<<"${cmd_up_body}" >/dev/null
+grep -F 'refresh_website_nginx_mount' <<<"${cmd_restart_body}" >/dev/null
+
 printf 'Development stack upgrade regression checks passed.\n'
