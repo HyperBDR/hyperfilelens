@@ -747,6 +747,11 @@ grep -F 'deploy/nginx/web.conf' "${ROOT}/deploy/installer/install.sh" >/dev/null
 grep -F 'deploy/blue-green/active-color' "${ROOT}/release/build.sh" >/dev/null
 grep -F 'deploy/blue-green/active-color' "${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'release package missing blue/green initial state' "${ROOT}/release/build.sh" >/dev/null
+sourcelens_installed_body="$(
+	sed -n '/^sourcelens_installed()/,/^}/p' "${ROOT}/deploy/installer/install.sh"
+)"
+grep -F 'SOURCELENS_INSTALL_DIR}/docker-compose.yml' <<<"${sourcelens_installed_body}" >/dev/null
+grep -F 'SOURCELENS_INSTALL_DIR}/.env' <<<"${sourcelens_installed_body}" >/dev/null
 grep -F 'api:8000' "${ROOT}/deploy/nginx/development-upstreams.conf" >/dev/null
 grep -F 'ws_recovery_gate drain' "${ROOT}/deploy/installer/install.sh" >/dev/null
 grep -F 'args=(reattach --timeout' "${ROOT}/deploy/installer/install.sh" >/dev/null
