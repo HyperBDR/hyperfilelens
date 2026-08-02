@@ -2359,7 +2359,13 @@ package_has_sourcelens_dir() {
 }
 
 sourcelens_installed() {
-	[[ -f "${SOURCELENS_INSTALL_DIR}/docker-compose.yml" ]]
+	# Release packages stage the SourceLens Compose file before the bundled
+	# installer has created its runtime configuration.  Treat that bundle as an
+	# installation only after the Compose env symlink (or legacy regular file)
+	# exists; otherwise first install would try to stop a stack that has never
+	# been configured.
+	[[ -f "${SOURCELENS_INSTALL_DIR}/docker-compose.yml" \
+		&& -f "${SOURCELENS_INSTALL_DIR}/.env" ]]
 }
 
 sourcelens_compose() {
