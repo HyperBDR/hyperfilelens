@@ -1119,6 +1119,8 @@ smoke_runner="${ROOT}/tools/dev/browser-smoke.sh"
 grep -F -- '--add-host host.docker.internal:host-gateway' "${smoke_runner}" >/dev/null
 grep -F 'SMOKE_HOST' "${smoke_runner}" >/dev/null
 grep -F 'HFL_LOGIN_PORT="${login_port}"' "${smoke_runner}" >/dev/null
+grep -F 'DJANGO_SUPERUSER_EMAIL' "${smoke_runner}" >/dev/null
+grep -F 'DJANGO_SUPERUSER_USERNAME' "${smoke_runner}" >/dev/null
 smoke_script="${ROOT}/tools/dev/browser-smoke.mjs"
 grep -F 'host.docker.internal' "${smoke_script}" >/dev/null
 grep -F "submit.waitFor({ state: 'visible'" "${smoke_script}" >/dev/null
