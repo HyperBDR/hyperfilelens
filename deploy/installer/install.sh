@@ -2684,19 +2684,126 @@ print(digest.hexdigest())
 PY
 }
 
+sourcelens_bundle_version() {
+	local root=$1
+	python3 - "${root}/BUILD_INFO.json" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(1)
+version = str(json.loads(path.read_text(encoding="utf-8")).get("version") or "")
+if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+    raise SystemExit(1)
+print(version)
+PY
+}
+
+sourcelens_installed_fingerprint_path() {
+	printf '%s/data/sourcelens/config/installed-bundle-fingerprint' "${ROOT}"
+}
+
+sourcelens_installed_runtime_path() {
+	printf '%s/data/sourcelens/config/installed-runtime-images.tsv' "${ROOT}"
+}
+
+read_sourcelens_installed_fingerprint() {
+	local path
+	path="$(sourcelens_installed_fingerprint_path)"
+	[[ -f "${path}" ]] || return 0
+	tr -d ' \t\r\n' <"${path}"
+}
+
+sourcelens_runtime_matches_bundle() {
+	local bundle_root=$1 version service container_id image
+	version="$(sourcelens_bundle_version "${bundle_root}" 2>/dev/null || true)"
+	[[ -n "${version}" ]] || return 1
+	for service in api worker scheduler ui; do
+		# Inspect stopped/restarting containers too. A transient process state is
+		# handled by health/recovery gates and is not itself an identity drift.
+		container_id="$(sourcelens_compose ps --all -q "${service}" 2>/dev/null | head -1)"
+		[[ -n "${container_id}" ]] || return 1
+		image="$(docker inspect --format '{{.Config.Image}}' "${container_id}" 2>/dev/null || true)"
+		case "${image}" in
+		*-sl"${version}" | *-sl"${version}"@*) ;;
+		*) return 1 ;;
+		esac
+	done
+	return 0
+}
+
+sourcelens_runtime_matches_recorded() {
+	local path service expected_image container_id actual_image count=0 seen=' '
+	path="$(sourcelens_installed_runtime_path)"
+	[[ -f "${path}" ]] || return 1
+	while IFS=$'\t' read -r service expected_image; do
+		case "${service}" in api | worker | scheduler | ui) ;; *) return 1 ;; esac
+		[[ -n "${expected_image}" && "${seen}" != *" ${service} "* ]] || return 1
+		seen+="${service} "
+		count=$((count + 1))
+		container_id="$(sourcelens_compose ps --all -q "${service}" 2>/dev/null | head -1)"
+		[[ -n "${container_id}" ]] || return 1
+		actual_image="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+		[[ "${actual_image}" == "${expected_image}" ]] || return 1
+	done <"${path}"
+	[[ "${count}" -eq 4 ]]
+}
+
+record_sourcelens_installed_bundle() {
+	local bundle_root=$1 fingerprint fingerprint_path runtime_path directory
+	local fingerprint_tmp runtime_tmp service container_id image_id
+	sourcelens_runtime_matches_bundle "${bundle_root}" || return 1
+	fingerprint="$(sourcelens_bundle_fingerprint "${bundle_root}")"
+	[[ "${fingerprint}" =~ ^[0-9a-f]{64}$ ]] || return 1
+	fingerprint_path="$(sourcelens_installed_fingerprint_path)"
+	runtime_path="$(sourcelens_installed_runtime_path)"
+	directory="$(dirname "${fingerprint_path}")"
+	mkdir -p "${directory}"
+	fingerprint_tmp="$(mktemp "${directory}/.installed-bundle-fingerprint.XXXXXX")"
+	runtime_tmp="$(mktemp "${directory}/.installed-runtime-images.XXXXXX")"
+	for service in api worker scheduler ui; do
+		container_id="$(sourcelens_compose ps --all -q "${service}" 2>/dev/null | head -1)"
+		image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+		if [[ -z "${container_id}" || ! "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+			rm -f "${fingerprint_tmp}" "${runtime_tmp}"
+			return 1
+		fi
+		printf '%s\t%s\n' "${service}" "${image_id}" >>"${runtime_tmp}"
+	done
+	printf '%s\n' "${fingerprint}" >"${fingerprint_tmp}"
+	chmod 600 "${fingerprint_tmp}" "${runtime_tmp}"
+	# The fingerprint is the commit marker: publish exact runtime identities
+	# first, then atomically make the semantic bundle record authoritative.
+	mv -f "${runtime_tmp}" "${runtime_path}"
+	mv -f "${fingerprint_tmp}" "${fingerprint_path}"
+	log "Recorded installed SourceLens bundle ${fingerprint:0:12}"
+}
+
 sourcelens_bundle_changed() {
 	local src_root=$1
 	if ! sourcelens_installed || [[ ! -f "${ROOT}/sourcelens/BUILD_INFO.json" ]]; then
 		return 0
 	fi
-	local current target
+	local current target installed previous
 	current="$(sourcelens_bundle_fingerprint "${ROOT}/sourcelens")"
 	target="$(sourcelens_bundle_fingerprint "${src_root}/sourcelens")"
-	if [[ "${current}" == "${target}" ]]; then
-		log "Bundled SourceLens is unchanged (${current:0:12}); keeping 11445 online"
+	installed="$(read_sourcelens_installed_fingerprint)"
+	if [[ "${installed}" == "${target}" ]] \
+		&& sourcelens_runtime_matches_recorded; then
+		log "Bundled SourceLens is unchanged (${target:0:12}); keeping 11445 online"
 		return 1
 	fi
-	log "Bundled SourceLens changed (${current:0:12} -> ${target:0:12})"
+	if [[ "${installed}" == "${target}" ]]; then
+		warn "Bundled SourceLens files match ${target:0:12}, but running containers drifted; reconciling the stack"
+	elif [[ -z "${installed}" && "${current}" == "${target}" ]]; then
+		warn "Bundled SourceLens target files have no successful runtime record; reconciling the stack"
+	else
+		previous="${installed:-${current}}"
+		log "Bundled SourceLens changed (${previous:0:12} -> ${target:0:12})"
+	fi
 	return 0
 }
 
@@ -3225,6 +3332,10 @@ cmd_install() {
 		skip "Bundled SourceLens health gate skipped by --hfl-only"
 	else
 		wait_for_sourcelens_health || die "bundled SourceLens failed its post-install health gate"
+		if [[ "$(configured_sourcelens_mode)" == "bundled" ]] && sourcelens_installed; then
+			record_sourcelens_installed_bundle "${ROOT}/sourcelens" \
+				|| die "could not record the installed SourceLens bundle identity"
+		fi
 	fi
 	sync_optional_identity_settings
 	ensure_local_platform_gateway
@@ -4066,6 +4177,10 @@ cmd_upgrade() {
 		&& [[ "${remove_sourcelens}" -eq 0 ]]; then
 		configure_lens_bridge_env
 		wait_for_sourcelens_health || die "bundled SourceLens failed its independent post-upgrade health gate"
+		if [[ "${upgrade_sourcelens}" -eq 1 ]]; then
+			record_sourcelens_installed_bundle "${ROOT}/sourcelens" \
+				|| die "could not record the installed SourceLens bundle identity"
+		fi
 	fi
 	if [[ "${SOURCELENS_MAINTENANCE_ARMED}" == "1" ]]; then
 		clear_sourcelens_maintenance_gate

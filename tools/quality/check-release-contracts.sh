@@ -772,6 +772,8 @@ if grep -E 'compose_color .* up .*api-' <<<"${recovery_body}" >/dev/null; then
 fi
 grep -F 'compose_color "${recovery_color}" start' <<<"${recovery_body}" >/dev/null
 grep -F './tools/quality/test-blue-green-recovery.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-sourcelens-runtime-sync.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-sourcelens-runtime-fingerprint.sh' "${workflow}" >/dev/null
 
 backend_dockerfile="${ROOT}/deploy/docker/backend.Dockerfile"
 frontend_dockerfile="${ROOT}/deploy/docker/frontend.Dockerfile"
