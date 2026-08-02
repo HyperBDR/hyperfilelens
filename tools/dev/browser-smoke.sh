@@ -45,6 +45,13 @@ fi
 cache_dir="${ROOT}/build/cache/playwright-node-${version}"
 mkdir -p "${cache_dir}"
 source_lens_env="${SMOKE_SOURCELENS_ENV_FILE:-${ROOT}/data/sourcelens/config/.env}"
+source_lens_user="${SOURCELENS_USER:-}"
+if [[ -z "${source_lens_user}" ]]; then
+	source_lens_user="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_EMAIL '')"
+fi
+if [[ -z "${source_lens_user}" ]]; then
+	source_lens_user="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_USERNAME admin)"
+fi
 smoke_host="${SMOKE_HOST:-host.docker.internal}"
 tenant_port="$(read_default HFL_TENANT_PORT 11443)"
 login_port="$(read_default HFL_LOGIN_PORT "${tenant_port}")"
@@ -62,7 +69,7 @@ docker run --rm \
 	-e SOURCELENS_CONSOLE_PORT="$(read_default SOURCELENS_CONSOLE_PORT 11445)" \
 	-e SEED_ADMIN_EMAIL="$(read_default SEED_ADMIN_EMAIL admin@hyperfilelens.com)" \
 	-e SEED_ADMIN_PASSWORD="$(read_default SEED_ADMIN_PASSWORD 'Admin@123')" \
-	-e SOURCELENS_USER="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_USERNAME admin)" \
+	-e SOURCELENS_USER="${source_lens_user}" \
 	-e SOURCELENS_PASSWORD="$(read_file_default "${source_lens_env}" DJANGO_SUPERUSER_PASSWORD adminpassword)" \
 	-e SMOKE_REQUIRE_HMR="${SMOKE_REQUIRE_HMR:-1}" \
 	-e SMOKE_SKIP_SOURCELENS="${SMOKE_SKIP_SOURCELENS:-0}" \
