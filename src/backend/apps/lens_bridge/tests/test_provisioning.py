@@ -242,6 +242,32 @@ class LensnodeWorkspaceReadinessTests(SimpleTestCase):
             )
         )
 
+    def test_requires_selected_directory_to_be_advertised(self):
+        data = {
+            "uuid": self.lensnode_uuid,
+            "status": "online",
+            "workspace_path": "/workspace/org-1",
+            "available_dirs": [
+                {"path": "/workspace/org-1/hfl-ks-ready"},
+            ],
+        }
+        self.assertTrue(
+            _lensnode_matches_workspace(
+                data,
+                lensnode_uuid=self.lensnode_uuid,
+                workspace_root="/workspace/org-1",
+                selected_dir="/workspace/org-1/hfl-ks-ready",
+            )
+        )
+        self.assertFalse(
+            _lensnode_matches_workspace(
+                data,
+                lensnode_uuid=self.lensnode_uuid,
+                workspace_root="/workspace/org-1",
+                selected_dir="/workspace/org-1/nested/hfl-ks-missing",
+            )
+        )
+
 
 class SlLensnodeSnapshotTests(SimpleTestCase):
     def test_extracts_display_fields(self):
@@ -309,7 +335,11 @@ class EnsureKsWorkspaceTests(SimpleTestCase):
         self.assertEqual(kwargs["payload"]["path"], "/workspace/org-1/ks-9")
         self.assertEqual(kwargs["payload"]["workspace_uid"], "workspace-9")
         self.assertEqual(kwargs["requesting_organization_id"], 1)
-        mock_wait.assert_called_once()
+        mock_wait.assert_called_once_with(
+            lensnode_uuid=link.sl_lensnode_uuid,
+            workspace_root="/workspace/org-1",
+            selected_dir="/workspace/org-1/ks-9",
+        )
 
 
 class BrowseGatewayDirectoryTests(SimpleTestCase):

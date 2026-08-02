@@ -176,14 +176,11 @@ def create_workspace_binding(
     )
     root = context.gateway_link.resolved_workspace_root()
     workspace_uid = uuid.uuid4()
-    relative_path = (
-        ""
-        if gateway_local
-        else (
-            f"tenants/{tenant_organization.id}/knowledge-sources/"
-            f"{workspace_uid}"
-        )
-    )
+    # SourceLens advertises and accepts only direct children of the LensNode
+    # workspace root as selectable directories. Keep the immutable UUID in the
+    # directory name so shared Platform Gateways remain collision-free without
+    # nesting tenant data below paths SourceLens cannot select.
+    relative_path = "" if gateway_local else f"hfl-ks-{workspace_uid}"
     binding, created = LensWorkspaceBinding.objects.get_or_create(
         organization=tenant_organization,
         knowledge_source=knowledge_source,

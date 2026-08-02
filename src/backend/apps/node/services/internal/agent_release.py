@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import tarfile
+import zipfile
 from pathlib import Path
 
 from django.conf import settings
@@ -139,6 +142,63 @@ def version_has_dist(
     ubuntu_release = ubuntu_bundle_release(role, platform, os_version)
     filename = dist_filename(version, platform, arch, ubuntu_release=ubuntu_release)
     return (root / version / filename).is_file()
+
+
+def agent_release_commit(
+    version: str,
+    platform: str,
+    arch: str,
+    *,
+    role: str | None = None,
+    os_version: str | None = None,
+) -> str:
+    """Read the immutable build commit embedded in a published Agent bundle."""
+
+    ubuntu_release = ubuntu_bundle_release(role, platform, os_version)
+    archive = agent_releases_root() / version / dist_filename(
+        version,
+        platform,
+        arch,
+        ubuntu_release=ubuntu_release,
+    )
+    try:
+        if archive.suffix == ".zip":
+            with zipfile.ZipFile(archive) as bundle:
+                names = [
+                    name
+                    for name in bundle.namelist()
+                    if name.endswith("/MANIFEST.json")
+                ]
+                if len(names) != 1:
+                    return ""
+                if bundle.getinfo(names[0]).file_size > 1024 * 1024:
+                    return ""
+                raw = bundle.read(names[0])
+        else:
+            with tarfile.open(archive, "r:gz") as bundle:
+                member = next(
+                    (
+                        item
+                        for item in bundle
+                        if item.isfile() and item.name.endswith("/MANIFEST.json")
+                    ),
+                    None,
+                )
+                if member is None or member.size > 1024 * 1024:
+                    return ""
+                extracted = bundle.extractfile(member)
+                if extracted is None:
+                    return ""
+                raw = extracted.read()
+        manifest = json.loads(raw)
+    except (OSError, tarfile.TarError, zipfile.BadZipFile, json.JSONDecodeError):
+        return ""
+    if not isinstance(manifest, dict):
+        return ""
+    if str(manifest.get("agent_version") or "").strip() != version:
+        return ""
+    commit = str(manifest.get("agent_commit") or "").strip().lower()
+    return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else ""
 
 
 def _dir_has_any_agent_archive(version_dir: Path) -> bool:

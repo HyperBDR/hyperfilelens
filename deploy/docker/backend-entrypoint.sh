@@ -104,12 +104,15 @@ require_watchfiles() {
   }
 }
 
+DEV_WATCH_IGNORE_PATHS="/opt/backend/media,/opt/backend/staticfiles,/opt/backend/lang-packs"
+
 run_api_dev() {
   ensure_log_dir
   wait_for_postgres
   require_watchfiles
   echo "[entrypoint] watch backend source and restart HTTP/WebSocket API"
-  exec watchfiles --filter python "/entrypoint.sh api" /opt/backend
+  exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \
+    "/entrypoint.sh api" /opt/backend
 }
 
 run_worker_dev() {
@@ -118,7 +121,7 @@ run_worker_dev() {
   run_migrations_and_register
   require_watchfiles
   echo "[entrypoint] watch backend source and restart celery worker"
-  exec watchfiles --filter python \
+  exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \
     "celery -A common worker --loglevel=INFO -Q backend,node.lifecycle,node.ingest,source.remote-io,storage.provider-validation" \
     /opt/backend
 }
@@ -128,7 +131,7 @@ run_scheduler_dev() {
   wait_for_postgres
   require_watchfiles
   echo "[entrypoint] watch backend source and restart celery scheduler"
-  exec watchfiles --filter python \
+  exec watchfiles --filter python --ignore-paths "${DEV_WATCH_IGNORE_PATHS}" \
     "celery -A common beat --scheduler django_celery_beat.schedulers:DatabaseScheduler --loglevel=INFO" \
     /opt/backend
 }

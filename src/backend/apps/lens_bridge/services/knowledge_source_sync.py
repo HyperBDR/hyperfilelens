@@ -561,6 +561,9 @@ def _run_phase_push_assistant(
         provisioning.wait_for_lensnode_ready(
             lensnode_uuid=lensnode_uuid,
             workspace_root=gateway_link.resolved_workspace_root(),
+            selected_dir=(
+                None if is_gateway_local_ks(ks) else ks.workspace_path_on_lensnode
+            ),
         )
     provisioning.sync_linked_assistant_for_ks(
         org=org,
