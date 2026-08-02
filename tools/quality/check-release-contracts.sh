@@ -821,6 +821,7 @@ agent_bootstrap_windows="${ROOT}/deploy/bootstrap/agent-bootstrap-windows.ps1"
 gateway_bootstrap_linux="${ROOT}/deploy/bootstrap/gateway-bootstrap-linux.sh"
 gateway_docker_installer="${ROOT}/deploy/bootstrap/gateway-install-docker-ubuntu-amd64.sh"
 gateway_lifecycle="${ROOT}/deploy/bootstrap/gateway-lifecycle.sh"
+gateway_sidecar_installer="${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh"
 grep -F 'requires a systemd-based Linux distribution' "${agent_bootstrap_linux}" >/dev/null
 grep -F 'systemctl show-environment' "${agent_bootstrap_linux}" >/dev/null
 grep -F 'launchd is required to install the agent service on macOS' "${agent_bootstrap_macos}" >/dev/null
@@ -840,6 +841,14 @@ grep -F -- '--fail --show-error --location --progress-bar' "${gateway_lifecycle}
 grep -F -- '--continue-at -' "${gateway_lifecycle}" >/dev/null
 grep -F 'HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5' "${gateway_lifecycle}" >/dev/null
 grep -F 'partial="${2}.part"' "${gateway_lifecycle}" >/dev/null
+grep -F 'HFL_SOURCELENS_STATE_ROOT="${HFL_GATEWAY_STATE_ROOT}/sourcelens"' \
+	"${gateway_sidecar_installer}" >/dev/null
+grep -F 'HFL_SOURCELENS_MOUNTPOINT="${HFL_WORKSPACE_ROOT}/.sourcelens"' \
+	"${gateway_sidecar_installer}" >/dev/null
+grep -F '${HFL_SOURCELENS_STATE_ROOT}:${HFL_SOURCELENS_MOUNTPOINT}:rw' \
+	"${gateway_sidecar_installer}" >/dev/null
+grep -F '${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro' \
+	"${gateway_sidecar_installer}" >/dev/null
 grep -F 'script="${INSTALL_SH%/install.sh}/libexec/gateway-lifecycle.sh"' \
 	"${ROOT}/src/agent/internal/platform/install/gateway_hooks_unix.go" >/dev/null
 grep -F 'Docker CE offline bundle' "${gateway_docker_installer}" >/dev/null
@@ -914,7 +923,7 @@ grep -F './tools/quality/test-agent-release-retention.sh' "${workflow}" >/dev/nu
 grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null
 grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/null
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
-	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+	"${gateway_sidecar_installer}" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-ga-runtime-config.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-sentry-runtime-config.sh' "${workflow}" >/dev/null

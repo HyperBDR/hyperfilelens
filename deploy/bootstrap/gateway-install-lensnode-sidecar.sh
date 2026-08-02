@@ -88,10 +88,18 @@ hfl_ok "SourceLens health check passed."
 hfl_step "Creating protected Gateway filesystem boundary."
 mkdir -p "${HFL_WORKSPACE_ROOT}"
 HFL_GATEWAY_STATE_ROOT="$(dirname "${HFL_WORKSPACE_ROOT}")/.hyperfilelens"
+HFL_SOURCELENS_STATE_ROOT="${HFL_GATEWAY_STATE_ROOT}/sourcelens"
+HFL_SOURCELENS_MOUNTPOINT="${HFL_WORKSPACE_ROOT}/.sourcelens"
 HFL_GATEWAY_TRASH_ROOT="${HFL_WORKSPACE_ROOT}/.hyperfilelens-trash"
-mkdir -p "${HFL_GATEWAY_STATE_ROOT}/identities" "${HFL_GATEWAY_TRASH_ROOT}"
+mkdir -p \
+	"${HFL_GATEWAY_STATE_ROOT}/identities" \
+	"${HFL_SOURCELENS_STATE_ROOT}" \
+	"${HFL_SOURCELENS_MOUNTPOINT}" \
+	"${HFL_GATEWAY_TRASH_ROOT}"
 chmod 0700 "${HFL_GATEWAY_STATE_ROOT}" \
 	"${HFL_GATEWAY_STATE_ROOT}/identities" \
+	"${HFL_SOURCELENS_STATE_ROOT}" \
+	"${HFL_SOURCELENS_MOUNTPOINT}" \
 	"${HFL_GATEWAY_TRASH_ROOT}"
 
 mkdir -p "${COMPOSE_DIR}"
@@ -229,8 +237,10 @@ ${EXTRA_HOSTS_BLOCK}    environment:
     volumes:
 ${sentry_volume_block}
       # LensNode only indexes managed data. The host Agent is the sole writer
-      # and lifecycle owner for this filesystem boundary.
+      # and lifecycle owner for this filesystem boundary. SourceLens receives
+      # one isolated writable mount for its runtime/cache state.
       - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro
+      - ${HFL_SOURCELENS_STATE_ROOT}:${HFL_SOURCELENS_MOUNTPOINT}:rw
     tmpfs:
       # Hide the host Agent's same-filesystem deletion quarantine from LensNode.
       - ${HFL_GATEWAY_TRASH_ROOT}:mode=0700
