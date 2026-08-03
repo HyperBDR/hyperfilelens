@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -329,6 +330,7 @@ def request_json(
     *,
     params: dict[str, Any] | None = None,
     json_body: dict[str, Any] | None = None,
+    extra_headers: dict[str, str] | None = None,
     timeout: int = 60,
     hfl_user: AbstractBaseUser | None = None,
 ) -> Any:
@@ -337,7 +339,10 @@ def request_json(
     if not path.startswith("/"):
         path = f"/{path}"
     url = urljoin(_base_url() + "/", path.lstrip("/"))
-    headers = _auth_headers({"Accept": "application/json"}, hfl_user=hfl_user)
+    headers = _auth_headers(
+        {"Accept": "application/json", **(extra_headers or {})},
+        hfl_user=hfl_user,
+    )
     if json_body is not None:
         headers["Content-Type"] = "application/json"
     try:
@@ -362,7 +367,10 @@ def request_json(
             with _ADMIN_TOKEN_LOCK:
                 global _ADMIN_ACCESS_TOKEN
                 _ADMIN_ACCESS_TOKEN = None
-        headers = _auth_headers({"Accept": "application/json"}, hfl_user=hfl_user)
+        headers = _auth_headers(
+            {"Accept": "application/json", **(extra_headers or {})},
+            hfl_user=hfl_user,
+        )
         if json_body is not None:
             headers["Content-Type"] = "application/json"
         try:
@@ -377,6 +385,163 @@ def request_json(
         except requests.RequestException as exc:
             raise _transport_error(exc) from exc
     return _raise_for_response(response)
+
+
+def list_managed_datasources(*, target_path: str) -> list[dict[str, Any]]:
+    """Return managed datasource candidates matching one target path."""
+
+    raw = request_json(
+        "GET",
+        "/api/lens/admin/datasources/",
+        params={
+            "filters": json.dumps(
+                [{"key": "target_path", "value": target_path}]
+            ),
+            "page_size": 100,
+        },
+    )
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    if isinstance(raw, dict) and isinstance(raw.get("results"), list):
+        return [
+            row for row in raw["results"] if isinstance(row, dict)
+        ]
+    return []
+
+
+def get_managed_datasource(datasource_uuid: str) -> dict[str, Any] | None:
+    """Return one SourceLens datasource, treating a missing row as absent."""
+
+    try:
+        raw = request_json(
+            "GET",
+            f"/api/lens/admin/datasources/{datasource_uuid}/",
+        )
+    except LensBridgeError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    return raw if isinstance(raw, dict) else None
+
+
+def create_managed_datasource(
+    *,
+    name: str,
+    lensnode_uuid: str,
+    target_path: str,
+) -> dict[str, Any]:
+    """Create one active SourceLens managed-workspace datasource."""
+
+    raw = request_json(
+        "POST",
+        "/api/lens/admin/datasources/",
+        json_body={
+            "name": name,
+            "source_type": "managed_workspace",
+            "lensnode_uuid": lensnode_uuid,
+            "target_path": target_path,
+            "status": "active",
+            "config": {},
+            "sync_policy": {},
+        },
+    )
+    if not isinstance(raw, dict) or not raw.get("uuid"):
+        raise LensBridgeError(
+            "SourceLens managed datasource create returned no uuid."
+        )
+    return raw
+
+
+def start_managed_datasource_conversion(
+    *,
+    datasource_uuid: str,
+    conversion: dict[str, Any],
+    operation_id: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Start one explicit managed-workspace conversion task.
+
+    SourceLens v0.21 safely ignores the operation headers. A newer SourceLens
+    contract can persist them as task metadata and make ambiguous POST recovery
+    exact without changing the HFL client again.
+    """
+
+    raw = request_json(
+        "POST",
+        f"/api/lens/admin/datasources/{datasource_uuid}/convert/",
+        json_body={"conversion": conversion, "force": force},
+        extra_headers={
+            "Idempotency-Key": operation_id,
+            "X-HFL-Operation-ID": operation_id,
+        },
+    )
+    if not isinstance(raw, dict) or not raw.get("task_id"):
+        raise LensBridgeError(
+            "SourceLens conversion request returned no task id."
+        )
+    return raw
+
+
+def list_managed_datasource_conversion_tasks(
+    datasource_uuid: str,
+) -> list[dict[str, Any]]:
+    """Return recent conversion tasks for one managed datasource."""
+
+    raw = request_json(
+        "GET",
+        f"/api/lens/admin/datasources/{datasource_uuid}/conversion-tasks/",
+        params={"page_size": 100},
+    )
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    if isinstance(raw, dict) and isinstance(raw.get("results"), list):
+        return [row for row in raw["results"] if isinstance(row, dict)]
+    return []
+
+
+def get_task_by_id(task_id: str) -> dict[str, Any] | None:
+    """Return full SourceLens task state by its stable task identifier."""
+
+    try:
+        raw = request_json(
+            "GET",
+            f"/api/v1/tasks/executions/by-task-id/{task_id}/",
+            params={"sync": "false"},
+        )
+    except LensBridgeError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    return raw if isinstance(raw, dict) else None
+
+
+def cancel_managed_datasource_conversion(datasource_uuid: str) -> bool:
+    """Cancel active conversion and report whether SourceLens found one."""
+
+    try:
+        request_json(
+            "POST",
+            f"/api/lens/admin/datasources/{datasource_uuid}/cancel-conversion/",
+        )
+    except LensBridgeError as exc:
+        if exc.status_code == 404:
+            return False
+        raise
+    return True
+
+
+def delete_managed_datasource(datasource_uuid: str) -> None:
+    """Delete a SourceLens datasource record idempotently."""
+
+    try:
+        request_json(
+            "DELETE",
+            f"/api/lens/admin/datasources/{datasource_uuid}/",
+        )
+    except LensBridgeError as exc:
+        if exc.status_code == 404:
+            return
+        raise
 
 
 def stream_sse(

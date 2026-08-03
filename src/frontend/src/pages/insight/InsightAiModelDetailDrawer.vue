@@ -261,11 +261,20 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelDefault') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelDefaultAgent') }}</span>
                 <span class="hfl-detail-row__value">
                   <HflBooleanStatusTag
-                    :value="detail.is_default === true"
-                    :label="detail.is_default ? t('insight.aiSettings.defaultBadge') : t('common.no')"
+                    :value="detail.is_default_agent === true"
+                    :label="detail.is_default_agent ? t('common.yes') : t('common.no')"
+                  />
+                </span>
+              </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.aiSettings.labelDefaultMultimodal') }}</span>
+                <span class="hfl-detail-row__value">
+                  <HflBooleanStatusTag
+                    :value="detail.is_default_multimodal === true"
+                    :label="detail.is_default_multimodal ? t('common.yes') : t('common.no')"
                   />
                 </span>
               </div>

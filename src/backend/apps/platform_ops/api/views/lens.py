@@ -19,6 +19,7 @@ from apps.lens_bridge.api.serializers import (
     LensKnowledgeSourceCreateSerializer,
     LensKnowledgeSourceSerializer,
     LensKnowledgeSourceUpdateSerializer,
+    LensOrgSettingsSerializer,
 )
 from apps.iam.models import Organization
 from apps.lens_bridge.models import (
@@ -113,12 +114,61 @@ class PlatformOpsLensUsageView(APIView):
 def _set_platform_default_model_ref(
     org: Organization,
     config_uuid: uuid.UUID | None,
+    *,
+    role: str = "agent",
 ) -> None:
     link = provisioning.get_or_create_org_link(org)
-    if link.default_agent_model_ref == config_uuid:
+    field_name = (
+        "default_agent_model_ref"
+        if role == "agent"
+        else "default_multimodal_model_ref"
+    )
+    if getattr(link, field_name) == config_uuid:
         return
-    link.default_agent_model_ref = config_uuid
-    link.save(update_fields=["default_agent_model_ref", "updated_at"])
+    setattr(link, field_name, config_uuid)
+    link.save(update_fields=[field_name, "updated_at"])
+
+
+class PlatformOpsLensSettingsView(APIView):
+    """Read and update platform-wide Agent and multimodal defaults."""
+
+    permission_classes = [IsPlatformOpsStaff]
+
+    def get(self, request):
+        link = provisioning.get_or_create_org_link(_platform_org())
+        return Response(
+            LensOrgSettingsSerializer(
+                {
+                    "default_agent_model_ref": link.default_agent_model_ref,
+                    "default_multimodal_model_ref": (
+                        link.default_multimodal_model_ref
+                    ),
+                }
+            ).data
+        )
+
+    def patch(self, request):
+        body = LensOrgSettingsSerializer(data=request.data, partial=True)
+        body.is_valid(raise_exception=True)
+        org = _platform_org()
+        for role, field_name in (
+            ("agent", "default_agent_model_ref"),
+            ("multimodal", "default_multimodal_model_ref"),
+        ):
+            if field_name not in body.validated_data:
+                continue
+            model_ref = body.validated_data[field_name]
+            org_models.validate_default_model_ref(
+                org,
+                model_ref,
+                field_name=field_name,
+            )
+            _set_platform_default_model_ref(
+                org,
+                model_ref,
+                role=role,
+            )
+        return self.get(request)
 
 
 def _platform_gateway(gateway_id: int) -> Node | None:
@@ -516,6 +566,7 @@ class PlatformOpsLensModelProxyView(APIView):
             return Response(data)
         body = dict(request.data)
         display_name = body.pop("name", None)
+        make_agent_default = body.pop("is_default", None) is True
         data = sl_client.request_json("POST", "/api/v1/admin/llm-config/", json_body=body)
         config_uuid_created = data.get("uuid")
         if config_uuid_created:
@@ -526,26 +577,36 @@ class PlatformOpsLensModelProxyView(APIView):
                 created_by=request.user,
             )
             org_models.set_model_display_name(link, display_name)
-            data = org_models.merge_model_display_name(data, link)
-            if body.get("is_default") is True:
+            if make_agent_default:
                 _set_platform_default_model_ref(
                     org,
                     uuid.UUID(str(config_uuid_created)),
                 )
+            data = org_models.merge_model_display_name(data, link)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def put(self, request, config_uuid):
         org = _platform_org()
         managed_link = _deployment_managed_model_link(org, config_uuid)
-        if managed_link is not None and set(request.data) - {"is_default"}:
+        if managed_link is not None and (
+            managed_link.is_deployment_history
+            or set(request.data) - {"is_default"}
+        ):
             return _deployment_managed_model_error()
         body = dict(request.data)
         display_name = body.pop("name", None)
-        data = sl_client.request_json(
-            "PUT",
-            f"/api/v1/admin/llm-config/{config_uuid}/",
-            json_body=body,
-        )
+        make_agent_default = body.pop("is_default", None) is True
+        if body:
+            data = sl_client.request_json(
+                "PUT",
+                f"/api/v1/admin/llm-config/{config_uuid}/",
+                json_body=body,
+            )
+        else:
+            data = sl_client.request_json(
+                "GET",
+                f"/api/v1/admin/llm-config/{config_uuid}/",
+            )
         link = (
             org_models.org_model_links(org)
             .filter(sl_config_uuid=config_uuid)
@@ -560,7 +621,16 @@ class PlatformOpsLensModelProxyView(APIView):
         if link is not None:
             org_models.set_model_display_name(link, display_name)
             link.refresh_from_db(fields=["display_name"])
-        if body.get("is_default") is True:
+        if make_agent_default:
+            if link is None:
+                raise ValidationError(
+                    {
+                        "is_default": (
+                            "Only a model linked to the platform organization "
+                            "can become the platform Agent default."
+                        )
+                    }
+                )
             _set_platform_default_model_ref(org, config_uuid)
         return Response(org_models.merge_model_display_name(data, link))
 
@@ -579,6 +649,12 @@ class PlatformOpsLensModelProxyView(APIView):
         platform_defaults = provisioning.get_or_create_org_link(org)
         if platform_defaults.default_agent_model_ref == config_uuid:
             _set_platform_default_model_ref(org, None)
+        if platform_defaults.default_multimodal_model_ref == config_uuid:
+            _set_platform_default_model_ref(
+                org,
+                None,
+                role="multimodal",
+            )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

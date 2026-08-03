@@ -15,6 +15,7 @@ class LensOrgLink(OrganizationScopedModel):
 
     default_lensnode_uuid = models.UUIDField(null=True, blank=True)
     default_agent_model_ref = models.UUIDField(null=True, blank=True)
+    default_multimodal_model_ref = models.UUIDField(null=True, blank=True)
     assistant_name_prefix = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
@@ -35,11 +36,24 @@ class LensOrgLink(OrganizationScopedModel):
 class LensOrgModelLink(OrganizationScopedModel):
     """Maps an organization to a SourceLens LLMConfig uuid it owns."""
 
+    class DeploymentRole(models.TextChoices):
+        AGENT = "agent", "Agent"
+        MULTIMODAL = "multimodal", "Multimodal"
+
     sl_config_uuid = models.UUIDField(db_index=True)
     display_name = models.CharField(max_length=160, blank=True, default="")
     management_key = models.CharField(
         max_length=64, blank=True, default="", db_index=True
     )
+    deployment_role = models.CharField(
+        max_length=16,
+        choices=DeploymentRole.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    is_deployment_history = models.BooleanField(default=False, db_index=True)
+    deployment_fingerprint = models.CharField(max_length=64, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -300,6 +314,7 @@ class LensKnowledgeSource(OrganizationScopedModel):
     )
     pinned_snapshot_id = models.BigIntegerField(null=True, blank=True)
     sl_assistant_uuid = models.UUIDField(null=True, blank=True, db_index=True)
+    sl_datasource_uuid = models.UUIDField(null=True, blank=True, db_index=True)
     sl_lensnode_uuid = models.UUIDField(null=True, blank=True, db_index=True)
     status = models.CharField(
         max_length=20,
@@ -319,6 +334,9 @@ class LensKnowledgeSource(OrganizationScopedModel):
         db_index=True,
     )
     teardown_state_json = models.JSONField(default=dict, blank=True)
+    sync_claim_token = models.UUIDField(null=True, blank=True, unique=True)
+    sync_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    sync_next_poll_at = models.DateTimeField(null=True, blank=True, db_index=True)
     teardown_attempts = models.PositiveIntegerField(default=0)
     teardown_claim_token = models.UUIDField(null=True, blank=True, unique=True)
     teardown_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -616,6 +634,7 @@ class LensSessionLink(OrganizationScopedModel):
     class ProvisionPhase(models.TextChoices):
         QUEUED = "queued", "Queued"
         RESTORING = "restoring", "Restoring backup data"
+        CONVERTING = "converting", "Extracting document content"
         CREATING_KNOWLEDGE_SOURCE = "creating_knowledge_source", "Creating knowledge source"
         CREATING_ASSISTANT = "creating_assistant", "Creating assistant"
         GRANTING_ASSISTANT = "granting_assistant", "Granting assistant"
@@ -655,6 +674,7 @@ class LensSessionLink(OrganizationScopedModel):
     sl_session_uuid = models.UUIDField(null=True, blank=True, unique=True, db_index=True)
     sl_assistant_uuid = models.UUIDField(null=True, blank=True, db_index=True)
     agent_model_ref = models.UUIDField(null=True, blank=True, db_index=True)
+    multimodal_model_ref = models.UUIDField(null=True, blank=True, db_index=True)
     title = models.CharField(max_length=160, blank=True, default="")
     last_message_at = models.DateTimeField(null=True, blank=True)
     last_assistant_message_at = models.DateTimeField(null=True, blank=True)

@@ -168,10 +168,26 @@ def _run_sync_in_thread(
     from apps.lens_bridge.services.knowledge_source_sync import run_knowledge_source_sync
 
     try:
-        run_knowledge_source_sync(
+        result = run_knowledge_source_sync(
             organization_id=organization_id,
             knowledge_source_id=knowledge_source_id,
         )
+        if result.get("status") == "waiting":
+            from apps.lens_bridge.services.managed_datasource import (
+                CONVERSION_RETRY_SECONDS,
+            )
+
+            timer = threading.Timer(
+                CONVERSION_RETRY_SECONDS,
+                queue_knowledge_source_sync,
+                kwargs={
+                    "organization_id": organization_id,
+                    "knowledge_source_id": knowledge_source_id,
+                    "mode": "resume",
+                },
+            )
+            timer.daemon = True
+            timer.start()
     except Exception:
         logger.exception(
             "Knowledge source sync thread failed ks_id=%s org_id=%s mode=%s",

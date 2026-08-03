@@ -63,7 +63,7 @@ class DeploymentAiModelServiceTests(TestCase):
         self.assertEqual(result.action, "created")
         self.assertTrue(result.connectivity_ok)
         create_payload = request_json.call_args_list[0].kwargs["json_body"]
-        self.assertTrue(create_payload["is_default"])
+        self.assertFalse(create_payload["is_default"])
         self.assertEqual(create_payload["config"]["api_key"], "deployment-secret")
         request_json.assert_any_call(
             "POST",
@@ -81,8 +81,162 @@ class DeploymentAiModelServiceTests(TestCase):
         self.assertEqual(link.sl_config_uuid, self.model_uuid)
         self.assertEqual(link.display_name, "DeepSeek V4 Flash")
         self.assertEqual(
+            link.deployment_role,
+            LensOrgModelLink.DeploymentRole.AGENT,
+        )
+        self.assertFalse(link.is_deployment_history)
+        self.assertEqual(
             LensOrgLink.objects.get(organization=link.organization).default_agent_model_ref,
             self.model_uuid,
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_multimodal_adoption_uses_separate_default_role(self, request_json):
+        request_json.side_effect = [
+            {"uuid": str(self.model_uuid)},
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            self.config,
+            role="multimodal",
+        )
+
+        self.assertEqual(result.action, "created")
+        create_payload = request_json.call_args_list[0].kwargs["json_body"]
+        self.assertFalse(create_payload["is_default"])
+        link = LensOrgModelLink.objects.get(
+            management_key=deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+        )
+        self.assertEqual(
+            link.deployment_role,
+            LensOrgModelLink.DeploymentRole.MULTIMODAL,
+        )
+        defaults = LensOrgLink.objects.get(organization=link.organization)
+        self.assertIsNone(defaults.default_agent_model_ref)
+        self.assertEqual(
+            defaults.default_multimodal_model_ref,
+            self.model_uuid,
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_multimodal_failure_preserves_installed_default(self, request_json):
+        org = platform_lens.get_or_create_platform_org()
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=(
+                deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+            ),
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+            deployment_fingerprint="previous-fingerprint",
+        )
+        defaults = LensOrgLink.objects.create(
+            organization=org,
+            default_multimodal_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": self.config.provider,
+                "config": {
+                    "model": self.config.model_id,
+                    "api_base": self.config.api_base,
+                },
+            },
+            {"uuid": str(self.replacement_uuid)},
+            {"ok": False},
+            None,
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            self.config,
+            role="multimodal",
+        )
+
+        self.assertFalse(result.connectivity_ok)
+        self.assertFalse(result.applied)
+        link.refresh_from_db()
+        defaults.refresh_from_db()
+        self.assertEqual(link.sl_config_uuid, self.model_uuid)
+        self.assertEqual(defaults.default_multimodal_model_ref, self.model_uuid)
+        request_json.assert_any_call(
+            "DELETE",
+            f"/api/v1/admin/llm-config/{self.replacement_uuid}/",
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_valid_unchanged_multimodal_repairs_missing_default(self, request_json):
+        org = platform_lens.get_or_create_platform_org()
+        LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=(
+                deployment_ai_model.DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+            ),
+            deployment_role=LensOrgModelLink.DeploymentRole.MULTIMODAL,
+            deployment_fingerprint=(
+                deployment_ai_model._deployment_fingerprint(self.config)
+            ),
+        )
+        defaults = LensOrgLink.objects.create(organization=org)
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": self.config.provider,
+                "config": {
+                    "model": self.config.model_id,
+                    "api_base": self.config.api_base,
+                },
+            },
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(
+            self.config,
+            role="multimodal",
+        )
+
+        self.assertTrue(result.connectivity_ok)
+        defaults.refresh_from_db()
+        self.assertEqual(defaults.default_multimodal_model_ref, self.model_uuid)
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_failed_recheck_rebuilds_from_deployment_configuration(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            deployment_role=LensOrgModelLink.DeploymentRole.AGENT,
+            deployment_fingerprint=(
+                deployment_ai_model._deployment_fingerprint(self.config)
+            ),
+        )
+        defaults = LensOrgLink.objects.create(
+            organization=org,
+            default_agent_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {"uuid": str(self.model_uuid), "is_active": True},
+            {"ok": False},
+            {"uuid": str(self.replacement_uuid)},
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(self.config)
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.action, "recreated")
+        link.refresh_from_db()
+        defaults.refresh_from_db()
+        self.assertTrue(link.is_deployment_history)
+        self.assertEqual(
+            defaults.default_agent_model_ref,
+            self.replacement_uuid,
         )
 
     @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
@@ -94,22 +248,170 @@ class DeploymentAiModelServiceTests(TestCase):
             management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
         )
         other_uuid = uuid.UUID("559d6d6e-78a6-4bbf-869c-e9005033d342")
+        LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=other_uuid,
+        )
         LensOrgLink.objects.create(
             organization=org,
             default_agent_model_ref=other_uuid,
         )
         request_json.side_effect = [
-            {"uuid": str(self.model_uuid), "is_default": False},
+            {
+                "uuid": str(self.model_uuid),
+                "provider": self.config.provider,
+                "config": {
+                    "model": self.config.model_id,
+                    "api_base": self.config.api_base,
+                },
+                "is_default": False,
+            },
             {"uuid": str(other_uuid), "is_active": True, "is_default": True},
-            {"uuid": str(self.model_uuid), "is_default": False},
+            {"uuid": str(self.replacement_uuid), "is_default": False},
             {"success": True},
         ]
 
         result = deployment_ai_model.ensure_platform_ai_model(self.config)
 
-        self.assertEqual(result.action, "updated")
-        update_payload = request_json.call_args_list[2].kwargs["json_body"]
-        self.assertNotIn("is_default", update_payload)
+        self.assertEqual(result.action, "recreated")
+        create_payload = request_json.call_args_list[2].kwargs["json_body"]
+        self.assertFalse(create_payload["is_default"])
+        defaults = LensOrgLink.objects.get(organization=org)
+        self.assertEqual(defaults.default_agent_model_ref, other_uuid)
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_model_identity_change_versions_config_for_existing_chats(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+        )
+        defaults = LensOrgLink.objects.create(
+            organization=org,
+            default_agent_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {
+                "uuid": str(self.model_uuid),
+                "provider": self.config.provider,
+                "config": {
+                    "model": "previous/model",
+                    "api_base": self.config.api_base,
+                },
+            },
+            {"uuid": str(self.replacement_uuid)},
+            {"ok": True},
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(self.config)
+
+        self.assertEqual(result.action, "recreated")
+        self.assertEqual(
+            request_json.call_args_list[1].args,
+            ("POST", "/api/v1/admin/llm-config/"),
+        )
+        defaults.refresh_from_db()
+        link.refresh_from_db()
+        self.assertEqual(link.sl_config_uuid, self.model_uuid)
+        self.assertTrue(link.is_deployment_history)
+        self.assertEqual(
+            link.deployment_role,
+            LensOrgModelLink.DeploymentRole.AGENT,
+        )
+        self.assertTrue(link.management_key.startswith("deploy-agent-history-"))
+        replacement_link = LensOrgModelLink.objects.get(
+            management_key=(
+                deployment_ai_model.DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY
+            )
+        )
+        self.assertEqual(replacement_link.sl_config_uuid, self.replacement_uuid)
+        self.assertFalse(replacement_link.is_deployment_history)
+        self.assertEqual(
+            defaults.default_agent_model_ref,
+            self.replacement_uuid,
+        )
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_agent_candidate_failure_preserves_working_model_and_default(
+        self,
+        request_json,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            deployment_role=LensOrgModelLink.DeploymentRole.AGENT,
+            deployment_fingerprint="previous-fingerprint",
+        )
+        defaults = LensOrgLink.objects.create(
+            organization=org,
+            default_agent_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {"uuid": str(self.model_uuid), "is_active": True},
+            {"uuid": str(self.replacement_uuid)},
+            {"ok": False},
+            None,
+        ]
+
+        result = deployment_ai_model.ensure_platform_ai_model(self.config)
+
+        self.assertFalse(result.applied)
+        link.refresh_from_db()
+        defaults.refresh_from_db()
+        self.assertEqual(link.sl_config_uuid, self.model_uuid)
+        self.assertFalse(link.is_deployment_history)
+        self.assertEqual(defaults.default_agent_model_ref, self.model_uuid)
+
+    @patch(
+        "apps.lens_bridge.services.deployment_ai_model._set_role_default",
+        side_effect=DatabaseError("default pointer unavailable"),
+    )
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_link_and_default_roll_back_together_when_promotion_fails(
+        self,
+        request_json,
+        _set_default,
+    ):
+        org = platform_lens.get_or_create_platform_org()
+        link = LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=self.model_uuid,
+            management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            deployment_role=LensOrgModelLink.DeploymentRole.AGENT,
+            deployment_fingerprint="previous-fingerprint",
+        )
+        LensOrgLink.objects.create(
+            organization=org,
+            default_agent_model_ref=self.model_uuid,
+        )
+        request_json.side_effect = [
+            {"uuid": str(self.model_uuid), "is_active": True},
+            {"uuid": str(self.replacement_uuid)},
+            {"ok": True},
+            None,
+        ]
+
+        with self.assertRaises(DatabaseError):
+            deployment_ai_model.ensure_platform_ai_model(self.config)
+
+        link.refresh_from_db()
+        self.assertEqual(link.sl_config_uuid, self.model_uuid)
+        self.assertFalse(link.is_deployment_history)
+        self.assertFalse(
+            LensOrgModelLink.objects.filter(
+                sl_config_uuid=self.replacement_uuid
+            ).exists()
+        )
+        request_json.assert_any_call(
+            "DELETE",
+            f"/api/v1/admin/llm-config/{self.replacement_uuid}/",
+        )
 
     @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
     def test_missing_managed_source_lens_record_is_recreated_without_stealing_default(
@@ -123,6 +425,10 @@ class DeploymentAiModelServiceTests(TestCase):
             management_key=deployment_ai_model.DEPLOYMENT_MODEL_MANAGEMENT_KEY,
         )
         other_uuid = uuid.UUID("3fdd8398-aa17-4817-96b9-6d8698c99dd4")
+        LensOrgModelLink.objects.create(
+            organization=org,
+            sl_config_uuid=other_uuid,
+        )
         LensOrgLink.objects.create(
             organization=org,
             default_agent_model_ref=other_uuid,
@@ -134,16 +440,18 @@ class DeploymentAiModelServiceTests(TestCase):
             {"uuid": str(other_uuid), "is_active": True, "is_default": True},
             {"uuid": str(self.replacement_uuid)},
             {"ok": False},
+            None,
         ]
 
         result = deployment_ai_model.ensure_platform_ai_model(self.config)
 
         self.assertEqual(result.action, "recreated")
         self.assertFalse(result.connectivity_ok)
+        self.assertFalse(result.applied)
         create_payload = request_json.call_args_list[2].kwargs["json_body"]
         self.assertFalse(create_payload["is_default"])
         link.refresh_from_db()
-        self.assertEqual(link.sl_config_uuid, self.replacement_uuid)
+        self.assertEqual(link.sl_config_uuid, self.model_uuid)
 
     @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
     def test_missing_managed_default_is_recreated_and_selected(self, request_json):
@@ -169,25 +477,34 @@ class DeploymentAiModelServiceTests(TestCase):
 
         self.assertEqual(result.action, "recreated")
         create_payload = request_json.call_args_list[1].kwargs["json_body"]
-        self.assertTrue(create_payload["is_default"])
+        self.assertFalse(create_payload["is_default"])
         defaults.refresh_from_db()
         self.assertEqual(defaults.default_agent_model_ref, self.replacement_uuid)
         link.refresh_from_db()
         self.assertEqual(link.sl_config_uuid, self.replacement_uuid)
 
     @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
-    def test_connectivity_failure_does_not_undo_created_model(self, request_json):
+    def test_agent_connectivity_failure_removes_candidate_and_keeps_no_default(
+        self,
+        request_json,
+    ):
         connection_error = sl_client.LensBridgeError("provider failure")
         request_json.side_effect = [
             {"uuid": str(self.model_uuid)},
             connection_error,
+            None,
         ]
 
         result = deployment_ai_model.ensure_platform_ai_model(self.config)
 
         self.assertFalse(result.connectivity_ok)
-        self.assertTrue(
+        self.assertFalse(result.applied)
+        self.assertFalse(
             LensOrgModelLink.objects.filter(sl_config_uuid=self.model_uuid).exists()
+        )
+        request_json.assert_any_call(
+            "DELETE",
+            f"/api/v1/admin/llm-config/{self.model_uuid}/",
         )
 
     @patch(
@@ -202,6 +519,7 @@ class DeploymentAiModelServiceTests(TestCase):
     ):
         request_json.side_effect = [
             {"uuid": str(self.model_uuid)},
+            {"ok": True},
             None,
         ]
 

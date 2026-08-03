@@ -990,6 +990,9 @@ jobs:
       ai_model_provider: ${{ vars.TEST_AI_MODEL_PROVIDER }}
       ai_model_id: ${{ vars.TEST_AI_MODEL_ID }}
       ai_model_display_name: ${{ vars.TEST_AI_MODEL_DISPLAY_NAME }}
+      ai_multimodal_model_provider: ${{ vars.TEST_AI_MULTIMODAL_MODEL_PROVIDER }}
+      ai_multimodal_model_id: ${{ vars.TEST_AI_MULTIMODAL_MODEL_ID }}
+      ai_multimodal_model_display_name: ${{ vars.TEST_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
     secrets:
       ssh_private_key: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.TEST_TURNSTILE_SECRET_KEY }}
@@ -1042,6 +1045,9 @@ jobs:
       ai_model_provider: ${{ vars.PREPROD_AI_MODEL_PROVIDER }}
       ai_model_id: ${{ vars.PREPROD_AI_MODEL_ID }}
       ai_model_display_name: ${{ vars.PREPROD_AI_MODEL_DISPLAY_NAME }}
+      ai_multimodal_model_provider: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_PROVIDER }}
+      ai_multimodal_model_id: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_ID }}
+      ai_multimodal_model_display_name: ${{ vars.PREPROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
     secrets:
       ssh_private_key: ${{ secrets.PREPROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PREPROD_TURNSTILE_SECRET_KEY }}

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 import re
 import uuid
@@ -9,12 +12,20 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
+from django.conf import settings
 from django.db import DatabaseError, transaction
 
-from apps.lens_bridge.models import LensOrgModelLink
+from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink
 from apps.lens_bridge.services import platform_lens, provisioning, sl_client
 
-DEPLOYMENT_MODEL_MANAGEMENT_KEY = "deployment-default"
+AiModelRole = Literal["agent", "multimodal"]
+
+DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY = "deployment-agent"
+DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY = "deployment-multimodal"
+LEGACY_DEPLOYMENT_MODEL_MANAGEMENT_KEY = "deployment-default"
+# Backwards-compatible import for tests and upgrade tooling that still names
+# the original single deployment-managed model.
+DEPLOYMENT_MODEL_MANAGEMENT_KEY = DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY
 logger = logging.getLogger(__name__)
 
 
@@ -101,6 +112,28 @@ class DeploymentAiModelResult:
 
     action: Literal["created", "updated", "recreated"]
     connectivity_ok: bool
+    applied: bool = True
+
+
+def _deployment_fingerprint(config: DeploymentAiModelConfig) -> str:
+    """Return a keyed fingerprint without persisting deployment secrets."""
+
+    raw = json.dumps(
+        {
+            "provider": config.provider,
+            "model_id": config.model_id,
+            "display_name": config.display_name,
+            "api_base": config.api_base,
+            "api_key": config.api_key,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hmac.new(
+        str(settings.SECRET_KEY).encode("utf-8"),
+        raw,
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def _source_lens_payload(
@@ -164,27 +197,67 @@ def _persist_link(
     link: LensOrgModelLink | None,
     config_uuid: uuid.UUID,
     display_name: str,
+    management_key: str,
+    role: AiModelRole,
+    preserve_existing: bool,
+    deployment_fingerprint: str,
 ) -> LensOrgModelLink:
+    """Persist the current link while retaining live historical identities."""
+
     org = platform_lens.get_or_create_platform_org()
     if link is None:
         return LensOrgModelLink.all_objects.create(
             organization=org,
             sl_config_uuid=config_uuid,
             display_name=display_name,
-            management_key=DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            management_key=management_key,
+            deployment_role=role,
+            deployment_fingerprint=deployment_fingerprint,
+        )
+
+    link = LensOrgModelLink.all_objects.select_for_update().get(pk=link.pk)
+    if preserve_existing and link.sl_config_uuid != config_uuid:
+        link.management_key = (
+            f"deploy-{role}-history-{link.sl_config_uuid.hex}"
+        )
+        link.deployment_role = role
+        link.is_deployment_history = True
+        link.deployment_fingerprint = ""
+        link.save(
+            update_fields=[
+                "management_key",
+                "deployment_role",
+                "is_deployment_history",
+                "deployment_fingerprint",
+                "updated_at",
+            ]
+        )
+        return LensOrgModelLink.all_objects.create(
+            organization=org,
+            sl_config_uuid=config_uuid,
+            display_name=display_name,
+            management_key=management_key,
+            deployment_role=role,
+            deployment_fingerprint=deployment_fingerprint,
         )
 
     link.sl_config_uuid = config_uuid
     link.display_name = display_name
-    link.management_key = DEPLOYMENT_MODEL_MANAGEMENT_KEY
+    link.management_key = management_key
+    link.deployment_role = role
+    link.is_deployment_history = False
     link.is_deleted = False
+    link.deployment_fingerprint = deployment_fingerprint
     link.deleted_at = None
     link.save(
         update_fields=[
             "sl_config_uuid",
             "display_name",
             "management_key",
+            "deployment_role",
+            "is_deployment_history",
             "is_deleted",
+            "deployment_fingerprint",
             "deleted_at",
             "updated_at",
         ]
@@ -211,69 +284,160 @@ def _test_connection(config_uuid: uuid.UUID) -> bool:
             return bool(response["ok"])
         if "success" in response:
             return bool(response["success"])
-    return True
+    return False
+
+
+def _management_keys_for_role(role: AiModelRole) -> tuple[str, ...]:
+    """Return current and adoptable deployment keys for one model role."""
+
+    if role == "agent":
+        return (
+            DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY,
+            LEGACY_DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+        )
+    return (DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY,)
+
+
+def _management_key_for_role(role: AiModelRole) -> str:
+    """Return the canonical deployment management key for one role."""
+
+    if role == "agent":
+        return DEPLOYMENT_AGENT_MODEL_MANAGEMENT_KEY
+    return DEPLOYMENT_MULTIMODAL_MODEL_MANAGEMENT_KEY
+
+
+def _set_role_default(
+    *,
+    defaults_id: int,
+    role: AiModelRole,
+    config_uuid: uuid.UUID,
+) -> None:
+    """Set one HFL role default while holding its organization row lock."""
+
+    defaults = LensOrgLink.objects.select_for_update().get(pk=defaults_id)
+    field_name = (
+        "default_agent_model_ref"
+        if role == "agent"
+        else "default_multimodal_model_ref"
+    )
+    if getattr(defaults, field_name) == config_uuid:
+        return
+    setattr(defaults, field_name, config_uuid)
+    defaults.save(update_fields=[field_name, "updated_at"])
 
 
 def ensure_platform_ai_model(
     config: DeploymentAiModelConfig,
+    *,
+    role: AiModelRole = "agent",
 ) -> DeploymentAiModelResult:
     """Create, update, or repair the deployment-owned SourceLens model.
 
-    The first adoption intentionally makes this model the global default. Once
-    linked, updates preserve an administrator's later default selection.
+    Candidates are tested before HFL promotes a role pointer. SourceLens's
+    process-wide default is never changed, and an administrator's later HFL
+    role selection is preserved across deployment-managed updates.
     """
 
     org = platform_lens.get_or_create_platform_org()
     platform_defaults = provisioning.get_or_create_org_link(org)
+    management_key = _management_key_for_role(role)
     link = (
         LensOrgModelLink.all_objects.filter(
             organization=org,
-            management_key=DEPLOYMENT_MODEL_MANAGEMENT_KEY,
+            management_key__in=_management_keys_for_role(role),
         )
         .order_by("id")
         .first()
     )
     current = _source_lens_model(link.sl_config_uuid) if link is not None else None
-    selected_ref = (
-        str(platform_defaults.default_agent_model_ref)
-        if platform_defaults.default_agent_model_ref
-        else ""
+    selected_model_ref = (
+        platform_defaults.default_agent_model_ref
+        if role == "agent"
+        else platform_defaults.default_multimodal_model_ref
     )
+    selected_ref = str(selected_model_ref) if selected_model_ref else ""
     managed_ref = str(link.sl_config_uuid) if link is not None else ""
     first_adoption = link is None
+    deployment_fingerprint = _deployment_fingerprint(config)
     should_select_managed = first_adoption or not selected_ref or selected_ref == managed_ref
-    if not should_select_managed and not _source_lens_model_is_active(selected_ref):
-        should_select_managed = True
+    if not should_select_managed:
+        selected_owned = LensOrgModelLink.objects.filter(
+            organization=org,
+            sl_config_uuid=selected_model_ref,
+            is_deleted=False,
+            is_deployment_history=False,
+        ).exists()
+        if not selected_owned or not _source_lens_model_is_active(selected_ref):
+            should_select_managed = True
 
-    if current is not None and link is not None:
-        sl_client.request_json(
-            "PUT",
-            f"/api/v1/admin/llm-config/{link.sl_config_uuid}/",
-            json_body=_source_lens_payload(
-                config,
-                make_default=True if should_select_managed else None,
-            ),
+    if (
+        current is not None
+        and link is not None
+        and link.deployment_fingerprint == deployment_fingerprint
+    ):
+        connectivity_ok = _test_connection(link.sl_config_uuid)
+        if connectivity_ok:
+            if should_select_managed:
+                with transaction.atomic():
+                    _set_role_default(
+                        defaults_id=platform_defaults.id,
+                        role=role,
+                        config_uuid=link.sl_config_uuid,
+                    )
+            return DeploymentAiModelResult(
+                action="updated",
+                connectivity_ok=True,
+            )
+        logger.warning(
+            "Deployment-managed %s model failed its recheck; "
+            "validating a replacement candidate.",
+            role,
         )
-        config_uuid = link.sl_config_uuid
-        action: Literal["created", "updated", "recreated"] = "updated"
-    else:
-        created = sl_client.request_json(
-            "POST",
-            "/api/v1/admin/llm-config/",
-            json_body=_source_lens_payload(
-                config,
-                make_default=should_select_managed,
-            ),
+
+    created = sl_client.request_json(
+        "POST",
+        "/api/v1/admin/llm-config/",
+        json_body=_source_lens_payload(config, make_default=False),
+    )
+    config_uuid = _created_uuid(created)
+    action: Literal["created", "updated", "recreated"] = (
+        "created" if first_adoption else "recreated"
+    )
+
+    connectivity_ok = _test_connection(config_uuid)
+    if not connectivity_ok:
+        try:
+            sl_client.request_json(
+                "DELETE",
+                f"/api/v1/admin/llm-config/{config_uuid}/",
+            )
+        except sl_client.LensBridgeError:
+            logger.warning(
+                "Unable to remove rejected deployment-managed AI model."
+            )
+        return DeploymentAiModelResult(
+            action=action,
+            connectivity_ok=False,
+            applied=False,
         )
-        config_uuid = _created_uuid(created)
-        action = "created" if first_adoption else "recreated"
 
     try:
-        _persist_link(
-            link=link,
-            config_uuid=config_uuid,
-            display_name=config.display_name,
-        )
+        with transaction.atomic():
+            _persist_link(
+                link=link,
+                config_uuid=config_uuid,
+                display_name=config.display_name,
+                management_key=management_key,
+                role=role,
+                preserve_existing=(current is not None),
+                deployment_fingerprint=deployment_fingerprint,
+            )
+            if should_select_managed:
+                _set_role_default(
+                    defaults_id=platform_defaults.id,
+                    role=role,
+                    config_uuid=config_uuid,
+                )
     except DatabaseError:
         if action in {"created", "recreated"}:
             try:
@@ -286,12 +450,7 @@ def ensure_platform_ai_model(
                     "Unable to remove orphaned deployment-managed SourceLens model."
                 )
         raise
-    if should_select_managed and platform_defaults.default_agent_model_ref != config_uuid:
-        platform_defaults.default_agent_model_ref = config_uuid
-        platform_defaults.save(
-            update_fields=["default_agent_model_ref", "updated_at"]
-        )
     return DeploymentAiModelResult(
         action=action,
-        connectivity_ok=_test_connection(config_uuid),
+        connectivity_ok=connectivity_ok,
     )

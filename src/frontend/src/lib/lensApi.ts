@@ -71,12 +71,18 @@ export type LensLlmConfig = {
   is_active?: boolean
   is_default?: boolean
   deployment_managed?: boolean
+  deployment_role?: '' | 'agent' | 'multimodal'
+  is_deployment_history?: boolean
+  is_default_agent?: boolean
+  is_default_multimodal?: boolean
   order?: number
   scope?: string
 }
 
 export type LensCopilotReadiness = {
   active_models: LensLlmConfig[]
+  default_agent_model_ref: string | null
+  default_multimodal_model_ref: string | null
 }
 
 export type LensCopilotUsageSummary = {
@@ -197,6 +203,7 @@ export type LensKnowledgeSource = {
   linked_version_mode: 'latest' | 'pinned'
   pinned_snapshot_id: number | null
   sl_assistant_uuid: string | null
+  sl_datasource_uuid: string | null
   sl_lensnode_uuid: string | null
   status: 'syncing' | 'ready' | 'degraded' | 'error' | 'paused' | string
   status_detail: string
@@ -291,6 +298,7 @@ export type LensSessionLink = {
   assistant_name?: string | null
   selected_task?: string | null
   agent_model_ref: string | null
+  multimodal_model_ref?: string | null
   backup_config_id: number | null
   backup_source_name: string | null
   backup_source_snapshot_id: number | null
@@ -389,6 +397,7 @@ export async function fetchCopilotReadiness(): Promise<LensCopilotReadiness> {
 
 export type LensOrgSettings = {
   default_agent_model_ref: string | null
+  default_multimodal_model_ref: string | null
 }
 
 export async function fetchLensOrgSettings(): Promise<LensOrgSettings> {
@@ -401,6 +410,15 @@ export async function setLensDefaultAgentModel(modelRef: string | null): Promise
     method: 'PATCH',
     headers: lensHeaders(),
     body: JSON.stringify({ default_agent_model_ref: modelRef }),
+  })
+  return lensPayload<LensOrgSettings>(raw)
+}
+
+export async function setLensDefaultMultimodalModel(modelRef: string | null): Promise<LensOrgSettings> {
+  const raw = await api(lensUrl('settings/'), {
+    method: 'PATCH',
+    headers: lensHeaders(),
+    body: JSON.stringify({ default_multimodal_model_ref: modelRef }),
   })
   return lensPayload<LensOrgSettings>(raw)
 }
@@ -482,6 +500,18 @@ export type KnowledgeSourceScope = {
   backup_snapshot_directory_id: number
 }
 
+function knowledgeSourceRequestBody<
+  T extends { ingest_policy?: LensIngestPolicy },
+>(body: T): T {
+  if (!body.ingest_policy) return body
+  const {
+    document_model_ref: _documentModelRef,
+    vision_model_ref: _visionModelRef,
+    ...tenantPolicy
+  } = body.ingest_policy
+  return { ...body, ingest_policy: tenantPolicy } as T
+}
+
 export async function createKnowledgeSource(body: {
   name: string
   gateway: number
@@ -497,7 +527,7 @@ export async function createKnowledgeSource(body: {
   const raw = await api(lensUrl('knowledge-sources/'), {
     method: 'POST',
     headers: lensHeaders(),
-    body: JSON.stringify(body),
+    body: JSON.stringify(knowledgeSourceRequestBody(body)),
   })
   return lensPayload<LensKnowledgeSource>(raw)
 }
@@ -520,7 +550,7 @@ export async function patchKnowledgeSource(
   const raw = await api(lensUrl(`knowledge-sources/${id}/`), {
     method: 'PATCH',
     headers: lensHeaders(),
-    body: JSON.stringify(body),
+    body: JSON.stringify(knowledgeSourceRequestBody(body)),
   })
   return lensPayload<LensKnowledgeSource>(raw)
 }

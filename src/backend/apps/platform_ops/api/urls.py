@@ -41,6 +41,7 @@ from apps.platform_ops.api.views.lens import (
     PlatformOpsLensKnowledgeSourceView,
     PlatformOpsLensMcpServerView,
     PlatformOpsLensModelProxyView,
+    PlatformOpsLensSettingsView,
     PlatformOpsLensSkillView,
     PlatformOpsLensUsageView,
 )
@@ -361,6 +362,7 @@ urlpatterns = [
         name="platform-ops-lens-knowledge-sources-sync",
     ),
     path("lens/models", PlatformOpsLensModelProxyView.as_view(), name="platform-ops-lens-models-list"),
+    path("lens/settings", PlatformOpsLensSettingsView.as_view(), name="platform-ops-lens-settings"),
     path(
         "lens/models/providers",
         PlatformOpsLensModelProxyView.as_view(),

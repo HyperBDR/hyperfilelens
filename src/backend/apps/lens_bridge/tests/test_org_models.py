@@ -6,8 +6,8 @@ from apps.lens_bridge.services import org_models
 
 
 class ActiveLlmConfigsTests(SimpleTestCase):
-    @patch("apps.lens_bridge.services.org_models.list_all_llm_configs")
-    def test_returns_platform_models_that_are_active(self, list_configs):
+    @patch("apps.lens_bridge.services.org_models.list_org_model_configs")
+    def test_returns_organization_models_that_are_active(self, list_configs):
         list_configs.return_value = [
             {"uuid": "first", "is_active": True},
             {"uuid": "inactive", "is_active": False},

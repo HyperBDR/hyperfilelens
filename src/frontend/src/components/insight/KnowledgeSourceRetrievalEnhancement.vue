@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { listLensModels, type LensIngestPolicy, type LensLlmConfig } from '../../lib/lensApi'
+import type { LensIngestPolicy } from '../../lib/lensApi'
 import { DEFAULT_LENS_INGEST_POLICY, normalizeLensIngestPolicy } from '../../lib/knowledgeSourceIngestPolicy'
 import HflHelpTip from '../HflHelpTip.vue'
 
@@ -22,8 +22,6 @@ const model = defineModel<LensIngestPolicy>({ required: true })
 
 const { t } = useI18n()
 const pdfAdvancedOpen = ref(false)
-const modelOptions = ref<LensLlmConfig[]>([])
-const modelsLoading = ref(false)
 
 const policy = computed({
   get: () => normalizeLensIngestPolicy(model.value),
@@ -59,21 +57,6 @@ function setPdfAdvancedOpen(open: boolean) {
   pdfAdvancedOpen.value = open
 }
 
-function modelLabel(row: LensLlmConfig) {
-  const provider = row.provider || 'model'
-  const name = row.config?.model || row.name || row.uuid
-  return `${provider} · ${name}`
-}
-
-async function loadModels() {
-  modelsLoading.value = true
-  try {
-    modelOptions.value = (await listLensModels()).filter((row) => row.is_active !== false)
-  } finally {
-    modelsLoading.value = false
-  }
-}
-
 watch(
   () => policy.value.document,
   (enabled) => {
@@ -97,7 +80,6 @@ onMounted(() => {
   if (hasPdfAdvancedCustomization(model.value)) {
     pdfAdvancedOpen.value = true
   }
-  void loadModels()
 })
 </script>
 
@@ -131,34 +113,6 @@ onMounted(() => {
       </div>
 
       <div v-if="policy.document" class="ks-retrieval-nest">
-        <div class="fullscreen-form-field">
-          <label class="fullscreen-form-field__label">
-            {{ t('insight.kb.retrieval.documentModel') }}
-            <HflHelpTip
-              :content="t('insight.kb.retrieval.documentModelTooltip')"
-              :aria-label="t('insight.kb.retrieval.documentModel')"
-            />
-          </label>
-          <ElSelect
-            :model-value="policy.document_model_ref || ''"
-            clearable
-            filterable
-            fit-input-width
-            style="width: 100%"
-            :loading="modelsLoading"
-            :placeholder="t('insight.kb.retrieval.noModel')"
-            @update:model-value="(value) => patchPolicy({ document_model_ref: value ? String(value) : null })"
-          >
-            <ElOption
-              v-for="row in modelOptions"
-              :key="row.uuid"
-              :label="modelLabel(row)"
-              :value="row.uuid"
-            />
-          </ElSelect>
-          <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.documentModelHint') }}</p>
-        </div>
-
         <div class="fullscreen-form-field">
           <div
             class="fullscreen-form-checkline"
@@ -233,6 +187,7 @@ onMounted(() => {
                 <ElInputNumber
                   :model-value="policy.pdf_max_pages"
                   :min="1"
+                  :max="200"
                   controls-position="right"
                   style="width: 100%"
                   @update:model-value="(value) => patchPolicy({ pdf_max_pages: Number(value) || 1 })"
@@ -246,6 +201,7 @@ onMounted(() => {
                 <ElInputNumber
                   :model-value="policy.pdf_max_images_per_page"
                   :min="1"
+                  :max="10"
                   controls-position="right"
                   style="width: 100%"
                   @update:model-value="(value) => patchPolicy({ pdf_max_images_per_page: Number(value) || 1 })"
@@ -259,6 +215,7 @@ onMounted(() => {
                 <ElInputNumber
                   :model-value="policy.pdf_render_dpi"
                   :min="1"
+                  :max="300"
                   controls-position="right"
                   style="width: 100%"
                   @update:model-value="(value) => patchPolicy({ pdf_render_dpi: Number(value) || 1 })"
@@ -272,6 +229,7 @@ onMounted(() => {
                 <ElInputNumber
                   :model-value="policy.pdf_min_text_chars"
                   :min="1"
+                  :max="10000"
                   controls-position="right"
                   style="width: 100%"
                   @update:model-value="(value) => patchPolicy({ pdf_min_text_chars: Number(value) || 1 })"
@@ -318,35 +276,9 @@ onMounted(() => {
         <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.convertImagesHint') }}</p>
       </div>
 
-      <div v-if="policy.image" class="ks-retrieval-nest">
-        <div class="fullscreen-form-field">
-          <label class="fullscreen-form-field__label">
-            {{ t('insight.kb.retrieval.visionModel') }}
-            <HflHelpTip
-              :content="t('insight.kb.retrieval.visionModelTooltip')"
-              :aria-label="t('insight.kb.retrieval.visionModel')"
-            />
-          </label>
-          <ElSelect
-            :model-value="policy.vision_model_ref || ''"
-            clearable
-            filterable
-            fit-input-width
-            style="width: 100%"
-            :loading="modelsLoading"
-            :placeholder="t('insight.kb.retrieval.noModel')"
-            @update:model-value="(value) => patchPolicy({ vision_model_ref: value ? String(value) : null })"
-          >
-            <ElOption
-              v-for="row in modelOptions"
-              :key="row.uuid"
-              :label="modelLabel(row)"
-              :value="row.uuid"
-            />
-          </ElSelect>
-          <p class="fullscreen-form-field__hint">{{ t('insight.kb.retrieval.visionModelHint') }}</p>
-        </div>
-      </div>
+      <p v-if="policy.image" class="fullscreen-form-field__hint">
+        {{ t('insight.kb.retrieval.adminMultimodalModelHint') }}
+      </p>
     </template>
 
     <!-- Global Conversion Limits -->
@@ -367,6 +299,7 @@ onMounted(() => {
           <ElInputNumber
             :model-value="policy.max_file_size_mb"
             :min="1"
+            :max="256"
             controls-position="right"
             style="width: 100%"
             @update:model-value="(value) => patchPolicy({ max_file_size_mb: Number(value) || 1 })"
@@ -380,6 +313,7 @@ onMounted(() => {
           <ElInputNumber
             :model-value="policy.max_images"
             :min="1"
+            :max="500"
             controls-position="right"
             style="width: 100%"
             @update:model-value="(value) => patchPolicy({ max_images: Number(value) || 1 })"

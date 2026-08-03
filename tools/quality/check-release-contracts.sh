@@ -468,6 +468,14 @@ for variable in AI_MODEL_PROVIDER AI_MODEL_ID AI_MODEL_DISPLAY_NAME; do
 	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
 	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
 done
+for variable in \
+	AI_MULTIMODAL_MODEL_PROVIDER \
+	AI_MULTIMODAL_MODEL_ID \
+	AI_MULTIMODAL_MODEL_DISPLAY_NAME; do
+	grep -F "TEST_${variable}" "${workflow}" >/dev/null
+	grep -F "PREPROD_${variable}" "${workflow}" >/dev/null
+	grep -F "PROD_${variable}" "${production_workflow}" >/dev/null
+done
 for secret in AI_MODEL_API_BASE AI_MODEL_API_KEY; do
 	grep -F "secrets.TEST_${secret}" "${workflow}" >/dev/null
 	grep -F "secrets.PREPROD_${secret}" "${workflow}" >/dev/null
@@ -476,6 +484,8 @@ done
 grep -F '/opt/hyperfilelens/install.sh manage ensure_platform_ai_model' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'HFL_AI_MODEL_CONNECTIVITY=failed' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F '"role": "multimodal"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'exit "$command_status"' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null

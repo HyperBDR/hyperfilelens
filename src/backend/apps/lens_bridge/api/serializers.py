@@ -32,6 +32,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
             "linked_version_mode",
             "pinned_snapshot_id",
             "sl_assistant_uuid",
+            "sl_datasource_uuid",
             "sl_lensnode_uuid",
             "status",
             "status_detail",
@@ -51,6 +52,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
             "mount_path_on_gateway",
             "workspace_path_on_lensnode",
             "sl_assistant_uuid",
+            "sl_datasource_uuid",
             "sl_lensnode_uuid",
             "status",
             "status_detail",
@@ -65,8 +67,12 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
         ]
 
     def _normalized_policy(self, obj: LensKnowledgeSource) -> dict:
-        org = getattr(self.context.get("view"), "org", None)
-        return ingest_policy.normalize_ingest_policy(obj.ingest_policy_json, org)
+        cache = self.context.setdefault("knowledge_source_ingest_policies", {})
+        if obj.pk not in cache:
+            cache[obj.pk] = ingest_policy.normalize_ingest_policy(
+                obj.ingest_policy_json
+            )
+        return cache[obj.pk]
 
     def get_ingest_policy(self, obj: LensKnowledgeSource) -> dict:
         return self._normalized_policy(obj)
@@ -89,8 +95,80 @@ class LensKnowledgeSourceScopeSerializer(serializers.Serializer):
     )
 
 
+class LensIngestPolicyInputSerializer(serializers.Serializer):
+    """Validate tenant-controlled conversion flags and resource limits."""
+
+    document = serializers.BooleanField(required=False)
+    embedded_image = serializers.BooleanField(required=False)
+    image = serializers.BooleanField(required=False)
+    document_model_ref = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    vision_model_ref = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    max_images = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS["max_images"],
+    )
+    max_file_size_mb = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS["max_file_size_mb"],
+    )
+    max_pages = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS["max_pages"],
+    )
+    pdf_extract_images = serializers.BooleanField(required=False)
+    pdf_extract_images_on_text_pages = serializers.BooleanField(required=False)
+    pdf_render_scanned_pages = serializers.BooleanField(required=False)
+    pdf_max_pages = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS["pdf_max_pages"],
+    )
+    pdf_max_images_per_page = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS[
+            "pdf_max_images_per_page"
+        ],
+    )
+    pdf_render_dpi = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS["pdf_render_dpi"],
+    )
+    pdf_min_text_chars = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=ingest_policy.INGEST_POLICY_MAXIMUMS["pdf_min_text_chars"],
+    )
+    pdf_min_image_area_ratio = serializers.FloatField(
+        required=False,
+        min_value=0.0001,
+        max_value=1,
+    )
+
+    def validate(self, attrs):
+        for field in ("document_model_ref", "vision_model_ref"):
+            if attrs.get(field):
+                raise serializers.ValidationError(
+                    {field: "Conversion models are selected by the administrator."}
+                )
+            attrs.pop(field, None)
+        return attrs
+
+
 class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
-    ingest_policy = serializers.JSONField(required=False)
+    ingest_policy = LensIngestPolicyInputSerializer(required=False)
     source_scopes = LensKnowledgeSourceScopeSerializer(many=True, required=False)
 
     class Meta:
@@ -213,15 +291,37 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
                     {"backup_snapshot_directory_id": "Select a snapshot directory root."}
                 )
 
-        attrs["ingest_policy_json"] = ingest_policy.normalize_ingest_policy(
-            attrs.pop("ingest_policy", None),
-            org,
-        )
+        raw_ingest_policy = attrs.pop("ingest_policy", None)
+        if (
+            raw_ingest_policy
+            and raw_ingest_policy.get("embedded_image")
+            and not raw_ingest_policy.get("document")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "ingest_policy": {
+                        "embedded_image": (
+                            "Embedded image conversion requires documents."
+                        )
+                    }
+                }
+            )
+        if raw_ingest_policy is None and not is_gateway_local:
+            attrs["ingest_policy_json"] = (
+                ingest_policy.managed_restore_default_policy(org)
+            )
+        else:
+            attrs["ingest_policy_json"] = (
+                ingest_policy.policy_from_user_input(
+                    raw_ingest_policy,
+                    org,
+                )
+            )
         return attrs
 
 
 class LensKnowledgeSourceUpdateSerializer(serializers.ModelSerializer):
-    ingest_policy = serializers.JSONField(required=False)
+    ingest_policy = LensIngestPolicyInputSerializer(required=False)
 
     class Meta:
         model = LensKnowledgeSource
@@ -236,8 +336,33 @@ class LensKnowledgeSourceUpdateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         org = self.context.get("org")
         if org is not None and "ingest_policy" in attrs:
-            attrs["ingest_policy_json"] = ingest_policy.normalize_ingest_policy(
-                attrs.pop("ingest_policy"),
+            if self.instance.status == LensKnowledgeSource.Status.SYNCING:
+                raise serializers.ValidationError(
+                    {
+                        "ingest_policy": (
+                            "Conversion settings cannot change while a sync "
+                            "is in progress."
+                        )
+                    }
+                )
+            current_policy = ingest_policy.normalize_ingest_policy(
+                self.instance.ingest_policy_json
+            )
+            current_policy.update(attrs.pop("ingest_policy"))
+            if current_policy.get("embedded_image") and not current_policy.get(
+                "document"
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "ingest_policy": {
+                            "embedded_image": (
+                                "Embedded image conversion requires documents."
+                            )
+                        }
+                    }
+                )
+            attrs["ingest_policy_json"] = ingest_policy.policy_from_user_input(
+                current_policy,
                 org,
             )
         mode = attrs.get(
@@ -326,6 +451,7 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "assistant_name",
             "selected_task",
             "agent_model_ref",
+            "multimodal_model_ref",
             "backup_config_id",
             "backup_source_name",
             "backup_source_snapshot_id",
@@ -465,6 +591,10 @@ class LensRunCreateSerializer(serializers.Serializer):
 
 class LensOrgSettingsSerializer(serializers.Serializer):
     default_agent_model_ref = serializers.UUIDField(required=False, allow_null=True)
+    default_multimodal_model_ref = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+    )
 
 
 class LensChatBindingEnsureSerializer(serializers.Serializer):

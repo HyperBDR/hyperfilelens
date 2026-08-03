@@ -88,6 +88,15 @@ def _lens_error_response(exc: sl_client.LensBridgeError) -> Response:
     )
 
 
+def _tenant_model_payload(data) -> tuple[dict, str | None]:
+    """Remove SourceLens-global fields from a tenant model mutation."""
+
+    body = dict(data)
+    display_name = body.pop("name", None)
+    body.pop("is_default", None)
+    return body, display_name
+
+
 def health(request):
     ping = sl_client.ping()
     return JsonResponse({"app": "lens_bridge", "status": "ok", "lens": ping})
@@ -136,8 +145,7 @@ class LensModelProxyView(OrgScopedMixin, APIView):
                 json_body=request.data,
             )
             return Response(data)
-        body = dict(request.data)
-        display_name = body.pop("name", None)
+        body, display_name = _tenant_model_payload(request.data)
         data = sl_client.request_json(
             "POST", "/api/v1/admin/llm-config/", json_body=body
         )
@@ -154,8 +162,7 @@ class LensModelProxyView(OrgScopedMixin, APIView):
 
     def put(self, request, config_uuid):
         link = org_models.require_org_model(self.org, config_uuid)
-        body = dict(request.data)
-        display_name = body.pop("name", None)
+        body, display_name = _tenant_model_payload(request.data)
         data = sl_client.request_json(
             "PUT",
             f"/api/v1/admin/llm-config/{config_uuid}/",
@@ -167,8 +174,7 @@ class LensModelProxyView(OrgScopedMixin, APIView):
     def patch(self, request, config_uuid):
         """Partial update — SourceLens admin API accepts PUT, not PATCH."""
         link = org_models.require_org_model(self.org, config_uuid)
-        body = dict(request.data)
-        display_name = body.pop("name", None)
+        body, display_name = _tenant_model_payload(request.data)
         if body:
             data = sl_client.request_json(
                 "PUT",
@@ -200,7 +206,12 @@ class LensOrgSettingsView(OrgScopedMixin, APIView):
         link = provisioning.get_or_create_org_link(self.org)
         return Response(
             LensOrgSettingsSerializer(
-                {"default_agent_model_ref": link.default_agent_model_ref}
+                {
+                    "default_agent_model_ref": link.default_agent_model_ref,
+                    "default_multimodal_model_ref": (
+                        link.default_multimodal_model_ref
+                    ),
+                }
             ).data
         )
 
@@ -212,10 +223,29 @@ class LensOrgSettingsView(OrgScopedMixin, APIView):
             ref = body.validated_data["default_agent_model_ref"]
             org_models.validate_default_model_ref(self.org, ref)
             link.default_agent_model_ref = ref
-            link.save(update_fields=["default_agent_model_ref", "updated_at"])
+        if "default_multimodal_model_ref" in body.validated_data:
+            ref = body.validated_data["default_multimodal_model_ref"]
+            org_models.validate_default_model_ref(
+                self.org,
+                ref,
+                field_name="default_multimodal_model_ref",
+            )
+            link.default_multimodal_model_ref = ref
+        link.save(
+            update_fields=[
+                "default_agent_model_ref",
+                "default_multimodal_model_ref",
+                "updated_at",
+            ]
+        )
         return Response(
             LensOrgSettingsSerializer(
-                {"default_agent_model_ref": link.default_agent_model_ref}
+                {
+                    "default_agent_model_ref": link.default_agent_model_ref,
+                    "default_multimodal_model_ref": (
+                        link.default_multimodal_model_ref
+                    ),
+                }
             ).data
         )
 
@@ -226,8 +256,13 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get(self, request):
+        active_models = org_models.active_llm_configs(org=self.org)
+        agent_ref, multimodal_ref = provisioning.default_model_refs_for_org(
+            self.org,
+            tenant_rows=active_models,
+        )
         rows = []
-        for model in org_models.active_llm_configs(org=self.org):
+        for model in active_models:
             config = (
                 model.get("config") if isinstance(model.get("config"), dict) else {}
             )
@@ -238,9 +273,21 @@ class LensCopilotReadinessView(OrgScopedMixin, APIView):
                     "provider": str(model.get("provider") or ""),
                     "config": {"model": str(config.get("model") or "")},
                     "is_active": True,
+                    "is_default_agent": bool(
+                        model.get("is_default_agent")
+                    ),
+                    "is_default_multimodal": bool(
+                        model.get("is_default_multimodal")
+                    ),
                 }
             )
-        return Response({"active_models": rows})
+        return Response(
+            {
+                "active_models": rows,
+                "default_agent_model_ref": agent_ref,
+                "default_multimodal_model_ref": multimodal_ref,
+            }
+        )
 
 
 class LensKnowledgeSourceViewSet(OrgScopedMixin, viewsets.ModelViewSet):

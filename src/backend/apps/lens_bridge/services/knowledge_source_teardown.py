@@ -15,7 +15,7 @@ from apps.lens_bridge.models import (
     LensSessionLink,
     LensWorkspaceBinding,
 )
-from apps.lens_bridge.services import assistant_access
+from apps.lens_bridge.services import assistant_access, managed_datasource, sl_client
 from apps.lens_bridge.services.teardown_claims import (
     TEARDOWN_CLAIM_TTL_SECONDS,
     next_retry_at,
@@ -271,6 +271,32 @@ def run_knowledge_source_teardown(
                 {"knowledge_source": "Knowledge source still belongs to an active Chat."}
             )
 
+        if knowledge_source.sl_datasource_uuid:
+            _renew(knowledge_source.id, claim_token)
+            sl_client.cancel_managed_datasource_conversion(
+                str(knowledge_source.sl_datasource_uuid)
+            )
+            if not managed_datasource.conversion_stop_confirmed(
+                knowledge_source
+            ):
+                _save_step(
+                    knowledge_source.id,
+                    claim_token,
+                    state,
+                    "cancel_conversion",
+                    status="waiting",
+                )
+                raise KnowledgeSourceTeardownIncompleteError(
+                    "Waiting for LensNode to stop document conversion."
+                )
+        _save_step(
+            knowledge_source.id,
+            claim_token,
+            state,
+            "cancel_conversion",
+            status="success",
+        )
+
         from apps.lens_bridge.services.assistants import _delete_sl_assistant
 
         assistant_uuids = {
@@ -297,6 +323,24 @@ def run_knowledge_source_teardown(
             claim_token,
             state,
             "delete_assistants",
+            status="success",
+        )
+
+        if knowledge_source.sl_datasource_uuid:
+            _renew(knowledge_source.id, claim_token)
+            sl_client.delete_managed_datasource(
+                str(knowledge_source.sl_datasource_uuid)
+            )
+        _claimed_update(
+            knowledge_source.id,
+            claim_token,
+            sl_datasource_uuid=None,
+        )
+        _save_step(
+            knowledge_source.id,
+            claim_token,
+            state,
+            "delete_datasource",
             status="success",
         )
 
