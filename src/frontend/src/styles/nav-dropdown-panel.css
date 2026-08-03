@@ -1,6 +1,7 @@
 /* Top navigation dropdown panel - align with fullscreen-form / add object storage repository */
 
 .nav-dropdown-popover.el-popper {
+  max-width: calc(100vw - 24px);
   padding: 0 !important;
   overflow: hidden;
   border: 1px solid var(--color-border-light, #e4e7ed) !important;
@@ -111,6 +112,14 @@
 
 .nav-dropdown-panel__item:hover {
   background: rgba(69, 125, 176, 0.08);
+}
+
+.nav-dropdown-panel__item--static {
+  cursor: default;
+}
+
+.nav-dropdown-panel__item--static:hover {
+  background: none;
 }
 
 .nav-dropdown-panel__item:focus-visible {

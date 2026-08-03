@@ -5,7 +5,10 @@ import { RouterView, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { LANG_STORAGE_KEY } from '../../i18n'
 import { useTheme } from '../../composables/useTheme'
-import { fetchDeployProfile } from '../../composables/useDeployProfile'
+import { platformOpsEntryUrl, fetchDeployProfile } from '../../composables/useDeployProfile'
+import { currentUser } from '../../composables/useAuth'
+import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
+import { useOrganizationSwitcher } from '../../composables/useOrganizationSwitcher'
 import Sidebar from '../../components/Sidebar.vue'
 import type { MenuItem } from '../../components/ModulePage.vue'
 import { useInsightSideNav } from '../../composables/useInsightSideNav'
@@ -20,6 +23,7 @@ const { locale, t } = useI18n()
 const route = useRoute()
 const { theme } = useTheme()
 const supportOrgKey = ref<string | null>(null)
+const adminConsoleUrl = ref('')
 // Bump this whenever theme changes so child components re-evaluate CSS var refs
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
@@ -30,6 +34,19 @@ const opsFallbackMenus = useOpsMenus()
 const accountFallbackMenus = useAccountCenterMenus()
 const mobileNavigationOpen = ref(false)
 const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
+const { canSwitchLocale, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
+const { showSwitcher: showOrganizationSwitcher } = useOrganizationSwitcher()
+
+const adminConsoleHref = computed(() => platformOpsEntryUrl(adminConsoleUrl.value))
+const timezoneOffsetDisplay = computed(() => {
+  const offset = new Date().getTimezoneOffset()
+  const sign = offset <= 0 ? '+' : '-'
+  const absOffset = Math.abs(offset)
+  const hours = String(Math.floor(absOffset / 60)).padStart(2, '0')
+  const minutes = String(absOffset % 60).padStart(2, '0')
+  return `GMT${sign}${hours}:${minutes}`
+})
+const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
 
 function pathMatchesPrefix(path: string, prefix: string) {
   return path === prefix || path.startsWith(`${prefix}/`)
@@ -75,10 +92,24 @@ function toggleFallbackSidebar() {
   localStorage.setItem('sidebar-collapsed', String(fallbackSidebarCollapsed.value))
 }
 
-onMounted(async () => {
+async function refreshHeaderProfile() {
   const profile = await fetchDeployProfile(true)
   supportOrgKey.value = profile?.support_org_key ?? null
+  adminConsoleUrl.value = profile?.admin_console_entry_visible
+    ? profile.admin_console_url
+    : ''
+}
+
+onMounted(() => {
+  void refreshHeaderProfile()
 })
+
+watch(
+  () => currentUser.value?.id,
+  () => {
+    void refreshHeaderProfile()
+  },
+)
 
 watch(
   locale,
@@ -448,13 +479,24 @@ function applyThemeVars(t: string) {
   >
     <TopNav
       :mobile-menu-open="mobileNavigationOpen"
+      :admin-console-href="adminConsoleHref"
+      :can-switch-locale="canSwitchLocale"
+      :next-locale-label="nextLocaleLabel"
+      :timezone-display="timezoneDisplay"
+      :timezone-offset-display="timezoneOffsetDisplay"
       @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
+      @toggle-locale="toggleLocale"
     />
     <MobileNavigationDrawer
       v-model="mobileNavigationOpen"
       :title="t('nav.navigation')"
       :primary-items="primaryNavItems"
       :module-items="fallbackMenuItems"
+      :admin-console-href="adminConsoleHref"
+      :can-switch-locale="canSwitchLocale"
+      :next-locale-label="nextLocaleLabel"
+      :show-organization-switcher="showOrganizationSwitcher"
+      @toggle-locale="toggleLocale"
     />
     <div v-if="supportOrgKey" class="support-banner">
       {{ t('common.supportModeBanner', { org: supportOrgKey }) }}

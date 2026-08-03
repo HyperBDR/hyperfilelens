@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { ChevronDown, X } from 'lucide-vue-next'
+import { ChevronDown, ExternalLink, Globe, Shield, X } from 'lucide-vue-next'
 import type { AppPrimaryNavItem } from '../composables/useAppPrimaryNav'
 import type { MenuItem } from './ModulePage.vue'
+import OrgSwitcher from './OrgSwitcher.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -11,15 +12,22 @@ const props = withDefaults(
     title: string
     primaryItems?: AppPrimaryNavItem[]
     moduleItems?: MenuItem[]
+    adminConsoleHref?: string
+    canSwitchLocale?: boolean
+    nextLocaleLabel?: string
+    showOrganizationSwitcher?: boolean
   }>(),
   {
     primaryItems: () => [],
     moduleItems: () => [],
+    adminConsoleHref: '',
+    nextLocaleLabel: '',
   },
 )
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  'toggle-locale': []
 }>()
 
 const route = useRoute()
@@ -49,6 +57,11 @@ function toggleGroup(index: number) {
   if (next.has(index)) next.delete(index)
   else next.add(index)
   expandedGroups.value = next
+}
+
+function toggleLocale() {
+  emit('toggle-locale')
+  close()
 }
 
 function routeQueryMatches(key: string, expected: string) {
@@ -97,6 +110,10 @@ function moduleItemActive(to?: string) {
       </header>
 
       <nav class="mobile-navigation__body" :aria-label="title">
+        <section v-if="showOrganizationSwitcher" class="mobile-navigation__section">
+          <OrgSwitcher variant="mobile" />
+        </section>
+
         <section v-if="primaryItems.length" class="mobile-navigation__section">
           <RouterLink
             v-for="item in primaryItems"
@@ -156,6 +173,32 @@ function moduleItemActive(to?: string) {
               <span>{{ item.label }}</span>
             </RouterLink>
           </template>
+        </section>
+
+        <section v-if="adminConsoleHref" class="mobile-navigation__section mobile-navigation__section--utility">
+          <a
+            :href="adminConsoleHref"
+            class="mobile-navigation__utility-link"
+            target="_blank"
+            rel="noopener noreferrer"
+            @click="close"
+          >
+            <Shield :size="17" aria-hidden="true" />
+            <span>{{ $t('nav.platformOps') }}</span>
+            <ExternalLink class="mobile-navigation__utility-external" :size="15" aria-hidden="true" />
+          </a>
+        </section>
+
+        <section v-if="canSwitchLocale" class="mobile-navigation__section mobile-navigation__section--utility">
+          <button
+            type="button"
+            class="mobile-navigation__utility-link"
+            :aria-label="$t('nav.switchLanguage', { language: nextLocaleLabel })"
+            @click="toggleLocale"
+          >
+            <Globe :size="17" aria-hidden="true" />
+            <span>{{ $t('nav.switchLanguage', { language: nextLocaleLabel }) }}</span>
+          </button>
         </section>
       </nav>
     </div>
@@ -242,7 +285,8 @@ function moduleItemActive(to?: string) {
 
 .mobile-navigation__primary-link,
 .mobile-navigation__module-link,
-.mobile-navigation__group-button {
+.mobile-navigation__group-button,
+.mobile-navigation__utility-link {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -266,7 +310,9 @@ function moduleItemActive(to?: string) {
 .mobile-navigation__module-link:hover,
 .mobile-navigation__module-link:focus-visible,
 .mobile-navigation__group-button:hover,
-.mobile-navigation__group-button:focus-visible {
+.mobile-navigation__group-button:focus-visible,
+.mobile-navigation__utility-link:hover,
+.mobile-navigation__utility-link:focus-visible {
   background: var(--el-fill-color-light);
 }
 
@@ -295,6 +341,19 @@ function moduleItemActive(to?: string) {
   display: grid;
   gap: 3px;
   padding-left: 8px;
+}
+
+.mobile-navigation__section--utility {
+  color: var(--el-text-color-secondary);
+}
+
+.mobile-navigation__utility-link {
+  color: inherit;
+}
+
+.mobile-navigation__utility-external {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .mobile-navigation__module-link.is-disabled {

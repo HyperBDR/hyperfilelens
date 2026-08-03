@@ -1,62 +1,37 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { useId } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api } from '../lib/api'
-import { asList } from '../lib/parse'
-import {
-  fetchCurrentUser,
-  getEffectiveOrgKey,
-  setStoredOrgKey,
-} from '../composables/useAuth'
-
-type OrgRow = {
-  id: number
-  key: string
-  name: string
-}
+import { useOrganizationSwitcher } from '../composables/useOrganizationSwitcher'
 
 const { t } = useI18n()
-const orgs = ref<OrgRow[]>([])
-const loading = ref(false)
-const currentKey = computed(() => getEffectiveOrgKey())
-
-const showSwitcher = computed(() => orgs.value.length > 1)
-
-async function loadOrgs() {
-  loading.value = true
-  try {
-    const data = await api<unknown>('/api/v1/iam/orgs/')
-    orgs.value = asList<OrgRow>(data)
-  } catch {
-    orgs.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-async function onOrgChange(orgKey: string) {
-  if (!orgKey || orgKey === currentKey.value) return
-  setStoredOrgKey(orgKey)
-  await fetchCurrentUser()
-  window.location.reload()
-}
-
-onMounted(() => {
-  void loadOrgs()
+const props = withDefaults(defineProps<{ variant?: 'desktop' | 'mobile' }>(), {
+  variant: 'desktop',
 })
+const controlId = `org-switcher-${useId()}`
+const {
+  organizations,
+  loading,
+  currentKey,
+  showSwitcher,
+  switchOrganization,
+} = useOrganizationSwitcher()
 </script>
 
 <template>
-  <div v-if="showSwitcher" class="org-switcher">
-    <label class="org-switcher__label" for="org-switcher-select">{{ t('nav.orgSwitcher') }}</label>
+  <div
+    v-if="showSwitcher"
+    class="org-switcher"
+    :class="`org-switcher--${props.variant}`"
+  >
+    <label class="org-switcher__label" :for="controlId">{{ t('nav.orgSwitcher') }}</label>
     <select
-      id="org-switcher-select"
+      :id="controlId"
       class="org-switcher__select"
       :disabled="loading"
       :value="currentKey"
-      @change="onOrgChange(($event.target as HTMLSelectElement).value)"
+      @change="switchOrganization(($event.target as HTMLSelectElement).value)"
     >
-      <option v-for="org in orgs" :key="org.key" :value="org.key">
+      <option v-for="org in organizations" :key="org.key" :value="org.key">
         {{ org.name }}
       </option>
     </select>
@@ -85,5 +60,27 @@ onMounted(() => {
   background: var(--tz-bg, rgba(255, 255, 255, 0.06));
   color: var(--tnav-text, #fff);
   font-size: 12px;
+}
+
+.org-switcher--mobile {
+  width: 100%;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+  margin-right: 0;
+}
+
+.org-switcher--mobile .org-switcher__label {
+  color: var(--el-text-color-secondary);
+}
+
+.org-switcher--mobile .org-switcher__select {
+  width: 100%;
+  max-width: none;
+  min-height: 44px;
+  padding: 9px 12px;
+  color: var(--sidebar-text, var(--el-text-color-primary));
+  background: var(--el-fill-color-light);
+  border-color: var(--sidebar-border, var(--el-border-color));
 }
 </style>
