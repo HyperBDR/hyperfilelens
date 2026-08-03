@@ -705,13 +705,12 @@ onMounted(async () => {
 
           <div class="fullscreen-form-footer add-nas-footer">
             <div class="add-nas-footer__actions">
-              <button class="form-action form-action--secondary" type="button" :disabled="busy" @click="handleBack">
+              <ElButton :disabled="busy" @click="handleBack">
                 {{ t('repositoriesPage.btnCancel') }}
-              </button>
-              <button class="form-action form-action--primary" type="button" :disabled="busy" @click="onSubmit">
-                <span v-if="busy" class="form-action__loading" />
+              </ElButton>
+              <ElButton type="primary" :loading="busy" :disabled="busy" @click="onSubmit">
                 {{ submitLabel }}
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>

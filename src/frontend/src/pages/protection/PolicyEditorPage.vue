@@ -323,13 +323,12 @@ onMounted(() => {
           />
 
           <footer class="fullscreen-form-footer fullscreen-form-action-footer">
-            <button class="form-action form-action--secondary" type="button" :disabled="saving" @click="handleBack">
+            <ElButton :disabled="saving" @click="handleBack">
               {{ t('protection.backupsPage.btnCancel') }}
-            </button>
-            <button class="form-action form-action--primary" type="button" :disabled="saving || loading" @click="submitEditor">
-              <span v-if="saving" class="form-action__loading" />
+            </ElButton>
+            <ElButton type="primary" :loading="saving" :disabled="saving || loading" @click="submitEditor">
               {{ editorSaveLabel }}
-            </button>
+            </ElButton>
           </footer>
         </main>
 

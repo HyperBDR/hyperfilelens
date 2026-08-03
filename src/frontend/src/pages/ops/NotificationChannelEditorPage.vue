@@ -564,28 +564,25 @@ watch(() => form.type, () => {
           </el-form>
 
           <div class="fullscreen-form-footer fullscreen-form-action-footer fullscreen-form-footer--split">
-            <button
-              type="button"
-              class="form-action form-action--secondary"
+            <ElButton
+              :loading="testing"
               :disabled="testing"
               @click="testFromEditor"
             >
-              <span v-if="testing" class="form-action__loading" />
               {{ t('ops.notification.testConnection') }}
-            </button>
+            </ElButton>
             <div class="flex gap-2">
-              <button type="button" class="form-action form-action--secondary" @click="handleBack">
+              <ElButton @click="handleBack">
                 {{ t('common.cancel') }}
-              </button>
-              <button
-                type="button"
-                class="form-action form-action--primary"
+              </ElButton>
+              <ElButton
+                type="primary"
+                :loading="saving"
                 :disabled="saving"
                 @click="saveChannel"
               >
-                <span v-if="saving" class="form-action__loading" />
                 {{ t('common.save') }}
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>

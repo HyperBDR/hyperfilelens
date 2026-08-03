@@ -133,9 +133,9 @@ function handleBack() {
             />
 
             <div class="fullscreen-form-footer fullscreen-form-action-footer">
-              <button type="button" class="form-action form-action--secondary" @click="handleBack">
+              <ElButton @click="handleBack">
                 {{ t('common.back') }}
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>

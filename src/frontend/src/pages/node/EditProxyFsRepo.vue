@@ -382,25 +382,17 @@ watch(repositoryId, (id) => {
 
           <div class="fullscreen-form-footer add-proxy-fs-footer">
             <div class="add-nas-footer__actions">
-              <button
-                class="form-action form-action--secondary"
-                type="button"
-                @click="handleBack"
-              >
+              <ElButton @click="handleBack">
                 {{ t('repositoriesPage.editProxyFsRepo.btnCancel') }}
-              </button>
-              <button
-                class="form-action form-action--primary"
-                type="button"
+              </ElButton>
+              <ElButton
+                type="primary"
+                :loading="busy"
                 :disabled="busy || !dirty"
                 @click="onSave"
               >
-                <span
-                  v-if="busy"
-                  class="form-action__loading"
-                />
                 {{ t('repositoriesPage.editProxyFsRepo.btnSave') }}
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>

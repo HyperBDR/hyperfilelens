@@ -868,13 +868,12 @@ function handleBack() {
           <!-- Footer Actions -->
           <div class="fullscreen-form-footer add-s3-footer">
             <p v-if="submitBlockReason" class="form-submit-hint">{{ submitBlockReason }}</p>
-            <button class="form-action form-action--secondary" @click="handleBack">
+            <ElButton @click="handleBack">
               {{ t('repositoriesPage.btnCancel') }}
-            </button>
-            <button class="form-action form-action--primary" :disabled="!canSubmit" @click="onSubmit">
-              <span v-if="busy" class="form-action__loading" />
+            </ElButton>
+            <ElButton type="primary" :loading="busy" :disabled="!canSubmit" @click="onSubmit">
               {{ t('addS3Repo.btnCreateInit') }}
-            </button>
+            </ElButton>
           </div>
         </div>
 
@@ -1193,11 +1192,11 @@ function handleBack() {
     line-height: 1.4;
   }
 
-  .add-s3-footer .form-action {
+  .add-s3-footer .el-button {
     white-space: nowrap;
   }
 
-  .add-s3-footer .form-action--secondary {
+  .add-s3-footer .el-button:first-of-type {
     margin-left: auto;
   }
 
