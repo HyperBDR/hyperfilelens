@@ -90,7 +90,7 @@ def assert_source_product_operation_allowed(
     raise ValidationError(
         {
             "source_ref_id": (
-                "Backup source has an active Reset or Unregister operation. "
+                "Backup source has an active Reset or Deregistration operation. "
                 "Wait for it to finish before starting new work."
             ),
             "task_uuid": str(blocker.task_uuid),

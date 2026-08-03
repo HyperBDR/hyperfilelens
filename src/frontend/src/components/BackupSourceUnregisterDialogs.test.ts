@@ -71,8 +71,8 @@ const BodyStub = defineComponent({
       <span data-test="preflight-disabled">{{ preflight?.delete_disabled }}</span>
       <span data-test="dialog-source-count">{{ sourceIds?.length || 0 }}</span>
       <button data-test="select-force" @click="$emit('update:force', true)">force</button>
-      <button data-test="strict-confirmation" @click="$emit('update:confirmText', 'UNREGISTER')">strict</button>
-      <button data-test="force-confirmation" @click="$emit('update:confirmText', 'FORCE UNREGISTER')">force confirm</button>
+      <button data-test="strict-confirmation" @click="$emit('update:confirmText', 'DEREGISTER')">strict</button>
+      <button data-test="force-confirmation" @click="$emit('update:confirmText', 'FORCE DEREGISTER')">force confirm</button>
       <button data-test="retry-preflight" @click="$emit('retry-preflight')">retry</button>
     </div>
   `,
@@ -206,7 +206,7 @@ describe.each([
     expect(bulkDeleteBackupSources).toHaveBeenCalledWith(
       ['agent:25'],
       true,
-      'FORCE UNREGISTER',
+      'FORCE DEREGISTER',
     )
     wrapper.unmount()
   })

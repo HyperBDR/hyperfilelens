@@ -1676,7 +1676,7 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn(
-            "active Reset or Unregister operation",
+            "active Reset or Deregistration operation",
             str(create.data),
         )
         self.assertFalse(RestoreRecord.objects.exists())

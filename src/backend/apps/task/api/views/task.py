@@ -118,7 +118,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise ValidationError({"detail": "Repository tasks are managed by the server scheduler."})
         if task_type == Task.Type.SOURCE_UNREGISTER:
             raise ValidationError(
-                {"detail": "Source unregister tasks cannot be cancelled after cleanup starts."}
+                {"detail": "Source deregistration tasks cannot be cancelled after cleanup starts."}
             )
         try:
             task = cancel_task(

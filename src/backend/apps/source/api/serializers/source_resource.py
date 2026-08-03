@@ -131,7 +131,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
     def get_effective_status_message(self, obj):
         status = self.get_effective_status(obj)
         if status == "remove_failed":
-            return "Unregister failed"
+            return "Deregistration failed"
         if status == "error":
             return "NAS connection error"
         if status == "probing":
@@ -139,7 +139,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
         if status == "online":
             return "NAS online"
         if status == "removing":
-            return "Unregistering"
+            return "Deregistering"
         return "NAS connection not verified"
 
 

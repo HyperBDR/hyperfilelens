@@ -288,11 +288,11 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
       <ExactKeywordConfirmInput
         v-model="confirmText"
         class="hfl-flow-action-dialog__confirm"
-        :keyword="force ? 'FORCE UNREGISTER' : 'UNREGISTER'"
+        :keyword="force ? 'FORCE DEREGISTER' : 'DEREGISTER'"
         :hint="force
           ? t('protection.backupsPage.deleteForceConfirmTypeKeyword')
           : t('protection.backupsPage.deleteConfirmTypeKeyword')"
-        :placeholder="force ? 'FORCE UNREGISTER' : 'UNREGISTER'"
+        :placeholder="force ? 'FORCE DEREGISTER' : 'DEREGISTER'"
         :disabled="loading"
         @confirm="emit('confirm')"
       />

@@ -281,7 +281,7 @@ def _create_source_unregister_task(
     selectable_id: str,
     force: bool,
 ) -> Task:
-    display_name = "Unregister backup source"
+    display_name = "Deregister backup source"
     return create_task(
         organization_id=org.id,
         task_type=Task.Type.SOURCE_UNREGISTER,
@@ -631,7 +631,7 @@ def _nas_remote_operation_blockers(*, ctx: SourceDeleteContext) -> list[DeleteRe
             code="source_operation_in_progress",
             detail=(
                 "A Source NAS connection or mount operation is still running. "
-                "Wait for it to finish before unregistering the source."
+                "Wait for it to finish before deregistering the source."
             ),
             source_id=ctx.selectable_id,
             source_name=ctx.display_name,
@@ -751,7 +751,7 @@ def _prepare_delete_batch(
                 reasons=[
                     DeleteReason(
                         code="unregister_in_progress",
-                        detail="A source unregister task is already running.",
+                        detail="A source deregistration task is already running.",
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
                     )
@@ -786,7 +786,7 @@ def _prepare_delete_batch(
                         code="running_tasks",
                         detail=(
                             f"{len(running)} backup or restore task(s) are still running. "
-                            "Stop them or wait for completion before unregistering the source."
+                            "Stop them or wait for completion before deregistering the source."
                         ),
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
@@ -1693,7 +1693,7 @@ def _complete_source_unregister_transaction(
                         code="running_tasks",
                         detail=(
                             f"{len(running)} backup or restore task(s) started "
-                            "while unregister was running."
+                            "while deregistration was running."
                         ),
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
@@ -1864,7 +1864,7 @@ def _complete_source_unregister_transaction(
         step_name="finalize_source_unregister",
         status=TaskStep.Status.SUCCESS,
         progress=100,
-        message="Source unregister finalized",
+        message="Source deregistration finalized",
         metadata={"result": result, "deleted": deleted},
     )
     write_audit_log(
@@ -2559,7 +2559,7 @@ def queue_delete_backup_sources(
             organization_id=org.id,
             ids=normalized,
             status=ResourceStatus.REMOVING,
-            message="Source unregister is in progress.",
+            message="Source deregistration is in progress.",
         )
         for selectable_id in normalized:
             unregister_task = _create_source_unregister_task(
@@ -2579,7 +2579,7 @@ def queue_delete_backup_sources(
                 step_name="prepare_source_unregister",
                 status=TaskStep.Status.SUCCESS,
                 progress=15,
-                message="Source unregister prepared",
+                message="Source deregistration prepared",
                 metadata={"source_ids": [selectable_id], "force": bool(force)},
             )
             unregister_tasks.append(unregister_task)
@@ -2727,7 +2727,7 @@ def fail_source_unregister_task_unexpectedly(
         if str(value).strip()
     ]
     detail = (
-        "Source unregister failed after automatic retries due to an unexpected "
+        "Source deregistration failed after automatic retries due to an unexpected "
         f"control-plane error ({exc.__class__.__name__})."
     )
     reason = {
@@ -2810,7 +2810,7 @@ def preflight_delete_backup_sources(
             blocking.append(
                 DeleteReason(
                     code="unregister_in_progress",
-                    detail="A source unregister task is already running.",
+                    detail="A source deregistration task is already running.",
                     source_id=ctx.selectable_id,
                     source_name=ctx.display_name,
                 ).as_dict()
@@ -2890,7 +2890,7 @@ def preflight_delete_backup_sources(
                         code="proxy_unbound",
                         detail=(
                             f"NAS source \"{ctx.display_name}\" has no bound Proxy. "
-                            "Strict unregister may fail if repository cleanup is required."
+                            "Strict deregistration may fail if repository cleanup is required."
                         ),
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
@@ -2905,7 +2905,7 @@ def preflight_delete_backup_sources(
                         code="proxy_unbound",
                         detail=(
                             f"NAS source \"{ctx.display_name}\" requires a Proxy but none is bound. "
-                            "Strict unregister may fail."
+                            "Strict deregistration may fail."
                         ),
                         source_id=ctx.selectable_id,
                         source_name=ctx.display_name,
@@ -3648,7 +3648,7 @@ def _soft_delete_identity(
         ref_id=resource.id,
     )
     resource.status = ResourceStatus.REMOVED
-    resource.status_message = "Source unregister completed."
+    resource.status_message = "Source deregistration completed."
     resource.save(update_fields=["status", "status_message", "updated_at"])
     resource.soft_delete()
 
@@ -3925,7 +3925,7 @@ def delete_backup_sources(
     normalized = _normalize_delete_ids(ids)
     if len(normalized) != 1:
         raise BackupSourceDeleteFailed(
-            message="Synchronous source unregister accepts one source at a time.",
+            message="Synchronous source deregistration accepts one source at a time.",
             reasons=[DeleteReason(code="batch_not_supported", detail="Provide exactly one source ID.")],
         )
     with transaction.atomic():
@@ -3935,7 +3935,7 @@ def delete_backup_sources(
             organization_id=org.id,
             ids=normalized,
             status=ResourceStatus.REMOVING,
-            message="Source unregister is in progress.",
+            message="Source deregistration is in progress.",
         )
         unregister_task = _create_source_unregister_task(
             org=org,
@@ -3955,7 +3955,7 @@ def delete_backup_sources(
             step_name="prepare_source_unregister",
             status=TaskStep.Status.SUCCESS,
             progress=15,
-            message="Source unregister prepared",
+            message="Source deregistration prepared",
             metadata={"source_ids": normalized, "force": bool(force)},
         )
     return _execute_source_unregister_work(

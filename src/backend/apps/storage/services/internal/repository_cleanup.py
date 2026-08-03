@@ -316,7 +316,7 @@ def create_direct_nas_target_cleanup_task(
         raise ValidationError(
             {
                 "triggered_by_task": (
-                    "Direct NAS physical cleanup must be triggered by source unregister "
+                    "Direct NAS physical cleanup must be triggered by source deregistration "
                     "or repository cleanup."
                 )
             }

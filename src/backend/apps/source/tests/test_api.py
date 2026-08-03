@@ -1650,18 +1650,32 @@ class BackupSourceBulkDeleteTests(TestCase):
         self.assertTrue(response.data["strict_may_fail"])
         self.assertTrue(any(row["code"] == "proxy_unbound" for row in response.data["risks"]))
 
-    def test_bulk_delete_requires_exact_unregister_confirmation(self):
+    def test_bulk_delete_requires_exact_deregister_confirmation(self):
         agent_key = f"agent:{self.agent.id}"
-        for confirmation in ("unregister", "UNREGISTER", "UNREGISTER ", " UNREGISTER"):
-            with self.subTest(confirmation=confirmation):
+        invalid_confirmations = (
+            (False, "UNREGISTER"),
+            (False, "deregister"),
+            (False, "DEREGISTER "),
+            (False, " DEREGISTER"),
+            (True, "FORCE UNREGISTER"),
+            (True, "DEREGISTER"),
+            (True, "force deregister"),
+            (True, "FORCE DEREGISTER "),
+        )
+        for force, confirmation in invalid_confirmations:
+            with self.subTest(force=force, confirmation=confirmation):
                 response = self.client.post(
                     "/api/v1/source/backup-selectable/bulk-delete/",
-                    {"ids": [agent_key], "force": True, "confirmation": confirmation},
+                    {"ids": [agent_key], "force": force, "confirmation": confirmation},
                     format="json",
                     **self._headers(),
                 )
                 self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-                self.assertIn("confirmation", response.data)
+                expected_keyword = "FORCE DEREGISTER" if force else "DEREGISTER"
+                self.assertEqual(
+                    response.data["confirmation"],
+                    f"Type {expected_keyword} exactly to confirm deregistration.",
+                )
         self.agent.refresh_from_db()
         self.assertFalse(self.agent.is_deleted)
 
@@ -1669,7 +1683,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [agent_key], "force": False, "confirmation": "UNREGISTER"},
+            {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -1711,7 +1725,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"agent:{self.agent.id}"],
                 "force": True,
-                "confirmation": "FORCE UNREGISTER",
+                "confirmation": "FORCE DEREGISTER",
             },
             format="json",
             **self._headers(),
@@ -1768,7 +1782,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"nas:{resource.id}"],
                 "force": True,
-                "confirmation": "FORCE UNREGISTER",
+                "confirmation": "FORCE DEREGISTER",
             },
             format="json",
             **self._headers(),
@@ -1789,7 +1803,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [agent_key], "force": False, "confirmation": "UNREGISTER"},
+            {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -1826,7 +1840,7 @@ class BackupSourceBulkDeleteTests(TestCase):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [agent_key], "force": True, "confirmation": "FORCE UNREGISTER"},
+            {"ids": [agent_key], "force": True, "confirmation": "FORCE DEREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -1845,6 +1859,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             ],
         )
         task = Task.objects.get(task_type=Task.Type.SOURCE_UNREGISTER)
+        self.assertEqual(task.display_name, "Deregister backup source")
         self.assertTrue(task.resources.get().is_primary)
         self.agent.refresh_from_db()
         self.assertTrue(self.agent.is_deleted)
@@ -1882,7 +1897,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"agent:{self.agent.id}", f"agent:{second_agent.id}"],
                 "force": True,
-                "confirmation": "FORCE UNREGISTER",
+                "confirmation": "FORCE DEREGISTER",
             },
             format="json",
             **self._headers(),
@@ -1945,7 +1960,7 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         delete_resp = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [nas_key], "force": False, "confirmation": "UNREGISTER"},
+            {"ids": [nas_key], "force": False, "confirmation": "DEREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -2019,7 +2034,7 @@ class BackupSourceBulkDeleteTests(TestCase):
 
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [nas_key], "force": False, "confirmation": "UNREGISTER"},
+            {"ids": [nas_key], "force": False, "confirmation": "DEREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -2091,7 +2106,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             {
                 "ids": [f"nas:{resource.id}"],
                 "force": False,
-                "confirmation": "UNREGISTER",
+                "confirmation": "DEREGISTER",
             },
             format="json",
             **self._headers(),

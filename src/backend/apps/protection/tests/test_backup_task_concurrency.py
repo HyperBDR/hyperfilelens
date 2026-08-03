@@ -143,7 +143,7 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
 
         self.assertEqual(result["results"][0]["status"], "failed")
         self.assertIn(
-            "active Reset or Unregister operation",
+            "active Reset or Deregistration operation",
             result["results"][0]["message"],
         )
         self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())

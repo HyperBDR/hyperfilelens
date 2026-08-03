@@ -291,7 +291,7 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise ValidationError("Finished tasks cannot be cancelled.")
     if task.task_type == Task.Type.SOURCE_UNREGISTER:
         raise ValidationError(
-            "Source unregister tasks cannot be cancelled after cleanup starts."
+            "Source deregistration tasks cannot be cancelled after cleanup starts."
         )
     if task.task_type == Task.Type.NODE_LIFECYCLE:
         raise ValidationError(

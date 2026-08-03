@@ -167,7 +167,7 @@ def ensure_backup_config_reset_task(
         raise ValidationError(
             {
                 "source_ref_id": (
-                    "A source unregister task is already running. "
+                    "A source deregistration task is already running. "
                     "Wait for it to finish before resetting configuration."
                 ),
                 "task_uuid": str(source_control_blocker.task_uuid),
@@ -307,7 +307,7 @@ def _reset_block_message(
         source_type=source_type,
         source_ref_id=source_ref_id,
     ):
-        return "A source unregister task is already running."
+        return "A source deregistration task is already running."
     running = _running_tasks_for_source(
         organization_id=organization_id,
         source_type=source_type,

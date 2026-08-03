@@ -52,7 +52,7 @@ const confirmText = ref('')
 const frozenSourceIds = ref<string[]>([])
 const frozenSources = ref<BackupSourceUnregisterDisplayRow[]>([])
 let preflightRequestSeq = 0
-const confirmationKeyword = computed(() => force.value ? 'FORCE UNREGISTER' : 'UNREGISTER')
+const confirmationKeyword = computed(() => force.value ? 'FORCE DEREGISTER' : 'DEREGISTER')
 
 const visible = computed({
   get: () => props.modelValue,

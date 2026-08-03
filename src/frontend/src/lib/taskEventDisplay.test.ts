@@ -26,6 +26,16 @@ describe('task event internationalization', () => {
       .toBe('ops.task.eventMessage.directNasRepositoryCleanupCompleted')
   })
 
+  it('maps current and historical source deregistration events to the same copy', () => {
+    const preparedKey = 'ops.task.eventMessage.sourceUnregisterPrepared'
+    const finalizedKey = 'ops.task.eventMessage.sourceUnregisterFinalized'
+
+    expect(taskEventMessageKey('Source deregistration prepared')).toBe(preparedKey)
+    expect(taskEventMessageKey('Source unregister prepared')).toBe(preparedKey)
+    expect(taskEventMessageKey('Source deregistration finalized')).toBe(finalizedKey)
+    expect(taskEventMessageKey('Source unregister finalized')).toBe(finalizedKey)
+  })
+
   it('maps Restore execution events to translation keys', () => {
     const messages = [
       ['Restore execution started', 'restoreExecutionStarted'],
