@@ -207,6 +207,7 @@ class TaskCreateSerializer(serializers.Serializer):
             for choice in Task.Type.choices
             if choice[0]
             not in {
+                Task.Type.NODE_LIFECYCLE,
                 Task.Type.REPOSITORY_OPERATION,
                 Task.Type.STORAGE_PROVIDER_VALIDATION,
             }

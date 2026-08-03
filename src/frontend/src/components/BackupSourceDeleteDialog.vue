@@ -50,6 +50,8 @@ const preflight = ref<BackupSourceDeletePreflight | null>(null)
 const preflightError = ref(false)
 const submitErrorReasons = ref<BackupSourceDeleteReason[]>([])
 const confirmText = ref('')
+const frozenSourceIds = ref<string[]>([])
+const frozenSources = ref<BackupSourceUnregisterDisplayRow[]>([])
 let preflightRequestSeq = 0
 const confirmationKeyword = computed(() => force.value ? 'FORCE UNREGISTER' : 'UNREGISTER')
 
@@ -57,9 +59,11 @@ const visible = computed({
   get: () => props.modelValue,
   set: (v: boolean) => emit('update:modelValue', v),
 })
+const dialogSourceIds = computed(() => frozenSourceIds.value)
+const dialogSources = computed(() => frozenSources.value)
 
 const title = computed(() =>
-  props.sourceIds.length > 1
+  dialogSourceIds.value.length > 1
     ? t('protection.backupsPage.titleDeleteSource')
     : t('protection.backupsPage.titleDeleteSourceSingle'),
 )
@@ -76,7 +80,7 @@ const deleteDisabled = computed(() => {
 
 async function loadPreflight() {
   const requestSeq = ++preflightRequestSeq
-  const sourceIds = [...props.sourceIds]
+  const sourceIds = [...dialogSourceIds.value]
   if (!sourceIds.length) {
     preflight.value = null
     preflightError.value = false
@@ -117,6 +121,9 @@ watch(
       resetDialogState()
       return
     }
+    if (loading.value) return
+    frozenSourceIds.value = [...props.sourceIds]
+    frozenSources.value = (props.sources || []).map(source => ({ ...source }))
     resetDialogState()
     void loadPreflight()
   },
@@ -133,8 +140,8 @@ function close() {
 }
 
 async function confirmDelete() {
-  if (deleteDisabled.value || !props.sourceIds.length) return
-  const sourceIds = [...props.sourceIds]
+  if (deleteDisabled.value || !dialogSourceIds.value.length) return
+  const sourceIds = [...dialogSourceIds.value]
   const forceDelete = force.value
   const confirmation = confirmText.value
   emit('started', { sourceIds })
@@ -189,8 +196,8 @@ async function confirmDelete() {
     <BackupSourceUnregisterDialogBody
       v-model:force="force"
       v-model:confirm-text="confirmText"
-      :source-ids="sourceIds"
-      :sources="sources"
+      :source-ids="dialogSourceIds"
+      :sources="dialogSources"
       :show-snapshots="showSnapshots === true"
       :preflight="preflight"
       :display-risks="displayRisks"

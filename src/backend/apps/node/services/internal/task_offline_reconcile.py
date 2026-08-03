@@ -69,6 +69,11 @@ def execution_state_blocks_workload(*, node: Node, task: Task) -> bool:
 
 
 def sync_platform_tasks_for_node_task(*, node_task: NodeTask) -> None:
+    if node_task.correlation_type == node_conf.LIFECYCLE_CORRELATION_TYPE:
+        from apps.node.services.internal.task import project_node_lifecycle_task
+
+        project_node_lifecycle_task(node_task=node_task)
+        return
     if node_task.correlation_type == protection_conf.PROTECTION_BACKUP_CORRELATION_TYPE:
         from apps.protection.services.backup_orchestrator import maybe_trigger_backup_advance
 

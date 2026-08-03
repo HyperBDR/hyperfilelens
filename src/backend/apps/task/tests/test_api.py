@@ -136,6 +136,19 @@ class TaskApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["data"]["errors"][0]["field"], "resources")
 
+    def test_create_task_rejects_system_managed_node_lifecycle_type(self):
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "task_type": Task.Type.NODE_LIFECYCLE,
+                "display_name": "Forged node removal",
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_new_source_scoped_tasks_only_persist_backup_source_resources(self):
         source_scoped_types = (
             Task.Type.BACKUP,
@@ -355,6 +368,44 @@ class TaskApiTests(TestCase):
         self.assertIn("cannot be cancelled", str(response.data))
         task.refresh_from_db()
         self.assertEqual(task.status, Task.Status.RUNNING)
+
+    def test_node_lifecycle_task_cannot_be_cancelled_or_retried_generically(self):
+        running = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            display_name="Delete proxy host",
+            status=Task.Status.RUNNING,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+
+        cancelled = self.client.post(
+            f"/api/v1/tasks/{running.task_uuid}/cancel/",
+            {"reason": "cancel projected task"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(cancelled.status_code, status.HTTP_400_BAD_REQUEST)
+        running.refresh_from_db()
+        self.assertEqual(running.status, Task.Status.RUNNING)
+
+        failed = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.NODE_LIFECYCLE,
+            display_name="Failed proxy removal",
+            status=Task.Status.FAILED,
+            trigger_type=Task.TriggerType.MANUAL,
+        )
+        retried = self.client.post(
+            f"/api/v1/tasks/{failed.task_uuid}/retry/",
+            {"reason": "retry projected task"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(retried.status_code, status.HTTP_400_BAD_REQUEST)
+        failed.refresh_from_db()
+        self.assertEqual(failed.status, Task.Status.FAILED)
 
     def test_failed_complete_task_stores_explicit_progress(self):
         task = Task.objects.create(

@@ -497,7 +497,7 @@ class RepositoryCleanupTests(TestCase):
         blocker = next(item for item in preflight["blockers"] if item["code"] == "active_task")
         self.assertEqual(blocker["task_uuid"], str(task.task_uuid))
 
-    def test_force_preflight_does_not_bypass_restore_record_relationship(self):
+    def test_historical_restore_record_is_a_warning_not_a_blocker(self):
         repository = self._s3_repository("restore-bound-s3")
         restore_task = create_task(
             organization_id=self.org.id,
@@ -542,9 +542,15 @@ class RepositoryCleanupTests(TestCase):
             force=True,
         )
 
-        self.assertFalse(preflight["allowed"])
+        self.assertTrue(preflight["allowed"])
         self.assertEqual(preflight["restore_record_count"], 1)
         self.assertTrue(
+            any(
+                warning["code"] == "associated_restore_records"
+                for warning in preflight["warnings"]
+            )
+        )
+        self.assertFalse(
             any(
                 blocker["code"] == "associated_restore_records"
                 for blocker in preflight["blockers"]

@@ -10,6 +10,7 @@ class TaskStep(models.Model):
         PENDING = "pending", "Pending"
         RUNNING = "running", "Running"
         SUCCESS = "success", "Success"
+        WARNING = "warning", "Warning"
         FAILED = "failed", "Failed"
         SKIPPED = "skipped", "Skipped"
 

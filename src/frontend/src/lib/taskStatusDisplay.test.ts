@@ -19,6 +19,7 @@ describe('taskStatusTone', () => {
     ['retrying', 'warning'],
     ['partial', 'warning'],
     ['degraded', 'warning'],
+    ['warning', 'warning'],
     ['unknown', 'neutral'],
     ['', 'neutral'],
   ])('maps %s to %s', (status, tone) => {

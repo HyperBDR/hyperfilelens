@@ -300,28 +300,59 @@ def _node_route_state(*, task: NodeTask) -> _RouteState:
 
 
 def _sync_task_info(task: NodeTask) -> None:
-    redis_store.set_task_info(
-        task_id=str(task.id),
-        data={
-            "task_id": str(task.id),
-            "status": task.status,
-            "node_id": task.node_id,
-            "kind": task.kind,
-            "correlation_type": task.correlation_type,
-            "correlation_id": task.correlation_id,
-            "last_progress_at": (
-                task.last_progress_at.isoformat() if task.last_progress_at else None
-            ),
-            "accepted_at": task.accepted_at.isoformat() if task.accepted_at else None,
-            "last_delivery_at": (
-                task.last_delivery_at.isoformat() if task.last_delivery_at else None
-            ),
-            "delivery_attempt_count": task.delivery_attempt_count,
-            "watchdog_deadline_at": task.watchdog_deadline_at.isoformat(),
-            "result": task.result,
-            "last_error": task.last_error,
-        },
-    )
+    try:
+        redis_store.set_task_info(
+            task_id=str(task.id),
+            data={
+                "task_id": str(task.id),
+                "status": task.status,
+                "node_id": task.node_id,
+                "kind": task.kind,
+                "correlation_type": task.correlation_type,
+                "correlation_id": task.correlation_id,
+                "last_progress_at": (
+                    task.last_progress_at.isoformat()
+                    if task.last_progress_at
+                    else None
+                ),
+                "accepted_at": (
+                    task.accepted_at.isoformat() if task.accepted_at else None
+                ),
+                "last_delivery_at": (
+                    task.last_delivery_at.isoformat()
+                    if task.last_delivery_at
+                    else None
+                ),
+                "delivery_attempt_count": task.delivery_attempt_count,
+                "watchdog_deadline_at": task.watchdog_deadline_at.isoformat(),
+                "result": task.result,
+                "last_error": task.last_error,
+            },
+        )
+    finally:
+        project_node_lifecycle_task(node_task=task)
+
+
+def project_node_lifecycle_task(*, node_task: NodeTask) -> None:
+    """Safely project direct node removal without affecting the Agent task."""
+    payload = node_task.payload if isinstance(node_task.payload, dict) else {}
+    if (
+        node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE
+        or node_task.kind != "agent.uninstall"
+        or payload.get("source_unregister_task_id")
+    ):
+        return
+    try:
+        from apps.node.services.internal.node_lifecycle_task import (
+            sync_node_remove_operation_task,
+        )
+
+        sync_node_remove_operation_task(node_task=node_task)
+    except Exception:
+        logger.exception(
+            "failed to project node lifecycle task node_task_id=%s",
+            node_task.pk,
+        )
 
 
 def _terminal_stream_message(task: NodeTask) -> dict[str, Any]:
@@ -372,6 +403,7 @@ def _fail_task_delivery(*, task: NodeTask, reason: str) -> NodeTask:
         updated_at=timezone.now(),
     )
     task.refresh_from_db()
+    _sync_task_info(task)
     redis_store.push_task_stream(
         task_id=str(task.id),
         message=_terminal_stream_message(task),
@@ -418,6 +450,7 @@ def create_agent_task(
             correlation_id=correlation_id,
         ),
     )
+    project_node_lifecycle_task(node_task=task)
     return task
 
 
@@ -999,6 +1032,7 @@ def fail_active_tasks_for_node(*, node_id: int, reason: str) -> int:
         task.status = NodeTask.Status.FAILED
         task.last_error = reason[:2000]
         task.save(update_fields=["status", "last_error", "updated_at"])
+        _sync_task_info(task)
         logger.warning(
             "agent task failed (node offline) %s error=%s",
             task_log_context(node_id=node_id, task_id=str(task.id), kind=task.kind),
