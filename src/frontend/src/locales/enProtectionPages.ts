@@ -48,7 +48,7 @@ export const enProtectionPages = {
     },
   },
   backupsPage: {
-    btnCreateBackup: 'Setup DR',
+    btnCreateBackup: 'Backup Setup',
     btnCreateBackupTask: 'Create Backup Configuration',
     btnCreateRestoreTask: 'Create Restore Task',
     btnPlusCreateBackup: 'Create Backup Configuration',
