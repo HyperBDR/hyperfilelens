@@ -34,7 +34,7 @@ const opsFallbackMenus = useOpsMenus()
 const accountFallbackMenus = useAccountCenterMenus()
 const mobileNavigationOpen = ref(false)
 const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
-const { canSwitchLocale, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
+const { canSwitchLocale, currentLocaleLabel, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
 const { showSwitcher: showOrganizationSwitcher } = useOrganizationSwitcher()
 
 const adminConsoleHref = computed(() => platformOpsEntryUrl(adminConsoleUrl.value))
@@ -494,8 +494,10 @@ function applyThemeVars(t: string) {
       :module-items="fallbackMenuItems"
       :admin-console-href="adminConsoleHref"
       :can-switch-locale="canSwitchLocale"
+      :current-locale-label="currentLocaleLabel"
       :next-locale-label="nextLocaleLabel"
       :show-organization-switcher="showOrganizationSwitcher"
+      :timezone-offset-display="timezoneOffsetDisplay"
       @toggle-locale="toggleLocale"
     />
     <div v-if="supportOrgKey" class="support-banner">

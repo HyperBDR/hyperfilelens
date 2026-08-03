@@ -83,4 +83,19 @@ const {
   background: var(--el-fill-color-light);
   border-color: var(--sidebar-border, var(--el-border-color));
 }
+
+@media (min-width: 1024px) and (max-width: 1151.98px) {
+  .org-switcher--desktop {
+    gap: 0;
+    margin-right: 4px;
+  }
+
+  .org-switcher--desktop .org-switcher__label {
+    display: none;
+  }
+
+  .org-switcher--desktop .org-switcher__select {
+    width: 104px;
+  }
+}
 </style>

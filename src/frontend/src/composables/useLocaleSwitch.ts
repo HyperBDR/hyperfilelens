@@ -6,19 +6,19 @@ import { hasMultipleLocales, installedLangPacks } from '../lib/langPacks'
 export function useLocaleSwitch() {
   const { locale } = useI18n()
   const canSwitchLocale = computed(() => hasMultipleLocales())
+  const localeLabel = (code: string) => {
+    if (code === DEFAULT_LOCALE) return 'English'
+    return (
+      installedLangPacks.value.find((pack) => pack.frontend_code === code)?.display_name ?? code
+    )
+  }
+  const currentLocaleLabel = computed(() => localeLabel(String(locale.value)))
   const nextLocaleCode = computed(() => {
     const available = getAvailableLocaleCodes()
     const currentIndex = available.indexOf(String(locale.value))
     return available[(currentIndex + 1) % available.length] ?? DEFAULT_LOCALE
   })
-  const nextLocaleLabel = computed(() => {
-    if (nextLocaleCode.value === DEFAULT_LOCALE) return 'English'
-    return (
-      installedLangPacks.value.find(
-        (pack) => pack.frontend_code === nextLocaleCode.value,
-      )?.display_name ?? nextLocaleCode.value
-    )
-  })
+  const nextLocaleLabel = computed(() => localeLabel(nextLocaleCode.value))
 
   function toggleLocale() {
     if (!canSwitchLocale.value) return
@@ -33,6 +33,7 @@ export function useLocaleSwitch() {
 
   return {
     canSwitchLocale,
+    currentLocaleLabel,
     nextLocaleCode,
     nextLocaleLabel,
     toggleLocale,

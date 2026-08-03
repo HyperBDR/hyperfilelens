@@ -49,4 +49,14 @@ describe('primary navigation icons', () => {
       /@media \(max-width: 1023\.98px\)[\s\S]*?\.nav-menu,[\s\S]*?display:\s*none/,
     )
   })
+
+  it('uses a compact desktop layout before switching to the mobile drawer', () => {
+    expect(topNavSource).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.nav-item\s*{[\s\S]*?min-width:\s*0[\s\S]*?padding-right:\s*8px/,
+    )
+    expect(topNavSource).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.platform-ops-entry span\s*{[\s\S]*?display:\s*none/,
+    )
+    expect(topNavSource).toContain(':aria-label="t(\'nav.platformOps\')"')
+  })
 })
