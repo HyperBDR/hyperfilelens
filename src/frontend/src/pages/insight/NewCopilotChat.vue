@@ -11,6 +11,7 @@ import {
   RefreshCw,
   TextCursorInput,
   Trash2,
+  TriangleAlert,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -29,10 +30,25 @@ import {
 
 const router = useRouter()
 const { t } = useI18n()
+
+type SubmitBlockCode =
+  | 'agent_model'
+  | 'backup_source'
+  | 'snapshot'
+  | 'source_scope'
+  | 'public_gateway'
+  | 'private_gateway'
+
+type SubmitBlocker = {
+  code: SubmitBlockCode
+  message: string
+}
+
 const sourceType = ref<KnowledgeSourceType>('backup_source')
 const editingId = ref<number | null>(null)
 const submitting = ref(false)
 const gatewayRefreshing = ref(false)
+const gatewayOptionsResolved = ref(false)
 const gatewayOptions = ref<LensCopilotGatewayOption[]>([])
 const readiness = ref<LensCopilotReadiness | null>(null)
 const gatewayMode = ref<'auto' | 'manual'>('auto')
@@ -86,6 +102,11 @@ const visualModelReady = computed(() => Boolean(readiness.value?.default_multimo
 const selectedGateway = computed(() => gatewayMode.value === 'auto'
   ? autoGateway.value
   : privateGateways.value.find((row) => row.gateway_link_id === gatewayLinkId.value) ?? null)
+const publicGatewayUnavailable = computed(() => (
+  gatewayOptionsResolved.value
+  && gatewayMode.value === 'auto'
+  && !autoGateway.value
+))
 const selectedBackupSource = computed(() => backupSourceOptions.value.find(
   (row) => row.backupConfigId === selectedBackupConfigId.value,
 ) ?? null)
@@ -102,18 +123,52 @@ const canCreate = computed(() => Boolean(
   && agentModelReady.value
   && !submitting.value,
 ))
-const submitBlockReason = computed(() => {
-  if (!agentModelReady.value) return 'No default Agent model is configured. Contact your administrator.'
-  if (!selectedBackupSource.value) return 'Select a backup source to continue.'
-  if (!effectiveSnapshotId.value) return 'Select a snapshot to continue.'
-  if (sourceScopes.value.length === 0) return 'Select at least one file or folder to continue.'
-  if (!selectedGateway.value) {
-    return gatewayMode.value === 'manual'
-      ? t('insight.copilot.gatewayPrivateRequired')
-      : t('insight.copilot.gatewayPublicUnavailable')
+const submitBlocker = computed<SubmitBlocker | null>(() => {
+  if (!agentModelReady.value) {
+    return {
+      code: 'agent_model',
+      message: 'No default Agent model is configured. Contact your administrator.',
+    }
   }
-  return ''
+  if (!selectedBackupSource.value) {
+    return {
+      code: 'backup_source',
+      message: 'Select a backup source to continue.',
+    }
+  }
+  if (!effectiveSnapshotId.value) {
+    return {
+      code: 'snapshot',
+      message: 'Select a snapshot to continue.',
+    }
+  }
+  if (sourceScopes.value.length === 0) {
+    return {
+      code: 'source_scope',
+      message: 'Select at least one file or folder to continue.',
+    }
+  }
+  if (!selectedGateway.value) {
+    if (gatewayMode.value === 'manual') {
+      return {
+        code: 'private_gateway',
+        message: t('insight.copilot.gatewayPrivateRequired'),
+      }
+    }
+    if (gatewayOptionsResolved.value) {
+      return {
+        code: 'public_gateway',
+        message: t('insight.copilot.gatewayPublicUnavailable'),
+      }
+    }
+  }
+  return null
 })
+const footerSubmitBlockReason = computed(() => (
+  submitBlocker.value?.code === 'public_gateway'
+    ? ''
+    : submitBlocker.value?.message ?? ''
+))
 
 function snapshotOptionLabel(row: { finished_at?: string | null; started_at?: string | null; created_at: string; total_size_bytes: number }) {
   const time = row.finished_at || row.started_at || row.created_at
@@ -151,6 +206,7 @@ async function refreshGatewayOptions(showFeedback = true) {
     if (!showFeedback) throw error
     ElMessage.error({ message: apiErrorMessage(error, t('insight.copilot.gatewayPrivateRefreshFailed')), grouping: true })
   } finally {
+    gatewayOptionsResolved.value = true
     gatewayRefreshing.value = false
   }
 }
@@ -381,7 +437,14 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                     <p v-if="!gatewayRefreshing && privateGateways.length === 0" class="new-chat-hint new-chat-hint--warn">{{ t('insight.copilot.gatewayPrivateNoOnline') }}</p>
                   </div>
                 </div>
-                <p v-if="gatewayMode === 'auto' && !autoGateway" class="new-chat-hint new-chat-hint--warn">{{ t('insight.copilot.gatewayPublicUnavailable') }}</p>
+                <div
+                  v-if="publicGatewayUnavailable"
+                  class="new-chat-gateway-warning"
+                  role="alert"
+                >
+                  <TriangleAlert :size="16" aria-hidden="true" />
+                  <span>{{ t('insight.copilot.gatewayPublicUnavailable') }}</span>
+                </div>
               </div>
             </section></div>
           </div>
@@ -411,7 +474,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
       </div>
 
       <footer class="fullscreen-form-footer">
-        <p v-if="submitBlockReason" class="form-submit-hint">{{ submitBlockReason }}</p>
+        <p v-if="footerSubmitBlockReason" class="form-submit-hint">{{ footerSubmitBlockReason }}</p>
         <button class="form-action form-action--secondary" type="button" @click="router.push('/insight/copilot')">Cancel</button>
         <button class="form-action form-action--primary" type="button" :disabled="!canCreate" @click="createChat"><span v-if="submitting" class="form-action__loading" />{{ submitting ? 'Starting Chat…' : 'Start Chat' }}</button>
       </footer>
@@ -445,6 +508,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-scope-hint { margin-top: 8px; }
 .new-chat-hint { margin: 10px 0 0; color: #86909c; font-size: 12px; line-height: 1.5; }
 .new-chat-hint--warn { color: #d46b08; }
+.new-chat-gateway-warning { display: flex; width: 100%; box-sizing: border-box; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--color-warning) 35%, var(--color-card-bg)); border-radius: 8px; background: color-mix(in srgb, var(--color-warning) 10%, var(--color-card-bg)); color: var(--color-warning-text); font-size: 12px; line-height: 1.5; }
+.new-chat-gateway-warning svg { flex: 0 0 auto; margin-top: 1px; color: var(--color-warning); }
+.new-chat-gateway-warning span { min-width: 0; overflow-wrap: anywhere; }
 .new-chat-visual-warning { margin: 14px 0 0; padding: 9px 10px; border: 1px solid #ffe7ba; border-radius: 8px; background: #fffbe6; color: #ad6800; font-size: 12px; line-height: 1.5; }
 .new-chat-choice { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; padding: 13px; border: 1px solid #e5e6eb; border-radius: 8px; cursor: pointer; transition: border-color .15s, background .15s; }
 .new-chat-choice--selected { border-color: #165dff; background: #f2f6ff; }
