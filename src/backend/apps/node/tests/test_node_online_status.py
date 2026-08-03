@@ -16,6 +16,8 @@ from apps.node.services.internal.node_registry import (
     CONNECTION_RECONNECTING,
     agent_connection_status,
     effective_agent_node_status,
+    record_node_availability,
+    reconcile_node_availability,
     reconcile_stale_online_nodes,
 )
 from apps.node.ws.uplink import on_agent_connected, on_agent_disconnected
@@ -116,6 +118,8 @@ class AgentNodeOnlineStatusTests(TestCase):
 
         self.node.refresh_from_db()
         self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+        self.assertIsNotNone(self.node.availability_updated_at)
         self.assertEqual(
             effective_agent_node_status(self.node),
             Node.Status.ONLINE,
@@ -152,6 +156,7 @@ class AgentNodeOnlineStatusTests(TestCase):
 
         self.node.refresh_from_db()
         self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertEqual(agent_connection_status(self.node), CONNECTION_RECONNECTING)
         self.assertIsNone(redis_store.get_agent_location(agent_id=self.node.id))
         self.assertEqual(
@@ -279,6 +284,123 @@ class AgentNodeOnlineStatusTests(TestCase):
         self.node.refresh_from_db()
         self.assertEqual(self.node.status, Node.Status.ONLINE)
         self.assertEqual(summary["nodes_marked_offline"], 0)
+
+    def test_availability_reconcile_marks_stale_node_offline(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        self.redis.delete(redis_store.agent_loc_key(self.node.id))
+        Node.objects.filter(pk=self.node.id).update(
+            last_seen_at=timezone.now()
+            - timezone.timedelta(seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5),
+        )
+
+        summary = reconcile_node_availability(limit=10)
+
+        self.node.refresh_from_db()
+        self.assertTrue(summary["redis_healthy"])
+        self.assertEqual(summary["nodes_marked_offline"], 1)
+        self.assertEqual(self.node.availability, Node.Availability.OFFLINE)
+
+    def test_availability_reconcile_retains_observation_during_redis_outage(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        Node.objects.filter(pk=self.node.id).update(
+            last_seen_at=timezone.now()
+            - timezone.timedelta(seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5),
+        )
+        from unittest.mock import patch
+
+        with patch(
+            "apps.node.services.internal.redis_store.get_redis",
+            return_value=None,
+        ):
+            summary = reconcile_node_availability(limit=10)
+
+        self.node.refresh_from_db()
+        self.assertFalse(summary["redis_healthy"])
+        self.assertEqual(summary["nodes_marked_offline"], 0)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+
+    def test_availability_reconcile_recovers_after_redis_outage(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        self.redis.delete(redis_store.agent_loc_key(self.node.id))
+        Node.objects.filter(pk=self.node.id).update(
+            last_seen_at=timezone.now()
+            - timezone.timedelta(seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5),
+        )
+        from unittest.mock import patch
+
+        with patch(
+            "apps.node.services.internal.redis_store.get_redis",
+            return_value=None,
+        ):
+            reconcile_node_availability(limit=10)
+        summary = reconcile_node_availability(limit=10)
+
+        self.node.refresh_from_db()
+        self.assertTrue(summary["redis_healthy"])
+        self.assertEqual(self.node.availability, Node.Availability.OFFLINE)
+
+    def test_availability_reconcile_retains_when_cached_redis_client_fails(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        Node.objects.filter(pk=self.node.id).update(
+            last_seen_at=timezone.now()
+            - timezone.timedelta(seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5),
+        )
+        from unittest.mock import Mock, patch
+
+        failed_client = Mock()
+        failed_client.ping.side_effect = ConnectionError("redis unavailable")
+        with patch(
+            "apps.node.services.internal.redis_store.get_redis",
+            return_value=failed_client,
+        ):
+            summary = reconcile_node_availability(limit=10)
+
+        self.node.refresh_from_db()
+        self.assertFalse(summary["redis_healthy"])
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+
+    def test_availability_reconcile_does_not_override_a_new_heartbeat(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        self.node.refresh_from_db()
+        expected_updated_at = self.node.availability_updated_at
+        expected_last_seen_at = self.node.last_seen_at
+        newer_last_seen_at = timezone.now() + timezone.timedelta(seconds=1)
+        Node.objects.filter(pk=self.node.id).update(
+            last_seen_at=newer_last_seen_at,
+        )
+
+        changed = record_node_availability(
+            node_id=self.node.id,
+            availability=Node.Availability.OFFLINE,
+            expected_updated_at=expected_updated_at,
+            expected_last_seen_at=expected_last_seen_at,
+        )
+
+        self.node.refresh_from_db()
+        self.assertFalse(changed)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+        self.assertEqual(self.node.last_seen_at, newer_last_seen_at)
+
+    def test_older_observation_does_not_regress_availability_timestamp(self):
+        self._mark_ws_alive()
+        on_agent_connected(node_id=self.node.id, session_id="session-a")
+        self.node.refresh_from_db()
+        current_updated_at = self.node.availability_updated_at
+
+        changed = record_node_availability(
+            node_id=self.node.id,
+            availability=Node.Availability.ONLINE,
+            observed_at=current_updated_at - timezone.timedelta(seconds=1),
+        )
+
+        self.node.refresh_from_db()
+        self.assertFalse(changed)
+        self.assertEqual(self.node.availability_updated_at, current_updated_at)
 
     def test_legacy_plain_agent_loc_value_still_routable(self):
         ws_id = node_conf.WS_INSTANCE_ID

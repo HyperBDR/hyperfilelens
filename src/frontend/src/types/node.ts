@@ -2,6 +2,7 @@ import type { NodeLifecycleInfo, NodeWorkloadInfo } from './nodeLifecycle'
 
 export type NodeRole = 'agent' | 'proxy' | 'gateway'
 export type NodeStatus = 'online' | 'reconnecting' | 'offline'
+export type Availability = 'online' | 'offline'
 
 export type ApiNode = {
   id: number
@@ -12,6 +13,8 @@ export type ApiNode = {
   os_name?: string
   ip_address?: string | null
   status: NodeStatus
+  availability?: Availability
+  availability_updated_at?: string | null
   routable?: boolean
   last_seen_at?: string | null
   metadata?: Record<string, unknown>

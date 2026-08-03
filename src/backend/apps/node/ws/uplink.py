@@ -26,6 +26,7 @@ from apps.node.services.interface import (
     complete_task,
     record_task_progress,
 )
+from apps.node.services.internal.node_registry import record_node_available
 from apps.node.ws.wire import ParsedUplink, WireType
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host_by_id
 
@@ -35,13 +36,15 @@ logger = logging.getLogger(__name__)
 def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None = None) -> None:
     redis_store.set_agent_location(agent_id=node_id, session_id=session_id)
     redis_store.touch_ws_instance_alive()
+    observed_at = timezone.now()
     updates: dict = {
-        "last_seen_at": timezone.now(),
+        "last_seen_at": observed_at,
         "status": Node.Status.ONLINE,
     }
     if client_ip:
         updates["connection_ip_address"] = client_ip
     Node.objects.filter(pk=node_id).update(**updates)
+    record_node_available(node_id=node_id, observed_at=observed_at)
     try:
         sync_agent_source_host_by_id(node_id=node_id)
     except Exception:
@@ -157,9 +160,11 @@ def apply_heartbeat_inventory_snapshot(*, node_id: int, inventory: dict | None) 
     updates = _merge_heartbeat_inventory_updates(node=node, inventory=inventory)
     if not updates:
         return
-    updates["last_seen_at"] = timezone.now()
+    observed_at = timezone.now()
+    updates["last_seen_at"] = observed_at
     updates["status"] = Node.Status.ONLINE
     Node.objects.filter(pk=node_id).update(**updates)
+    record_node_available(node_id=node_id, observed_at=observed_at)
 
 
 def _should_process_full_inventory(*, node_id: int) -> bool:
@@ -181,13 +186,15 @@ def _process_heartbeat_followup(*, node_id: int, inventory: dict | None = None) 
         return
 
     full_inventory = inventory and _should_process_full_inventory(node_id=node_id)
+    observed_at = timezone.now()
     updates: dict = {
-        "last_seen_at": timezone.now(),
+        "last_seen_at": observed_at,
         "status": Node.Status.ONLINE,
     }
     if full_inventory:
         updates.update(_merge_heartbeat_inventory_updates(node=node, inventory=inventory))
     Node.objects.filter(pk=node_id).update(**updates)
+    record_node_available(node_id=node_id, observed_at=observed_at)
 
     if (
         full_inventory

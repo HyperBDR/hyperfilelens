@@ -69,6 +69,8 @@ export type SourceResource = {
   status?: string
   status_display?: string
   status_message?: string
+  availability?: 'online' | 'offline'
+  availability_updated_at?: string | null
   effective_status?: 'removing' | 'remove_failed' | 'error' | 'probing' | 'online' | 'unverified'
   effective_status_message?: string
   connection_test_status?: 'idle' | 'pending' | 'running' | 'success' | 'failed'

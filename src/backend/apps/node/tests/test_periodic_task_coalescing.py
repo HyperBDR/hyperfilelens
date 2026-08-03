@@ -40,6 +40,7 @@ class PeriodicTaskCoalescingTests(SimpleTestCase):
 
         ingest = TASK_REGISTRY._entries["node_ingest_uplink_streams"]
         lifecycle = TASK_REGISTRY._entries["node_advance_active_lifecycle_nodes"]
+        availability = TASK_REGISTRY._entries["node_reconcile_availability"]
         self.assertEqual(
             ingest["expire_seconds"],
             node_conf.UPLINK_INGEST_EXPIRE_SECONDS,
@@ -48,6 +49,11 @@ class PeriodicTaskCoalescingTests(SimpleTestCase):
             lifecycle["expire_seconds"],
             node_conf.LIFECYCLE_ADVANCE_EXPIRE_SECONDS,
         )
+        self.assertEqual(
+            availability["schedule"],
+            node_conf.STALE_NODE_RECONCILE_INTERVAL_SECONDS,
+        )
+        self.assertEqual(availability["kwargs"], {"limit": 200})
 
     @patch(
         "apps.node.tasks.uplink_ingest.redis_store.periodic_lease",

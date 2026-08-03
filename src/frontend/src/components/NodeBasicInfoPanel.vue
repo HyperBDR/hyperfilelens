@@ -79,6 +79,15 @@ const versionText = computed(() => {
   return props.node.version?.trim() || DETAIL_EMPTY
 })
 
+const availabilityLabel = computed(() =>
+  props.node.availability === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline'),
+)
+const availabilityTagType = computed(() =>
+  props.node.availability === 'online' ? 'success' : 'danger',
+)
+
 const capacityParts = computed(() => {
   if (props.source?.total_size) {
     const used = Number(props.source.used_size || 0)
@@ -328,6 +337,16 @@ function detailValueClass(text: string, monoWhenPresent = false) {
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colVersion') }}</span>
           <span class="hfl-detail-row__value">{{ versionText }}</span>
+        </div>
+        <div class="hfl-detail-row">
+          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colAvailability') }}</span>
+          <span class="hfl-detail-row__value">
+            <ElTag :type="availabilityTagType" size="small">{{ availabilityLabel }}</ElTag>
+          </span>
+        </div>
+        <div class="hfl-detail-row">
+          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
+          <span class="hfl-detail-row__value">{{ formatNodeDate(node.availability_updated_at) }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegistered') }}</span>

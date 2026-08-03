@@ -253,6 +253,16 @@ function formatDate(iso?: string | null) {
   return formatAppDateTime(iso, '—')
 }
 
+function availabilityLabel(value?: string) {
+  return value === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline')
+}
+
+function availabilityTagType(value?: string): 'success' | 'danger' {
+  return value === 'online' ? 'success' : 'danger'
+}
+
 function agentUsageParts(node: ApiNode) {
   const source = localSourceByNodeId.value.get(node.id)
   if (source?.total_size) {
@@ -1983,7 +1993,7 @@ onUnmounted(() => {
               <el-table-column type="selection" width="35" fixed="left" />
               <el-table-column
                 :label="t('protection.sourceResources.colName')"
-                min-width="200"
+                min-width="170"
                 fixed="left"
                 class-name="hfl-table-name-col"
               >
@@ -1993,47 +2003,7 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="140">
-                <template #default="{ row }">
-                  <span>{{ row.ip_address?.trim() || '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="OS" min-width="120">
-                <template #default="{ row }">
-                  <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
-                    <span class="source-os-cell__icon-wrap">
-                      <AgentPlatformBrandIcon :os="agentEnrollmentOs(row)" />
-                    </span>
-                    <span class="source-os-cell__platform">{{ agentPlatformLabel(row) }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="88">
-                <template #default="{ row }">
-                  <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="100">
-                <template #default="{ row }">
-                  <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="96">
-                <template #default="{ row }">
-                  <span>{{ nodeDiskCount(row) ?? '—' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="200">
-                <template #default="{ row }">
-                  <HflCapacityCell
-                    :used-bytes="agentUsageParts(row).used"
-                    :total-bytes="agentUsageParts(row).total"
-                    variant="compact"
-                    :format-bytes="formatBytes"
-                  />
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="156" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="126" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <FlowSourceReadyStatusCell
@@ -2048,7 +2018,56 @@ onUnmounted(() => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colVersion')" min-width="130">
+              <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="120">
+                <template #default="{ row }">
+                  <span>{{ row.ip_address?.trim() || '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="OS" min-width="105">
+                <template #default="{ row }">
+                  <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
+                    <span class="source-os-cell__icon-wrap">
+                      <AgentPlatformBrandIcon :os="agentEnrollmentOs(row)" />
+                    </span>
+                    <span class="source-os-cell__platform">{{ agentPlatformLabel(row) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="76">
+                <template #default="{ row }">
+                  <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="90">
+                <template #default="{ row }">
+                  <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="78">
+                <template #default="{ row }">
+                  <span>{{ nodeDiskCount(row) ?? '—' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
+                <template #default="{ row }">
+                  <HflCapacityCell
+                    :used-bytes="agentUsageParts(row).used"
+                    :total-bytes="agentUsageParts(row).total"
+                    variant="compact"
+                    :format-bytes="formatBytes"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
+                <template #default="{ row }">
+                  <div class="hfl-table-no-tooltip">
+                    <ElTag :type="availabilityTagType(row.availability)" size="small">
+                      {{ availabilityLabel(row.availability) }}
+                    </ElTag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colVersion')" min-width="115">
                 <template #default="{ row }">
                   <NodeVersionCell
                     :node="row"
@@ -2057,7 +2076,7 @@ onUnmounted(() => {
                   />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
+              <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time">{{ formatDate(row.created_at) }}</span>
                 </template>
@@ -2087,7 +2106,7 @@ onUnmounted(() => {
               <el-table-column type="selection" width="35" fixed="left" />
               <el-table-column
                 :label="t('protection.sourceResources.colName')"
-                min-width="200"
+                min-width="170"
                 fixed="left"
                 class-name="hfl-table-name-col"
               >
@@ -2101,7 +2120,7 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colProtocol')" width="100">
+              <el-table-column :label="t('protection.sourceResources.colProtocol')" width="85">
                 <template #default="{ row }">
                   <span v-if="nasProtocolType(row) !== 'nas'" :class="nasProtocolPillClass(row)">
                     <component :is="nasMountProtocolIcon(nasProtocolType(row))" :size="12" stroke-width="2.25" />
@@ -2110,17 +2129,17 @@ onUnmounted(() => {
                   <span v-else>—</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colNasServer')" min-width="140">
+              <el-table-column :label="t('protection.sourceResources.colNasServer')" min-width="115">
                 <template #default="{ row }">
                   {{ nasServerAddress(row) }}
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="160">
+              <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="130">
                 <template #default="{ row }">
                   {{ nasShareOrExport(row) }}
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="150">
+              <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="130">
                 <template #header>
                   <span class="hfl-table-header-with-tip">
                     <span>{{ t('protection.sourceResources.colSourceProxy') }}</span>
@@ -2140,12 +2159,12 @@ onUnmounted(() => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colProxyMountPoint')" min-width="220">
+              <el-table-column :label="t('protection.sourceResources.colProxyMountPoint')" min-width="170">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ nasProxyMountPoint(row) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="200">
+              <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
                 <template #default="{ row }">
                   <HflCapacityCell
                     v-if="row.total_size"
@@ -2160,7 +2179,7 @@ onUnmounted(() => {
                   <span v-else>—</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="156" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="135" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <FlowSourceReadyStatusCell
@@ -2176,7 +2195,16 @@ onUnmounted(() => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
+              <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
+                <template #default="{ row }">
+                  <div class="hfl-table-no-tooltip">
+                    <ElTag :type="availabilityTagType(row.availability)" size="small">
+                      {{ availabilityLabel(row.availability) }}
+                    </ElTag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-time">{{ formatDate(sourceRegisteredAt(row)) }}</span>
                 </template>

@@ -12,8 +12,14 @@ from celery import shared_task
 
 from common.observability.celery_context import logged_celery_task
 
-from apps.node.constants import TASK_RECONCILE_STALE_ONLINE_NODES
-from apps.node.services.interface import reconcile_stale_online_nodes
+from apps.node.constants import (
+    TASK_RECONCILE_NODE_AVAILABILITY,
+    TASK_RECONCILE_STALE_ONLINE_NODES,
+)
+from apps.node.services.interface import (
+    reconcile_node_availability,
+    reconcile_stale_online_nodes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,4 +38,22 @@ def reconcile_stale_online_nodes_task(self, *, limit: int = 200) -> dict[str, in
         logger.info("reconcile_stale_online_nodes complete %s", summary)
     else:
         logger.debug("reconcile_stale_online_nodes complete %s", summary)
+    return summary
+
+
+@shared_task(
+    name=TASK_RECONCILE_NODE_AVAILABILITY,
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 2},
+)
+@logged_celery_task(name=TASK_RECONCILE_NODE_AVAILABILITY, trace_keys=("limit",))
+def reconcile_node_availability_task(self, *, limit: int = 200) -> dict:
+    del self
+    summary = reconcile_node_availability(limit=int(limit))
+    if summary.get("nodes_marked_offline") or not summary.get("redis_healthy"):
+        logger.info("reconcile_node_availability complete %s", summary)
+    else:
+        logger.debug("reconcile_node_availability complete %s", summary)
     return summary

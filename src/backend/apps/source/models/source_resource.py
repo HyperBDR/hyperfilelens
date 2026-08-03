@@ -2,10 +2,12 @@
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.node import agent_paths
 from apps.node.models.base import OrganizationScopedModel
 from apps.source.constants import (
+    Availability,
     ConnectionTestStatus,
     MountStatus,
     ResourceStatus,
@@ -55,6 +57,17 @@ class SourceResource(OrganizationScopedModel):
         db_index=True,
     )
     status_message = models.TextField(blank=True, default="")
+
+    availability = models.CharField(
+        max_length=20,
+        choices=Availability.CHOICES,
+        default=Availability.OFFLINE,
+        db_index=True,
+    )
+    availability_updated_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+    )
 
     last_connection_test = models.DateTimeField(null=True, blank=True)
     connection_test_result = models.TextField(blank=True, default="")

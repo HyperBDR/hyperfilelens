@@ -80,6 +80,8 @@ class NodeHeartbeatClientIpTests(TestCase):
         node = Node.objects.get(organization=self.org)
         self.assertEqual(str(node.ip_address), "10.20.1.15")
         self.assertEqual(str(node.connection_ip_address), "192.168.10.15")
+        self.assertEqual(node.availability, Node.Availability.ONLINE)
+        self.assertIsNotNone(node.availability_updated_at)
 
     def test_heartbeat_updates_host_and_connection_addresses_independently(self):
         node = Node.objects.create(
@@ -143,3 +145,7 @@ class NodeHeartbeatClientIpTests(TestCase):
 
     def test_host_ip_is_read_only_in_tenant_serializer(self):
         self.assertTrue(NodeSerializer().fields["ip_address"].read_only)
+        self.assertTrue(NodeSerializer().fields["availability"].read_only)
+        self.assertTrue(
+            NodeSerializer().fields["availability_updated_at"].read_only
+        )

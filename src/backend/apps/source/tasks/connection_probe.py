@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
+from uuid import uuid4
 
 from celery import shared_task
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.node.models import Node
 from apps.source.constants import (
+    Availability,
     ConnectionTestStatus,
     ResourceStatus,
     ResourceType,
 )
+from apps.source import conf as source_conf
 from apps.source.models import SourceResource
 from apps.source.services.internal.connection import (
     apply_connection_test_result_if_current,
@@ -24,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 SOURCE_REMOTE_IO_QUEUE = "source.remote-io"
 _PROBE_MAX_RETRIES = 2
-_PROBE_STALE_SECONDS = 15 * 60
+_PROBE_STALE_SECONDS = source_conf.AVAILABILITY_VALIDITY_SECONDS
 
 
 def _probe_target(
@@ -214,6 +219,204 @@ def queue_source_resource_capacity_probe(
     return True
 
 
+def _queue_availability_probe(
+    *,
+    resource_id: int,
+    force: bool = False,
+    expected_updated_at: datetime | None = None,
+) -> bool:
+    """Claim and enqueue one availability refresh without overlapping probes."""
+    with transaction.atomic():
+        resource = (
+            SourceResource.objects.select_for_update()
+            .filter(
+                pk=resource_id,
+                resource_type__in=ResourceType.REQUIRES_MOUNT,
+                is_deleted=False,
+            )
+            .first()
+        )
+        if resource is None:
+            return False
+        if resource.status in {ResourceStatus.REMOVING, ResourceStatus.REMOVED}:
+            return False
+        if resource.connection_test_status in ConnectionTestStatus.ACTIVE:
+            return False
+        if (
+            expected_updated_at is not None
+            and resource.availability_updated_at != expected_updated_at
+        ):
+            return False
+        if (
+            resource.bound_node is None
+            or resource.bound_node.availability != Node.Availability.ONLINE
+        ):
+            return False
+        refresh_cutoff = timezone.now() - timedelta(
+            seconds=max(1, source_conf.AVAILABILITY_VALIDITY_SECONDS // 2)
+        )
+        if not force and resource.availability_updated_at > refresh_cutoff:
+            return False
+
+        probe_token = uuid4()
+        resource.connection_test_status = ConnectionTestStatus.PENDING
+        resource.connection_probe_token = probe_token
+        resource.save(
+            update_fields=[
+                "connection_test_status",
+                "connection_probe_token",
+                "updated_at",
+            ]
+        )
+        transaction.on_commit(
+            lambda: queue_source_resource_capacity_probe(
+                resource_id=resource.id,
+                probe_token=str(probe_token),
+                expected_bound_node_id=int(resource.bound_node_id or 0),
+            )
+        )
+        return True
+
+
+def queue_source_availability_probes_for_proxy(
+    *,
+    proxy_id: int,
+    limit: int | None = None,
+) -> dict[str, int]:
+    """Queue a bounded fresh NAS observation after a Proxy becomes available."""
+    batch_size = max(
+        1,
+        int(limit or source_conf.AVAILABILITY_RECONCILE_BATCH_SIZE),
+    )
+    resource_ids = list(
+        SourceResource.objects.filter(
+            bound_node_id=proxy_id,
+            resource_type__in=ResourceType.REQUIRES_MOUNT,
+            is_deleted=False,
+        )
+        .exclude(connection_test_status__in=ConnectionTestStatus.ACTIVE)
+        .exclude(status__in={ResourceStatus.REMOVING, ResourceStatus.REMOVED})
+        .order_by("availability_updated_at", "id")
+        .values_list("id", flat=True)[:batch_size]
+    )
+    queued = sum(
+        1
+        for resource_id in resource_ids
+        if _queue_availability_probe(resource_id=resource_id, force=True)
+    )
+    return {"candidates": len(resource_ids), "queued": queued}
+
+
+@shared_task(
+    name=(
+        "apps.source.tasks.connection_probe."
+        "queue_source_availability_probes_for_proxy_task"
+    )
+)
+def queue_source_availability_probes_for_proxy_task(
+    *,
+    proxy_id: int,
+    limit: int | None = None,
+) -> dict[str, int]:
+    """Queue bounded NAS refreshes outside the Proxy heartbeat request."""
+    return queue_source_availability_probes_for_proxy(
+        proxy_id=int(proxy_id),
+        limit=limit,
+    )
+
+
+def reconcile_source_availability(*, limit: int | None = None) -> dict[str, int]:
+    """Expire stale NAS observations and queue bounded pre-refresh probes."""
+    now = timezone.now()
+    validity_seconds = max(2, source_conf.AVAILABILITY_VALIDITY_SECONDS)
+    refresh_cutoff = now - timedelta(seconds=validity_seconds // 2)
+    expiry_cutoff = now - timedelta(seconds=validity_seconds)
+    batch_size = max(
+        1,
+        int(limit or source_conf.AVAILABILITY_RECONCILE_BATCH_SIZE),
+    )
+    resources = list(
+        SourceResource.objects.select_related("bound_node")
+        .filter(
+            resource_type__in=ResourceType.REQUIRES_MOUNT,
+            is_deleted=False,
+        )
+        .exclude(status__in={ResourceStatus.REMOVING, ResourceStatus.REMOVED})
+        .filter(
+            Q(
+                availability_updated_at__lte=refresh_cutoff,
+                bound_node__availability=Node.Availability.ONLINE,
+            )
+            | Q(
+                availability=Availability.ONLINE,
+            )
+            & (
+                Q(bound_node__isnull=True)
+                | Q(bound_node__availability=Node.Availability.OFFLINE)
+            )
+        )
+        .order_by("availability_updated_at", "id")[:batch_size]
+    )
+    expired = 0
+    proxy_offline = 0
+    queued = 0
+    for resource in resources:
+        node = resource.bound_node
+        if node is None or node.availability != Node.Availability.ONLINE:
+            observed_at = (
+                node.availability_updated_at
+                if node is not None
+                else now
+            )
+            changed = SourceResource.objects.filter(
+                pk=resource.id,
+                availability=resource.availability,
+                availability_updated_at=resource.availability_updated_at,
+            ).update(
+                availability=Availability.OFFLINE,
+                availability_updated_at=observed_at,
+            )
+            proxy_offline += int(changed)
+            continue
+
+        due_for_refresh = resource.availability_updated_at <= refresh_cutoff
+        expected_updated_at = resource.availability_updated_at
+        if resource.availability_updated_at <= expiry_cutoff:
+            changed = SourceResource.objects.filter(
+                pk=resource.id,
+                availability_updated_at=resource.availability_updated_at,
+            ).update(
+                availability=Availability.OFFLINE,
+                availability_updated_at=now,
+            )
+            if not changed:
+                continue
+            expected_updated_at = now
+            expired += int(changed)
+        if due_for_refresh and _queue_availability_probe(
+            resource_id=resource.id,
+            force=True,
+            expected_updated_at=expected_updated_at,
+        ):
+            queued += 1
+    return {
+        "candidates": len(resources),
+        "expired": expired,
+        "proxy_offline": proxy_offline,
+        "queued": queued,
+    }
+
+
+@shared_task(
+    name=(
+        "apps.source.tasks.connection_probe."
+        "reconcile_source_availability_task"
+    )
+)
+def reconcile_source_availability_task(*, limit: int = 100) -> dict[str, int]:
+    return reconcile_source_availability(limit=int(limit))
+
+
 def reconcile_stale_source_connection_probes(*, limit: int = 100) -> dict[str, int]:
     """Fail probes that can no longer be owned by a live Celery execution."""
     cutoff = timezone.now() - timedelta(seconds=_PROBE_STALE_SECONDS)
@@ -260,6 +463,10 @@ def reconcile_stale_source_connection_probes_task(*, limit: int = 100) -> dict[s
 __all__ = [
     "probe_source_resource_capacity",
     "queue_source_resource_capacity_probe",
+    "queue_source_availability_probes_for_proxy",
+    "queue_source_availability_probes_for_proxy_task",
+    "reconcile_source_availability",
+    "reconcile_source_availability_task",
     "reconcile_stale_source_connection_probes",
     "reconcile_stale_source_connection_probes_task",
     "run_source_resource_capacity_probe",

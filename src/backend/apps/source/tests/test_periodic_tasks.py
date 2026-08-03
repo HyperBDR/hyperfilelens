@@ -10,7 +10,19 @@ class SourcePeriodicTaskTests(SimpleTestCase):
     def test_registers_probe_and_unregister_reconciliation(self, add):
         register_periodic_tasks()
 
-        self.assertEqual(add.call_count, 2)
+        self.assertEqual(add.call_count, 3)
+        add.assert_any_call(
+            name="source_reconcile_availability",
+            task=(
+                "apps.source.tasks.connection_probe."
+                "reconcile_source_availability_task"
+            ),
+            schedule=60,
+            args=(),
+            kwargs={"limit": 100},
+            queue="source.remote-io",
+            enabled=True,
+        )
         add.assert_any_call(
             name="source_reconcile_stale_connection_probes",
             task=(

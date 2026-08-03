@@ -97,6 +97,8 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
             config=config,
             bound_node=node,
             status=status,
+            availability=node.availability,
+            availability_updated_at=node.availability_updated_at,
             total_size=total,
             used_size=used,
             free_size=free,
@@ -110,12 +112,16 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
 
     resource.config = config
     resource.status = status
+    resource.availability = node.availability
+    resource.availability_updated_at = node.availability_updated_at
     resource.total_size = total
     resource.used_size = used
     resource.free_size = free
     update_fields = [
         "config",
         "status",
+        "availability",
+        "availability_updated_at",
         "total_size",
         "used_size",
         "free_size",

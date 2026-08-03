@@ -1,6 +1,7 @@
 """Node registry model."""
 
 from django.db import models
+from django.utils import timezone
 
 from .base import NodeRole, OrganizationScopedModel
 
@@ -9,6 +10,10 @@ class Node(OrganizationScopedModel):
     """Registered Agent endpoint (agent, proxy, or gateway)."""
 
     class Status(models.TextChoices):
+        ONLINE = "online", "Online"
+        OFFLINE = "offline", "Offline"
+
+    class Availability(models.TextChoices):
         ONLINE = "online", "Online"
         OFFLINE = "offline", "Offline"
 
@@ -44,6 +49,16 @@ class Node(OrganizationScopedModel):
         max_length=20,
         choices=Status.choices,
         default=Status.OFFLINE,
+        db_index=True,
+    )
+    availability = models.CharField(
+        max_length=20,
+        choices=Availability.choices,
+        default=Availability.OFFLINE,
+        db_index=True,
+    )
+    availability_updated_at = models.DateTimeField(
+        default=timezone.now,
         db_index=True,
     )
     last_seen_at = models.DateTimeField(blank=True, null=True, db_index=True)
