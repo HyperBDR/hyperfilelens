@@ -50,14 +50,16 @@ const route = useRoute()
 const router = useRouter()
 const { items: navItems, isActive: navActive } = useAppPrimaryNav()
 
-const timezoneDisplay = computed(() => {
+const timezoneOffsetDisplay = computed(() => {
   const offset = new Date().getTimezoneOffset()
   const sign = offset <= 0 ? '+' : '-'
   const absOffset = Math.abs(offset)
   const hours = String(Math.floor(absOffset / 60)).padStart(2, '0')
   const minutes = String(absOffset % 60).padStart(2, '0')
-  return `${t('nav.timezone')}GMT${sign}${hours}:${minutes}`
+  return `GMT${sign}${hours}:${minutes}`
 })
+
+const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
 
 function navigateImmediately(to: string) {
   if (to === route.fullPath) return
@@ -99,13 +101,24 @@ function handleNavClick(event: MouseEvent, to: string) {
         class="nav-item"
         @click="handleNavClick($event, item.to)"
       >
-        {{ item.label }}
+        <component
+          :is="item.icon"
+          class="nav-item__icon"
+          :size="16"
+          :stroke-width="2"
+          aria-hidden="true"
+        />
+        <span>{{ item.label }}</span>
       </RouterLink>
     </nav>
 
     <div class="right-menu">
-      <span class="timezone-display desktop-navigation-control">
-        {{ timezoneDisplay }}
+      <span
+        class="timezone-display desktop-navigation-control"
+        :title="timezoneDisplay"
+      >
+        <span class="timezone-display__label">{{ t('nav.timezone') }}</span>
+        <span>{{ timezoneOffsetDisplay }}</span>
       </span>
 
       <ElButton
@@ -236,8 +249,13 @@ function handleNavClick(event: MouseEvent, to: string) {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   border-radius: 8px 8px 0 0;
   transition: color 150ms ease, background-color 150ms ease;
+}
+
+.nav-item__icon {
+  flex: 0 0 auto;
 }
 
 .nav-item:hover {
@@ -325,6 +343,18 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 .alerts-btn {
   position: relative;
+}
+
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  .nav-item__icon {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439.98px) {
+  .timezone-display__label {
+    display: none;
+  }
 }
 
 @media (max-width: 1023.98px) {

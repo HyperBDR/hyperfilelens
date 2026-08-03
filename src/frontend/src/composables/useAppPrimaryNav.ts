@@ -1,10 +1,18 @@
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
+import {
+  Activity,
+  ChartNoAxesCombined,
+  LayoutDashboard,
+  Settings,
+  ShieldCheck,
+} from 'lucide-vue-next'
 
 export interface AppPrimaryNavItem {
   to: string
   label: string
+  icon: Component
   active?: boolean
 }
 
@@ -27,11 +35,11 @@ export function useAppPrimaryNav() {
   const route = useRoute()
 
   const items = computed<AppPrimaryNavItem[]>(() => [
-    { to: '/', label: t('nav.overview') },
-    { to: '/protection', label: t('nav.protection') },
-    { to: '/insight', label: t('nav.insight') },
-    { to: '/node', label: t('nav.node') },
-    { to: '/ops', label: t('nav.ops') },
+    { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
+    { to: '/protection', label: t('nav.protection'), icon: ShieldCheck },
+    { to: '/insight', label: t('nav.insight'), icon: ChartNoAxesCombined },
+    { to: '/node', label: t('nav.node'), icon: Settings },
+    { to: '/ops', label: t('nav.ops'), icon: Activity },
   ])
 
   function isActive(to: string) {
