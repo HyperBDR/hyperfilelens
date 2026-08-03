@@ -461,7 +461,7 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
     !payload.api_base ||
     typeof payload.tls_verify !== 'boolean'
   ) {
-    throw new Error('Platform gateway enrollment response is incomplete')
+    throw new Error('Public Data Gateway enrollment response is incomplete')
   }
   return {
     token: payload.token,

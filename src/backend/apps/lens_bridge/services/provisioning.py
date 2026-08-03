@@ -822,7 +822,7 @@ def _resolve_gateway_link_identity(
         and existing is None
     ):
         raise ValidationError(
-            {"owner_user": "Private data gateway requires an owner."}
+            {"owner_user": "Private Data Gateway requires an owner."}
         )
     desired_origin = (
         existing.origin
@@ -858,7 +858,7 @@ def _resolve_gateway_link_identity(
         and link.owner_user_id != requested_owner_id
     ):
         raise ValidationError(
-            {"owner_user": "Private data gateway belongs to another user."}
+            {"owner_user": "Private Data Gateway belongs to another user."}
         )
     if link.scope != desired_scope:
         raise ValidationError(

@@ -177,7 +177,7 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
 
         with self.assertRaisesMessage(
             Exception,
-            "Private data gateway belongs to another user.",
+            "Private Data Gateway belongs to another user.",
         ):
             provisioning.ensure_lensnode_for_gateway(
                 org=self.org,

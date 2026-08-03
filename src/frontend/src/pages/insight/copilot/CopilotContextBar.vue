@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { MessageSquare, TriangleAlert } from 'lucide-vue-next'
 import { formatBytes } from '../../../lib/kopiaProgress'
 import { formatLocalDateTime } from '../../../lib/dateTime'
+import { copilotGatewayKind } from '../../../lib/copilotGatewayTerminology'
 import type { LensSessionLink } from '../../../lib/lensApi'
 
 const props = defineProps<{
   session: LensSessionLink
 }>()
 
+const { t } = useI18n()
 const detailsOpen = ref(false)
 const activeRunStatuses = new Set(['queued', 'running', 'streaming'])
 
@@ -43,9 +46,22 @@ const createdShort = computed(() => {
     hour12: false,
   }).format(value)
 })
-const gatewaySummary = computed(() => props.session.gateway_selection_mode === 'manual'
-  ? `Private Gateway${props.session.gateway_name ? `: ${props.session.gateway_name}` : ''}`
-  : 'Platform Gateway')
+const gatewayKind = computed(() => copilotGatewayKind(
+  props.session.gateway_scope,
+  props.session.gateway_selection_mode,
+))
+const gatewayType = computed(() => gatewayKind.value === 'private'
+  ? t('insight.copilot.gatewayPrivateTitle')
+  : t('insight.copilot.gatewayPublicTitle'))
+const compactGatewayType = computed(() => gatewayKind.value === 'private'
+  ? t('insight.copilot.gatewayTypePrivate')
+  : t('insight.copilot.gatewayTypePublic'))
+const gatewaySummary = computed(() => props.session.gateway_name
+  ? t('insight.copilot.gatewaySummaryWithName', {
+      type: gatewayType.value,
+      name: props.session.gateway_name,
+    })
+  : gatewayType.value)
 
 </script>
 
@@ -90,8 +106,8 @@ const gatewaySummary = computed(() => props.session.gateway_selection_mode === '
       </section>
       <section>
         <h3>Data Privacy</h3>
-        <dl><dt>Gateway Type</dt><dd>{{ session.gateway_selection_mode === 'manual' ? 'Private Gateway' : 'Platform Gateway' }}</dd></dl>
-        <dl v-if="session.gateway_selection_mode === 'manual'"><dt>Gateway</dt><dd>{{ session.gateway_name || '—' }}</dd></dl>
+        <dl><dt>{{ t('insight.copilot.gatewayTypeLabel') }}</dt><dd>{{ compactGatewayType }}</dd></dl>
+        <dl><dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt><dd>{{ session.gateway_name || '—' }}</dd></dl>
       </section>
     </div>
   </ElDialog>

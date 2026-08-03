@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import HflPopover from '../../components/HflPopover.vue'
 import { useKnowledgeSourceForm, type BackupScopePickerNode, type KnowledgeSourceType } from '../../composables/useKnowledgeSourceForm'
 import { apiErrorMessage } from '../../lib/api'
@@ -27,6 +28,7 @@ import {
 } from '../../lib/lensApi'
 
 const router = useRouter()
+const { t } = useI18n()
 const sourceType = ref<KnowledgeSourceType>('backup_source')
 const editingId = ref<number | null>(null)
 const submitting = ref(false)
@@ -107,8 +109,8 @@ const submitBlockReason = computed(() => {
   if (sourceScopes.value.length === 0) return 'Select at least one file or folder to continue.'
   if (!selectedGateway.value) {
     return gatewayMode.value === 'manual'
-      ? 'Select a private gateway to continue.'
-      : 'No platform gateway is available. Select a private gateway or contact your administrator.'
+      ? t('insight.copilot.gatewayPrivateRequired')
+      : t('insight.copilot.gatewayPublicUnavailable')
   }
   return ''
 })
@@ -143,11 +145,11 @@ async function refreshGatewayOptions(showFeedback = true) {
       gatewayLinkId.value = null
     }
     if (showFeedback) {
-      ElMessage.success({ message: 'Private gateways refreshed.', grouping: true })
+      ElMessage.success({ message: t('insight.copilot.gatewayPrivateRefreshSuccess'), grouping: true })
     }
   } catch (error) {
     if (!showFeedback) throw error
-    ElMessage.error({ message: apiErrorMessage(error, 'Unable to refresh private gateways.'), grouping: true })
+    ElMessage.error({ message: apiErrorMessage(error, t('insight.copilot.gatewayPrivateRefreshFailed')), grouping: true })
   } finally {
     gatewayRefreshing.value = false
   }
@@ -328,9 +330,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 </div>
               </div>
               <div class="new-chat-privacy-options">
-                <label class="new-chat-choice" :class="{ 'new-chat-choice--selected': gatewayMode === 'auto' }"><input v-model="gatewayMode" type="radio" value="auto"><span><strong>Platform Gateway</strong><small>Use a gateway managed by the platform. No setup is required.</small></span></label>
+                <label class="new-chat-choice" :class="{ 'new-chat-choice--selected': gatewayMode === 'auto' }"><input v-model="gatewayMode" type="radio" value="auto"><span><strong>{{ t('insight.copilot.gatewayPublicTitle') }}</strong><small>{{ t('insight.copilot.gatewayPublicDescription') }}</small></span></label>
                 <div ref="privateGatewayCardRef" class="new-chat-choice new-chat-choice--private" :class="{ 'new-chat-choice--selected': gatewayMode === 'manual' }">
-                  <label class="new-chat-choice__radio"><input v-model="gatewayMode" type="radio" value="manual"><span><strong>Private Gateway</strong><small>Use your own gateway for isolated data processing.</small></span></label>
+                  <label class="new-chat-choice__radio"><input v-model="gatewayMode" type="radio" value="manual"><span><strong>{{ t('insight.copilot.gatewayPrivateTitle') }}</strong><small>{{ t('insight.copilot.gatewayPrivateDescription') }}</small></span></label>
                   <div class="new-chat-choice__control">
                     <div class="new-chat-gateway-select-row">
                       <ElSelect
@@ -338,10 +340,10 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                         class="new-chat-gateway-select"
                         filterable
                         :loading="gatewayRefreshing"
-                        no-data-text="No online private gateways"
+                        :no-data-text="t('insight.copilot.gatewayPrivateNoOnline')"
                         placement="top-start"
                         :fallback-placements="['bottom-start', 'top-end', 'bottom-end']"
-                        placeholder="Select a private gateway"
+                        :placeholder="t('insight.copilot.gatewayPrivateSelectPlaceholder')"
                         popper-class="new-chat-gateway-select-popper"
                         @change="gatewayMode = 'manual'"
                         @visible-change="(visible) => visible && ensurePrivateGatewayVisible()"
@@ -360,8 +362,8 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       </ElSelect>
                       <ElButton
                         class="hfl-refresh-button new-chat-gateway-select-row__refresh"
-                        title="Refresh Private Gateways"
-                        aria-label="Refresh Private Gateways"
+                        :title="t('insight.copilot.gatewayPrivateRefreshAction')"
+                        :aria-label="t('insight.copilot.gatewayPrivateRefreshAction')"
                         :disabled="gatewayRefreshing"
                         @click="refreshGatewayOptions()"
                       >
@@ -369,17 +371,17 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                       </ElButton>
                       <ElButton
                         class="fullscreen-form-icon-btn new-chat-gateway-select-row__deploy"
-                        title="Install a Private Gateway"
-                        aria-label="Install a Private Gateway"
+                        :title="t('insight.copilot.gatewayPrivateInstallAction')"
+                        :aria-label="t('insight.copilot.gatewayPrivateInstallAction')"
                         @click="openGatewayDeploy"
                       >
                         <Plus :size="14" />
                       </ElButton>
                     </div>
-                    <p v-if="!gatewayRefreshing && privateGateways.length === 0" class="new-chat-hint new-chat-hint--warn">No online private gateways are available.</p>
+                    <p v-if="!gatewayRefreshing && privateGateways.length === 0" class="new-chat-hint new-chat-hint--warn">{{ t('insight.copilot.gatewayPrivateNoOnline') }}</p>
                   </div>
                 </div>
-                <p v-if="gatewayMode === 'auto' && !autoGateway" class="new-chat-hint new-chat-hint--warn">No platform gateway is available. Select a private gateway or contact your administrator.</p>
+                <p v-if="gatewayMode === 'auto' && !autoGateway" class="new-chat-hint new-chat-hint--warn">{{ t('insight.copilot.gatewayPublicUnavailable') }}</p>
               </div>
             </section></div>
           </div>
@@ -397,8 +399,8 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
               </section>
               <section class="add-form-preview-section">
                 <h3 class="add-form-preview-section__title">Data Privacy</h3>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">Gateway Type</span><span class="add-form-preview-row__value">{{ gatewayMode === 'auto' ? 'Platform Gateway' : 'Private Gateway' }}</span></div>
-                <div class="add-form-preview-row"><span class="add-form-preview-row__label">Gateway</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedGateway }">{{ selectedGateway?.name || 'Not ready' }}</span></div>
+                <div class="add-form-preview-row"><span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayTypeLabel') }}</span><span class="add-form-preview-row__value">{{ gatewayMode === 'auto' ? t('insight.copilot.gatewayTypePublic') : t('insight.copilot.gatewayTypePrivate') }}</span></div>
+                <div class="add-form-preview-row"><span class="add-form-preview-row__label">{{ t('insight.copilot.gatewayNameLabel') }}</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedGateway }">{{ selectedGateway?.name || t('insight.copilot.gatewayNotReady') }}</span></div>
               </section>
               <p v-if="!visualModelReady" class="new-chat-visual-warning">
                 Visual understanding is unavailable. Text documents remain searchable, but images and scanned PDFs may not be readable.

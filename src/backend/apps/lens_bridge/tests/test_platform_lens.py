@@ -6,7 +6,9 @@ from unittest import mock
 
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from rest_framework.exceptions import ValidationError
 
+from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services import platform_lens
 from apps.node.models import Node
@@ -14,6 +16,26 @@ from apps.node.models.base import NodeRole
 
 
 class PlatformGatewaySelectionTests(TestCase):
+    def test_missing_auto_gateway_uses_public_private_product_terms(self):
+        tenant = Organization.objects.create(
+            key="gateway-copy-tenant",
+            name="Gateway Copy Tenant",
+        )
+
+        with self.assertRaises(ValidationError) as raised:
+            platform_lens.resolve_gateway_link_for_copilot(
+                tenant,
+                user=mock.Mock(),
+            )
+
+        self.assertEqual(
+            str(raised.exception.detail["gateway_link_id"]),
+            (
+                "No public Data Gateway is available. Select a private "
+                "Data Gateway or contact your administrator."
+            ),
+        )
+
     def test_explicit_platform_default_is_selected_before_older_gateway(self):
         org = platform_lens.get_or_create_platform_org()
         older_gateway = Node.objects.create(

@@ -72,14 +72,14 @@ def context_for_gateway_link(
         from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
 
         if link.organization.key != PLATFORM_ORG_KEY or link.owner_user_id is not None:
-            raise ValidationError({"gateway_link_id": "Platform gateway identity is invalid."})
+            raise ValidationError({"gateway_link_id": "Public Data Gateway identity is invalid."})
     elif link.scope == LensGatewayLink.GatewayScope.USER:
         if link.organization_id != tenant_organization.id:
-            raise ValidationError({"gateway_link_id": "Private data gateway belongs to another organization."})
+            raise ValidationError({"gateway_link_id": "Private Data Gateway belongs to another organization."})
         if link.owner_user_id is None:
-            raise ValidationError({"gateway_link_id": "Private data gateway has no owner."})
+            raise ValidationError({"gateway_link_id": "Private Data Gateway has no owner."})
         if expected_owner_user_id is not None and link.owner_user_id != expected_owner_user_id:
-            raise ValidationError({"gateway_link_id": "Private data gateway belongs to another user."})
+            raise ValidationError({"gateway_link_id": "Private Data Gateway belongs to another user."})
     else:
         raise ValidationError({"gateway_link_id": "Unsupported data gateway scope."})
 
@@ -115,7 +115,7 @@ def require_user_gateway_link(
     ).first()
     if link is None:
         raise ValidationError(
-            {"gateway_id": "Private data gateway is not owned by this user."}
+            {"gateway_id": "Private Data Gateway is not owned by this user."}
         )
     context_for_gateway_link(
         tenant_organization=tenant_organization,

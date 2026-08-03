@@ -2,12 +2,57 @@ import uuid
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.iam.services.registration_service import provision_registered_user_tenant
+from apps.lens_bridge.api.serializers import LensSessionCreateSerializer
 from apps.lens_bridge.models import LensSessionLink, LensSlUserLink, LensUsageLedger
+
+
+class LensSessionCreateSerializerTests(SimpleTestCase):
+    def _payload(self, **overrides):
+        payload = {
+            "backup_config_id": 1,
+            "backup_source_snapshot_id": 1,
+            "source_scopes": [
+                {
+                    "source_path": "/documents",
+                    "backup_snapshot_directory_id": 1,
+                }
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_private_gateway_option_requires_a_gateway(self):
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(gateway_mode=LensSessionLink.GatewaySelectionMode.MANUAL)
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertEqual(
+            str(serializer.errors["gateway_link_id"][0]),
+            "Select a Private Data Gateway.",
+        )
+
+    def test_public_gateway_option_rejects_a_specific_gateway(self):
+        serializer = LensSessionCreateSerializer(
+            data=self._payload(
+                gateway_mode=LensSessionLink.GatewaySelectionMode.AUTO,
+                gateway_link_id=7,
+            )
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertEqual(
+            str(serializer.errors["gateway_link_id"][0]),
+            (
+                "Do not select a specific Data Gateway when using the Public "
+                "Data Gateway option."
+            ),
+        )
 
 
 class CopilotSessionApiTests(TestCase):
