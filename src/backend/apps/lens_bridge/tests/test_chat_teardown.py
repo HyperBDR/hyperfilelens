@@ -1252,6 +1252,120 @@ class CopilotChatTeardownTests(TestCase):
             LensWorkspaceBinding.State.DELETED,
         )
 
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "sl_client.delete_managed_datasource"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "sl_client.cancel_managed_datasource_conversion"
+    )
+    @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
+    @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
+    def test_teardown_cancels_conversion_before_deleting_remote_resources(
+        self,
+        run_agent_task,
+        delete_assistant,
+        cancel_conversion,
+        delete_datasource,
+    ):
+        datasource_uuid = uuid.uuid4()
+        self.knowledge_source.sl_datasource_uuid = datasource_uuid
+        self.knowledge_source.save(
+            update_fields=["sl_datasource_uuid", "updated_at"]
+        )
+        LensAssistantLink.objects.create(
+            organization=self.tenant,
+            sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
+            knowledge_source=self.knowledge_source,
+            owner_user=self.user,
+            created_by=self.user,
+            visibility_scope=LensAssistantLink.VisibilityScope.USER,
+        )
+        events = []
+        cancel_conversion.side_effect = lambda *_args: events.append(
+            "cancel_conversion"
+        )
+        delete_assistant.side_effect = lambda *_args: events.append(
+            "delete_assistant"
+        )
+        delete_datasource.side_effect = lambda *_args: events.append(
+            "delete_datasource"
+        )
+        run_agent_task.side_effect = lambda **_kwargs: (
+            events.append("cleanup_workspace")
+            or mock.MagicMock(
+                ok=True,
+                timed_out=False,
+                task=mock.MagicMock(id=uuid.uuid4(), last_error=""),
+            )
+        )
+
+        result = knowledge_source_teardown.run_knowledge_source_teardown(
+            knowledge_source_id=self.knowledge_source.id,
+            owner_session_link_id=self.session.id,
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        self.assertEqual(
+            events,
+            [
+                "cancel_conversion",
+                "delete_assistant",
+                "delete_datasource",
+                "cleanup_workspace",
+            ],
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "managed_datasource.conversion_stop_confirmed",
+        return_value=False,
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "sl_client.delete_managed_datasource"
+    )
+    @mock.patch(
+        "apps.lens_bridge.services.knowledge_source_teardown."
+        "sl_client.cancel_managed_datasource_conversion"
+    )
+    def test_teardown_waits_for_lensnode_conversion_acknowledgement(
+        self,
+        cancel_conversion,
+        delete_datasource,
+        _conversion_stopped,
+    ):
+        self.knowledge_source.sl_datasource_uuid = uuid.uuid4()
+        self.knowledge_source.sync_state_json = {
+            "conversion": {"task_id": "convert-1"}
+        }
+        self.knowledge_source.save(
+            update_fields=[
+                "sl_datasource_uuid",
+                "sync_state_json",
+                "updated_at",
+            ]
+        )
+
+        with self.assertRaises(
+            knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError
+        ):
+            knowledge_source_teardown.run_knowledge_source_teardown(
+                knowledge_source_id=self.knowledge_source.id,
+                owner_session_link_id=self.session.id,
+            )
+
+        cancel_conversion.assert_called_once()
+        delete_datasource.assert_not_called()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.teardown_state_json["cancel_conversion"][
+                "status"
+            ],
+            "waiting",
+        )
+
     @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")
     def test_gateway_local_workspace_cleanup_never_deletes_source_path(
         self,

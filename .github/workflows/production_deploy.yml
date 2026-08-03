@@ -92,6 +92,9 @@ jobs:
       ai_model_provider: ${{ vars.PROD_AI_MODEL_PROVIDER }}
       ai_model_id: ${{ vars.PROD_AI_MODEL_ID }}
       ai_model_display_name: ${{ vars.PROD_AI_MODEL_DISPLAY_NAME }}
+      ai_multimodal_model_provider: ${{ vars.PROD_AI_MULTIMODAL_MODEL_PROVIDER }}
+      ai_multimodal_model_id: ${{ vars.PROD_AI_MULTIMODAL_MODEL_ID }}
+      ai_multimodal_model_display_name: ${{ vars.PROD_AI_MULTIMODAL_MODEL_DISPLAY_NAME }}
     secrets:
       ssh_private_key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
       turnstile_secret_key: ${{ secrets.PROD_TURNSTILE_SECRET_KEY }}

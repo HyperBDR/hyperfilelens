@@ -23,7 +23,7 @@ import {
   fetchCopilotReadiness,
   listCopilotGatewayOptions,
   type LensCopilotGatewayOption,
-  type LensLlmConfig,
+  type LensCopilotReadiness,
 } from '../../lib/lensApi'
 
 const router = useRouter()
@@ -32,7 +32,7 @@ const editingId = ref<number | null>(null)
 const submitting = ref(false)
 const gatewayRefreshing = ref(false)
 const gatewayOptions = ref<LensCopilotGatewayOption[]>([])
-const aiModels = ref<LensLlmConfig[]>([])
+const readiness = ref<LensCopilotReadiness | null>(null)
 const gatewayMode = ref<'auto' | 'manual'>('auto')
 const gatewayLinkId = ref<number | null>(null)
 const backupScopePickerWidth = ref(460)
@@ -79,7 +79,8 @@ const readyGateways = computed(() => gatewayOptions.value.filter(
 const privateGateways = computed(() => readyGateways.value.filter((row) => row.scope === 'user'))
 const platformGateway = computed(() => readyGateways.value.find((row) => row.scope === 'platform') ?? null)
 const autoGateway = computed(() => platformGateway.value)
-const activeModel = computed(() => aiModels.value.find((row) => row.is_active !== false) ?? null)
+const agentModelReady = computed(() => Boolean(readiness.value?.default_agent_model_ref))
+const visualModelReady = computed(() => Boolean(readiness.value?.default_multimodal_model_ref))
 const selectedGateway = computed(() => gatewayMode.value === 'auto'
   ? autoGateway.value
   : privateGateways.value.find((row) => row.gateway_link_id === gatewayLinkId.value) ?? null)
@@ -96,11 +97,11 @@ const canCreate = computed(() => Boolean(
   effectiveSnapshotId.value
   && sourceScopes.value.length > 0
   && selectedGateway.value
-  && activeModel.value
+  && agentModelReady.value
   && !submitting.value,
 ))
 const submitBlockReason = computed(() => {
-  if (!activeModel.value) return 'AI Copilot is temporarily unavailable. Contact your administrator.'
+  if (!agentModelReady.value) return 'No default Agent model is configured. Contact your administrator.'
   if (!selectedBackupSource.value) return 'Select a backup source to continue.'
   if (!effectiveSnapshotId.value) return 'Select a snapshot to continue.'
   if (sourceScopes.value.length === 0) return 'Select at least one file or folder to continue.'
@@ -167,7 +168,9 @@ async function load() {
     await Promise.all([
       loadSnapshots(),
       refreshGatewayOptions(false),
-      fetchCopilotReadiness().then((row) => { aiModels.value = row.active_models }),
+      fetchCopilotReadiness().then((row) => {
+        readiness.value = row
+      }),
     ])
   } catch (error) {
     ElMessage.error({ message: apiErrorMessage(error, 'Unable to load chat options.'), grouping: true })
@@ -175,7 +178,7 @@ async function load() {
 }
 
 async function createChat() {
-  if (!effectiveSnapshotId.value || !selectedBackupConfigId.value || !selectedGateway.value || !activeModel.value) return
+  if (!effectiveSnapshotId.value || !selectedBackupConfigId.value || !selectedGateway.value || !agentModelReady.value) return
   const scopesValid = await validateAllBackupScopeEntries(true)
   if (!scopesValid || sourceScopes.value.length === 0) return
 
@@ -397,6 +400,9 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 <div class="add-form-preview-row"><span class="add-form-preview-row__label">Gateway Type</span><span class="add-form-preview-row__value">{{ gatewayMode === 'auto' ? 'Platform Gateway' : 'Private Gateway' }}</span></div>
                 <div class="add-form-preview-row"><span class="add-form-preview-row__label">Gateway</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedGateway }">{{ selectedGateway?.name || 'Not ready' }}</span></div>
               </section>
+              <p v-if="!visualModelReady" class="new-chat-visual-warning">
+                Visual understanding is unavailable. Text documents remain searchable, but images and scanned PDFs may not be readable.
+              </p>
             </div>
           </div>
         </aside>
@@ -437,6 +443,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 .new-chat-scope-hint { margin-top: 8px; }
 .new-chat-hint { margin: 10px 0 0; color: #86909c; font-size: 12px; line-height: 1.5; }
 .new-chat-hint--warn { color: #d46b08; }
+.new-chat-visual-warning { margin: 14px 0 0; padding: 9px 10px; border: 1px solid #ffe7ba; border-radius: 8px; background: #fffbe6; color: #ad6800; font-size: 12px; line-height: 1.5; }
 .new-chat-choice { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; padding: 13px; border: 1px solid #e5e6eb; border-radius: 8px; cursor: pointer; transition: border-color .15s, background .15s; }
 .new-chat-choice--selected { border-color: #165dff; background: #f2f6ff; }
 .new-chat-choice input { accent-color: #165dff; }

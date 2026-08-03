@@ -22,6 +22,7 @@ from apps.lens_bridge.models import (
 from apps.lens_bridge.services import (
     assistant_access,
     chat_user_provisioning,
+    ingest_policy,
     knowledge_source_sync,
     platform_lens,
     provisioning,
@@ -204,7 +205,9 @@ def create_copilot_chat(
             else None
         ),
     )
-    model_ref = provisioning.default_model_ref_for_org(org)
+    model_ref, multimodal_model_ref = (
+        provisioning.default_model_refs_for_org(org)
+    )
     if not model_ref:
         raise ValidationError({"model": "Configure an active AI model before creating a chat."})
 
@@ -230,6 +233,7 @@ def create_copilot_chat(
         gateway_link=gateway_link,
         gateway_selection_mode=gateway_mode,
         agent_model_ref=model_ref,
+        multimodal_model_ref=multimodal_model_ref,
         status=LensSessionLink.Status.ACTIVE,
         lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
         provision_phase=LensSessionLink.ProvisionPhase.QUEUED,
@@ -343,10 +347,13 @@ def run_copilot_chat_provision(*, session_link_id: int) -> dict[str, Any]:
     if claim_token is None:
         return {"session_link_id": session_link_id, "status": claim_status}
     try:
-        return _run_copilot_chat_provision(
+        result = _run_copilot_chat_provision(
             session_link_id=session_link_id,
             claim_token=claim_token,
         )
+        if result.get("status") == "waiting":
+            _release_provision_claim(session_link_id, claim_token)
+        return result
     except ChatProvisionLeaseLostError:
         current_status = (
             LensSessionLink.objects.filter(pk=session_link_id)
@@ -459,6 +466,21 @@ def _run_copilot_chat_provision(
             source_path=first_path,
             source_scopes_json=scopes,
             sl_lensnode_uuid=gateway_link.sl_lensnode_uuid,
+            ingest_policy_json=ingest_policy.normalize_ingest_policy(
+                {
+                    "document": True,
+                    "image": bool(link.multimodal_model_ref),
+                    "embedded_image": bool(link.multimodal_model_ref),
+                    "pdf_render_scanned_pages": bool(
+                        link.multimodal_model_ref
+                    ),
+                    "vision_model_ref": (
+                        str(link.multimodal_model_ref)
+                        if link.multimodal_model_ref
+                        else None
+                    ),
+                },
+            ),
             created_by=user,
         )
         ks = knowledge_source_sync.prepare_new_knowledge_source(org=org, ks=ks)
@@ -469,11 +491,31 @@ def _run_copilot_chat_provision(
             _cleanup_orphan_knowledge_source(ks, owner_session_link_id=link.id)
             raise
 
-    # 2) Restore + index synchronously inside this worker (DG unchanged).
+    # 2) Restore + convert synchronously inside this worker (DG unchanged).
+    def sync_progress(phase: str, detail: str) -> None:
+        provision_phase = (
+            LensSessionLink.ProvisionPhase.CONVERTING
+            if phase in {"ensure_managed_datasource", "convert_documents"}
+            else LensSessionLink.ProvisionPhase.RESTORING
+        )
+        if phase in {"push_assistant", "finalize"}:
+            provision_phase = (
+                LensSessionLink.ProvisionPhase.CREATING_KNOWLEDGE_SOURCE
+            )
+        _set_phase(link, claim_token, provision_phase, detail)
+
     sync_result = knowledge_source_sync.run_knowledge_source_sync(
         organization_id=org.id,
         knowledge_source_id=ks.id,
+        progress_callback=sync_progress,
     )
+    if sync_result.get("status") in {"waiting", "busy", "scheduled"}:
+        return {
+            "session_link_id": link.id,
+            "status": "waiting",
+            "knowledge_source_id": ks.id,
+            "sync": sync_result,
+        }
     ks.refresh_from_db()
     if ks.status not in (
         LensKnowledgeSource.Status.READY,
@@ -521,6 +563,7 @@ def _run_copilot_chat_provision(
                 ks=ks,
                 gateway_link=gateway_link,
                 model_ref=link.agent_model_ref,
+                multimodal_model_ref=link.multimodal_model_ref,
                 slug=assistant_slug,
             )
     try:
@@ -622,6 +665,23 @@ def _require_provision_claim(link_id: int, claim_token: str) -> None:
         lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
         provision_claim_token=claim_token,
     ).exists():
+        raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
+
+
+def _release_provision_claim(link_id: int, claim_token: str) -> None:
+    """Release a healthy provision lease while external work is pending."""
+
+    updated = LensSessionLink.objects.filter(
+        pk=link_id,
+        lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+        provision_claim_token=claim_token,
+    ).update(
+        provision_claim_token=None,
+        provision_claimed_at=None,
+        provision_next_retry_at=None,
+        updated_at=timezone.now(),
+    )
+    if updated != 1:
         raise ChatProvisionLeaseLostError("Chat provisioning lease was lost.")
 
 

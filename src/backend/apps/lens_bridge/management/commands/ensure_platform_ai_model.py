@@ -36,8 +36,13 @@ class Command(BaseCommand):
             raise CommandError("AI model configuration must be a JSON object.")
 
         try:
+            role = str(payload.get("role") or "agent").strip().lower()
+            if role not in {"agent", "multimodal"}:
+                raise DeploymentAiModelConfigurationError(
+                    "role must be agent or multimodal"
+                )
             config = DeploymentAiModelConfig.from_mapping(payload)
-            result = ensure_platform_ai_model(config)
+            result = ensure_platform_ai_model(config, role=role)
         except DeploymentAiModelConfigurationError as exc:
             raise CommandError(str(exc)) from exc
         except sl_client.LensBridgeError as exc:
@@ -49,12 +54,30 @@ class Command(BaseCommand):
                 "Unable to persist the deployment-managed AI model link."
             ) from exc
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Deployment-managed AI model {result.action} successfully."
+        if role == "agent" and not result.applied:
+            raise CommandError(
+                "The required Agent model candidate failed connectivity "
+                "validation; the installed model was preserved."
             )
-        )
+
+        if result.applied:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Deployment-managed {role} AI model "
+                    f"{result.action} successfully."
+                )
+            )
+        else:
+            self.stderr.write(
+                self.style.WARNING(
+                    f"Deployment-managed {role} AI model was not applied; "
+                    "the installed default was preserved."
+                )
+            )
         self.stdout.write(f"HFL_AI_MODEL_STATUS={result.action}")
+        self.stdout.write(
+            f"HFL_AI_MODEL_APPLIED={'true' if result.applied else 'false'}"
+        )
         if not result.connectivity_ok:
             self.stdout.write("HFL_AI_MODEL_CONNECTIVITY=failed")
             self.stderr.write(

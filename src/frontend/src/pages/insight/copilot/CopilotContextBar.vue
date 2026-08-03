@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { MessageSquare } from 'lucide-vue-next'
+import { MessageSquare, TriangleAlert } from 'lucide-vue-next'
 import { formatBytes } from '../../../lib/kopiaProgress'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import type { LensSessionLink } from '../../../lib/lensApi'
@@ -65,6 +65,15 @@ const gatewaySummary = computed(() => props.session.gateway_selection_mode === '
       <span class="copilot-context-bar__gateway">{{ gatewaySummary }}</span><em>·</em>
       <span class="copilot-context-bar__created">Created {{ createdShort }}</span>
     </div>
+    <div
+      v-if="session.lifecycle_status === 'ready' && !session.multimodal_model_ref"
+      class="copilot-context-bar__visual-warning"
+      role="status"
+      aria-live="polite"
+    >
+      <TriangleAlert :size="13" aria-hidden="true" />
+      <span>Visual understanding is unavailable. Images and scanned PDFs may not be searchable.</span>
+    </div>
   </header>
 
   <ElDialog v-model="detailsOpen" title="Chat Details" width="560px" append-to-body>
@@ -109,6 +118,8 @@ const gatewaySummary = computed(() => props.session.gateway_selection_mode === '
 .copilot-context-bar__path:hover { color: var(--color-primary); }
 .copilot-context-bar__path b { font-weight: 600; }
 .copilot-context-bar__gateway,.copilot-context-bar__created { flex: 0 0 auto; }
+.copilot-context-bar__visual-warning { display: flex; align-items: center; gap: 6px; color: #b54708; font-size: 11px; line-height: 16px; }
+.copilot-context-bar__visual-warning svg { flex: 0 0 auto; }
 .copilot-details { display: grid; gap: 20px; }
 .copilot-details section + section { padding-top: 18px; border-top: 1px solid var(--color-border-light); }
 .copilot-details h3 { margin: 0 0 12px; color: var(--color-text-tertiary); font-size: 11px; font-weight: 600; }

@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { lensModelsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, CirclePlay, CircleStop, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-vue-next'
+import { ChevronDown, CirclePlay, CircleStop, Images, Pencil, Plus, RefreshCw, Search, Star, Trash2 } from 'lucide-vue-next'
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
@@ -13,6 +13,8 @@ import {
   fetchLensHealth,
   listLensModels,
   patchLensModel,
+  setLensDefaultAgentModel,
+  setLensDefaultMultimodalModel,
   type LensHealth,
   type LensLlmConfig,
 } from '../../lib/lensApi'
@@ -77,10 +79,17 @@ const filteredModels = computed(() => {
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => selectedRows.value.length === 1 ? selectedRows.value[0]! : null)
 const selectedIsManaged = computed(() => Boolean(singleSelected.value?.deployment_managed))
-const selectedCanSetDefault = computed(() => Boolean(
+const selectedCanSetAgentDefault = computed(() => Boolean(
   singleSelected.value &&
   singleSelected.value.is_active !== false &&
-  !singleSelected.value.is_default,
+  !singleSelected.value.is_deployment_history &&
+  !singleSelected.value.is_default_agent,
+))
+const selectedCanSetMultimodalDefault = computed(() => Boolean(
+  singleSelected.value &&
+  singleSelected.value.is_active !== false &&
+  !singleSelected.value.is_deployment_history &&
+  !singleSelected.value.is_default_multimodal,
 ))
 
 function modelName(row: LensLlmConfig) {
@@ -143,11 +152,22 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
   }
 }
 
-async function setDefault(row: LensLlmConfig) {
-  if (row.is_default || row.is_active === false) return
+async function setAgentDefault(row: LensLlmConfig) {
+  if (row.is_default_agent || row.is_active === false || row.is_deployment_history) return
   try {
-    await patchLensModel(row.uuid, { is_default: true })
-    ElMessage.success({ message: t('insight.aiSettings.defaultModelSaved'), grouping: true })
+    await setLensDefaultAgentModel(row.uuid)
+    ElMessage.success({ message: t('insight.aiSettings.defaultAgentModelSaved'), grouping: true })
+    await load()
+  } catch (err) {
+    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+  }
+}
+
+async function setMultimodalDefault(row: LensLlmConfig) {
+  if (row.is_default_multimodal || row.is_active === false || row.is_deployment_history) return
+  try {
+    await setLensDefaultMultimodalModel(row.uuid)
+    ElMessage.success({ message: t('insight.aiSettings.defaultMultimodalModelSaved'), grouping: true })
     await load()
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
@@ -201,10 +221,16 @@ function editSelected() {
   openEdit(row)
 }
 
-async function setSelectedDefault() {
+async function setSelectedAgentDefault() {
   const row = singleSelected.value
   if (!row) return
-  await setDefault(row)
+  await setAgentDefault(row)
+}
+
+async function setSelectedMultimodalDefault() {
+  const row = singleSelected.value
+  if (!row) return
+  await setMultimodalDefault(row)
 }
 
 onMounted(() => {
@@ -242,10 +268,16 @@ onMounted(() => {
                   <span>{{ t('common.edit') }}</span>
                 </span>
               </ElDropdownItem>
-              <ElDropdownItem :disabled="!selectedCanSetDefault" @click="setSelectedDefault">
+              <ElDropdownItem :disabled="!selectedCanSetAgentDefault" @click="setSelectedAgentDefault">
                 <span class="el-dropdown-menu__item-content">
                   <Star :size="14" class="shrink-0" />
-                  <span>{{ t('insight.aiSettings.setDefault') }}</span>
+                  <span>{{ t('insight.aiSettings.setDefaultAgent') }}</span>
+                </span>
+              </ElDropdownItem>
+              <ElDropdownItem :disabled="!selectedCanSetMultimodalDefault" @click="setSelectedMultimodalDefault">
+                <span class="el-dropdown-menu__item-content">
+                  <Images :size="14" class="shrink-0" />
+                  <span>{{ t('insight.aiSettings.setDefaultMultimodal') }}</span>
                 </span>
               </ElDropdownItem>
               <ElDropdownItem divided :disabled="batchDisabled || !singleSelected || selectedIsManaged" @click="enableSelected">
@@ -327,12 +359,18 @@ onMounted(() => {
                 <button type="button" class="hfl-table-name-link hfl-table-name-link--full" @click="openDetail(row)">
                   {{ modelName(row) }}
                 </button>
-                <div v-if="row.is_default || row.deployment_managed" class="insight-ai-models-badges">
-                  <ElTag v-if="row.is_default" size="small" type="success" effect="plain">
-                    {{ t('insight.aiSettings.defaultBadge') }}
+                <div v-if="row.is_default_agent || row.is_default_multimodal || row.deployment_managed || row.is_deployment_history" class="insight-ai-models-badges">
+                  <ElTag v-if="row.is_default_agent" size="small" type="success" effect="plain">
+                    {{ t('insight.aiSettings.defaultAgentBadge') }}
+                  </ElTag>
+                  <ElTag v-if="row.is_default_multimodal" size="small" type="warning" effect="plain">
+                    {{ t('insight.aiSettings.defaultMultimodalBadge') }}
                   </ElTag>
                   <ElTag v-if="row.deployment_managed" size="small" type="info" effect="plain">
                     {{ t('insight.aiSettings.deploymentManagedBadge') }}
+                  </ElTag>
+                  <ElTag v-if="row.is_deployment_history" size="small" type="info" effect="plain">
+                    {{ t('insight.aiSettings.deploymentHistoryBadge') }}
                   </ElTag>
                 </div>
               </div>

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Callable
 
+from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -15,7 +19,12 @@ from apps.lens_bridge.models import (
     LensKnowledgeSource,
     LensWorkspaceBinding,
 )
-from apps.lens_bridge.services import gateway_readiness, ingest_policy, provisioning
+from apps.lens_bridge.services import (
+    gateway_readiness,
+    ingest_policy,
+    managed_datasource,
+    provisioning,
+)
 from apps.lens_bridge.services.gateway_execution import context_for_knowledge_source
 from apps.node.models.node import Node
 from apps.node.services.internal.node_workload import get_node_workload_blockers
@@ -29,21 +38,26 @@ logger = logging.getLogger(__name__)
 SYNC_PHASES = (
     "prepare_workspace",
     "restore_snapshot",
+    "ensure_managed_datasource",
+    "convert_documents",
     "push_assistant",
-    "trigger_ingest",
     "finalize",
 )
 
 _PHASE_LABELS = {
     "prepare_workspace": "Preparing workspace on gateway…",
     "restore_snapshot": "Restoring snapshot data…",
+    "ensure_managed_datasource": "Preparing document conversion…",
+    "convert_documents": "Extracting document content…",
     "push_assistant": "Syncing linked Assistant configuration…",
-    "trigger_ingest": "Indexing and converting documents…",
     "finalize": "Finalizing…",
 }
 
 _RESTORE_WAIT_SECONDS = 6 * 3600
 _RESTORE_POLL_SECONDS = 2.0
+SYNC_CLAIM_TTL_SECONDS = int(
+    getattr(settings, "LENS_KS_SYNC_TIME_LIMIT", 7200)
+) + 300
 _TERMINAL_TASK_STATUSES = frozenset(
     {
         Task.Status.SUCCESS,
@@ -58,6 +72,69 @@ class KnowledgeSourceSyncError(Exception):
     """Non-validation failure during knowledge source sync."""
 
 
+@transaction.atomic
+def _claim_sync(
+    *,
+    organization_id: int,
+    knowledge_source_id: int,
+) -> tuple[str | None, str]:
+    """Atomically claim one due Knowledge Source sync execution."""
+
+    now = timezone.now()
+    ks = (
+        LensKnowledgeSource.all_objects.select_for_update()
+        .filter(
+            organization_id=organization_id,
+            pk=knowledge_source_id,
+        )
+        .first()
+    )
+    if ks is None:
+        return None, "missing"
+    if ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
+        return None, "inactive"
+    if ks.status != LensKnowledgeSource.Status.SYNCING:
+        return None, str(ks.status)
+    if ks.sync_next_poll_at and ks.sync_next_poll_at > now:
+        return None, "scheduled"
+    stale_before = now - timedelta(seconds=SYNC_CLAIM_TTL_SECONDS)
+    if ks.sync_claimed_at and ks.sync_claimed_at > stale_before:
+        return None, "busy"
+
+    claim_token = uuid.uuid4()
+    ks.sync_claim_token = claim_token
+    ks.sync_claimed_at = now
+    ks.sync_next_poll_at = None
+    ks.save(
+        update_fields=[
+            "sync_claim_token",
+            "sync_claimed_at",
+            "sync_next_poll_at",
+            "updated_at",
+        ]
+    )
+    return str(claim_token), "claimed"
+
+
+def _release_sync_claim(
+    *,
+    knowledge_source_id: int,
+    claim_token: str,
+    next_poll_at: datetime | None = None,
+) -> None:
+    """Release a sync lease without overwriting a successor's claim."""
+
+    LensKnowledgeSource.all_objects.filter(
+        pk=knowledge_source_id,
+        sync_claim_token=claim_token,
+    ).update(
+        sync_claim_token=None,
+        sync_claimed_at=None,
+        sync_next_poll_at=next_poll_at,
+        updated_at=timezone.now(),
+    )
+
+
 def _require_active_lifecycle(ks: LensKnowledgeSource) -> None:
     ks.refresh_from_db(fields=["lifecycle_status"])
     if ks.lifecycle_status != LensKnowledgeSource.LifecycleStatus.READY:
@@ -66,6 +143,22 @@ def _require_active_lifecycle(ks: LensKnowledgeSource) -> None:
 
 def is_gateway_local_ks(ks: LensKnowledgeSource) -> bool:
     return not ks.backup_source_snapshot_id and not ks.backup_snapshot_directory_id
+
+
+def managed_conversion_enabled(
+    *,
+    org: Organization,
+    ks: LensKnowledgeSource,
+) -> bool:
+    """Return whether this managed restore requests any conversion work."""
+
+    policy = ingest_policy.normalize_ingest_policy(
+        ks.ingest_policy_json,
+    )
+    return any(
+        bool(policy.get(key))
+        for key in ("document", "image", "embedded_image")
+    )
 
 
 def scope_entries(ks: LensKnowledgeSource) -> list[dict[str, Any]]:
@@ -263,7 +356,32 @@ def request_knowledge_source_sync(
     gateway_readiness.require_hfl_usable_gateway(gateway_link, field="gateway")
 
     sync_state = dict(ks.sync_state_json or {})
-    if mode == "full":
+    completed = set(sync_state.get("completed_phases") or [])
+    conversion_state = sync_state.get("conversion")
+    if (
+        isinstance(conversion_state, dict)
+        and str(conversion_state.get("status") or "")
+        in {"FAILURE", "REVOKED"}
+    ):
+        if not managed_datasource.conversion_stop_confirmed(ks):
+            raise ValidationError(
+                {
+                    "status": (
+                        "The previous document conversion is still stopping. "
+                        "Retry after SourceLens confirms the final LensNode callback."
+                    )
+                }
+            )
+        sync_state.pop("conversion", None)
+        completed.difference_update(
+            {"convert_documents", "push_assistant", "finalize"}
+        )
+        sync_state["completed_phases"] = list(completed)
+    start_new_cycle = mode == "full" or set(SYNC_PHASES).issubset(
+        completed
+    )
+    effective_mode = "full" if start_new_cycle else mode
+    if start_new_cycle:
         next_generation = max(1, int(sync_state.get("restore_generation") or 0) + 1)
         sync_state = {
             "mode": "full",
@@ -283,20 +401,48 @@ def request_knowledge_source_sync(
     ks.status = LensKnowledgeSource.Status.SYNCING
     ks.status_detail = _PHASE_LABELS.get(str(sync_state.get("phase") or ""), "Syncing…")
     ks.sync_state_json = sync_state
-    ks.save(update_fields=["status", "status_detail", "sync_state_json", "updated_at"])
+    ks.sync_claim_token = None
+    ks.sync_claimed_at = None
+    ks.sync_next_poll_at = timezone.now()
+    ks.save(
+        update_fields=[
+            "status",
+            "status_detail",
+            "sync_state_json",
+            "sync_claim_token",
+            "sync_claimed_at",
+            "sync_next_poll_at",
+            "updated_at",
+        ]
+    )
 
     enqueue_knowledge_source_sync(
         organization_id=org.id,
         knowledge_source_id=ks.id,
-        mode=mode,
+        mode=effective_mode,
     )
     return ks
 
 
-def run_knowledge_source_sync(*, organization_id: int, knowledge_source_id: int) -> dict[str, Any]:
+def run_knowledge_source_sync(
+    *,
+    organization_id: int,
+    knowledge_source_id: int,
+    progress_callback: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
     from django.db import close_old_connections
 
     close_old_connections()
+    claim_token, claim_status = _claim_sync(
+        organization_id=organization_id,
+        knowledge_source_id=knowledge_source_id,
+    )
+    if claim_token is None:
+        return {
+            "knowledge_source_id": knowledge_source_id,
+            "status": claim_status,
+        }
+
     ks = LensKnowledgeSource.objects.select_related(
         "gateway",
         "gateway_link",
@@ -308,14 +454,50 @@ def run_knowledge_source_sync(*, organization_id: int, knowledge_source_id: int)
         pk=knowledge_source_id,
     ).first()
     if ks is None:
-        raise KnowledgeSourceSyncError(f"Knowledge source {knowledge_source_id} not found.")
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+        )
+        return {
+            "knowledge_source_id": knowledge_source_id,
+            "status": "missing",
+        }
 
     org = Organization.objects.filter(pk=organization_id).first()
     if org is None:
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+        )
         raise KnowledgeSourceSyncError(f"Organization {organization_id} not found.")
 
     try:
-        return _run_sync_pipeline(org=org, ks=ks)
+        result = _run_sync_pipeline(
+            org=org,
+            ks=ks,
+            progress_callback=progress_callback,
+        )
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+        )
+        return result
+    except managed_datasource.ManagedDatasourcePending as exc:
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+            next_poll_at=(
+                timezone.now()
+                + timedelta(
+                    seconds=managed_datasource.CONVERSION_RETRY_SECONDS
+                )
+            ),
+        )
+        return {
+            "knowledge_source_id": ks.id,
+            "status": "waiting",
+            "detail": str(exc),
+        }
     except Exception as exc:
         logger.exception(
             "knowledge source sync failed ks_id=%s org_id=%s",
@@ -323,15 +505,25 @@ def run_knowledge_source_sync(*, organization_id: int, knowledge_source_id: int)
             organization_id,
         )
         _mark_sync_error(ks=ks, message=str(exc))
+        _release_sync_claim(
+            knowledge_source_id=knowledge_source_id,
+            claim_token=claim_token,
+        )
         raise
 
 
-def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[str, Any]:
+def _run_sync_pipeline(
+    *,
+    org: Organization,
+    ks: LensKnowledgeSource,
+    progress_callback: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
     sync_state = dict(ks.sync_state_json or {})
     completed = set(sync_state.get("completed_phases") or [])
 
     _require_active_lifecycle(ks)
     if "prepare_workspace" not in completed:
+        _notify_progress(progress_callback, "prepare_workspace")
         _run_phase_prepare_workspace(org=org, ks=ks, sync_state=sync_state)
         completed.add("prepare_workspace")
         sync_state["completed_phases"] = list(completed)
@@ -339,7 +531,39 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
     _require_active_lifecycle(ks)
-    if should_run_restore_phase(ks=ks, sync_state=sync_state):
+    conversion_state = sync_state.get("conversion")
+    conversion_status = (
+        str(conversion_state.get("status") or "").upper()
+        if isinstance(conversion_state, dict)
+        else ""
+    )
+    conversion_in_progress = bool(
+        conversion_state
+        and conversion_status not in {"SUCCESS", "FAILURE", "REVOKED"}
+    )
+    restore_required = (
+        False
+        if conversion_in_progress
+        else should_run_restore_phase(
+            ks=ks,
+            sync_state=sync_state,
+        )
+    )
+    if restore_required:
+        completed.difference_update(
+            {
+                "restore_snapshot",
+                "ensure_managed_datasource",
+                "convert_documents",
+                "push_assistant",
+                "finalize",
+            }
+        )
+        sync_state["completed_phases"] = list(completed)
+        sync_state.pop("conversion", None)
+        ks.sync_state_json = sync_state
+        ks.save(update_fields=["sync_state_json", "updated_at"])
+        _notify_progress(progress_callback, "restore_snapshot")
         _run_phase_restore_snapshot(org=org, ks=ks, sync_state=sync_state)
         completed.add("restore_snapshot")
     elif not is_gateway_local_ks(ks):
@@ -349,7 +573,71 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
     ks.save(update_fields=["sync_state_json", "updated_at"])
 
     _require_active_lifecycle(ks)
+    policy = ingest_policy.normalize_ingest_policy(
+        ks.ingest_policy_json,
+    )
+    conversion = ingest_policy.conversion_payload_for_sl(policy)
+    conversion_state = sync_state.get("conversion")
+    recorded_fingerprint = (
+        str(conversion_state.get("policy_fingerprint") or "")
+        if isinstance(conversion_state, dict)
+        else ""
+    )
+    current_fingerprint = managed_datasource.conversion_policy_fingerprint(
+        conversion
+    )
+    if (
+        "convert_documents" in completed
+        and recorded_fingerprint != current_fingerprint
+    ):
+        completed.difference_update(
+            {"convert_documents", "push_assistant", "finalize"}
+        )
+        sync_state["completed_phases"] = list(completed)
+        sync_state.pop("conversion", None)
+        ks.sync_state_json = sync_state
+        ks.save(update_fields=["sync_state_json", "updated_at"])
+
+    if (
+        not is_gateway_local_ks(ks)
+        and ks.scan_enabled
+        and managed_conversion_enabled(org=org, ks=ks)
+    ):
+        if "ensure_managed_datasource" not in completed:
+            _notify_progress(progress_callback, "ensure_managed_datasource")
+            _run_phase_ensure_managed_datasource(
+                ks=ks,
+                sync_state=sync_state,
+            )
+            completed.add("ensure_managed_datasource")
+            sync_state["completed_phases"] = list(completed)
+            ks.sync_state_json = sync_state
+            ks.save(update_fields=["sync_state_json", "updated_at"])
+
+        _require_active_lifecycle(ks)
+        if "convert_documents" not in completed:
+            _notify_progress(progress_callback, "convert_documents")
+            _run_phase_convert_documents(
+                ks=ks,
+                sync_state=sync_state,
+                conversion=conversion,
+                progress_callback=progress_callback,
+            )
+            completed.add("convert_documents")
+            sync_state["completed_phases"] = list(completed)
+            ks.sync_state_json = sync_state
+            ks.save(update_fields=["sync_state_json", "updated_at"])
+    else:
+        completed.update(
+            {"ensure_managed_datasource", "convert_documents"}
+        )
+        sync_state["completed_phases"] = list(completed)
+        ks.sync_state_json = sync_state
+        ks.save(update_fields=["sync_state_json", "updated_at"])
+
+    _require_active_lifecycle(ks)
     if "push_assistant" not in completed:
+        _notify_progress(progress_callback, "push_assistant")
         _run_phase_push_assistant(org=org, ks=ks, sync_state=sync_state)
         completed.add("push_assistant")
         sync_state["completed_phases"] = list(completed)
@@ -357,14 +645,7 @@ def _run_sync_pipeline(*, org: Organization, ks: LensKnowledgeSource) -> dict[st
         ks.save(update_fields=["sync_state_json", "updated_at"])
 
     _require_active_lifecycle(ks)
-    if "trigger_ingest" not in completed:
-        _run_phase_trigger_ingest(org=org, ks=ks, sync_state=sync_state)
-        completed.add("trigger_ingest")
-        sync_state["completed_phases"] = list(completed)
-        ks.sync_state_json = sync_state
-        ks.save(update_fields=["sync_state_json", "updated_at"])
-
-    _require_active_lifecycle(ks)
+    _notify_progress(progress_callback, "finalize")
     _run_phase_finalize(org=org, ks=ks, sync_state=sync_state)
     completed.add("finalize")
 
@@ -455,14 +736,25 @@ def _run_phase_restore_snapshot(
     _update_sync_phase(ks=ks, sync_state=sync_state, phase="restore_snapshot")
     generation = max(1, int(sync_state.get("restore_generation") or 1))
     previous_record_id = sync_state.get("restore_record_id")
-    if previous_record_id and _restore_record_failed(
-        record_id=int(previous_record_id),
-        organization_id=org.id,
-    ):
+    previous_record_failed = bool(
+        previous_record_id
+        and _restore_record_failed(
+            record_id=int(previous_record_id),
+            organization_id=org.id,
+        )
+    )
+    snapshot_id = resolve_snapshot_id_for_sync(ks=ks)
+    previous_snapshot_id = sync_state.get("snapshot_id_used")
+    snapshot_changed = bool(
+        previous_snapshot_id is not None
+        and str(previous_snapshot_id) != str(snapshot_id)
+    )
+    if previous_record_failed or snapshot_changed:
         generation += 1
         sync_state["restore_generation"] = generation
         sync_state["restore_scope_status"] = {}
-    snapshot_id = resolve_snapshot_id_for_sync(ks=ks)
+        sync_state.pop("restore_record_id", None)
+        sync_state.pop("conversion", None)
     snapshot = BackupSourceSnapshot.objects.filter(
         organization_id=org.id,
         pk=snapshot_id,
@@ -572,14 +864,48 @@ def _run_phase_push_assistant(
     )
 
 
-def _run_phase_trigger_ingest(
+def _run_phase_ensure_managed_datasource(
     *,
-    org: Organization,
     ks: LensKnowledgeSource,
     sync_state: dict[str, Any],
 ) -> None:
-    _update_sync_phase(ks=ks, sync_state=sync_state, phase="trigger_ingest")
-    provisioning.sync_assistant_ingest_settings(org=org, ks=ks)
+    _update_sync_phase(
+        ks=ks,
+        sync_state=sync_state,
+        phase="ensure_managed_datasource",
+    )
+    managed_datasource.ensure_managed_datasource(
+        ks=ks,
+        sync_state=sync_state,
+    )
+
+
+def _run_phase_convert_documents(
+    *,
+    ks: LensKnowledgeSource,
+    sync_state: dict[str, Any],
+    conversion: dict[str, Any],
+    progress_callback: Callable[[str, str], None] | None,
+) -> None:
+    _update_sync_phase(
+        ks=ks,
+        sync_state=sync_state,
+        phase="convert_documents",
+    )
+
+    def report(detail: str) -> None:
+        if progress_callback is not None:
+            progress_callback(
+                "convert_documents",
+                detail or _PHASE_LABELS["convert_documents"],
+            )
+
+    managed_datasource.convert_documents(
+        ks=ks,
+        sync_state=sync_state,
+        conversion=conversion,
+        progress=report,
+    )
 
 
 def _run_phase_finalize(
@@ -592,13 +918,13 @@ def _run_phase_finalize(
     ks.refresh_from_db()
     if not ks.scan_enabled:
         ks.status = LensKnowledgeSource.Status.PAUSED
-        policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json, org)
+        policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
         ks.status_detail = ingest_policy.ingest_summary(policy)
         ks.save(update_fields=["status", "status_detail", "updated_at"])
         return
 
     if not provisioning.assistant_uuid_for_ks(ks):
-        policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json, org)
+        policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
         ks.status = LensKnowledgeSource.Status.READY
         ks.status_detail = "Workspace ready. Create an Assistant to enable indexing."
         ks.save(update_fields=["status", "status_detail", "updated_at"])
@@ -615,7 +941,7 @@ def _run_phase_finalize(
         ks.save(update_fields=["status", "status_detail", "updated_at"])
         return
 
-    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json, org)
+    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
     ks.status = LensKnowledgeSource.Status.READY
     ks.status_detail = ingest_policy.ingest_summary(policy)
     ks.save(update_fields=["status", "status_detail", "updated_at"])
@@ -687,6 +1013,18 @@ def _resume_phase(sync_state: dict[str, Any]) -> str:
     return "prepare_workspace"
 
 
+def _notify_progress(
+    callback: Callable[[str, str], None] | None,
+    phase: str,
+    detail: str = "",
+) -> None:
+    """Publish an optional owning-workflow progress update."""
+
+    if callback is None:
+        return
+    callback(phase, detail or _PHASE_LABELS.get(phase, "Syncing…"))
+
+
 def _update_sync_phase(
     *,
     ks: LensKnowledgeSource,
@@ -753,6 +1091,9 @@ def prepare_new_knowledge_source(*, org: Organization, ks: LensKnowledgeSource) 
 
     ks.status = LensKnowledgeSource.Status.SYNCING
     ks.status_detail = _PHASE_LABELS["prepare_workspace"]
+    ks.sync_claim_token = None
+    ks.sync_claimed_at = None
+    ks.sync_next_poll_at = timezone.now()
     ks.sync_state_json = {
         "mode": "full",
         "phase": "prepare_workspace",
@@ -770,6 +1111,9 @@ def prepare_new_knowledge_source(*, org: Organization, ks: LensKnowledgeSource) 
             "status",
             "status_detail",
             "sync_state_json",
+            "sync_claim_token",
+            "sync_claimed_at",
+            "sync_next_poll_at",
             "updated_at",
         ]
     )

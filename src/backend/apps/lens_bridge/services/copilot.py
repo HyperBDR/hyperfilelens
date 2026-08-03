@@ -152,7 +152,9 @@ def create_copilot_session(
         raise NotFound("Assistant not found.")
 
     model_ref_raw = assistant.get("agent_model_ref")
+    multimodal_ref_raw = assistant.get("multimodal_model_ref")
     model_ref: uuid_lib.UUID | None = None
+    multimodal_ref: uuid_lib.UUID | None = None
     if model_ref_raw:
         model_ref = uuid_lib.UUID(str(model_ref_raw))
         org_models.validate_default_model_ref(org, model_ref)
@@ -162,6 +164,13 @@ def create_copilot_session(
                 model_ref=model_ref,
                 assistant_uuid=assistant_uuid,
             )
+    if multimodal_ref_raw:
+        multimodal_ref = uuid_lib.UUID(str(multimodal_ref_raw))
+        org_models.validate_default_model_ref(
+            org,
+            multimodal_ref,
+            field_name="multimodal_model_ref",
+        )
 
     session_title = (title or "").strip() or _default_session_title(str(assistant.get("name") or ""))
     sl_session = sl_client.request_json(
@@ -180,6 +189,7 @@ def create_copilot_session(
         sl_session_uuid=sl_session["uuid"],
         sl_assistant_uuid=assistant_uuid,
         agent_model_ref=model_ref,
+        multimodal_model_ref=multimodal_ref,
         title=session_title,
         chat_binding=chat_binding,
     )

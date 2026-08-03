@@ -342,6 +342,69 @@ class EnsureKsWorkspaceTests(SimpleTestCase):
         )
 
 
+class CreateAssistantModelBindingTests(SimpleTestCase):
+    @patch(
+        "apps.lens_bridge.services.provisioning."
+        "default_multimodal_model_ref_for_org"
+    )
+    @patch("apps.lens_bridge.services.provisioning.pick_lensnode_task")
+    @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_freezes_agent_and_multimodal_models_on_assistant(
+        self,
+        request_json,
+        pick_task,
+        default_multimodal,
+    ):
+        from apps.lens_bridge.services import provisioning
+
+        agent_ref = "876742d4-c3b7-4f6c-84a8-a3c0cc8ac38e"
+        multimodal_ref = "f658a5ed-8878-4c81-8428-87a3926203ab"
+        assistant_uuid = "50b5d33c-7028-4c0b-a3bb-b907db06dfc4"
+        request_json.return_value = {"uuid": assistant_uuid}
+        pick_task.return_value = "knowledge_qa"
+        default_multimodal.return_value = multimodal_ref
+        knowledge_source = MagicMock(
+            id=42,
+            name="Chat documents",
+            backup_source_snapshot_id=11,
+            backup_snapshot_directory_id=12,
+            workspace_path_on_lensnode="/workspace/org-1/ks-42",
+            ingest_policy_json={
+                "document": True,
+                "image": True,
+                "embedded_image": True,
+                "pdf_render_scanned_pages": True,
+                "vision_model_ref": multimodal_ref,
+            },
+        )
+        gateway_link = MagicMock(
+            sl_lensnode_uuid="de240f46-eccd-4e4b-868f-b1f504fbe67b"
+        )
+
+        result = provisioning.create_sl_assistant_for_ks(
+            org=MagicMock(key="tenant-one"),
+            ks=knowledge_source,
+            gateway_link=gateway_link,
+            model_ref=agent_ref,
+            multimodal_model_ref=multimodal_ref,
+            slug="chat-documents-ks-42",
+        )
+
+        self.assertEqual(str(result), assistant_uuid)
+        payload = request_json.call_args.kwargs["json_body"]
+        self.assertEqual(payload["agent_model_ref"], agent_ref)
+        self.assertEqual(
+            payload["multimodal_model_ref"],
+            multimodal_ref,
+        )
+        self.assertEqual(
+            payload["settings"]["ingestion"]["conversion"][
+                "vision_model_ref"
+            ],
+            multimodal_ref,
+        )
+
+
 class BrowseGatewayDirectoryTests(SimpleTestCase):
     @patch("apps.node.services.interface.run_agent_task_sync")
     @patch("apps.lens_bridge.services.provisioning.get_gateway_link")

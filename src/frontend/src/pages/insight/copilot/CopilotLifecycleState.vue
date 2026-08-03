@@ -15,6 +15,7 @@ const emit = defineEmits<{
 const steps = [
   { label: 'Validating Selected Data', phases: ['queued'] },
   { label: 'Preparing Files and Folders', phases: ['restoring'] },
+  { label: 'Extracting Document Content', phases: ['converting'] },
   { label: 'Indexing Selected Content', phases: ['creating_knowledge_source'] },
   { label: 'Getting AI Copilot Ready', phases: ['creating_assistant', 'granting_assistant', 'creating_session'] },
 ]

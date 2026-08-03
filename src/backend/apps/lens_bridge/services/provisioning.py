@@ -71,49 +71,107 @@ def assistant_slug_for_ks(*, org: Organization, ks: LensKnowledgeSource) -> str:
     return f"{org_prefix}-{base}{suffix}"
 
 
-def default_model_ref_for_org(org: Organization) -> str | None:
-    """Resolve an explicit, deployment-managed, or stable active model."""
+def default_model_refs_for_org(
+    org: Organization,
+    *,
+    tenant_rows: list[dict[str, Any]] | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve Agent and multimodal defaults from organization-owned links.
 
-    rows = org_models.active_llm_configs(org=org)
+    HFL role pointers are authoritative. SourceLens's process-wide
+    ``is_default`` flag is intentionally ignored because it is not tenant
+    scoped.
+    """
+
     from apps.lens_bridge.services import platform_lens
 
     platform_org = platform_lens.get_or_create_platform_org()
-    org_models.ensure_org_default_model(org)
-    org_link = get_or_create_org_link(org)
-    if org.pk != platform_org.pk and org_link.default_agent_model_ref:
-        tenant_ref = str(org_link.default_agent_model_ref)
-        if any(str(row.get("uuid") or "") == tenant_ref for row in rows):
-            return tenant_ref
+    tenant_rows = (
+        tenant_rows
+        if tenant_rows is not None
+        else org_models.active_llm_configs(org=org)
+    )
+    platform_rows = (
+        tenant_rows
+        if org.pk == platform_org.pk
+        else org_models.active_llm_configs(org=platform_org)
+    )
+    tenant_active = {
+        str(row.get("uuid") or "")
+        for row in tenant_rows
+        if row.get("uuid") and not row.get("is_deployment_history")
+    }
+    platform_active = {
+        str(row.get("uuid") or "")
+        for row in platform_rows
+        if row.get("uuid") and not row.get("is_deployment_history")
+    }
 
-    platform_defaults = get_or_create_org_link(platform_org)
-    if platform_defaults.default_agent_model_ref:
-        platform_ref = str(platform_defaults.default_agent_model_ref)
-        if any(str(row.get("uuid") or "") == platform_ref for row in rows):
-            return platform_ref
+    org_defaults = org_models.ensure_org_model_defaults(org)
+    platform_defaults = (
+        org_defaults
+        if org.pk == platform_org.pk
+        else org_models.ensure_org_model_defaults(platform_org)
+    )
 
-    managed_uuid = org_models.deployment_managed_model_uuid(platform_org)
-    if managed_uuid is not None:
-        managed_ref = str(managed_uuid)
-        if any(str(row.get("uuid") or "") == managed_ref for row in rows):
-            return managed_ref
+    agent_ref: str | None = None
+    if org.pk != platform_org.pk and org_defaults.default_agent_model_ref:
+        candidate = str(org_defaults.default_agent_model_ref)
+        if candidate in tenant_active:
+            agent_ref = candidate
+    if agent_ref is None and platform_defaults.default_agent_model_ref:
+        candidate = str(platform_defaults.default_agent_model_ref)
+        if candidate in platform_active:
+            agent_ref = candidate
+    if agent_ref is None:
+        managed_agent = org_models.deployment_managed_model_uuid(
+            platform_org,
+            role="agent",
+        )
+        if managed_agent is not None and str(managed_agent) in platform_active:
+            agent_ref = str(managed_agent)
 
-    for row in rows:
-        if not row.get("is_default"):
-            continue
-        model_uuid = row.get("uuid")
-        if model_uuid:
-            return str(model_uuid)
+    multimodal_ref: str | None = None
+    if (
+        org.pk != platform_org.pk
+        and org_defaults.default_multimodal_model_ref
+    ):
+        candidate = str(org_defaults.default_multimodal_model_ref)
+        if candidate in tenant_active:
+            multimodal_ref = candidate
+    if (
+        multimodal_ref is None
+        and platform_defaults.default_multimodal_model_ref
+    ):
+        candidate = str(platform_defaults.default_multimodal_model_ref)
+        if candidate in platform_active:
+            multimodal_ref = candidate
+    if multimodal_ref is None:
+        managed_multimodal = org_models.deployment_managed_model_uuid(
+            platform_org,
+            role="multimodal",
+        )
+        if (
+            managed_multimodal is not None
+            and str(managed_multimodal) in platform_active
+        ):
+            multimodal_ref = str(managed_multimodal)
 
-    if org_link.default_agent_model_ref:
-        legacy_ref = str(org_link.default_agent_model_ref)
-        if any(str(row.get("uuid") or "") == legacy_ref for row in rows):
-            return legacy_ref
+    return agent_ref, multimodal_ref
 
-    for row in rows:
-        model_uuid = row.get("uuid")
-        if model_uuid:
-            return str(model_uuid)
-    return None
+
+def default_model_ref_for_org(org: Organization) -> str | None:
+    """Resolve the effective Agent model for an organization."""
+
+    return default_model_refs_for_org(org)[0]
+
+
+def default_multimodal_model_ref_for_org(
+    org: Organization,
+) -> str | None:
+    """Resolve the effective multimodal model for an organization."""
+
+    return default_model_refs_for_org(org)[1]
 
 
 def get_gateway_link(org: Organization, gateway_id: int) -> LensGatewayLink:
@@ -343,7 +401,7 @@ def update_sl_assistant_for_ks(
         raise ValidationError({"gateway_id": "LensNode is not linked to this gateway."})
 
     selected_dirs = indexed_dirs_for_ks(ks)
-    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json, org)
+    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
     data = sl_client.request_json("GET", f"/api/lens/assistants/{ks.sl_assistant_uuid}/")
     settings = dict(data.get("settings") or {})
     settings["ingestion"] = {
@@ -365,6 +423,7 @@ def create_sl_assistant_for_ks(
     ks: LensKnowledgeSource,
     gateway_link: LensGatewayLink,
     model_ref: str | uuid.UUID | None = None,
+    multimodal_model_ref: str | uuid.UUID | None = None,
     slug: str | None = None,
 ) -> uuid.UUID:
     """Create the remote Assistant without mutating HFL ownership state."""
@@ -399,7 +458,9 @@ def create_sl_assistant_for_ks(
         "visibility": "private",
         "status": "active",
     }
-    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json, org)
+    if multimodal_model_ref:
+        payload["multimodal_model_ref"] = str(multimodal_model_ref)
+    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
     payload["settings"] = {
         "ingestion": {
             "conversion": ingest_policy.conversion_payload_for_sl(policy),
@@ -430,27 +491,6 @@ def sync_assistant_agent_model(
         f"/api/lens/assistants/{target}/",
         json_body={"agent_model_ref": str(model_ref)},
     )
-
-
-def sync_assistant_ingest_settings(*, org: Organization, ks: LensKnowledgeSource) -> None:
-    """Push ingest conversion policy to the linked SourceLens Assistant."""
-    if not ks.sl_assistant_uuid:
-        return
-    data = sl_client.request_json("GET", f"/api/lens/assistants/{ks.sl_assistant_uuid}/")
-    settings = dict(data.get("settings") or {})
-    policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json, org)
-    settings["ingestion"] = {
-        "conversion": ingest_policy.conversion_payload_for_sl(policy),
-    }
-    sl_client.request_json(
-        "PATCH",
-        f"/api/lens/assistants/{ks.sl_assistant_uuid}/",
-        json_body={"settings": settings},
-    )
-    summary = ingest_policy.ingest_summary(policy)
-    if ks.status_detail != summary:
-        ks.status_detail = summary
-        ks.save(update_fields=["status_detail", "updated_at"])
 
 
 def refresh_ks_status_from_sl(ks: LensKnowledgeSource) -> LensKnowledgeSource:

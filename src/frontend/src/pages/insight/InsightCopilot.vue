@@ -26,12 +26,12 @@ import {
   retryCopilotSession,
   type LensChatMessage,
   type LensCopilotActiveRun,
+  type LensCopilotReadiness,
   type LensCopilotRunOutcome,
   type LensCopilotAssistant,
   type LensGatewayInsight,
   type LensCopilotGatewayOption,
   type LensKnowledgeSource,
-  type LensLlmConfig,
   type LensSessionLink,
 } from '../../lib/lensApi'
 import CopilotComposer from './copilot/CopilotComposer.vue'
@@ -60,7 +60,7 @@ const assistants = ref<LensCopilotAssistant[]>([])
 const gateways = ref<LensGatewayInsight[]>([])
 const copilotGatewayOptions = ref<LensCopilotGatewayOption[]>([])
 const knowledgeSources = ref<LensKnowledgeSource[]>([])
-const models = ref<LensLlmConfig[]>([])
+const modelReadiness = ref<LensCopilotReadiness | null>(null)
 const sessions = ref<SessionRow[]>([])
 const activeSessionId = ref<number | null>(null)
 const deleteOpen = ref(false)
@@ -225,6 +225,7 @@ const activeAssistant = computed((): LensCopilotAssistant | null => {
       status: 'active',
       selected_task: session.selected_task || undefined,
       agent_model_ref: session.agent_model_ref,
+      multimodal_model_ref: session.multimodal_model_ref,
     }
   }
   return null
@@ -271,15 +272,15 @@ const emptyPhase = computed((): CopilotEmptyPhase => {
 })
 
 const copilotReadiness = computed((): CopilotReadiness => {
-  const activeModels = models.value.filter((row) => row.is_active !== false)
+  const hasDefaultAgent = Boolean(modelReadiness.value?.default_agent_model_ref)
   const readyCopilotGateways = copilotGatewayOptions.value.filter((row) => row.copilot_eligible)
   const hasAssistants = chatReadyAssistants.value.length > 0
   return {
-    hasModels: activeModels.length > 0,
+    hasModels: hasDefaultAgent,
     hasGateways: readyCopilotGateways.length > 0,
     hasKnowledgeSources: knowledgeSources.value.length > 0,
     hasAssistants,
-    canStartChat: activeModels.length > 0 && readyCopilotGateways.length > 0,
+    canStartChat: hasDefaultAgent && readyCopilotGateways.length > 0,
   }
 })
 
@@ -311,6 +312,7 @@ async function bootstrap() {
       gateways.value = []
       copilotGatewayOptions.value = []
       knowledgeSources.value = []
+      modelReadiness.value = null
       sessions.value = []
       activeSessionId.value = null
       return
@@ -322,17 +324,16 @@ async function bootstrap() {
       gateways.value = []
       copilotGatewayOptions.value = []
       knowledgeSources.value = []
+      modelReadiness.value = null
       sessions.value = []
       activeSessionId.value = null
       return
     }
 
-    const [assistantRows, sessionRows, modelRows, gatewayRows, copilotGatewayRows, ksRows] = await Promise.all([
+    const [assistantRows, sessionRows, readiness, gatewayRows, copilotGatewayRows, ksRows] = await Promise.all([
       listCopilotAssistants().catch(() => [] as LensCopilotAssistant[]),
       listCopilotSessions().catch(() => [] as LensSessionLink[]),
-      fetchCopilotReadiness()
-        .then((row) => row.active_models)
-        .catch(() => [] as LensLlmConfig[]),
+      fetchCopilotReadiness().catch(() => null),
       listLensGateways().catch(() => [] as LensGatewayInsight[]),
       listCopilotGatewayOptions().catch(() => [] as LensCopilotGatewayOption[]),
       listKnowledgeSources().catch(() => [] as LensKnowledgeSource[]),
@@ -341,7 +342,7 @@ async function bootstrap() {
     gateways.value = gatewayRows
     copilotGatewayOptions.value = copilotGatewayRows
     knowledgeSources.value = ksRows
-    models.value = modelRows
+    modelReadiness.value = readiness
     sessions.value = toSessionRows(sessionRows)
     refreshPollerSessions()
     for (const session of sessions.value) {

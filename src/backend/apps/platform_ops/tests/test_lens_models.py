@@ -81,6 +81,7 @@ class PlatformOpsLensModelTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["is_default"])
+        self.assertTrue(response.data["is_default_agent"])
         self.assertEqual(
             LensOrgLink.objects.get(
                 organization=self.link.organization
@@ -88,14 +89,36 @@ class PlatformOpsLensModelTests(TestCase):
             self.model_uuid,
         )
         request_json.assert_called_once_with(
-            "PUT",
+            "GET",
             f"/api/v1/admin/llm-config/{self.model_uuid}/",
-            json_body={"is_default": True},
         )
 
     @patch("apps.platform_ops.api.views.lens.sl_client.request_json")
     def test_managed_model_cannot_be_deleted(self, request_json):
         response = self.client.delete(self.path)
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        request_json.assert_not_called()
+
+    @patch("apps.platform_ops.api.views.lens.sl_client.request_json")
+    def test_historical_deployment_model_is_read_only(self, request_json):
+        self.link.is_deployment_history = True
+        self.link.management_key = f"deploy-agent-history-{self.model_uuid.hex}"
+        self.link.deployment_role = LensOrgModelLink.DeploymentRole.AGENT
+        self.link.save(
+            update_fields=[
+                "is_deployment_history",
+                "management_key",
+                "deployment_role",
+                "updated_at",
+            ]
+        )
+
+        response = self.client.patch(
+            self.path,
+            {"is_default": True},
+            format="json",
+        )
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         request_json.assert_not_called()
@@ -112,4 +135,34 @@ class PlatformOpsLensModelTests(TestCase):
             "POST",
             f"/api/v1/admin/llm-config/{self.model_uuid}/test-call/",
             json_body={},
+        )
+
+    def test_platform_settings_persist_independent_model_roles(self):
+        multimodal_uuid = uuid.uuid4()
+        LensOrgModelLink.objects.create(
+            organization=self.link.organization,
+            sl_config_uuid=multimodal_uuid,
+            display_name="Multimodal Model",
+        )
+
+        response = self.client.patch(
+            "/api/v1/platform-ops/lens/settings",
+            {
+                "default_agent_model_ref": str(self.model_uuid),
+                "default_multimodal_model_ref": str(multimodal_uuid),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        defaults = LensOrgLink.objects.get(
+            organization=self.link.organization
+        )
+        self.assertEqual(
+            defaults.default_agent_model_ref,
+            self.model_uuid,
+        )
+        self.assertEqual(
+            defaults.default_multimodal_model_ref,
+            multimodal_uuid,
         )

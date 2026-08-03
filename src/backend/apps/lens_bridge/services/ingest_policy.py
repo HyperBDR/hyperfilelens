@@ -27,6 +27,16 @@ DEFAULT_INGEST_POLICY: dict[str, Any] = {
     "pdf_min_image_area_ratio": 0.08,
 }
 
+INGEST_POLICY_MAXIMUMS: dict[str, int] = {
+    "max_images": 500,
+    "max_file_size_mb": 256,
+    "max_pages": 1000,
+    "pdf_max_images_per_page": 10,
+    "pdf_max_pages": 200,
+    "pdf_min_text_chars": 10_000,
+    "pdf_render_dpi": 300,
+}
+
 _BOOL_KEYS = (
     "document",
     "image",
@@ -47,12 +57,14 @@ _INT_KEYS = (
 _STR_KEYS = ("vision_model_ref", "document_model_ref")
 
 
-def _positive_int(value: Any, fallback: int) -> int:
+def _bounded_positive_int(key: str, value: Any, fallback: int) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
         return fallback
-    return parsed if parsed > 0 else fallback
+    if parsed <= 0:
+        return fallback
+    return min(parsed, INGEST_POLICY_MAXIMUMS[key])
 
 
 def _ratio(value: Any, fallback: float) -> float:
@@ -65,15 +77,21 @@ def _ratio(value: Any, fallback: float) -> float:
     return parsed
 
 
-def normalize_ingest_policy(raw: dict[str, Any] | None, org: Organization | None = None) -> dict[str, Any]:
+def normalize_ingest_policy(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize a trusted persisted policy without remote model lookups."""
+
     data = dict(DEFAULT_INGEST_POLICY)
     if isinstance(raw, dict):
         for key in _BOOL_KEYS:
-            if key in raw:
-                data[key] = bool(raw[key])
+            if key in raw and isinstance(raw[key], bool):
+                data[key] = raw[key]
         for key in _INT_KEYS:
             if key in raw:
-                data[key] = _positive_int(raw[key], int(DEFAULT_INGEST_POLICY[key]))
+                data[key] = _bounded_positive_int(
+                    key,
+                    raw[key],
+                    int(DEFAULT_INGEST_POLICY[key]),
+                )
         if "pdf_min_image_area_ratio" in raw:
             data["pdf_min_image_area_ratio"] = _ratio(
                 raw["pdf_min_image_area_ratio"],
@@ -87,14 +105,44 @@ def normalize_ingest_policy(raw: dict[str, Any] | None, org: Organization | None
     if data.get("embedded_image") and not data.get("document"):
         data["embedded_image"] = False
 
-    if org is not None:
-        default_model = provisioning.default_model_ref_for_org(org)
-        if data.get("document") and not data.get("document_model_ref") and default_model:
-            data["document_model_ref"] = default_model
-        if data.get("image") and not data.get("vision_model_ref") and default_model:
-            data["vision_model_ref"] = default_model
-
     return data
+
+
+def policy_from_user_input(
+    raw: dict[str, Any] | None,
+    org: Organization,
+) -> dict[str, Any]:
+    """Build a policy while resolving server-owned model roles once."""
+
+    policy = normalize_ingest_policy(raw)
+    policy["document_model_ref"] = None
+    policy["vision_model_ref"] = None
+    visual_enabled = bool(
+        policy.get("image")
+        or policy.get("embedded_image")
+        or policy.get("pdf_render_scanned_pages")
+    )
+    if visual_enabled:
+        policy["vision_model_ref"] = (
+            provisioning.default_multimodal_model_ref_for_org(org)
+        )
+    return policy
+
+
+def managed_restore_default_policy(org: Organization) -> dict[str, Any]:
+    """Return the default local-document policy for a restored workspace."""
+
+    multimodal_ref = provisioning.default_multimodal_model_ref_for_org(org)
+    visual_enabled = bool(multimodal_ref)
+    return normalize_ingest_policy(
+        {
+            "document": True,
+            "image": visual_enabled,
+            "embedded_image": visual_enabled,
+            "pdf_render_scanned_pages": visual_enabled,
+            "vision_model_ref": multimodal_ref,
+        }
+    )
 
 
 def conversion_payload_for_sl(policy: dict[str, Any]) -> dict[str, Any]:
@@ -103,7 +151,11 @@ def conversion_payload_for_sl(policy: dict[str, Any]) -> dict[str, Any]:
     for key in _BOOL_KEYS:
         payload[key] = bool(policy.get(key))
     for key in _INT_KEYS:
-        payload[key] = _positive_int(policy.get(key), int(DEFAULT_INGEST_POLICY[key]))
+        payload[key] = _bounded_positive_int(
+            key,
+            policy.get(key),
+            int(DEFAULT_INGEST_POLICY[key]),
+        )
     payload["pdf_min_image_area_ratio"] = _ratio(
         policy.get("pdf_min_image_area_ratio"),
         float(DEFAULT_INGEST_POLICY["pdf_min_image_area_ratio"]),
