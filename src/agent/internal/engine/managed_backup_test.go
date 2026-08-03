@@ -1001,6 +1001,46 @@ func TestCollectRestoredDownloadReturnsFileForSingleFile(t *testing.T) {
 	}
 }
 
+func TestCollectRestoredDownloadReturnsSingleDotfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".hidden-note"), []byte("hidden content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	content, filename, contentType, err := collectRestoredDownload(root, ".hidden-note", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filename != ".hidden-note" || contentType != "application/octet-stream" {
+		t.Fatalf("expected .hidden-note application/octet-stream, got %q %q", filename, contentType)
+	}
+	if string(content) != "hidden content" {
+		t.Fatalf("unexpected dotfile content %q", string(content))
+	}
+}
+
+func TestCollectRestoredDownloadReturnsZipForDirectoryContainingOnlyDotfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".hidden-note"), []byte("hidden content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	content, filename, contentType, err := collectRestoredDownload(root, "hidden-dir", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filename != "hidden-dir.zip" || contentType != "application/zip" {
+		t.Fatalf("expected hidden-dir.zip application/zip, got %q %q", filename, contentType)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatalf("expected valid zip: %v", err)
+	}
+	if len(zr.File) != 1 || zr.File[0].Name != ".hidden-note" {
+		t.Fatalf("expected zip to contain .hidden-note, got %#v", zr.File)
+	}
+}
+
 func TestParseKopiaPackedBytesJSON(t *testing.T) {
 	got := parseKopiaPackedBytes(`{"totalPackedSize": 2048}`)
 	if got != 2048 {

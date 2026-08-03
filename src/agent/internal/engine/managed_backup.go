@@ -1834,18 +1834,11 @@ func collectRestoredDownload(root string, requestedPath string, forceZip bool) (
 	if err != nil {
 		return nil, "", "", err
 	}
-	visible := make([]os.DirEntry, 0, len(entries))
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		visible = append(visible, entry)
-	}
-	if len(visible) == 0 {
+	if len(entries) == 0 {
 		return nil, "", "", fmt.Errorf("restored path not found")
 	}
-	if !forceZip && len(visible) == 1 && !visible[0].IsDir() {
-		filePath := filepath.Join(root, visible[0].Name())
+	if !forceZip && len(entries) == 1 && !entries[0].IsDir() {
+		filePath := filepath.Join(root, entries[0].Name())
 		file, openErr := os.Open(filePath)
 		if openErr != nil {
 			return nil, "", "", openErr
