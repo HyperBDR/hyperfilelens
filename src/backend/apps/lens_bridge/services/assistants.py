@@ -604,9 +604,10 @@ def _require_manual_assistant_management(
 def _delete_sl_assistant(assistant_uuid: uuid_lib.UUID) -> None:
     """Retire an Assistant through SourceLens' supported archive contract.
 
-    SourceLens 0.20.0 removed DELETE from Assistant CRUD and exposes a POST
-    archive action instead. HFL treats an already archived/missing 404 as
-    idempotent success but preserves every other error for durable retry.
+    SourceLens versions 0.20.0 and later remove DELETE from Assistant CRUD and
+    expose a POST archive action instead. HFL treats an already archived or
+    missing 404 as idempotent success but preserves every other error for
+    durable retry.
     """
 
     try:

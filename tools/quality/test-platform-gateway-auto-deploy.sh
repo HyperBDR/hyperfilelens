@@ -72,6 +72,10 @@ export HFL_SENTRY_POLICY_MANAGED=true
 
 AUTO_DEPLOY=false
 TLS_MODE=1
+AGENT_ACTIVE=1
+READINESS_OK=1
+LOCAL_GATEWAY_IS_DEFAULT=0
+READINESS_QUERY=""
 read_env_value() {
 	case "$1" in
 	HFL_PLATFORM_GATEWAY_AUTO_DEPLOY) printf '%s' "${AUTO_DEPLOY}" ;;
@@ -87,11 +91,31 @@ die() { printf 'FAIL: %s\n' "$1" >&2; exit "${2:-1}"; }
 require_root_or_sudo() { :; }
 require_docker() { :; }
 run_as_root() { "$@"; }
-systemctl() { [[ "$*" == "is-active --quiet hyperfilelens-agent.service" ]]; }
+systemctl() {
+	[[ "$*" == "is-active --quiet hyperfilelens-agent.service" ]] \
+		&& [[ "${AGENT_ACTIVE}" == "1" ]]
+}
 converge_local_platform_gateway_lensnode() { :; }
-wait_for_local_platform_gateway_online() { [[ "$1" == "99" ]]; }
+wait_for_local_platform_gateway_readiness() {
+	[[ "$1" == "180" ]]
+	LOCAL_PLATFORM_GATEWAY_READINESS_REASON=""
+	if [[ "${READINESS_OK}" == "1" ]]; then
+		return 0
+	fi
+	LOCAL_PLATFORM_GATEWAY_READINESS_REASON="fixture Gateway is not fully ready"
+	return 1
+}
 active_api_service() { printf 'api-blue'; }
 compose_in_root() {
+	if [[ "$*" == *"gateway_runtime_state"* ]]; then
+		READINESS_QUERY="$*"
+		if [[ "${LOCAL_GATEWAY_IS_DEFAULT}" != "1" \
+			&& "$*" == *"is_platform_default=True"* ]]; then
+			return 1
+		fi
+		[[ "${READINESS_OK}" == "1" ]]
+		return
+	fi
 	printf 'HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT={"org_key":"%s","token":"fixture-token","api_base":"https://console.example:11443","wss_url":"wss://console.example:11443/ws/node/agent/","managed_node_ids":[99]}\n' "${ENROLLMENT_ORG}"
 }
 
@@ -107,6 +131,13 @@ ensure_local_platform_gateway
 [[ "$(<"${marker}")" == "https://127.0.0.1:11443|wss://127.0.0.1:11443/ws/node/agent/|1" ]]
 [[ "$(local_platform_gateway_installed_agent_version)" == "main-1111111" ]]
 [[ ! -e "${TEST_AGENT_UPGRADE_MARKER}" ]]
+
+READINESS_OK=0
+if (ensure_local_platform_gateway) 2>/dev/null; then
+	printf 'ERROR: auto-deploy accepted an incompletely ready platform Gateway\n' >&2
+	exit 1
+fi
+READINESS_OK=1
 
 # An equal desired version must not restart or upgrade the Agent.
 rm -f "${marker}"
@@ -168,9 +199,10 @@ fi
 
 # Exercise LensNode image convergence separately from Agent enrollment.
 # shellcheck disable=SC1090
-source <(sed -n '/^converge_local_platform_gateway_lensnode()/,/^wait_for_local_platform_gateway_online()/p' "${installer}" | sed '$d')
+source <(sed -n '/^converge_local_platform_gateway_lensnode()/,/^ensure_local_platform_gateway()/p' "${installer}" | sed '$d')
 CURRENT_LENSNODE_IMAGE_ID=sha256:desired
 DESIRED_LENSNODE_IMAGE_ID=sha256:desired
+LENSNODE_RUNNING=true
 SIDECAR_RECREATED=0
 script="${ROOT}/data/media/gateway-bootstrap/gateway-install-lensnode-sidecar.sh"
 printf '#!/usr/bin/env bash\nexit 99\n' >"${script}"
@@ -187,7 +219,7 @@ docker() {
 		printf '%s\n' "${CURRENT_LENSNODE_IMAGE_ID}"
 		;;
 	"inspect --format {{.State.Running}} lensnode-container")
-		printf 'true\n'
+		printf '%s\n' "${LENSNODE_RUNNING}"
 		;;
 	*) printf 'unexpected fake Docker invocation: %s\n' "$*" >&2; return 1 ;;
 	esac
@@ -207,5 +239,59 @@ CURRENT_LENSNODE_IMAGE_ID=sha256:old
 converge_local_platform_gateway_lensnode
 [[ "${SIDECAR_RECREATED}" == "1" ]]
 [[ "${CURRENT_LENSNODE_IMAGE_ID}" == "${DESIRED_LENSNODE_IMAGE_ID}" ]]
+
+# Restore the production readiness implementation after the deterministic
+# ensure fixture above exercised its failure contract.
+# shellcheck disable=SC1090
+source <(sed -n '/^local_platform_gateway_readiness_once()/,/^local_platform_gateway_installed_agent_version()/p' "${installer}" | sed '$d')
+wait_for_local_platform_gateway_readiness 0
+[[ "${READINESS_QUERY}" == *"gateway_id=99, scope='platform'"* ]]
+if [[ "${READINESS_QUERY}" == *"is_platform_default=True"* ]]; then
+	printf 'ERROR: local Gateway readiness was coupled to platform default selection\n' >&2
+	exit 1
+fi
+READINESS_OK=0
+if wait_for_local_platform_gateway_readiness 0; then
+	printf 'ERROR: an unusable platform Gateway passed readiness\n' >&2
+	exit 1
+fi
+[[ "${LOCAL_PLATFORM_GATEWAY_READINESS_REASON}" == \
+	"managed platform Gateway link, Agent WebSocket, or LensNode sidecar is not online and usable" ]]
+READINESS_OK=1
+LENSNODE_RUNNING=false
+if wait_for_local_platform_gateway_readiness 0; then
+	printf 'ERROR: a stopped LensNode passed platform Gateway readiness\n' >&2
+	exit 1
+fi
+[[ "${LOCAL_PLATFORM_GATEWAY_READINESS_REASON}" == \
+	"managed LensNode container is not running" ]]
+LENSNODE_RUNNING=true
+AGENT_ACTIVE=0
+if wait_for_local_platform_gateway_readiness 0; then
+	printf 'ERROR: a stopped Agent passed platform Gateway readiness\n' >&2
+	exit 1
+fi
+[[ "${LOCAL_PLATFORM_GATEWAY_READINESS_REASON}" == "Agent service is not active" ]]
+AGENT_ACTIVE=1
+
+# Exercise the public read-only verification command after its dependencies
+# have been replaced with deterministic fixtures.
+# shellcheck disable=SC1090
+source <(sed -n '/^cmd_platform_gateway()/,/^cmd_start()/p' "${installer}" | sed '$d')
+init_install_root() { :; }
+printf 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true\n' >"${ROOT}/.env"
+AUTO_DEPLOY=true
+cmd_platform_gateway verify --required --timeout 0
+AUTO_DEPLOY=false
+cmd_platform_gateway verify --timeout 0
+if (cmd_platform_gateway verify --required --timeout 0) 2>/dev/null; then
+	printf 'ERROR: required platform Gateway verification accepted disabled auto-deploy\n' >&2
+	exit 1
+fi
+AUTO_DEPLOY=true
+if (cmd_platform_gateway verify --timeout --required) 2>/dev/null; then
+	printf 'ERROR: platform Gateway verification accepted a missing timeout\n' >&2
+	exit 1
+fi
 
 printf 'Platform Gateway auto-deploy contracts passed.\n'

@@ -53,7 +53,7 @@ Commands:
   restart       stop then start
   status        Show version and compose service status
   manage        Run a Django management command in the active API color
-  platform-gateway Ensure the configured installer-managed platform Gateway
+  platform-gateway Ensure or verify the installer-managed platform Gateway
   upgrade       In-place upgrade from another release package directory or .tar.gz
   uninstall     Stop and remove Docker containers and app images (does not remove the install dir; see uninstall options)
   lang-pack     Install, list, or remove optional runtime language packs
@@ -105,6 +105,9 @@ Options:
 
   platform-gateway:
     ensure                  Deploy or repair the local platform Gateway when enabled
+    verify [options]        Read-only verification of the local platform Gateway
+      --timeout SECONDS     Wait up to 180 seconds by default (maximum 900)
+      --required            Fail when local platform Gateway auto-deploy is disabled
 
   manage:
     COMMAND [ARGS...]       Forward a Django management command to the active API color
@@ -2925,24 +2928,12 @@ check_local_platform_gateway_continuity() {
 		return 0
 	fi
 	# A control-plane release must not mutate independently running Gateway,
-	# Agent, or LensNode workloads. Report continuity only; their upgrade has a
-	# separate lifecycle command and drain contract.
-	if run_as_root systemctl is-active --quiet hyperfilelens-agent.service; then
-		ok "Installer-managed platform Gateway Agent remained active"
+	# Agent, or LensNode workloads. Wait only for their existing control channels
+	# to recover; their upgrade remains a separate lifecycle operation.
+	if wait_for_local_platform_gateway_readiness 180; then
+		ok "Installer-managed platform Gateway recovered after the control-plane upgrade"
 	else
-		warn "Installer-managed platform Gateway Agent is not active after the control-plane upgrade"
-	fi
-	local container_id running
-	container_id="$(docker ps -aq --no-trunc \
-		--filter 'label=com.hyperfilelens.managed=true' \
-		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
-		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
-		--filter 'label=com.docker.compose.service=lensnode' | head -1)"
-	running="$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)"
-	if [[ -n "${container_id}" && "${running}" == "true" ]]; then
-		ok "Installer-managed platform Gateway LensNode remained active"
-	else
-		warn "Installer-managed platform Gateway LensNode is not active after the control-plane upgrade"
+		warn "Installer-managed platform Gateway is not ready after the control-plane upgrade: ${LOCAL_PLATFORM_GATEWAY_READINESS_REASON:-unknown reason}"
 	fi
 }
 
@@ -2951,6 +2942,66 @@ read_agent_env_value() {
 	[[ -f "${env_file}" ]] || return 0
 	grep -E "^${key}=" "${env_file}" 2>/dev/null \
 		| head -1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+local_platform_gateway_readiness_once() {
+	LOCAL_PLATFORM_GATEWAY_READINESS_REASON=""
+	if ! run_as_root systemctl is-active --quiet hyperfilelens-agent.service; then
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="Agent service is not active"
+		return 1
+	fi
+
+	local node_id container_id running api_service query
+	node_id="$(read_agent_env_value HFL_NODE_ID)"
+	if [[ ! "${node_id}" =~ ^[0-9]+$ ]]; then
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="managed Agent node ID is missing or invalid"
+		return 1
+	fi
+	container_id="$(docker ps -aq --no-trunc \
+		--filter 'label=com.hyperfilelens.managed=true' \
+		--filter 'label=com.hyperfilelens.component=gateway-lensnode' \
+		--filter 'label=com.docker.compose.project=hyperfilelens-gateway' \
+		--filter 'label=com.docker.compose.service=lensnode' | head -1)"
+	if [[ -z "${container_id}" ]]; then
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="managed LensNode container is missing"
+		return 1
+	fi
+	running="$(docker inspect --format '{{.State.Running}}' "${container_id}" 2>/dev/null || true)"
+	if [[ "${running}" != "true" ]]; then
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="managed LensNode container is not running"
+		return 1
+	fi
+	api_service="$(active_api_service 2>/dev/null)" || {
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="active HFL API color is unavailable"
+		return 1
+	}
+	query="from apps.lens_bridge.models import LensGatewayLink; from apps.lens_bridge.services.gateway_readiness import gateway_runtime_state; link = LensGatewayLink.objects.select_related('gateway').filter(gateway_id=${node_id}, scope='platform').first(); state = gateway_runtime_state(link); raise SystemExit(0 if link is not None and state['hfl_usable'] and state['copilot_eligible'] else 1)"
+	if ! compose_in_root exec -T "${api_service}" python manage.py shell -c "${query}" \
+		>/dev/null 2>&1; then
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="managed platform Gateway link, Agent WebSocket, or LensNode sidecar is not online and usable"
+		return 1
+	fi
+	return 0
+}
+
+wait_for_local_platform_gateway_readiness() {
+	local timeout_seconds=${1:-180} deadline
+	if [[ ! "${timeout_seconds}" =~ ^(0|[1-9][0-9]*)$ ]] \
+		|| ((timeout_seconds > 900)); then
+		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="readiness timeout must be between 0 and 900 seconds"
+		return 2
+	fi
+	deadline=$((SECONDS + timeout_seconds))
+	while true; do
+		if local_platform_gateway_readiness_once; then
+			ok "Installer-managed platform Gateway is online and usable"
+			return 0
+		fi
+		if ((SECONDS >= deadline)); then
+			return 1
+		fi
+		sleep 2
+	done
 }
 
 local_platform_gateway_installed_agent_version() {
@@ -3056,22 +3107,6 @@ converge_local_platform_gateway_lensnode() {
 		|| die "installer-managed local platform Gateway LensNode is not running"
 }
 
-wait_for_local_platform_gateway_online() {
-	local node_id=$1 attempt
-	[[ "${node_id}" =~ ^[0-9]+$ ]] \
-		|| die "installer-managed local platform Gateway has no valid node ID"
-	for attempt in $(seq 1 12); do
-		if compose_in_root exec -T "$(active_api_service)" python manage.py shell -c \
-			"from apps.node.models import Node; from apps.node.services.internal.node_registry import agent_ws_routable; node = Node.objects.filter(pk=${node_id}, status=Node.Status.ONLINE).first(); raise SystemExit(0 if node is not None and agent_ws_routable(agent_id=node.id) else 1)" \
-			>/dev/null 2>&1; then
-			ok "Installer-managed local platform Gateway WebSocket is online"
-			return 0
-		fi
-		((attempt < 12)) && sleep 2
-	done
-	die "installer-managed local platform Gateway did not reconnect its WebSocket"
-}
-
 ensure_local_platform_gateway() {
 	if ! platform_gateway_auto_deploy_enabled; then
 		skip "Local platform Gateway auto-deploy is disabled"
@@ -3167,9 +3202,9 @@ print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
 	desired_version="$(read_version)"
 	verify_local_platform_gateway_agent "${desired_version}"
 	converge_local_platform_gateway_lensnode
-	existing_node_id="$(read_agent_env_value HFL_NODE_ID)"
-	wait_for_local_platform_gateway_online "${existing_node_id}"
-	ok "Installer-managed local platform Gateway is ready"
+	if ! wait_for_local_platform_gateway_readiness 180; then
+		die "installer-managed local platform Gateway readiness failed: ${LOCAL_PLATFORM_GATEWAY_READINESS_REASON:-unknown reason}"
+	fi
 }
 
 sync_optional_identity_settings() {
@@ -3302,14 +3337,47 @@ cmd_install() {
 }
 
 cmd_platform_gateway() {
-	[[ $# -eq 1 && "$1" == "ensure" ]] \
-		|| die "usage: install.sh platform-gateway ensure" 2
+	local action=${1:-} timeout_seconds=180 required=0
+	[[ -n "${action}" ]] || die "usage: install.sh platform-gateway {ensure|verify}" 2
+	shift
 	init_install_root
 	require_docker
 	[[ -f "${ROOT}/.env" ]] || die "missing .env; run install first"
-	wait_for_hfl_health || die "HyperFileLens failed its platform Gateway health gate"
-	wait_for_sourcelens_health || die "bundled SourceLens failed its platform Gateway health gate"
-	ensure_local_platform_gateway
+	case "${action}" in
+	ensure)
+		[[ $# -eq 0 ]] || die "usage: install.sh platform-gateway ensure" 2
+		wait_for_hfl_health || die "HyperFileLens failed its platform Gateway health gate"
+		wait_for_sourcelens_health || die "bundled SourceLens failed its platform Gateway health gate"
+		ensure_local_platform_gateway
+		;;
+	verify)
+		require_root_or_sudo
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--timeout)
+				shift
+				timeout_seconds=${1:-}
+				[[ -n "${timeout_seconds}" && "${timeout_seconds:0:1}" != "-" ]] \
+					|| die "--timeout requires seconds" 2
+				;;
+			--required) required=1 ;;
+			*) die "unknown platform-gateway verify option: $1" 2 ;;
+			esac
+			shift
+		done
+		if ! platform_gateway_auto_deploy_enabled; then
+			if [[ "${required}" -eq 1 ]]; then
+				die "local platform Gateway is required but auto-deploy is disabled"
+			fi
+			skip "Local platform Gateway auto-deploy is disabled"
+			return 0
+		fi
+		if ! wait_for_local_platform_gateway_readiness "${timeout_seconds}"; then
+			die "installer-managed local platform Gateway readiness failed: ${LOCAL_PLATFORM_GATEWAY_READINESS_REASON:-unknown reason}"
+		fi
+		;;
+	*) die "usage: install.sh platform-gateway {ensure|verify}" 2 ;;
+	esac
 }
 
 cmd_start() {
