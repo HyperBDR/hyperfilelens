@@ -233,25 +233,24 @@ onMounted(() => {
       </div>
 
       <footer class="fullscreen-form-footer">
-        <button
-          type="button"
-          class="form-action form-action--secondary"
+        <ElButton
+          :loading="testing"
           :disabled="testing || loading"
           @click="runTest"
         >
           {{ t('insight.aiSettings.testConnection') }}
-        </button>
-        <button type="button" class="form-action form-action--secondary" @click="handleBack">
+        </ElButton>
+        <ElButton @click="handleBack">
           {{ t('common.cancel') }}
-        </button>
-        <button
-          type="button"
-          class="form-action form-action--primary"
+        </ElButton>
+        <ElButton
+          type="primary"
+          :loading="saving"
           :disabled="saving || loading"
           @click="handleSubmit"
         >
           {{ isEditing ? t('common.save') : t('insight.aiSettings.btnCreateModel') }}
-        </button>
+        </ElButton>
       </footer>
     </div>
   </div>

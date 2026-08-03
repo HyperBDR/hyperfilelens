@@ -475,8 +475,10 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
 
       <footer class="fullscreen-form-footer">
         <p v-if="footerSubmitBlockReason" class="form-submit-hint">{{ footerSubmitBlockReason }}</p>
-        <button class="form-action form-action--secondary" type="button" @click="router.push('/insight/copilot')">Cancel</button>
-        <button class="form-action form-action--primary" type="button" :disabled="!canCreate" @click="createChat"><span v-if="submitting" class="form-action__loading" />{{ submitting ? 'Starting Chat…' : 'Start Chat' }}</button>
+        <ElButton @click="router.push('/insight/copilot')">Cancel</ElButton>
+        <ElButton type="primary" :loading="submitting" :disabled="!canCreate" @click="createChat">
+          {{ submitting ? 'Starting Chat…' : 'Start Chat' }}
+        </ElButton>
       </footer>
     </div>
   </div>

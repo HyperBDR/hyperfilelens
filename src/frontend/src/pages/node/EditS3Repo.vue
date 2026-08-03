@@ -727,22 +727,18 @@ watch(repositoryId, (id) => {
           </div>
 
           <div class="fullscreen-form-footer add-s3-footer">
-            <button
-              class="form-action form-action--secondary"
+            <ElButton
               :disabled="busy"
               @click="handleBack"
             >
               {{ t('repositoriesPage.btnCancel') }}
-            </button>
-            <button
-              class="form-action form-action--primary"
+            </ElButton>
+            <ElButton
+              type="primary"
+              :loading="busy"
               :disabled="busy"
               @click="onSave"
             >
-              <span
-                v-if="busy"
-                class="form-action__loading"
-              />
               <template v-if="busy && savingPhase === 'verifying'">
                 {{ t('repositoriesPage.editS3Repo.savingAndVerifying') }}
               </template>
@@ -752,7 +748,7 @@ watch(repositoryId, (id) => {
               <template v-else>
                 {{ t('repositoriesPage.editS3Repo.btnSave') }}
               </template>
-            </button>
+            </ElButton>
           </div>
         </div>
 
@@ -999,13 +995,12 @@ watch(repositoryId, (id) => {
       v-if="verifyStatus === 'failed'"
       #footer
     >
-      <button
-        type="button"
-        class="form-action form-action--primary"
+      <ElButton
+        type="primary"
         @click="closeVerifyDialog"
       >
         {{ t('repositoriesPage.editS3Repo.verifyDialogClose') }}
-      </button>
+      </ElButton>
     </template>
   </ElDialog>
 </template>

@@ -1079,18 +1079,17 @@ onMounted(async () => {
           </el-form>
 
           <div class="fullscreen-form-footer fullscreen-form-action-footer alert-policy-editor-footer">
-            <button type="button" class="form-action form-action--secondary" @click="handleBack">
+            <ElButton @click="handleBack">
               {{ t('common.cancel') }}
-            </button>
-            <button
-              type="button"
-              class="form-action form-action--primary"
+            </ElButton>
+            <ElButton
+              type="primary"
+              :loading="saving"
               :disabled="saving"
               @click="savePolicy"
             >
-              <span v-if="saving" class="form-action__loading" />
               {{ t('common.save') }}
-            </button>
+            </ElButton>
           </div>
         </div>
 

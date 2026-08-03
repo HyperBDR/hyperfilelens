@@ -190,7 +190,7 @@ function footerHint(wrapper: VueWrapper) {
 }
 
 function startChatButton(wrapper: VueWrapper) {
-  return wrapper.get('.fullscreen-form-footer .form-action--primary')
+  return wrapper.get('.fullscreen-form-footer .el-button--primary')
 }
 
 describe('New Chat Public Data Gateway warning', () => {

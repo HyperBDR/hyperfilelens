@@ -8825,9 +8825,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                   @copy="copyDeployScript"
                 />
                 <div class="fullscreen-form-footer fullscreen-form-action-footer">
-                  <button type="button" class="form-action form-action--secondary" @click="closeAddSource">
+                  <ElButton @click="closeAddSource">
                     {{ t('common.back') }}
-                  </button>
+                  </ElButton>
                 </div>
               </template>
               <template v-else>
@@ -12383,18 +12383,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   border-top: 1px solid rgba(226, 232, 240, 0.95);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.05);
-}
-
-.repository-add-main--embedded :deep(.resource-add-fullscreen--embedded .form-action--secondary) {
-  color: rgb(51 65 85);
-  border-color: rgb(203 213 225);
-  background: #fff;
-}
-
-.repository-add-main--embedded :deep(.resource-add-fullscreen--embedded .form-action--secondary:hover:not(:disabled)) {
-  color: rgb(15 23 42);
-  border-color: rgb(148 163 184);
-  background: rgb(248 250 252);
 }
 
 .repository-add-steps {

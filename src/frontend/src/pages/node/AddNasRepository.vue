@@ -529,13 +529,12 @@ watch(enableQuotaAlert, (enabled) => {
 
           <div class="fullscreen-form-footer fullscreen-form-action-footer add-nas-footer">
             <div class="flex gap-2">
-              <button class="form-action form-action--secondary" type="button" @click="handleBack">
+              <ElButton @click="handleBack">
                 {{ t('repositoriesPage.btnCancel') }}
-              </button>
-              <button class="form-action form-action--primary" type="button" :disabled="busy" @click="onSubmit">
-                <span v-if="busy" class="form-action__loading" />
+              </ElButton>
+              <ElButton type="primary" :loading="busy" :disabled="busy" @click="onSubmit">
                 {{ submitButtonLabel }}
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>

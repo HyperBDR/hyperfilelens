@@ -11811,9 +11811,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   @copy="copyDeployScript"
                 />
                 <div class="fullscreen-form-footer fullscreen-form-action-footer">
-                  <button type="button" class="form-action form-action--secondary" @click="closeAddSource">
+                  <ElButton @click="closeAddSource">
                     {{ t('common.back') }}
-                  </button>
+                  </ElButton>
                 </div>
               </template>
               <template v-else>

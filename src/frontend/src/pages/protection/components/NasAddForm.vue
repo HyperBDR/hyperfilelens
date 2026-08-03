@@ -362,18 +362,17 @@ defineExpose({
     </div>
 
     <div class="fullscreen-form-footer fullscreen-form-action-footer">
-      <button type="button" class="form-action form-action--secondary" @click="emit('cancel')">
+      <ElButton @click="emit('cancel')">
         {{ t('common.back') }}
-      </button>
-      <button
-        type="button"
-        class="form-action form-action--primary"
+      </ElButton>
+      <ElButton
+        type="primary"
+        :loading="busy"
         :disabled="busy || !!nameConflictMessage"
         @click="emit('submit')"
       >
-        <span v-if="busy" class="form-action__loading" />
         {{ t('protection.sourceResources.nasBtnSubmit') }}
-      </button>
+      </ElButton>
     </div>
   </div>
 </template>
@@ -482,7 +481,6 @@ defineExpose({
 
 .nas-add-form :deep(.add-nas-protocol-card__title),
 .nas-add-form :deep(.add-nas-protocol-card .el-radio__label),
-.nas-add-form :deep(.form-action),
 .nas-add-form :deep(.el-button) {
   font-weight: 400;
 }

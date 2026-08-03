@@ -868,17 +868,17 @@ watch(
       </div>
 
       <footer class="fullscreen-form-footer">
-        <button type="button" class="form-action form-action--secondary" @click="handleBack">
+        <ElButton @click="handleBack">
           {{ t('common.cancel') }}
-        </button>
-        <button
-          type="button"
-          class="form-action form-action--primary"
+        </ElButton>
+        <ElButton
+          type="primary"
+          :loading="saving"
           :disabled="saving || loading || !canSubmit"
           @click="handleSubmit"
         >
           {{ isEditing ? t('common.save') : t('insight.assistants.btnCreate') }}
-        </button>
+        </ElButton>
       </footer>
     </div>
   </div>
