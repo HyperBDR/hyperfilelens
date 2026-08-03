@@ -161,6 +161,9 @@ class AgentTaskSyncWaitTests(TestCase):
             def exists(self, key):
                 return False
 
+            def set(self, *args, **kwargs):
+                return True
+
         NodeTask.objects.filter(pk=self.task.pk).update(
             created_at=timezone.now()
             - timezone.timedelta(seconds=node_conf.TASK_ROUTE_RECONNECT_GRACE_SECONDS + 1),
@@ -193,6 +196,9 @@ class AgentTaskSyncWaitTests(TestCase):
         class RedisClient:
             def exists(self, key):
                 return False
+
+            def set(self, *args, **kwargs):
+                return True
 
         self.node.status = Node.Status.OFFLINE
         self.node.save(update_fields=["status"])

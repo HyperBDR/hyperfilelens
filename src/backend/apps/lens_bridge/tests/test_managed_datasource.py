@@ -4,6 +4,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
+from django.utils import timezone
 
 from apps.lens_bridge.services import managed_datasource, sl_client
 
@@ -234,7 +235,7 @@ class ManagedDatasourceTests(SimpleTestCase):
                 "policy_fingerprint": (
                     managed_datasource.conversion_policy_fingerprint(policy)
                 ),
-                "started_at": "2026-08-03T06:00:00Z",
+                "started_at": timezone.now().isoformat(),
             }
         }
 
