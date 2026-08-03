@@ -360,16 +360,37 @@ function handleNavClick(event: MouseEvent, to: string) {
     padding-left: 8px;
   }
 
-  .platform-ops-entry {
+  .top-nav .platform-ops-entry {
     width: 32px;
     height: 32px;
     box-sizing: border-box;
     justify-content: center;
     padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--icon-btn-color, #aeb2c5);
   }
 
   .platform-ops-entry span {
     display: none;
+  }
+
+  .top-nav .platform-ops-entry svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .top-nav .platform-ops-entry:hover,
+  .top-nav .platform-ops-entry:focus-visible {
+    border-color: transparent;
+    background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
+    color: var(--icon-btn-hover-color, #E2E2E2);
+  }
+
+  .top-nav .platform-ops-entry:focus-visible {
+    outline: 2px solid var(--color-primary, #6D5EF6);
+    outline-offset: 2px;
   }
 }
 

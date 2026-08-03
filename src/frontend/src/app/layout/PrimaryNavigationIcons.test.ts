@@ -55,7 +55,10 @@ describe('primary navigation icons', () => {
       /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.nav-item\s*{[\s\S]*?min-width:\s*0[\s\S]*?padding-right:\s*8px/,
     )
     expect(topNavSource).toMatch(
-      /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.platform-ops-entry span\s*{[\s\S]*?display:\s*none/,
+      /@media \(min-width: 1024px\) and \(max-width: 1151\.98px\)[\s\S]*?\.top-nav \.platform-ops-entry\s*{[\s\S]*?border:\s*0[\s\S]*?background:\s*transparent/,
+    )
+    expect(topNavSource).toMatch(
+      /\.top-nav \.platform-ops-entry svg\s*{[\s\S]*?width:\s*18px[\s\S]*?height:\s*18px/,
     )
     expect(topNavSource).toContain(':aria-label="t(\'nav.platformOps\')"')
   })
