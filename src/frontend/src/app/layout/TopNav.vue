@@ -115,6 +115,8 @@ function handleNavClick(event: MouseEvent, to: string) {
         v-if="adminConsoleHref"
         class="platform-ops-entry desktop-navigation-control"
         :href="adminConsoleHref"
+        :title="t('nav.platformOps')"
+        :aria-label="t('nav.platformOps')"
         target="_blank"
         rel="noopener noreferrer"
       >
@@ -126,7 +128,7 @@ function handleNavClick(event: MouseEvent, to: string) {
         <NavNotificationPopover />
       </div>
 
-      <NavUserMenu :timezone-offset-display="timezoneOffsetDisplay" />
+      <NavUserMenu />
     </div>
   </header>
 </template>
@@ -274,6 +276,7 @@ function handleNavClick(event: MouseEvent, to: string) {
 }
 
 .right-menu {
+  min-width: 0;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -325,6 +328,47 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 @media (min-width: 1024px) and (max-width: 1279.98px) {
   .nav-item__icon {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1151.98px) {
+  .top-nav {
+    padding-right: max(8px, var(--app-safe-right));
+    padding-left: max(8px, var(--app-safe-left));
+  }
+
+  .logo {
+    width: 140px;
+    flex: 0 0 140px;
+  }
+
+  .nav-menu {
+    min-width: 0;
+  }
+
+  .nav-item {
+    min-width: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+    white-space: nowrap;
+  }
+
+  .timezone-display {
+    margin-right: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .platform-ops-entry {
+    width: 32px;
+    height: 32px;
+    box-sizing: border-box;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .platform-ops-entry span {
     display: none;
   }
 }

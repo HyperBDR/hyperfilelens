@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { ChevronDown, ExternalLink, Globe, Shield, X } from 'lucide-vue-next'
+import { ChevronDown, Clock3, ExternalLink, Globe, Shield, X } from 'lucide-vue-next'
 import type { AppPrimaryNavItem } from '../composables/useAppPrimaryNav'
 import type { MenuItem } from './ModulePage.vue'
 import OrgSwitcher from './OrgSwitcher.vue'
@@ -14,14 +14,18 @@ const props = withDefaults(
     moduleItems?: MenuItem[]
     adminConsoleHref?: string
     canSwitchLocale?: boolean
+    currentLocaleLabel?: string
     nextLocaleLabel?: string
     showOrganizationSwitcher?: boolean
+    timezoneOffsetDisplay?: string
   }>(),
   {
     primaryItems: () => [],
     moduleItems: () => [],
     adminConsoleHref: '',
+    currentLocaleLabel: '',
     nextLocaleLabel: '',
+    timezoneOffsetDisplay: '',
   },
 )
 
@@ -189,16 +193,39 @@ function moduleItemActive(to?: string) {
           </a>
         </section>
 
-        <section v-if="canSwitchLocale" class="mobile-navigation__section mobile-navigation__section--utility">
+        <section
+          v-if="currentLocaleLabel || timezoneOffsetDisplay"
+          class="mobile-navigation__section mobile-navigation__section--utility"
+        >
           <button
+            v-if="canSwitchLocale"
             type="button"
             class="mobile-navigation__utility-link"
             :aria-label="$t('nav.switchLanguage', { language: nextLocaleLabel })"
             @click="toggleLocale"
           >
             <Globe :size="17" aria-hidden="true" />
-            <span>{{ $t('nav.switchLanguage', { language: nextLocaleLabel }) }}</span>
+            <span class="mobile-navigation__utility-copy">
+              <span class="mobile-navigation__utility-title">{{ $t('nav.languageLabel') }}</span>
+              <span class="mobile-navigation__utility-subtitle">
+                {{ $t('nav.languageSwitchDetail', { current: currentLocaleLabel, language: nextLocaleLabel }) }}
+              </span>
+            </span>
           </button>
+          <div v-else-if="currentLocaleLabel" class="mobile-navigation__utility-link mobile-navigation__utility-link--static">
+            <Globe :size="17" aria-hidden="true" />
+            <span class="mobile-navigation__utility-copy">
+              <span class="mobile-navigation__utility-title">{{ $t('nav.languageLabel') }}</span>
+              <span class="mobile-navigation__utility-subtitle">{{ currentLocaleLabel }}</span>
+            </span>
+          </div>
+          <div v-if="timezoneOffsetDisplay" class="mobile-navigation__utility-link mobile-navigation__utility-link--static">
+            <Clock3 :size="17" aria-hidden="true" />
+            <span class="mobile-navigation__utility-copy">
+              <span class="mobile-navigation__utility-title">{{ $t('nav.timezoneLabel') }}</span>
+              <span class="mobile-navigation__utility-subtitle">{{ timezoneOffsetDisplay }}</span>
+            </span>
+          </div>
         </section>
       </nav>
     </div>
@@ -349,6 +376,33 @@ function moduleItemActive(to?: string) {
 
 .mobile-navigation__utility-link {
   color: inherit;
+}
+
+.mobile-navigation__utility-link--static {
+  cursor: default;
+}
+
+.mobile-navigation__utility-link--static:hover {
+  background: transparent;
+}
+
+.mobile-navigation__utility-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mobile-navigation__utility-title {
+  color: var(--sidebar-text, var(--el-text-color-primary));
+  font-weight: 600;
+}
+
+.mobile-navigation__utility-subtitle {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-navigation__utility-external {

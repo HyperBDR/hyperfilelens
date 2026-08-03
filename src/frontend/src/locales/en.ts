@@ -155,6 +155,8 @@ export const en = {
     timezone: 'Time Zone: ',
     timezoneLabel: 'Time Zone',
     orgSwitcher: 'Organization',
+    languageLabel: 'Language',
+    languageSwitchDetail: '{current} · Switch to {language}',
     switchLanguage: 'Switch to {language}',
     themeSelect: 'Select theme',
     themeLight: 'Light',

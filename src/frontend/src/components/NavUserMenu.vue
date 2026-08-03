@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Clock3, LogOut, User } from 'lucide-vue-next'
+import { ChevronDown, LogOut, User } from 'lucide-vue-next'
 import { confirmSignOut, performLogout } from '../lib/logout'
 import { useAuth } from '../composables/useAuth'
 import { useTheme } from '../composables/useTheme'
@@ -13,10 +13,6 @@ const router = useRouter()
 const { user } = useAuth()
 const { theme } = useTheme()
 const popoverRef = ref<InstanceType<typeof HflPopover> | null>(null)
-
-withDefaults(defineProps<{ timezoneOffsetDisplay?: string }>(), {
-  timezoneOffsetDisplay: '',
-})
 
 const username = computed(() => user.value?.username || '—')
 const email = computed(() => user.value?.email || '—')
@@ -97,18 +93,6 @@ async function confirmLogout() {
             <span v-if="profileSub" class="nav-dropdown-panel__item-sub">{{ profileSub }}</span>
           </span>
         </button>
-        <div
-          v-if="timezoneOffsetDisplay"
-          class="nav-dropdown-panel__item nav-dropdown-panel__item--static nav-user-timezone"
-        >
-          <span class="nav-dropdown-panel__icon-box" aria-hidden="true">
-            <Clock3 :size="16" stroke-width="1.75" />
-          </span>
-          <span class="nav-dropdown-panel__item-text">
-            <span class="nav-dropdown-panel__item-title">{{ t('nav.timezoneLabel') }}</span>
-            <span class="nav-dropdown-panel__item-sub">{{ timezoneOffsetDisplay }}</span>
-          </span>
-        </div>
       </div>
 
       <div class="nav-dropdown-panel__divider" />
@@ -173,17 +157,20 @@ async function confirmLogout() {
   color: var(--nav-user-trigger-caret-hover-color, rgba(255, 255, 255, 0.95));
 }
 
-.nav-user-timezone {
-  display: none;
-}
-
 @media (max-width: 1023.98px) {
   .nav-user-trigger {
     min-height: 44px;
   }
+}
 
-  .nav-user-timezone {
-    display: flex;
+@media (min-width: 1024px) and (max-width: 1151.98px) {
+  .nav-user-trigger {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .nav-user-trigger__label {
+    max-width: 72px;
   }
 }
 
