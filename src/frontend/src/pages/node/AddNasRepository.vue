@@ -71,19 +71,25 @@ const availableProxyNodes = computed(() => proxyNodes.value.filter((node) => nod
 const selectedProxyNodeName = computed(() =>
   availableProxyNodes.value.find((node) => node.id === proxyNodeId.value)?.name || '',
 )
-const isDirectNasAccess = computed(() => !proxyNodeId.value)
+const hasProxyDecision = computed(() => proxyNodeId.value !== undefined)
+const hasBoundProxy = computed(() => Number(proxyNodeId.value || 0) > 0)
+const isDirectNasAccess = computed(() => proxyNodeId.value === 0)
 const accessPathLabel = computed(() =>
   isDirectNasAccess.value ? t('addNasRepo.accessPathDirect') : t('addNasRepo.accessPathWithProxy'),
 )
+const proxyPreviewLabel = computed(() => {
+  if (selectedProxyNodeName.value) return selectedProxyNodeName.value
+  return isDirectNasAccess.value ? t('addNasRepo.notBoundProxy') : '—'
+})
 const topologySourceLabels = computed(() => [
   t('addNasRepo.demoBackupSourceA'),
   t('addNasRepo.demoBackupSourceB'),
   t('addNasRepo.demoBackupSourceC'),
 ])
 const submitButtonLabel = computed(() =>
-  proxyNodeId.value
-    ? 'Submit and initialize'
-    : 'Save configuration',
+  isDirectNasAccess.value
+    ? 'Save configuration'
+    : 'Submit and initialize',
 )
 const validQuotaAlertThreshold = computed(() => {
   const value = Number(quotaAlertThreshold.value || 0)
@@ -122,6 +128,10 @@ function validateForm(): boolean {
       ElMessage.warning({ message: t('repositoriesPage.errNfsExport'), grouping: true })
       return false
     }
+  }
+  if (!hasProxyDecision.value) {
+    ElMessage.warning({ message: t('addNasRepo.errProxyDecisionRequired'), grouping: true })
+    return false
   }
   if (!repoName.value.trim()) {
     ElMessage.warning({ message: t('repositoriesPage.errName'), grouping: true })
@@ -203,6 +213,10 @@ async function refreshProxyNodesManually() {
   } finally {
     proxyNodesRefreshing.value = false
   }
+}
+
+function clearProxySelection() {
+  proxyNodeId.value = undefined
 }
 
 onMounted(() => {
@@ -380,7 +394,6 @@ watch(enableQuotaAlert, (enabled) => {
                       <span class="fullscreen-form-section__indicator" />
                       {{ t('addNasRepo.titleBindProxy') }}
                     </h3>
-                    <span class="fullscreen-form-optional-badge">{{ t('addNasRepo.optional') }}</span>
                   </div>
                   <ElButton class="add-nas-proxy-action" @click="openProxyDeploy">
                     <Plus :size="14" />
@@ -400,7 +413,7 @@ watch(enableQuotaAlert, (enabled) => {
                 <div class="add-nas-proxy-layout">
                   <div class="add-nas-proxy-form">
                     <ElForm label-position="top" class="fullscreen-form-el-form add-nas-form">
-                      <ElFormItem class="add-nas-bind-form-item">
+                      <ElFormItem required class="add-nas-bind-form-item">
                         <template #label>{{ t('addNasRepo.fieldSourceProxyNode') }}</template>
                         <div class="add-nas-select-row">
                           <ElSelect
@@ -409,14 +422,15 @@ watch(enableQuotaAlert, (enabled) => {
                             clearable
                             filterable
                             :placeholder="t('addNasRepo.phSourceProxyNode')"
+                            @clear="clearProxySelection"
                           >
-                            <ElOption :value="0" :label="t('addNasRepo.optionNoProxy')" />
                             <ElOption
                               v-for="n in availableProxyNodes"
                               :key="n.id"
                               :value="n.id"
                               :label="n.ip_address ? `${n.name} (${n.ip_address})` : n.name"
                             />
+                            <ElOption :value="0" :label="t('addNasRepo.optionNoProxy')" />
                           </ElSelect>
                           <ElButton
                             class="hfl-refresh-button add-nas-select-row__refresh"
@@ -428,12 +442,23 @@ watch(enableQuotaAlert, (enabled) => {
                             <RefreshCw :size="16" :class="{ 'is-spinning': proxyNodesRefreshing }" />
                           </ElButton>
                         </div>
-                        <div class="mt-2 text-xs text-[rgb(100_116_139)]">
-                          {{ proxyNodeId ? t('addNasRepo.hintProxySelected') : t('addNasRepo.hintProxySkipped') }}
+                        <div v-if="hasBoundProxy" class="mt-2 text-xs text-[rgb(100_116_139)]">
+                          {{ t('addNasRepo.hintProxySelected') }}
                         </div>
+                        <div v-else-if="!hasProxyDecision" class="mt-2 text-xs text-[rgb(100_116_139)]">
+                          {{ t('addNasRepo.hintProxyUndecided') }}
+                        </div>
+                        <ElAlert
+                          v-else
+                          type="warning"
+                          :closable="false"
+                          show-icon
+                          class="add-nas-direct-warning"
+                          :title="t('addNasRepo.directAccessRisk')"
+                        />
                       </ElFormItem>
                       <ElFormItem
-                        v-if="proxyNodeId"
+                        v-if="hasBoundProxy"
                         :label="t('repositoriesPage.fieldRepositoryServerHost')"
                       >
                         <ElInput
@@ -568,7 +593,7 @@ watch(enableQuotaAlert, (enabled) => {
                 <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('addNasRepo.fieldSourceProxyNode') }}</span>
                   <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedProxyNodeName }">
-                    {{ selectedProxyNodeName || t('addNasRepo.notBoundProxy') }}
+                    {{ proxyPreviewLabel }}
                   </span>
                 </div>
                 <div class="add-form-preview-row">
@@ -704,6 +729,15 @@ watch(enableQuotaAlert, (enabled) => {
 
 .add-nas-bind-form-item :deep(.el-form-item__content) {
   width: 100%;
+}
+
+.add-nas-direct-warning {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.add-nas-direct-warning :deep(.el-alert__title) {
+  line-height: 1.5;
 }
 
 .add-nas-select-row {
