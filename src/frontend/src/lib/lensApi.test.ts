@@ -2,12 +2,34 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
+import type { LensIngestPolicy } from './lensApi'
 import {
+  createKnowledgeSource,
+  patchKnowledgeSource,
   setLensApiScope,
   setLensDefaultAgentModel,
   setLensDefaultMultimodalModel,
   testSavedLensModel,
 } from './lensApi'
+
+const ingestPolicy: LensIngestPolicy = {
+  document: true,
+  embedded_image: true,
+  image: true,
+  document_model_ref: 'document-model',
+  vision_model_ref: 'vision-model',
+  max_images: 20,
+  max_file_size_mb: 100,
+  max_pages: 200,
+  pdf_extract_images: true,
+  pdf_extract_images_on_text_pages: false,
+  pdf_render_scanned_pages: true,
+  pdf_max_pages: 200,
+  pdf_max_images_per_page: 10,
+  pdf_render_dpi: 144,
+  pdf_min_text_chars: 80,
+  pdf_min_image_area_ratio: 0.1,
+}
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>()
@@ -79,5 +101,29 @@ describe('AI model role defaults', () => {
         }),
       }),
     )
+  })
+})
+
+describe('knowledge source ingest policy', () => {
+  it.each([
+    ['create', () => createKnowledgeSource({
+      name: 'Documents',
+      gateway: 42,
+      source_path: '/documents',
+      ingest_policy: ingestPolicy,
+    })],
+    ['patch', () => patchKnowledgeSource(7, { ingest_policy: ingestPolicy })],
+  ])('keeps deployment-owned model references out of %s requests', async (_operation, request) => {
+    vi.mocked(api).mockResolvedValue({ id: 7 })
+
+    await request()
+
+    const options = vi.mocked(api).mock.calls[0]?.[1]
+    const body = JSON.parse(String(options?.body))
+    expect(body.ingest_policy).not.toHaveProperty('document_model_ref')
+    expect(body.ingest_policy).not.toHaveProperty('vision_model_ref')
+    expect(body.ingest_policy.document).toBe(true)
+    expect(ingestPolicy.document_model_ref).toBe('document-model')
+    expect(ingestPolicy.vision_model_ref).toBe('vision-model')
   })
 })
