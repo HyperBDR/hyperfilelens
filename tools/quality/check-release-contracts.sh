@@ -200,7 +200,7 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.20.0}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.21.0}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -337,7 +337,7 @@ grep -F 'APT_MIRROR_URL: ${DEBIAN_APT_MIRROR_URL:-https://deb.debian.org/debian}
 [[ "$(grep -Fc 'UV_VERSION: ${UV_VERSION:-0.10.2}' \
 	"${tmp}/source-patch/docker-compose.standalone.yml")" -eq 2 ]]
 
-grep -F '# SourceLens v0.20.0 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.21.0 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -f "${ROOT}/tools/sourcelens/patches/retired/lensnode-tls-v0.4.0.patch" ]]
 if [[ -e "${ROOT}/deploy/installer/sourcelens/lensnode-tls.patch" \
@@ -910,6 +910,8 @@ grep -F 'HFL_SOURCELENS_MOUNTPOINT="${HFL_WORKSPACE_ROOT}/.sourcelens"' \
 	"${gateway_sidecar_installer}" >/dev/null
 grep -F '${HFL_SOURCELENS_STATE_ROOT}:${HFL_SOURCELENS_MOUNTPOINT}:rw' \
 	"${gateway_sidecar_installer}" >/dev/null
+grep -F 'LENSNODE_CHECKPOINT_DIR: ${HFL_SOURCELENS_MOUNTPOINT}/checkpoints' \
+	"${gateway_sidecar_installer}" >/dev/null
 grep -F '${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro' \
 	"${gateway_sidecar_installer}" >/dev/null
 grep -F 'script="${INSTALL_SH%/install.sh}/libexec/gateway-lifecycle.sh"' \
@@ -994,6 +996,10 @@ grep -F 'hfl-sentry-sitecustomize.py' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'Verify Platform Gateway Readiness' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'platform-gateway verify --required --timeout 180' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11442/en/' \
@@ -1011,6 +1017,7 @@ fi
 
 installer="${ROOT}/deploy/installer/install.sh"
 grep -F 'platform-gateway ensure' "${installer}" >/dev/null
+grep -F 'platform-gateway verify' "${installer}" >/dev/null
 materialize_body="$(sed -n '/^materialize_to_install_dir()/,/^}/p' "${installer}")"
 grep -F -- '--checksum' <<<"${materialize_body}" >/dev/null
 grep -F -- '--delete' <<<"${materialize_body}" >/dev/null

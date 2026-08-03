@@ -80,7 +80,7 @@ run_cleanup() {
 	local releases=$5 disposition=${6:-incomplete} compare_fail=${7:-0}
 	: >"${tmp}/gh.log"
 	: >"${tmp}/summary.md"
-	(
+	if ! (
 		cd "${tmp}/work"
 		PATH="${tmp}/bin:${PATH}" \
 			GH_MOCK_LOG="${tmp}/gh.log" \
@@ -95,7 +95,12 @@ run_cleanup() {
 			PUBLISH_RESULT="${publish_result}" \
 			PUBLISH_DISPOSITION="${disposition}" \
 			"${ROOT}/.github/scripts/cleanup-main-builds.sh"
-	)
+	) >"${tmp}/cleanup-output.log" 2>&1; then
+		# Prevent an expected fixture annotation from becoming a real Actions
+		# annotation while still preserving readable diagnostics on test failure.
+		sed 's/^::/%3A%3A/' "${tmp}/cleanup-output.log" >&2
+		return 1
+	fi
 }
 
 release_rows="$(printf '%s\t%s\n%s\t%s\n' \
@@ -158,6 +163,8 @@ if [[ -s "${tmp}/gh.log" ]]; then
 	exit 1
 fi
 grep -F 'current Main freshness could not be verified' "${tmp}/summary.md" >/dev/null
+grep -F '::warning title=Main release cleanup::' \
+	"${tmp}/cleanup-output.log" >/dev/null
 git -C "${tmp}/work" remote set-url origin "${tmp}/remote.git"
 
 if ARTIFACT_ID=invalid \

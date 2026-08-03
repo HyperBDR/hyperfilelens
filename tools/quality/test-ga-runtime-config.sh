@@ -59,16 +59,17 @@ end = workflow.index(end_marker, start)
 renderer = textwrap.dedent(workflow[start:end])
 
 
-def render(target: str, measurement_id: str, filename: str) -> str:
+def render(target: str, measurement_id: str, filename: str):
     output = pathlib.Path(sys.argv[2], filename)
     environment = os.environ.copy()
     environment.update(
         DEPLOY_TARGET=target,
         HFL_GA_MEASUREMENT_ID=measurement_id,
     )
-    subprocess.run(
+    completed = subprocess.run(
         [sys.executable, "-", str(output)],
         check=True,
+        capture_output=True,
         env=environment,
         input=renderer,
         text=True,
@@ -77,12 +78,16 @@ def render(target: str, measurement_id: str, filename: str) -> str:
         line.split("=", 1)
         for line in output.read_text(encoding="utf-8").splitlines()
     )
-    return values["HFL_GA_MEASUREMENT_ID"]
+    return values["HFL_GA_MEASUREMENT_ID"], completed.stdout
 
 
-assert render("prod", "  G-0RX9GZJCWF\t", "trimmed.env") == "G-0RX9GZJCWF"
-assert render("prod", "G-0RX9GZJCWF\ninvalid", "multiline.env") == ""
-assert render("preprod", "G-0RX9GZJCWF", "preprod.env") == ""
+assert render("prod", "  G-0RX9GZJCWF\t", "trimmed.env") == ("G-0RX9GZJCWF", "")
+invalid_value, invalid_output = render(
+    "prod", "G-0RX9GZJCWF\ninvalid", "multiline.env"
+)
+assert invalid_value == ""
+assert "::warning title=Google Analytics configuration::" in invalid_output
+assert render("preprod", "G-0RX9GZJCWF", "preprod.env") == ("", "")
 PY
 
 if grep -R -E '(TEST|PREPROD)_GA_MEASUREMENT_ID' "${ROOT}/.github/workflows" >/dev/null; then
