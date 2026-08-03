@@ -168,7 +168,7 @@ def _force_purge_without_remote_uninstall(
         if defer_control_plane_purge
         else _purge_agent_server_records(org=org, node=node, user=user)
     )
-    return {
+    result = {
         "operation_id": f"force-remove:{node.id}",
         "task_id": None,
         "node_id": node.id,
@@ -188,6 +188,23 @@ def _force_purge_without_remote_uninstall(
         "retained_resources": retained_resources,
         "summary": summary,
     }
+    if not defer_control_plane_purge and node.role in {NodeRole.PROXY, NodeRole.GATEWAY}:
+        from apps.node.services.internal.node_lifecycle_task import (
+            record_immediate_node_remove_task,
+        )
+
+        try:
+            record_immediate_node_remove_task(
+                node=node,
+                force=True,
+                result=result,
+            )
+        except Exception:
+            logger.exception(
+                "failed to record immediate node removal node_id=%s",
+                node.id,
+            )
+    return result
 
 
 def _version_matches_target(

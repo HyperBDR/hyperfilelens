@@ -22,7 +22,12 @@ from apps.node.services.internal.node_lifecycle import (
     start_node_remove,
     start_node_upgrade,
 )
-from apps.node.services.internal.task import complete_task
+from apps.node.services.internal.task import (
+    _RouteState,
+    complete_task,
+    create_agent_task,
+    deliver_agent_task,
+)
 from apps.task.models import Task, TaskResource
 
 
@@ -172,6 +177,174 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(
             result["retained_resources"],
             ["agent_installation", "lensnode_sidecar"],
+        )
+        operation = Task.objects.get(task_type=Task.Type.NODE_LIFECYCLE)
+        self.assertEqual(operation.status, Task.Status.SUCCESS)
+        self.assertEqual(operation.result_payload["result"], "partial_success")
+        self.assertFalse(operation.result_payload["cleanup_complete"])
+        self.assertEqual(operation.resources.get().resource_id, self.node.id)
+
+    def test_proxy_uninstall_is_projected_to_operations_with_warning_result(self):
+        self.node.role = NodeRole.PROXY
+        self.node.save(update_fields=["role", "updated_at"])
+        node_task = create_agent_task(
+            org=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+            payload={"force_cleanup": True},
+        )
+
+        operation = Task.objects.get(task_type=Task.Type.NODE_LIFECYCLE)
+        self.assertEqual(operation.status, Task.Status.PENDING)
+
+        complete_task(
+            task_id=node_task.id,
+            node_id=self.node.id,
+            status=NodeTask.Status.SUCCESS,
+            result={
+                "cleanup_complete": False,
+                "cleanup_failures": [
+                    {"code": "agent_offline", "detail": "Agent disconnected."}
+                ],
+                "retained_resources": ["agent_installation"],
+            },
+        )
+
+        operation.refresh_from_db()
+        self.assertEqual(operation.status, Task.Status.SUCCESS)
+        self.assertEqual(operation.result_payload["result"], "partial_success")
+        self.assertEqual(
+            operation.steps.get(step_name="cleanup_node_endpoint").status,
+            "warning",
+        )
+
+    def test_proxy_uninstall_delivery_projects_running_state(self):
+        self.node.role = NodeRole.PROXY
+        self.node.save(update_fields=["role", "updated_at"])
+        node_task = create_agent_task(
+            org=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        with (
+            patch(
+                "apps.node.services.internal.task._node_route_state",
+                return_value=_RouteState.ONLINE,
+            ),
+            patch("apps.node.services.internal.task._send_task_command"),
+        ):
+            deliver_agent_task(task=node_task)
+
+        operation = Task.objects.get(task_type=Task.Type.NODE_LIFECYCLE)
+        self.assertEqual(operation.status, Task.Status.RUNNING)
+        self.assertEqual(
+            operation.steps.get(step_name="dispatch_agent_uninstall").status,
+            "success",
+        )
+        self.assertEqual(
+            operation.steps.get(step_name="cleanup_node_endpoint").status,
+            "running",
+        )
+
+    def test_proxy_uninstall_delivery_failure_projects_failed_dispatch(self):
+        self.node.role = NodeRole.PROXY
+        self.node.save(update_fields=["role", "updated_at"])
+        node_task = create_agent_task(
+            org=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+
+        with (
+            patch(
+                "apps.node.services.internal.task._node_route_state",
+                return_value=_RouteState.ONLINE,
+            ),
+            patch(
+                "apps.node.services.internal.task._send_task_command",
+                side_effect=RuntimeError("dispatch unavailable"),
+            ),
+        ):
+            deliver_agent_task(task=node_task)
+
+        node_task.refresh_from_db()
+        operation = Task.objects.get(task_type=Task.Type.NODE_LIFECYCLE)
+        self.assertEqual(node_task.status, NodeTask.Status.FAILED)
+        self.assertEqual(operation.status, Task.Status.FAILED)
+        self.assertEqual(float(operation.progress), 35)
+        self.assertIn("dispatch unavailable", operation.error_message)
+        self.assertEqual(
+            operation.steps.get(step_name="dispatch_agent_uninstall").status,
+            "failed",
+        )
+        self.assertEqual(
+            operation.steps.get(step_name="cleanup_node_endpoint").status,
+            "skipped",
+        )
+
+    def test_late_uninstall_success_refreshes_terminal_operation_once(self):
+        self.node.role = NodeRole.PROXY
+        self.node.save(update_fields=["role", "updated_at"])
+        node_task = create_agent_task(
+            org=self.org,
+            node=self.node,
+            kind="agent.uninstall",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"remove:{self.node.id}",
+        )
+        with (
+            patch(
+                "apps.node.services.internal.task._node_route_state",
+                return_value=_RouteState.ONLINE,
+            ),
+            patch("apps.node.services.internal.task._send_task_command"),
+        ):
+            deliver_agent_task(task=node_task)
+        complete_task(
+            task_id=node_task.id,
+            node_id=self.node.id,
+            status=NodeTask.Status.FAILED,
+            error="callback timed out",
+            result={"cleanup_complete": False},
+        )
+        operation = Task.objects.get(task_type=Task.Type.NODE_LIFECYCLE)
+        self.assertEqual(operation.status, Task.Status.FAILED)
+        self.assertEqual(
+            operation.events.filter(message__startswith="Task finished with status").count(),
+            1,
+        )
+
+        complete_task(
+            task_id=node_task.id,
+            node_id=self.node.id,
+            status=NodeTask.Status.SUCCESS,
+            result={"cleanup_complete": True},
+        )
+
+        operation.refresh_from_db()
+        self.assertEqual(operation.status, Task.Status.SUCCESS)
+        self.assertTrue(operation.result_payload["cleanup_complete"])
+        self.assertEqual(operation.result_payload["result"], "success")
+        self.assertEqual(
+            operation.steps.get(step_name="cleanup_node_endpoint").status,
+            "success",
+        )
+        self.assertEqual(
+            operation.events.filter(message__startswith="Task finished with status").count(),
+            1,
+        )
+        self.assertEqual(
+            operation.events.filter(
+                message="Node removal result reconciled from the authoritative Agent task"
+            ).count(),
+            1,
         )
 
     @patch("apps.node.services.internal.node_lifecycle.run_agent_task_async")

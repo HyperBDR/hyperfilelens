@@ -61,6 +61,7 @@ const BodyStub = defineComponent({
     preflight: Object,
     preflightLoading: Boolean,
     preflightError: Boolean,
+    sourceIds: Array,
   },
   emits: ['update:force', 'update:confirmText', 'retry-preflight', 'confirm'],
   template: `
@@ -68,6 +69,7 @@ const BodyStub = defineComponent({
       <span data-test="preflight-loading">{{ preflightLoading }}</span>
       <span data-test="preflight-error">{{ preflightError }}</span>
       <span data-test="preflight-disabled">{{ preflight?.delete_disabled }}</span>
+      <span data-test="dialog-source-count">{{ sourceIds?.length || 0 }}</span>
       <button data-test="select-force" @click="$emit('update:force', true)">force</button>
       <button data-test="strict-confirmation" @click="$emit('update:confirmText', 'UNREGISTER')">strict</button>
       <button data-test="force-confirmation" @click="$emit('update:confirmText', 'FORCE UNREGISTER')">force confirm</button>
@@ -206,6 +208,31 @@ describe.each([
       true,
       'FORCE UNREGISTER',
     )
+    wrapper.unmount()
+  })
+
+  it('keeps the submitted selection visible while the request is pending', async () => {
+    const request = deferred<Record<string, unknown>>()
+    preflightDeleteBackupSources.mockResolvedValue(successfulPreflight)
+    bulkDeleteBackupSources.mockReturnValue(request.promise)
+    const wrapper = mountDialog(component)
+    await flushPromises()
+
+    await wrapper.get('[data-test="strict-confirmation"]').trigger('click')
+    await wrapper.get('[data-test="confirm-delete"]').trigger('click')
+    await wrapper.setProps({ sourceIds: [] })
+    await nextTick()
+
+    expect(wrapper.get('[data-test="dialog-source-count"]').text()).toBe('1')
+    request.resolve({
+      result: 'pending',
+      warnings: [],
+      pending_removals: [],
+      deleted: [],
+      ok: true,
+      accepted: true,
+    })
+    await flushPromises()
     wrapper.unmount()
   })
 

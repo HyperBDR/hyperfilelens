@@ -4,7 +4,7 @@ from django.db import models
 
 
 class BackupSourceRepositoryPurgePending(models.Model):
-    """Queued Kopia snapshot cleanup when strict delete cannot reach the repository."""
+    """Durable repository residue recorded when source cleanup cannot finish."""
 
     organization_id = models.BigIntegerField(db_index=True)
     source_kind = models.CharField(max_length=16, db_index=True)

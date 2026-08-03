@@ -293,6 +293,10 @@ def cancel_task(*, task_uuid: UUID | str, organization_id: int, reason: str = ""
         raise ValidationError(
             "Source unregister tasks cannot be cancelled after cleanup starts."
         )
+    if task.task_type == Task.Type.NODE_LIFECYCLE:
+        raise ValidationError(
+            "Node lifecycle tasks are controlled by the authoritative Agent task."
+        )
 
     task.status = Task.Status.CANCELLED
     task.error_code = "TASK_CANCELLED"
@@ -343,6 +347,10 @@ def retry_task(*, task_uuid: UUID | str, organization_id: int, reason: str = "")
     )
     if task is None:
         raise Task.DoesNotExist
+    if task.task_type == Task.Type.NODE_LIFECYCLE:
+        raise ValidationError(
+            "Node lifecycle tasks cannot be retried from Operations. Retry the node removal instead."
+        )
     if task.status not in {
         Task.Status.FAILED,
         Task.Status.TIMEOUT,

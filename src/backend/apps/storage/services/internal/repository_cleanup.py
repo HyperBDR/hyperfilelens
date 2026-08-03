@@ -156,10 +156,13 @@ def repository_cleanup_preflight(
             }
         )
     if not allow_associations and restore_record_count:
-        blockers.append(
+        warnings.append(
             {
                 "code": "associated_restore_records",
-                "detail": f"Repository has {restore_record_count} restore record(s).",
+                "detail": (
+                    f"Repository has {restore_record_count} historical restore record(s). "
+                    "The history is retained for audit and does not block deletion."
+                ),
                 "count": restore_record_count,
             }
         )
@@ -561,7 +564,7 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             (
                 TaskStep.Status.SUCCESS
                 if physical_cleanup_complete
-                else TaskStep.Status.FAILED
+                else TaskStep.Status.WARNING
             ),
             75,
         )
@@ -978,9 +981,15 @@ def _repository_cleanup_plan(
         "operation_type": operation_type,
         "repository": {
             "id": repository.id,
+            "name": repository.name,
             "type": repository.repo_type,
             "bucket": repository.s3_bucket,
             "bucket_mode": repository.s3_bucket_mode,
+            "created_at": (
+                repository.created_at.isoformat()
+                if repository.created_at is not None
+                else None
+            ),
             **identity_fields,
         },
         "target": (

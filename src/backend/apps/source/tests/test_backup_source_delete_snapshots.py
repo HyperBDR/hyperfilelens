@@ -180,6 +180,47 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             Task.Status.SUCCESS,
         )
 
+    def test_checkpoint_deduplicates_failure_after_source_identity_is_known(self):
+        previous = {
+            "result": "waiting",
+            "cleanup_complete": False,
+            "cleanup_failures": [
+                {
+                    "source_id": "",
+                    "code": "agent_offline",
+                    "detail": "Agent is offline.",
+                },
+            ],
+            "sources": [
+                {
+                    "source_id": f"nas:{self.resource.id}",
+                    "source_name": self.resource.name,
+                    "cleanup_complete": False,
+                    "cleanup_failures": [],
+                }
+            ],
+        }
+        current = {
+            "result": "partial_success",
+            "cleanup_complete": False,
+            "cleanup_failures": [
+                {
+                    "source_id": f"nas:{self.resource.id}",
+                    "code": "agent_offline",
+                    "detail": "Agent  is offline.",
+                },
+            ],
+            "sources": previous["sources"],
+        }
+
+        merged = _merge_unregister_checkpoint(previous, current)
+
+        self.assertEqual(len(merged["cleanup_failures"]), 1)
+        self.assertEqual(
+            merged["cleanup_failures"][0]["source_id"],
+            f"nas:{self.resource.id}",
+        )
+
     def test_snapshot_terminal_failure_queues_current_unregister_attempt(self):
         parent = self._create_unregister_parent()
         child = create_snapshot_delete_task(
@@ -400,11 +441,11 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         self.assertFalse(source_result["cleanup_complete"])
         self.assertEqual(
             source_result["cleanup_failures"][0]["code"],
-            "repository_purge_pending",
+            "repository_cleanup_required",
         )
         self.assertEqual(
             source_result["retained_resources"],
-            [f"repository_purge_pending:{pending.id}"],
+            [f"repository_cleanup_record:{pending.id}"],
         )
         audit = AuditLog.objects.filter(
             organization_id=self.org.id,

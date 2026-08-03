@@ -366,7 +366,19 @@ def _source_unregister_cleanup_plan(
             {
                 "node_id": ctx.agent_node.id,
                 "role": ctx.agent_node.role,
+                "endpoint": ctx.agent_node.ip_address,
+                "registered_at": (
+                    ctx.agent_node.created_at.isoformat()
+                    if ctx.agent_node.created_at is not None
+                    else None
+                ),
             }
+        )
+    if ctx.nas_resource is not None:
+        endpoint["registered_at"] = (
+            ctx.nas_resource.created_at.isoformat()
+            if ctx.nas_resource.created_at is not None
+            else None
         )
     return {
         "version": 1,
@@ -1354,9 +1366,16 @@ def _dedupe_cleanup_items(items: list[Any]) -> list[dict[str, Any]]:
             continue
         item = dict(value)
         key = (
-            str(item.get("source_id") or ""),
-            str(item.get("code") or item.get("task_id") or ""),
-            str(item.get("detail") or item.get("task_uuid") or item.get("id") or ""),
+            str(item.get("source_id") or "").strip(),
+            str(item.get("code") or item.get("task_id") or "").strip().lower(),
+            " ".join(
+                str(
+                    item.get("detail")
+                    or item.get("task_uuid")
+                    or item.get("id")
+                    or ""
+                ).split()
+            ),
         )
         if key in seen:
             continue
@@ -1424,10 +1443,10 @@ def _merge_checkpoint_source(
         if not isinstance(value, dict):
             continue
         item = dict(value)
-        if source_id:
-            item.setdefault("source_id", source_id)
-        if source_name:
-            item.setdefault("source_name", source_name)
+        if source_id and not item.get("source_id"):
+            item["source_id"] = source_id
+        if source_name and not item.get("source_name"):
+            item["source_name"] = source_name
         cleanup_failures.append(item)
     merged["cleanup"] = _merge_cleanup_counts(
         previous.get("cleanup"),
@@ -1514,10 +1533,23 @@ def _merge_unregister_checkpoint(
         merged_sources.append(_merge_checkpoint_source(prior, latest))
     merged["sources"] = merged_sources
 
+    default_source = merged_sources[0] if len(merged_sources) == 1 else {}
+
+    def normalized_failure(value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        item = dict(value)
+        if default_source:
+            if not item.get("source_id"):
+                item["source_id"] = default_source.get("source_id")
+            if not item.get("source_name"):
+                item["source_name"] = default_source.get("source_name")
+        return item
+
     cleanup_failures = _dedupe_cleanup_items(
         [
-            *(previous.get("cleanup_failures") or []),
-            *(current.get("cleanup_failures") or []),
+            *(normalized_failure(item) for item in previous.get("cleanup_failures") or []),
+            *(normalized_failure(item) for item in current.get("cleanup_failures") or []),
             *(
                 failure
                 for source in merged_sources
@@ -1808,10 +1840,24 @@ def _complete_source_unregister_transaction(
     _set_unregister_step(
         task=locked_task,
         step_name="cleanup_source_endpoint",
-        status=TaskStep.Status.SUCCESS,
+        status=(
+            TaskStep.Status.WARNING
+            if result == "partial_success"
+            else TaskStep.Status.SUCCESS
+        ),
         progress=85,
-        message="Source endpoint cleanup dispatched",
-        metadata={"pending_removals": [], "warnings": warnings},
+        message=(
+            "Source endpoint cleanup completed with retained resources"
+            if result == "partial_success"
+            else "Source endpoint cleanup completed"
+        ),
+        level="WARN" if result == "partial_success" else "INFO",
+        metadata={
+            "pending_removals": [],
+            "warnings": warnings,
+            "cleanup_complete": bool(response.get("cleanup_complete", True)),
+            "retained_resources": response.get("retained_resources") or [],
+        },
     )
     _set_unregister_step(
         task=locked_task,
@@ -3324,11 +3370,15 @@ def _delete_repository_snapshots(
         pending_count += 1
         warnings.append(
             DeleteWarning(
-                code="repository_purge_pending",
-                detail=f"Backup data cleanup queued for repository \"{repo_name}\".",
+                code="repository_cleanup_required",
+                detail=(
+                    f"Backup data could not be removed from repository \"{repo_name}\" "
+                    f"(ID {snapshot.repository_id}). "
+                    "Manual cleanup is required because the source endpoint is no longer available."
+                ),
                 source_id=ctx.selectable_id,
                 source_name=ctx.display_name,
-                retained_resources=(f"repository_purge_pending:{pending_id}",),
+                retained_resources=(f"repository_cleanup_record:{pending_id}",),
             )
         )
     result: dict[str, Any] = {

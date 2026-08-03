@@ -48,6 +48,15 @@ import { resolveTaskBackupSourceResource } from '../../lib/taskBackupSourceResou
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../lib/taskStepExpansion'
 import {
+  taskCleanupFailures,
+  taskCleanupWarnings,
+  taskDisplayStatus,
+  taskFailedCleanupChildren,
+  taskNeedsManualCleanup,
+  taskResourceSnapshot,
+  taskRetainedResources,
+} from '../../lib/taskOutcomeDisplay'
+import {
   cancelTask,
   getTask,
   listTaskEvents,
@@ -127,6 +136,18 @@ const selectedResourceType = ref('')
 const resourceLoading = ref(false)
 const resourceDetails = reactive<Record<string, ResourceDetailRow[]>>({})
 const resourceErrors = reactive<Record<string, string>>({})
+const activeCleanupFailures = computed(() => taskCleanupFailures(activeTask.value))
+const activeCleanupWarnings = computed(() => taskCleanupWarnings(activeTask.value))
+const activeRetainedResources = computed(() => taskRetainedResources(activeTask.value))
+const activeFailedCleanupChildren = computed(() => taskFailedCleanupChildren(activeTask.value))
+const activeNeedsManualCleanup = computed(() => taskNeedsManualCleanup(activeTask.value))
+const cleanupOutcomeSucceeded = computed(() => activeTask.value?.status === 'success')
+const showCleanupOutcome = computed(() => (
+  taskDisplayStatus(activeTask.value) === 'partial'
+  || activeCleanupFailures.value.length > 0
+  || activeCleanupWarnings.value.length > 0
+  || activeRetainedResources.value.length > 0
+))
 
 type ResourceDetailRow = {
   key: string
@@ -145,7 +166,7 @@ type ResourceDetailRow = {
 }
 
 const statusOptions = ['pending', 'running', 'success', 'failed', 'cancelled', 'timeout']
-const taskTypeOptions = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'source_unregister', 'repository_operation']
+const taskTypeOptions = ['backup', 'restore', 'snapshot_download', 'snapshot_delete', 'backup_config_reset', 'source_unregister', 'node_lifecycle', 'repository_operation']
 const DEFAULT_TRIGGER_TYPE_OPTIONS = ['manual', 'system']
 const triggerTypeOptions = computed(() => Array.from(new Set([
   ...DEFAULT_TRIGGER_TYPE_OPTIONS,
@@ -196,7 +217,7 @@ const taskAdvancedRangeLabel = computed(() => {
 })
 
 const canCancel = computed(() => {
-  if (activeTask.value?.task_type === 'source_unregister') return false
+  if (activeTask.value?.task_type === 'source_unregister' || activeTask.value?.task_type === 'node_lifecycle') return false
   if (activeTask.value?.task_type === 'repository_operation') {
     return canCancelRepositoryTask(activeTask.value)
   }
@@ -349,10 +370,15 @@ function stepDuration(index: number) {
 
 function timelineIconClass(status?: string) {
   if (status === 'success') return 'hfl-task-drawer__timeline-icon--success'
+  if (status === 'warning') return 'hfl-task-drawer__timeline-icon--warning'
   if (status === 'failed' || status === 'timeout') return 'hfl-task-drawer__timeline-icon--danger'
   if (status === 'running') return 'hfl-task-drawer__timeline-icon--running'
   if (status === 'cancelled') return 'hfl-task-drawer__timeline-icon--muted'
   return 'hfl-task-drawer__timeline-icon--pending'
+}
+
+function displayTaskStatus(task?: TaskRow | null) {
+  return taskDisplayStatus(task)
 }
 
 function eventTone(event: TaskEventRow) {
@@ -539,8 +565,8 @@ function normalizeResourceDetail(type: string, id: number, raw: unknown, source?
     updatedAt: objectValue(record, ['updated_at', 'last_checked_at', 'created_at']) || t('ops.task.emptyMark'),
     summary: resourceSummary(record) || t('ops.task.emptyMark'),
     backupSource: source?.backupSource,
-    endpointName: source?.endpointName,
-    endpointIp: source?.endpointIp,
+    endpointName: source?.endpointName || objectValue(record, ['hostname', 'name', 'display_name']),
+    endpointIp: source?.endpointIp || objectValue(record, ['ip_address', 'endpoint']),
     registeredAt: source?.registeredAt || objectValue(record, ['created_at']),
     flowSource: source?.flowSource,
   }
@@ -576,7 +602,12 @@ async function loadTaskOwner(task: TaskRow, signal?: AbortSignal) {
       taskOwner.value = normalizeResourceDetail(resource.resource_type, resource.resource_id, detail).name
     }
   } catch {
-    if (activeTask.value?.task_uuid === task.task_uuid) taskOwner.value = t('ops.task.emptyMark')
+    const snapshot = taskResourceSnapshot(task, resource)
+    if (activeTask.value?.task_uuid === task.task_uuid) {
+      taskOwner.value = snapshot
+        ? normalizeResourceDetail(resource.resource_type, resource.resource_id, snapshot).name
+        : t('ops.task.emptyMark')
+    }
   }
 }
 
@@ -590,11 +621,19 @@ async function loadResourceType(type: string) {
   delete resourceErrors[type]
   try {
     const results = await Promise.allSettled(resources.map(async (resource) => {
-      const raw = await fetchResourceDetail(resource, signal)
-      const source = resource.resource_type === 'backup_source'
-        ? await resolveTaskBackupSourceResource(resource, resourceSubtype(resource), signal)
-        : undefined
-      return normalizeResourceDetail(resource.resource_type, resource.resource_id, raw, source)
+      try {
+        const raw = await fetchResourceDetail(resource, signal)
+        const source = resource.resource_type === 'backup_source'
+          ? await resolveTaskBackupSourceResource(resource, resourceSubtype(resource), signal)
+          : undefined
+        return normalizeResourceDetail(resource.resource_type, resource.resource_id, raw, source)
+      } catch (error) {
+        const snapshot = taskResourceSnapshot(activeTask.value, resource)
+        if (snapshot) {
+          return normalizeResourceDetail(resource.resource_type, resource.resource_id, snapshot)
+        }
+        throw error
+      }
     }))
     const rows = results.map((result, index) => {
       if (result.status === 'fulfilled') return result.value
@@ -1035,7 +1074,7 @@ watch(
         </el-table-column>
         <el-table-column :label="t('ops.task.colStatus')" min-width="120">
           <template #default="{ row }">
-            <TaskStatusTag :status="row.status" />
+            <TaskStatusTag :status="displayTaskStatus(row)" />
           </template>
         </el-table-column>
         <el-table-column :label="t('ops.task.colStep')" min-width="150">
@@ -1047,7 +1086,7 @@ watch(
               <div class="hfl-task-list-progress__track">
                 <div
                   class="hfl-task-list-progress__fill"
-                  :class="`hfl-task-list-progress__fill--${row.status}`"
+                  :class="`hfl-task-list-progress__fill--${displayTaskStatus(row)}`"
                   :style="{ width: `${progressValue(row)}%` }"
                 />
               </div>
@@ -1160,7 +1199,7 @@ watch(
           <div v-if="activeTask" class="hfl-task-drawer__header-summary">
             <div class="hfl-task-drawer__header-title-row">
               <h2 class="hfl-task-drawer__header-title">{{ taskDescription(activeTask) }}</h2>
-              <TaskStatusTag :status="activeTask.status" />
+              <TaskStatusTag :status="displayTaskStatus(activeTask)" />
             </div>
             <div class="hfl-task-drawer__header-meta">
               <span>{{ t('ops.task.ownerLabel') }}: {{ taskOwner || t('ops.task.emptyMark') }}</span>
@@ -1261,11 +1300,64 @@ watch(
             <div class="hfl-task-drawer__progress-track">
               <div
                 class="hfl-task-drawer__progress-fill"
-                :class="`hfl-task-drawer__progress-fill--${activeTask.status}`"
+                :class="`hfl-task-drawer__progress-fill--${displayTaskStatus(activeTask)}`"
                 :style="{ width: `${progressValue(activeTask)}%` }"
               />
             </div>
           </div>
+        </section>
+
+        <section v-if="showCleanupOutcome" class="hfl-task-drawer__cleanup-outcome" aria-live="polite">
+          <div class="hfl-task-drawer__cleanup-outcome-head">
+            <AlertTriangle :size="17" aria-hidden="true" />
+            <div>
+              <strong>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningTitle') : t('ops.task.cleanupIncompleteTitle') }}</strong>
+              <p>{{ cleanupOutcomeSucceeded ? t('ops.task.cleanupWarningDescription') : t('ops.task.cleanupIncompleteDescription') }}</p>
+            </div>
+          </div>
+          <div v-if="activeCleanupFailures.length" class="hfl-task-drawer__cleanup-group">
+            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupFailures') }}</span>
+            <ul>
+              <li v-for="failure in activeCleanupFailures" :key="`${failure.sourceId || ''}:${failure.code}:${failure.detail}`">
+                <strong>{{ failure.sourceName || failure.code }}</strong>
+                <span>{{ failure.detail }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="activeCleanupWarnings.length" class="hfl-task-drawer__cleanup-group">
+            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.cleanupWarnings') }}</span>
+            <ul>
+              <li v-for="warning in activeCleanupWarnings" :key="`${warning.sourceId || ''}:${warning.code}:${warning.detail}`">
+                <strong>{{ warning.sourceName || warning.code }}</strong>
+                <span>{{ warning.detail }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="activeRetainedResources.length" class="hfl-task-drawer__cleanup-group">
+            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.retainedResources') }}</span>
+            <ul>
+              <li v-for="resource in activeRetainedResources" :key="resource">
+                <code>{{ resource }}</code>
+              </li>
+            </ul>
+          </div>
+          <div v-if="activeFailedCleanupChildren.length" class="hfl-task-drawer__cleanup-group">
+            <span class="hfl-task-drawer__cleanup-label">{{ t('ops.task.failedCleanupTasks') }}</span>
+            <ul>
+              <li v-for="child in activeFailedCleanupChildren" :key="child.taskUuid">
+                <button type="button" class="hfl-table-name-link" @click="openTaskDetail(child.taskUuid)">{{ child.taskUuid }}</button>
+                <span>{{ child.error }}</span>
+              </li>
+            </ul>
+          </div>
+          <ElAlert
+            v-if="activeNeedsManualCleanup"
+            type="warning"
+            :closable="false"
+            :title="t('ops.task.manualCleanupRequired')"
+            :description="t('ops.task.manualCleanupDescription')"
+            show-icon
+          />
         </section>
 
         <ElTabs
@@ -1304,6 +1396,7 @@ watch(
             >
               <div class="hfl-task-drawer__step-anchor" :class="timelineIconClass(step.status)">
                 <Check v-if="step.status === 'success'" :size="15" />
+                <AlertTriangle v-else-if="step.status === 'warning'" :size="13" />
                 <X v-else-if="step.status === 'failed' || step.status === 'timeout'" :size="15" />
                 <Clock3 v-else-if="step.status === 'running'" :size="15" />
                 <Circle v-else :size="9" />
@@ -1485,13 +1578,16 @@ watch(
                     :row="row.flowSource"
                     :interactive="false"
                   />
-                  <span v-else class="hfl-empty-mark">{{ t('ops.task.emptyMark') }}</span>
+                  <div v-else>
+                    <div class="hfl-task-drawer__resource-name">{{ row.name }}</div>
+                    <div class="hfl-task-drawer__resource-summary">{{ row.type }}</div>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column v-if="selectedResourceType === 'backup_source'" :label="t('protection.backupsPage.colConnectionAddress')" min-width="200">
                 <template #default="{ row }">
                   <FlowSourceConnectionCell v-if="row.flowSource" :row="row.flowSource" />
-                  <span v-else class="hfl-empty-mark">{{ t('ops.task.emptyMark') }}</span>
+                  <span v-else>{{ row.endpointIp || row.endpointName || t('ops.task.emptyMark') }}</span>
                 </template>
               </el-table-column>
               <el-table-column
@@ -1893,6 +1989,10 @@ watch(
   background-color: var(--color-success);
 }
 
+.hfl-task-drawer__progress-fill--partial {
+  background-color: var(--color-warning);
+}
+
 .hfl-task-drawer__progress-fill--failed,
 .hfl-task-drawer__progress-fill--timeout {
   background-color: var(--color-error);
@@ -1912,6 +2012,12 @@ watch(
 .hfl-task-drawer__timeline-icon--danger {
   border-color: var(--color-error);
   background-color: var(--color-error);
+  color: #fff;
+}
+
+.hfl-task-drawer__timeline-icon--warning {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning);
   color: #fff;
 }
 
@@ -1935,6 +2041,70 @@ watch(
 .hfl-task-drawer__tabs {
   min-width: 0;
   margin-top: 4px;
+}
+
+.hfl-task-drawer__cleanup-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: 12px;
+  background: var(--color-warning-light);
+  color: rgb(120 53 15);
+}
+
+.hfl-task-drawer__cleanup-outcome-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.hfl-task-drawer__cleanup-outcome-head > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.hfl-task-drawer__cleanup-outcome-head strong {
+  font-size: 13px;
+}
+
+.hfl-task-drawer__cleanup-outcome-head p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hfl-task-drawer__cleanup-group {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--color-warning-border) 75%, transparent);
+}
+
+.hfl-task-drawer__cleanup-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hfl-task-drawer__cleanup-group ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hfl-task-drawer__cleanup-group li span {
+  display: block;
+}
+
+.hfl-task-drawer__cleanup-group code {
+  overflow-wrap: anywhere;
+  color: inherit;
 }
 
 .hfl-task-drawer__tab-panel {

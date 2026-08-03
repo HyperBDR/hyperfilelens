@@ -14,6 +14,7 @@ class Task(models.Model):
         SNAPSHOT_DELETE = "snapshot_delete", "Snapshot delete"
         BACKUP_CONFIG_RESET = "backup_config_reset", "Backup config reset"
         SOURCE_UNREGISTER = "source_unregister", "Source unregister"
+        NODE_LIFECYCLE = "node_lifecycle", "Node lifecycle"
         REPOSITORY_OPERATION = "repository_operation", "Repository operation"
         STORAGE_PROVIDER_VALIDATION = (
             "storage_provider_validation",
