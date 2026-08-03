@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Globe, Menu, Shield } from 'lucide-vue-next'
@@ -7,59 +6,37 @@ import NavNotificationPopover from '../../components/NavNotificationPopover.vue'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import OrgSwitcher from '../../components/OrgSwitcher.vue'
 import AppLogoMark from '../../components/AppLogoMark.vue'
-import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
-import { fetchDeployProfile, platformOpsEntryUrl } from '../../composables/useDeployProfile'
-import { currentUser } from '../../composables/useAuth'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
 
-defineProps<{
-  mobileMenuOpen?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    mobileMenuOpen?: boolean
+    adminConsoleHref?: string
+    canSwitchLocale?: boolean
+    nextLocaleLabel?: string
+    timezoneDisplay?: string
+    timezoneOffsetDisplay?: string
+  }>(),
+  {
+    adminConsoleHref: '',
+    nextLocaleLabel: '',
+    timezoneDisplay: '',
+    timezoneOffsetDisplay: '',
+  },
+)
 
 const emit = defineEmits<{
   'toggle-mobile-menu': []
+  'toggle-locale': []
 }>()
 
 const { t } = useI18n()
-const { canSwitchLocale, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
-
-const adminConsoleUrl = ref('')
-const adminConsoleHref = computed(() => platformOpsEntryUrl(adminConsoleUrl.value))
-
-async function refreshAdminConsoleEntry() {
-  const profile = await fetchDeployProfile(true)
-  adminConsoleUrl.value = profile?.admin_console_entry_visible
-    ? profile.admin_console_url
-    : ''
-}
-
-onMounted(() => {
-  void refreshAdminConsoleEntry()
-})
-
-watch(
-  () => currentUser.value?.id,
-  () => {
-    void refreshAdminConsoleEntry()
-  },
-)
 
 const route = useRoute()
 const router = useRouter()
 const { items: navItems, isActive: navActive } = useAppPrimaryNav()
-
-const timezoneOffsetDisplay = computed(() => {
-  const offset = new Date().getTimezoneOffset()
-  const sign = offset <= 0 ? '+' : '-'
-  const absOffset = Math.abs(offset)
-  const hours = String(Math.floor(absOffset / 60)).padStart(2, '0')
-  const minutes = String(absOffset % 60).padStart(2, '0')
-  return `GMT${sign}${hours}:${minutes}`
-})
-
-const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
 
 function navigateImmediately(to: string) {
   if (to === route.fullPath) return
@@ -124,8 +101,9 @@ function handleNavClick(event: MouseEvent, to: string) {
       <ElButton
         v-if="canSwitchLocale"
         class="icon-btn desktop-navigation-control"
-        :title="`Switch to ${nextLocaleLabel}`"
-        @click="toggleLocale"
+        :title="t('nav.switchLanguage', { language: nextLocaleLabel })"
+        :aria-label="t('nav.switchLanguage', { language: nextLocaleLabel })"
+        @click="emit('toggle-locale')"
         text
       >
         <Globe :size="16" />
@@ -148,7 +126,7 @@ function handleNavClick(event: MouseEvent, to: string) {
         <NavNotificationPopover />
       </div>
 
-      <NavUserMenu />
+      <NavUserMenu :timezone-offset-display="timezoneOffsetDisplay" />
     </div>
   </header>
 </template>
