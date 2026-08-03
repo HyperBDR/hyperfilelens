@@ -457,7 +457,7 @@ export async function deleteSourceResource(id: number, force = false): Promise<S
   const result = await bulkDeleteBackupSources(
     [selectableId],
     force,
-    force ? 'FORCE UNREGISTER' : 'UNREGISTER',
+    force ? 'FORCE DEREGISTER' : 'DEREGISTER',
   )
   return {
     deleted: result.deleted.includes(selectableId),

@@ -808,7 +808,7 @@ def start_node_upgrade(
             )
         except ValidationError as exc:
             raise NodeLifecycleError(
-                "Backup source has an active Reset or Unregister operation.",
+                "Backup source has an active Reset or Deregistration operation.",
                 code="source_operation_in_progress",
             ) from exc
 
@@ -919,7 +919,7 @@ def _start_node_remove_locked(
             )
         except ValidationError as exc:
             raise NodeLifecycleError(
-                "Backup source has an active Reset or Unregister operation.",
+                "Backup source has an active Reset or Deregistration operation.",
                 code="source_operation_in_progress",
             ) from exc
 

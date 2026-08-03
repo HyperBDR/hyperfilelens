@@ -46,7 +46,7 @@ def preflight_force_proxy_decommission(
                     "code": "proxy_fs_in_use",
                     "detail": (
                         f"Local disk repository \"{repo_name}\" is used by backup sources. "
-                        "Unregister those backup sources before deleting the Proxy."
+                        "Deregister those backup sources before deleting the Proxy."
                     ),
                     "repository_id": repo_id,
                     "repository_name": repo_name,

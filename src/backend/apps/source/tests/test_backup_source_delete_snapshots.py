@@ -337,7 +337,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
         nas_key = f"nas:{self.resource.id}"
         response = self.client.post(
             "/api/v1/source/backup-selectable/bulk-delete/",
-            {"ids": [nas_key], "force": False, "confirmation": "UNREGISTER"},
+            {"ids": [nas_key], "force": False, "confirmation": "DEREGISTER"},
             format="json",
             **self._headers(),
         )
@@ -392,7 +392,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             {
                 "ids": [f"agent:{agent.id}"],
                 "force": False,
-                "confirmation": "UNREGISTER",
+                "confirmation": "DEREGISTER",
             },
             format="json",
             **self._headers(),

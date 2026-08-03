@@ -190,12 +190,12 @@ class BackupSelectableBulkDeleteView(APIView):
         if ids is None:
             return Response({"detail": "ids must be a list of agent:/nas: keys."}, status=status.HTTP_400_BAD_REQUEST)
         force = bool(request.data.get("force"))
-        confirmation_keyword = "FORCE UNREGISTER" if force else "UNREGISTER"
+        confirmation_keyword = "FORCE DEREGISTER" if force else "DEREGISTER"
         if request.data.get("confirmation") != confirmation_keyword:
             return Response(
                 {
                     "confirmation": (
-                        f"Type {confirmation_keyword} exactly to confirm unregister."
+                        f"Type {confirmation_keyword} exactly to confirm deregistration."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
