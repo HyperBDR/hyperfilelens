@@ -504,11 +504,9 @@ function knowledgeSourceRequestBody<
   T extends { ingest_policy?: LensIngestPolicy },
 >(body: T): T {
   if (!body.ingest_policy) return body
-  const {
-    document_model_ref: _documentModelRef,
-    vision_model_ref: _visionModelRef,
-    ...tenantPolicy
-  } = body.ingest_policy
+  const tenantPolicy = { ...body.ingest_policy }
+  delete tenantPolicy.document_model_ref
+  delete tenantPolicy.vision_model_ref
   return { ...body, ingest_policy: tenantPolicy } as T
 }
 

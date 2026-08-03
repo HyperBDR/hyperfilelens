@@ -2,6 +2,7 @@
 
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import ElementPlus, {
+  ElButton,
   ElFormItem,
   ElInput,
   ElMessage,
@@ -90,6 +91,14 @@ function previewValue(wrapper: VueWrapper, label: string) {
   return row.find('.add-form-preview-row__value').text()
 }
 
+function submitButton(wrapper: VueWrapper) {
+  const button = wrapper
+    .findAllComponents(ElButton)
+    .find((component) => component.props('type') === 'primary')
+  if (!button) throw new Error('Primary submit button was not rendered')
+  return button
+}
+
 describe('AddNasRepository Proxy decision', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -110,7 +119,7 @@ describe('AddNasRepository Proxy decision', () => {
     expect(wrapper.find('.nas-proxy-topology--direct').exists()).toBe(false)
     expect(previewValue(wrapper, en.addNasRepo.fieldSourceProxyNode)).toBe('—')
     expect(previewValue(wrapper, en.repositoriesPage.fieldAccessPath)).toBe(en.addNasRepo.accessPathWithProxy)
-    expect(wrapper.find('.form-action--primary').text()).toContain('Submit and initialize')
+    expect(submitButton(wrapper).text()).toContain('Submit and initialize')
 
     const optionLabels = wrapper.findAllComponents(ElOption).map(option => option.props('label'))
     expect(optionLabels).toEqual([
@@ -126,7 +135,7 @@ describe('AddNasRepository Proxy decision', () => {
     const wrapper = await mountForm({ embedded: true })
     await fillRequiredNfsFields(wrapper)
 
-    await wrapper.find('button.form-action--primary').trigger('click')
+    await submitButton(wrapper).trigger('click')
     await flushPromises()
 
     expect(mocks.createStorageRepository).not.toHaveBeenCalled()
@@ -153,7 +162,7 @@ describe('AddNasRepository Proxy decision', () => {
     )
     await nextTick()
 
-    await wrapper.find('button.form-action--primary').trigger('click')
+    await submitButton(wrapper).trigger('click')
     await flushPromises()
     expect(mocks.createStorageRepository).toHaveBeenCalledWith(expect.objectContaining({
       bind_node_type: 'proxy',
@@ -182,12 +191,12 @@ describe('AddNasRepository Proxy decision', () => {
     expect(wrapper.find('.add-nas-direct-warning').text()).toContain(en.addNasRepo.directAccessRisk)
     expect(previewValue(wrapper, en.addNasRepo.fieldSourceProxyNode)).toBe(en.addNasRepo.notBoundProxy)
     expect(previewValue(wrapper, en.repositoriesPage.fieldAccessPath)).toBe(en.addNasRepo.accessPathDirect)
-    expect(wrapper.find('.form-action--primary').text()).toContain('Save configuration')
+    expect(submitButton(wrapper).text()).toContain('Save configuration')
     expect(wrapper.findAllComponents(ElFormItem).some(
       component => component.props('label') === en.repositoriesPage.fieldRepositoryServerHost,
     )).toBe(false)
 
-    await wrapper.find('button.form-action--primary').trigger('click')
+    await submitButton(wrapper).trigger('click')
     await flushPromises()
 
     expect(mocks.createStorageRepository).toHaveBeenCalledOnce()
