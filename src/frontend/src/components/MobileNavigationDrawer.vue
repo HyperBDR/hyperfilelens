@@ -107,7 +107,13 @@ function moduleItemActive(to?: string) {
             :aria-current="item.active ? 'page' : undefined"
             @click="close"
           >
-            {{ item.label }}
+            <component
+              :is="item.icon"
+              :size="17"
+              :stroke-width="2"
+              aria-hidden="true"
+            />
+            <span>{{ item.label }}</span>
           </RouterLink>
         </section>
 
