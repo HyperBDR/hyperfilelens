@@ -204,7 +204,7 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
             owner_user_id = self.context.get("gateway_owner_user_id")
             if owner_user_id is None:
                 raise serializers.ValidationError(
-                    {"gateway": "Private data gateway owner is required."}
+                    {"gateway": "Private Data Gateway owner is required."}
                 )
             link = require_user_gateway_link(
                 tenant_organization=org,
@@ -567,11 +567,16 @@ class LensSessionCreateSerializer(serializers.Serializer):
         gateway_link_id = attrs.get("gateway_link_id")
         if mode == LensSessionLink.GatewaySelectionMode.MANUAL and not gateway_link_id:
             raise serializers.ValidationError(
-                {"gateway_link_id": "Select a data gateway when gateway mode is manual."}
+                {"gateway_link_id": "Select a Private Data Gateway."}
             )
         if mode == LensSessionLink.GatewaySelectionMode.AUTO and gateway_link_id is not None:
             raise serializers.ValidationError(
-                {"gateway_link_id": "Do not provide a data gateway when gateway mode is auto."}
+                {
+                    "gateway_link_id": (
+                        "Do not select a specific Data Gateway when using the Public "
+                        "Data Gateway option."
+                    )
+                }
             )
         return attrs
 

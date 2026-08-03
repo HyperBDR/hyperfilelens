@@ -189,7 +189,7 @@ def create_copilot_chat(
         raise ValidationError(
             {
                 "gateway_link_id": (
-                    "No platform gateway is available. Select a private gateway or contact your administrator."
+                    platform_lens.NO_PUBLIC_DATA_GATEWAY_AVAILABLE
                 )
             }
         )

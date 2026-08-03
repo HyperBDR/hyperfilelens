@@ -13,6 +13,10 @@ from apps.lens_bridge.services.gateway_readiness import (
 
 PLATFORM_ORG_KEY = "__platform_lens__"
 PLATFORM_ORG_NAME = "Platform Lens"
+NO_PUBLIC_DATA_GATEWAY_AVAILABLE = (
+    "No public Data Gateway is available. Select a private Data Gateway "
+    "or contact your administrator."
+)
 
 
 def get_or_create_platform_org() -> Organization:
@@ -118,7 +122,7 @@ def resolve_gateway_link_for_copilot(
         return platform_default
 
     raise ValidationError(
-        {"gateway_link_id": "No platform gateway is available. Select a private gateway or contact your administrator."}
+        {"gateway_link_id": NO_PUBLIC_DATA_GATEWAY_AVAILABLE}
     )
 
 

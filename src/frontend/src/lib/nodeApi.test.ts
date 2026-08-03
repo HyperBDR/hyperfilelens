@@ -115,7 +115,7 @@ describe('Data Gateway enrollment', () => {
     })
 
     await expect(issuePlatformGatewayEnrollmentInstall()).rejects.toThrow(
-      'Platform gateway enrollment response is incomplete',
+      'Public Data Gateway enrollment response is incomplete',
     )
   })
 
