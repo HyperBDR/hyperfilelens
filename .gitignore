@@ -54,6 +54,7 @@ src/backend/staticfiles/
 
 # --- Other ---
 *.mo
+.worktrees/
 .tmp/
 .tools/
 /src/frontend/AGENTS.md
