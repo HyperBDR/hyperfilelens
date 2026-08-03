@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
+from django.utils import timezone
 
 from apps.audit.constants import AuditAction, AuditResult
 from apps.audit.services.interface import write_audit_log
@@ -27,6 +28,7 @@ from apps.source.services.internal.connection import (
     run_connection_test,
     unmount_resource as _unmount_resource,
 )
+from apps.source.services.internal.availability import public_connection_result
 from apps.source.services.internal.bound_node_rules import validate_bound_node_role
 from apps.source.services.internal.nas_path_normalize import normalize_resource_config
 from apps.source.services.internal.validators import validate_resource_payload
@@ -76,8 +78,17 @@ def _queue_remount_after_proxy_binding(
     resource.mount_status = MountStatus.UNMOUNTED
     resource.mount_point = ""
     resource.mount_error = ""
+    resource.availability = "offline"
+    resource.availability_updated_at = timezone.now()
     resource.save(
-        update_fields=["mount_status", "mount_point", "mount_error", "updated_at"]
+        update_fields=[
+            "mount_status",
+            "mount_point",
+            "mount_error",
+            "availability",
+            "availability_updated_at",
+            "updated_at",
+        ]
     )
     schedule_remount_after_proxy_change(
         resource_id=resource.id,
@@ -339,8 +350,8 @@ def test_resource_connection(*, resource: SourceResource) -> dict:
         result=result,
     )
     if current is None:
-        return {**result, "stale": True}
-    return result
+        return {**public_connection_result(result), "stale": True}
+    return public_connection_result(result)
 
 
 def test_draft_connection(
@@ -358,12 +369,12 @@ def test_draft_connection(
         validate_bound_node_role(resource_type=resource_type, node=node)
     except ValueError as exc:
         return {"success": False, "message": str(exc)}
-    return run_connection_test(
+    return public_connection_result(run_connection_test(
         bound_node=node,
         resource_type=resource_type,
         config=config,
         credentials=credentials,
-    )
+    ))
 
 
 @transaction.atomic

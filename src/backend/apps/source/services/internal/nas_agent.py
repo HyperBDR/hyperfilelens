@@ -20,6 +20,7 @@ from apps.source.services.internal.source_credentials import (
     resolve_source_credentials,
     scrub_source_secrets,
 )
+from apps.source.services.internal.availability import record_mount_availability
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,7 @@ def apply_mount_success(resource: SourceResource, result: dict[str, Any]) -> Non
         resource.total_size = int(space.get("total_bytes") or 0)
         resource.used_size = int(space.get("used_bytes") or 0)
         resource.free_size = int(space.get("free_bytes") or 0)
+    record_mount_availability(resource=resource, availability="online")
     resource.save(
         update_fields=[
             "mount_status",
@@ -249,15 +251,26 @@ def apply_mount_success(resource: SourceResource, result: dict[str, Any]) -> Non
             "total_size",
             "used_size",
             "free_size",
+            "availability",
+            "availability_updated_at",
             "updated_at",
         ]
     )
 
 
-def apply_mount_failure(resource: SourceResource, message: str) -> None:
+def apply_mount_failure(
+    resource: SourceResource,
+    message: str,
+    *,
+    availability_confirmed: bool,
+) -> None:
     resource.mount_status = MountStatus.ERROR
     resource.mount_error = message[:2000]
-    resource.save(update_fields=["mount_status", "mount_error", "updated_at"])
+    update_fields = ["mount_status", "mount_error", "updated_at"]
+    if availability_confirmed:
+        record_mount_availability(resource=resource, availability="offline")
+        update_fields.extend(["availability", "availability_updated_at"])
+    resource.save(update_fields=update_fields)
 
 
 def apply_unmount_success(resource: SourceResource) -> None:

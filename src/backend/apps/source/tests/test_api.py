@@ -55,6 +55,7 @@ class SourceResourceApiTests(TestCase):
             name="proxy-1",
             role=Node.Role.PROXY,
             status=Node.Status.ONLINE,
+            availability=Node.Availability.ONLINE,
         )
         self.client.force_authenticate(user=self.user)
 
@@ -118,6 +119,9 @@ class SourceResourceApiTests(TestCase):
         )
         self.assertEqual(listing.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(listing.data["count"], 1)
+        row = listing.data["results"][0]
+        self.assertEqual(row["availability"], "offline")
+        self.assertIsNotNone(row["availability_updated_at"])
 
     def test_list_search_matches_nas_fields(self):
         SourceResource.objects.create(

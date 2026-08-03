@@ -1923,6 +1923,8 @@ sourceResources: {
     colName: 'Name',
     colType: 'Type',
     colStatus: 'Status',
+    colAvailability: 'Availability',
+    fieldAvailabilityUpdatedAt: 'Availability Updated At',
     colMount: 'Mount',
     colNode: 'Bound Node',
     colSourceProxy: 'Proxy Host',

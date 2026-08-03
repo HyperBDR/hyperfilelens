@@ -24,7 +24,10 @@ from apps.node.services.internal.agent_task import (
     run_agent_task_sync,
     wait_for_agent_task,
 )
-from apps.node.services.internal.node_registry import reconcile_stale_online_nodes
+from apps.node.services.internal.node_registry import (
+    reconcile_node_availability,
+    reconcile_stale_online_nodes,
+)
 from apps.node.services.internal.task import (
     accept_task,
     DispatchResult,
@@ -54,6 +57,7 @@ __all__ = [
     "record_task_progress",
     "reconcile_unaccepted_agent_tasks",
     "redeliver_pending_agent_task",
+    "reconcile_node_availability",
     "reconcile_stale_online_nodes",
     "remove_agent_node",
     "remove_agent_node_for_source_resource",

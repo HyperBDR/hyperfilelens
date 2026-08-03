@@ -1,6 +1,16 @@
 """Source resource domain constants."""
 
 
+class Availability:
+    ONLINE = "online"
+    OFFLINE = "offline"
+
+    CHOICES = (
+        (ONLINE, "Online"),
+        (OFFLINE, "Offline"),
+    )
+
+
 class ResourceType:
     NAS = "nas"
     NFS = "nfs"

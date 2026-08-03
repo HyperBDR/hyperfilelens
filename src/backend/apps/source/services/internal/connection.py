@@ -27,6 +27,11 @@ from apps.source.services.internal.nas_agent import (
     dispatch_nas_agent_task,
     explain_nas_mount_point_error,
 )
+from apps.source.services.internal.availability import (
+    apply_result_availability,
+    confirmed_agent_failure,
+    result_with_availability_observation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,11 +110,14 @@ def run_connection_test(
             resource.id if resource else payload.get("resource_id"),
             message[:500],
         )
-        return {
+        failure = {
             "success": False,
             "message": message,
             "details": {"storage_type": rtype, "protocol": payload.get("protocol")},
         }
+        if confirmed_agent_failure(outcome):
+            return result_with_availability_observation(failure, "offline")
+        return failure
 
     result = outcome.result if isinstance(outcome.result, dict) else {}
     space = result.get("space_info") if isinstance(result.get("space_info"), dict) else {}
@@ -125,11 +133,11 @@ def run_connection_test(
         resource.id if resource else payload.get("resource_id"),
         details.get("mount_point"),
     )
-    return {
+    return result_with_availability_observation({
         "success": True,
         "message": "Connection test successful",
         "details": details,
-    }
+    }, "online")
 
 
 def apply_connection_test_result(resource: SourceResource, result: dict) -> None:
@@ -159,6 +167,7 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
         resource.mount_status = MountStatus.MOUNTED
         resource.mount_point = mount_point
         resource.mount_error = ""
+    apply_result_availability(resource=resource, result=result)
     resource.save()
 
 
@@ -223,7 +232,7 @@ def mount_resource(resource: SourceResource) -> dict:
     )
     if outcome.timed_out:
         message = "Mount timed out on the proxy agent."
-        apply_mount_failure(resource, message)
+        apply_mount_failure(resource, message, availability_confirmed=False)
         return {"success": False, "message": message}
     if not outcome.ok:
         message = explain_nas_mount_point_error(
@@ -231,7 +240,11 @@ def mount_resource(resource: SourceResource) -> dict:
             agent_message=_task_error_message(outcome),
             payload_mount_point=str(payload.get("mount_point") or ""),
         )
-        apply_mount_failure(resource, message)
+        apply_mount_failure(
+            resource,
+            message,
+            availability_confirmed=confirmed_agent_failure(outcome),
+        )
         return {"success": False, "message": message}
 
     result = outcome.result if isinstance(outcome.result, dict) else {}

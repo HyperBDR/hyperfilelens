@@ -1,0 +1,17 @@
+"""Runtime defaults for Source availability observations."""
+
+from project.settings.env import env_int
+
+
+AVAILABILITY_VALIDITY_SECONDS = env_int(
+    "SOURCE_AVAILABILITY_VALIDITY_SECONDS",
+    15 * 60,
+)
+AVAILABILITY_RECONCILE_INTERVAL_SECONDS = env_int(
+    "SOURCE_AVAILABILITY_RECONCILE_INTERVAL_SECONDS",
+    60,
+)
+AVAILABILITY_RECONCILE_BATCH_SIZE = env_int(
+    "SOURCE_AVAILABILITY_RECONCILE_BATCH_SIZE",
+    100,
+)

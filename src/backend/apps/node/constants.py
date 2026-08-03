@@ -19,6 +19,9 @@ TASK_RECONCILE_UNACCEPTED_AGENT_TASKS = (
 TASK_RECONCILE_STALE_ONLINE_NODES = (
     "apps.node.tasks.node.reconcile_stale_online_nodes"
 )
+TASK_RECONCILE_NODE_AVAILABILITY = (
+    "apps.node.tasks.node.reconcile_node_availability"
+)
 TASK_ADVANCE_NODE_LIFECYCLE = (
     "apps.node.tasks.lifecycle.advance_node_lifecycle_for_node"
 )
@@ -44,6 +47,7 @@ __all__ = [
     "TASK_INGEST_NODE_UPLINK_STREAMS",
     "TASK_RECONCILE_EXECUTION_STATE",
     "TASK_RECONCILE_OFFLINE_STALE_NODE_TASKS",
+    "TASK_RECONCILE_NODE_AVAILABILITY",
     "TASK_RECONCILE_STALE_ONLINE_NODES",
     "TASK_REDELIVER_AGENT_TASK",
     "TASK_RECONCILE_UNACCEPTED_AGENT_TASKS",

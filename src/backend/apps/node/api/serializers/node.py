@@ -29,6 +29,8 @@ class NodeSerializer(serializers.ModelSerializer):
             "os_name",
             "ip_address",
             "status",
+            "availability",
+            "availability_updated_at",
             "routable",
             "last_seen_at",
             "metadata",
@@ -43,6 +45,8 @@ class NodeSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "ip_address",
+            "availability",
+            "availability_updated_at",
             "created_at",
             "updated_at",
             "is_deleted",

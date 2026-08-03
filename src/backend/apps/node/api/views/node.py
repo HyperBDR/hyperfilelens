@@ -44,6 +44,7 @@ from apps.node.services.internal.node_naming import (
 )
 from apps.node.services.internal.network_inventory import split_network_from_metadata
 from apps.node.services.internal.local_platform_gateway import registration_metadata
+from apps.node.services.internal.node_registry import record_node_available
 from apps.node.exceptions import NodeLifecycleError
 from apps.node.services.internal.agent_uninstall import ProxyHasBoundResources
 from apps.node.services.internal.bindings import collect_proxy_bindings
@@ -296,6 +297,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         if node_id:
             node = list_nodes(organization=org).filter(pk=node_id).first()
 
+        observed_at = timezone.now()
         if node is None and node_token:
             token_row = get_valid_enrollment_token(
                 org=org,
@@ -316,11 +318,12 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 role=payload["role"],
                 version=payload.get("version", ""),
                 os_name=payload.get("os_name", ""),
+                availability_updated_at=observed_at,
                 metadata=registration_metadata(
                     metadata_payload,
                     token_note=token_row.note,
                 ),
-                last_seen_at=timezone.now(),
+                last_seen_at=observed_at,
                 ip_address=network_state.primary_ip_address,
                 connection_ip_address=client_ip,
                 network_inventory=network_state.inventory or {},
@@ -335,7 +338,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 node.save(update_fields=["name", "updated_at"])
             NodeToken.objects.filter(pk=token_row.pk).update(used_at=timezone.now())
         elif node is not None:
-            node.last_seen_at = timezone.now()
+            node.last_seen_at = observed_at
             if is_auto_assigned_node_name(node.name):
                 next_name = resolve_registration_node_name(
                     payload=payload,
@@ -369,6 +372,9 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 {"error": "node not found; enrollment token required"},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        record_node_available(node_id=node.id, observed_at=observed_at)
+        node.refresh_from_db(fields=["availability", "availability_updated_at"])
 
         try:
             ingest_node_heartbeat_metrics(node=node)

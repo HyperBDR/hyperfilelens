@@ -51,6 +51,10 @@ class NodeListPaginationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 35)
         self.assertEqual(len(response.data["results"]), 30)
+        self.assertEqual(response.data["results"][0]["availability"], "offline")
+        self.assertIsNotNone(
+            response.data["results"][0]["availability_updated_at"]
+        )
 
         page_two = self.client.get(
             reverse("node-list"),

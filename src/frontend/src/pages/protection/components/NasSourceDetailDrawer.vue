@@ -175,6 +175,15 @@ const runtimeStatus = computed(() =>
 const connectionStatusLabel = computed(() => t(runtimeStatus.value.labelKey))
 const connectionStatusTagAttrs = computed(() => statusTagAttrs(runtimeStatus.value.tone))
 
+const availabilityLabel = computed(() =>
+  row.value?.availability === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline'),
+)
+const availabilityTagType = computed(() =>
+  row.value?.availability === 'online' ? 'success' : 'danger',
+)
+
 const lastHeartbeatText = computed(() => formatLastHeartbeat(proxyNode.value?.last_seen_at))
 
 function formatRelativeAgo(iso?: string | null): string {
@@ -782,6 +791,16 @@ onUnmounted(() => {
                       :empty-label="DETAIL_EMPTY"
                     />
                   </span>
+                </div>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colAvailability') }}</span>
+                  <span class="hfl-detail-row__value">
+                    <ElTag :type="availabilityTagType" size="small">{{ availabilityLabel }}</ElTag>
+                  </span>
+                </div>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
+                  <span class="hfl-detail-row__value">{{ formatNodeDate(row.availability_updated_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegistered') }}</span>

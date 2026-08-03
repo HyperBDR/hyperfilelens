@@ -10,6 +10,7 @@ from apps.node.constants import (
     TASK_ADVANCE_ACTIVE_LIFECYCLE_NODES,
     TASK_INGEST_NODE_UPLINK_STREAMS,
     TASK_RECONCILE_EXECUTION_STATE,
+    TASK_RECONCILE_NODE_AVAILABILITY,
     TASK_RECONCILE_UNACCEPTED_AGENT_TASKS,
     TASK_RECONCILE_OFFLINE_STALE_NODE_TASKS,
     TASK_RECONCILE_STALE_ONLINE_NODES,
@@ -34,6 +35,15 @@ def register_periodic_tasks() -> None:
         schedule=node_conf.WATCHDOG_SWEEP_INTERVAL_SECONDS,
         args=(),
         kwargs={"limit": 500},
+        queue=None,
+        enabled=True,
+    )
+    TASK_REGISTRY.add(
+        name="node_reconcile_availability",
+        task=TASK_RECONCILE_NODE_AVAILABILITY,
+        schedule=node_conf.STALE_NODE_RECONCILE_INTERVAL_SECONDS,
+        args=(),
+        kwargs={"limit": 200},
         queue=None,
         enabled=True,
     )
