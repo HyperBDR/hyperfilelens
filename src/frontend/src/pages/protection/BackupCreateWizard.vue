@@ -12011,7 +12011,7 @@ function preserveShallowestPathOrder(paths: string[]) {
 .target-assignment-summary {
   display: flex;
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 0%;
   flex-direction: column;
   gap: 4px;
 }
@@ -12187,7 +12187,7 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .target-assignment-empty {
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 0%;
   overflow: hidden;
   color: rgb(148 163 184);
   text-overflow: ellipsis;
