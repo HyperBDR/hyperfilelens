@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Ellipsis, Pencil, Plus, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, Ellipsis, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { isActiveRunStatus } from '../../../composables/useLensRunStream'
 import type { LensSessionLink } from '../../../lib/lensApi'
 
@@ -163,7 +163,7 @@ function handleAction(command: string, row: SessionRow) {
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem class="copilot-session-menu__rename" command="rename" :icon="Pencil">Rename Chat</ElDropdownItem>
-                    <ElDropdownItem v-if="row.lifecycle_status === 'failed'" command="retry">Try Again</ElDropdownItem>
+                    <ElDropdownItem v-if="row.lifecycle_status === 'failed'" class="copilot-session-menu__retry" command="retry" :icon="RotateCcw">Try Again</ElDropdownItem>
                     <ElDropdownItem class="copilot-session-menu__delete" command="delete" :icon="Trash2" divided>Delete Chat</ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
@@ -210,8 +210,8 @@ function handleAction(command: string, row: SessionRow) {
 .copilot-session-item:hover .copilot-session-item__actions,.copilot-session-item:focus-within .copilot-session-item__actions { opacity: 1; pointer-events: auto; }
 .copilot-session-item:hover .copilot-session-item__more,.copilot-session-item__more:focus-visible { opacity: 1; }
 .copilot-session-item__more:hover { background: color-mix(in srgb, var(--color-text-title) 8%, transparent); color: var(--color-text-title); }
-:global(.copilot-session-menu__rename),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
-:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
+:global(.copilot-session-menu__rename),:global(.copilot-session-menu__retry),:global(.copilot-session-menu__delete) { min-height: 36px; padding: 0 14px; font-size: 13px; }
+:global(.copilot-session-menu__rename .el-icon),:global(.copilot-session-menu__retry .el-icon),:global(.copilot-session-menu__delete .el-icon) { width: 15px; height: 15px; margin-right: 9px; font-size: 15px; }
 :global(.copilot-session-menu__rename:hover) { color: var(--color-primary) !important; }
 :global(.copilot-session-menu__delete) { color: #d92d20 !important; }
 :global(.copilot-session-menu__delete:hover) { background: #fef3f2 !important; color: #b42318 !important; }
