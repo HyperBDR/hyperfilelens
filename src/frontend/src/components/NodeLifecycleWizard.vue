@@ -741,13 +741,16 @@ defineExpose({ clearInstallCommand })
               <p class="install-flow-note__label">{{ t('nodeLifecycle.installFlowLabel') }}</p>
               <div class="install-flow-note__steps">
                 <p class="install-flow-note__step">
-                  <strong>{{ t('nodeLifecycle.installFlowStepDownload') }}</strong>{{ t('nodeLifecycle.installFlowDownload') }}
+                  <strong>{{ t('nodeLifecycle.installFlowStepDownload') }}</strong>
+                  {{ t('nodeLifecycle.installFlowDownload') }}
                 </p>
                 <p class="install-flow-note__step">
-                  <strong>{{ t('nodeLifecycle.installFlowStepInstall') }}</strong>{{ t('nodeLifecycle.installFlowInstall') }}
+                  <strong>{{ t('nodeLifecycle.installFlowStepInstall') }}</strong>
+                  {{ t('nodeLifecycle.installFlowInstall') }}
                 </p>
                 <p class="install-flow-note__step">
-                  <strong>{{ t('nodeLifecycle.installFlowStepRegister') }}</strong>{{ installFlowRegisterText }}
+                  <strong>{{ t('nodeLifecycle.installFlowStepRegister') }}</strong>
+                  {{ installFlowRegisterText }}
                 </p>
               </div>
             </div>
