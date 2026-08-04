@@ -303,6 +303,9 @@ class RepositoryTask(models.Model):
         CLEANUP_TARGET = "cleanup.target", "Delete subrepository"
         CLEANUP_REPOSITORY = "cleanup.repository", "Delete repository"
         CHECK = "check", "Check"
+        CREATE_REPOSITORY = "create.repository", "Create repository"
+        REPAIR_BIND = "repair.bind", "Bind proxy"
+        REPAIR_REMOUNT = "repair.remount", "Remount repository"
 
     task = models.OneToOneField(
         "task.Task",

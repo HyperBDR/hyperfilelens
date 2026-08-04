@@ -313,9 +313,25 @@ async function onSubmit() {
     } else {
       payload.bind_node_id = null
     }
-    await repairStorageRepository(repoId.value, payload)
-    ElMessage.success({ message: t('repairNasRepo.savedOk'), grouping: true })
-    router.push({ path: '/node/repositories', query: { tab: 'nas', refresh: '1' } })
+    const repaired = await repairStorageRepository(repoId.value, payload)
+    const accepted = String(repaired.status || '').toLowerCase() === 'creating'
+    ElMessage.success({
+      message: t(accepted ? 'repairNasRepo.acceptedAsync' : 'repairNasRepo.savedOk'),
+      grouping: true,
+    })
+    router.push({
+      path: '/node/repositories',
+      query: {
+        tab: 'nas',
+        refresh: '1',
+        ...(accepted && repaired.active_create_task?.task_uuid
+          ? {
+              pending_create_id: String(repaired.id),
+              pending_create_task: repaired.active_create_task.task_uuid,
+            }
+          : {}),
+      },
+    })
   } catch (err) {
     const message = apiErrorMessage(err, t('repairNasRepo.saveFailed'))
     if (typeof message === 'string' && /running|busy|backup/i.test(message)) {

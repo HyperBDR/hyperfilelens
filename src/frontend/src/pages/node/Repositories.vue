@@ -29,6 +29,7 @@ import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import {
+  createStorageRepository,
   listStorageRepositories,
   listStorageRepositoryAssociatedSources,
   listStorageRepositoryTasks,
@@ -746,15 +747,21 @@ const deleteConfirmDisabled = computed(() => (
 ))
 
 const REPOSITORY_CLEANUP_PENDING_KEY = 'hfl-repository-cleanup-pending-v1'
+const REPOSITORY_CREATE_PENDING_KEY = 'hfl-repository-create-pending-v1'
 const REPOSITORY_CLEANUP_POLL_MS = 2000
 const REPOSITORY_CLEANUP_TIMEOUT_MS = 15 * 60 * 1000
-const repositoryCleanupPending = ref(new Map<number, {
+const REPOSITORY_CREATE_TIMEOUT_MS = 15 * 60 * 1000
+type RepositoryPendingEntry = {
   taskUuid: string
   repositoryName: string
   startedAt: number
-}>())
+}
+const repositoryCleanupPending = ref(new Map<number, RepositoryPendingEntry>())
+const repositoryCreatePending = ref(new Map<number, RepositoryPendingEntry>())
 let repositoryCleanupPollTimer: number | null = null
 let repositoryCleanupPollInFlight = false
+let repositoryCreatePollTimer: number | null = null
+let repositoryCreatePollInFlight = false
 
 function persistRepositoryCleanupPending() {
   if (!repositoryCleanupPending.value.size) {
@@ -767,16 +774,55 @@ function persistRepositoryCleanupPending() {
   )
 }
 
+function persistRepositoryCreatePending() {
+  if (!repositoryCreatePending.value.size) {
+    sessionStorage.removeItem(REPOSITORY_CREATE_PENDING_KEY)
+    return
+  }
+  sessionStorage.setItem(
+    REPOSITORY_CREATE_PENDING_KEY,
+    JSON.stringify([...repositoryCreatePending.value.entries()]),
+  )
+}
+
 function restoreRepositoryCleanupPending() {
   try {
     const raw = sessionStorage.getItem(REPOSITORY_CLEANUP_PENDING_KEY)
     repositoryCleanupPending.value = raw
-      ? new Map(JSON.parse(raw) as Array<[number, { taskUuid: string; repositoryName: string; startedAt: number }]>)
+      ? new Map(JSON.parse(raw) as Array<[number, RepositoryPendingEntry]>)
       : new Map()
   } catch {
     repositoryCleanupPending.value = new Map()
     sessionStorage.removeItem(REPOSITORY_CLEANUP_PENDING_KEY)
   }
+}
+
+function restoreRepositoryCreatePending() {
+  try {
+    const raw = sessionStorage.getItem(REPOSITORY_CREATE_PENDING_KEY)
+    repositoryCreatePending.value = raw
+      ? new Map(JSON.parse(raw) as Array<[number, RepositoryPendingEntry]>)
+      : new Map()
+  } catch {
+    repositoryCreatePending.value = new Map()
+    sessionStorage.removeItem(REPOSITORY_CREATE_PENDING_KEY)
+  }
+}
+
+function trackRepositoryCreatePending(
+  repositoryId: number,
+  taskUuid: string,
+  repositoryName: string,
+  startedAt = Date.now(),
+) {
+  if (!repositoryId || !taskUuid) return
+  repositoryCreatePending.value.set(repositoryId, {
+    taskUuid,
+    repositoryName,
+    startedAt,
+  })
+  persistRepositoryCreatePending()
+  scheduleRepositoryCreatePoll(0)
 }
 
 function scheduleRepositoryCleanupPoll(delay = REPOSITORY_CLEANUP_POLL_MS) {
@@ -786,6 +832,16 @@ function scheduleRepositoryCleanupPoll(delay = REPOSITORY_CLEANUP_POLL_MS) {
   repositoryCleanupPollTimer = window.setTimeout(() => {
     repositoryCleanupPollTimer = null
     void reconcileRepositoryCleanupTasks()
+  }, delay)
+}
+
+function scheduleRepositoryCreatePoll(delay = REPOSITORY_CLEANUP_POLL_MS) {
+  if (repositoryCreatePollTimer != null) window.clearTimeout(repositoryCreatePollTimer)
+  repositoryCreatePollTimer = null
+  if (!mounted || !repositoryCreatePending.value.size) return
+  repositoryCreatePollTimer = window.setTimeout(() => {
+    repositoryCreatePollTimer = null
+    void reconcileRepositoryCreateTasks()
   }, delay)
 }
 
@@ -827,6 +883,51 @@ async function reconcileRepositoryCleanupTasks() {
   } finally {
     repositoryCleanupPollInFlight = false
     scheduleRepositoryCleanupPoll()
+  }
+}
+
+async function reconcileRepositoryCreateTasks() {
+  if (repositoryCreatePollInFlight || !repositoryCreatePending.value.size) return
+  repositoryCreatePollInFlight = true
+  let terminal = false
+  try {
+    const entries = [...repositoryCreatePending.value.entries()]
+    const tasks = await Promise.allSettled(entries.map(([, pending]) => getTask(pending.taskUuid)))
+    tasks.forEach((result, index) => {
+      const [repositoryId, pending] = entries[index]
+      if (result.status === 'rejected') {
+        if (Date.now() - pending.startedAt >= REPOSITORY_CREATE_TIMEOUT_MS) {
+          repositoryCreatePending.value.delete(repositoryId)
+          ElMessage.error({
+            message: `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
+            grouping: true,
+          })
+          terminal = true
+        }
+        return
+      }
+      const status = String(result.value.status || '').toLowerCase()
+      if (status === 'success') {
+        repositoryCreatePending.value.delete(repositoryId)
+        ElMessage.success({
+          message: `${pending.repositoryName}: ${t('repositoriesPage.createSucceeded')}`,
+          grouping: true,
+        })
+        terminal = true
+      } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
+        repositoryCreatePending.value.delete(repositoryId)
+        ElMessage.error({
+          message: result.value.error_message || `${pending.repositoryName}: ${t('repositoriesPage.createFailed')}`,
+          grouping: true,
+        })
+        terminal = true
+      }
+    })
+    persistRepositoryCreatePending()
+    if (terminal) await load()
+  } finally {
+    repositoryCreatePollInFlight = false
+    scheduleRepositoryCreatePoll()
   }
 }
 
@@ -1236,6 +1337,9 @@ function repositoryTaskLabel(scope: 'operation' | 'status' | 'trigger', value?: 
     'operation:maintenance.full': 'repositoriesPage.taskOperationFull',
     'operation:cleanup.target': 'repositoriesPage.taskOperationCleanupTarget',
     'operation:cleanup.repository': 'repositoriesPage.taskOperationCleanupRepository',
+    'operation:create.repository': 'repositoriesPage.taskOperationCreateRepository',
+    'operation:repair.bind': 'repositoriesPage.taskOperationRepairBind',
+    'operation:repair.remount': 'repositoriesPage.taskOperationRepairRemount',
     'operation:check': 'repositoriesPage.taskOperationCheck',
     'status:pending': 'repositoriesPage.taskStatusPending',
     'status:running': 'repositoriesPage.taskStatusRunning',
@@ -1776,11 +1880,15 @@ async function submitModal() {
       })
       ElMessage.success({ message: t('repositoriesPage.msgUpdated'), grouping: true })
     } else {
-      await api('/api/v1/storage/repositories/', {
-        method: 'POST',
-        body: JSON.stringify(buildRepositoryPayload(kind)),
+      const created = await createStorageRepository(buildRepositoryPayload(kind) as never)
+      const accepted = String(created.status || '').toLowerCase() === 'creating'
+      ElMessage.success({
+        message: t(accepted ? 'repositoriesPage.msgCreateAccepted' : 'repositoriesPage.msgCreated'),
+        grouping: true,
       })
-      ElMessage.success({ message: t('repositoriesPage.msgCreated'), grouping: true })
+      if (accepted && created.active_create_task?.task_uuid) {
+        trackRepositoryCreatePending(created.id, created.active_create_task.task_uuid, created.name)
+      }
     }
     modalOpen.value = false
     resetForm()
@@ -1949,16 +2057,27 @@ async function load() {
       signal,
     })
     for (const repository of list.results) {
-      const activeTask = repository.active_cleanup_task
-      if (!activeTask?.task_uuid) continue
-      repositoryCleanupPending.value.set(repository.id, {
-        taskUuid: activeTask.task_uuid,
-        repositoryName: repository.name,
-        startedAt: activeTask.created_at ? Date.parse(activeTask.created_at) || Date.now() : Date.now(),
-      })
+      const activeCleanup = repository.active_cleanup_task
+      if (activeCleanup?.task_uuid) {
+        repositoryCleanupPending.value.set(repository.id, {
+          taskUuid: activeCleanup.task_uuid,
+          repositoryName: repository.name,
+          startedAt: activeCleanup.created_at ? Date.parse(activeCleanup.created_at) || Date.now() : Date.now(),
+        })
+      }
+      const activeCreate = repository.active_create_task
+      if (activeCreate?.task_uuid) {
+        repositoryCreatePending.value.set(repository.id, {
+          taskUuid: activeCreate.task_uuid,
+          repositoryName: repository.name,
+          startedAt: activeCreate.created_at ? Date.parse(activeCreate.created_at) || Date.now() : Date.now(),
+        })
+      }
     }
     persistRepositoryCleanupPending()
+    persistRepositoryCreatePending()
     scheduleRepositoryCleanupPoll()
+    scheduleRepositoryCreatePoll()
     const mappedRows = list.results.map(mapApiToRow)
     rows.value = mappedRows
     repositoryTotal.value = list.count
@@ -1982,14 +2101,23 @@ async function load() {
 onMounted(() => {
   mounted = true
   restoreRepositoryCleanupPending()
+  restoreRepositoryCreatePending()
+  const pendingCreateId = Number(route.query.pending_create_id || 0)
+  const pendingCreateTask = String(route.query.pending_create_task || '').trim()
+  if (pendingCreateId > 0 && pendingCreateTask) {
+    trackRepositoryCreatePending(pendingCreateId, pendingCreateTask, t('repositoriesPage.statusCreating'))
+  }
   void load()
   scheduleRepositoryCleanupPoll(0)
+  scheduleRepositoryCreatePoll(0)
 })
 
 onBeforeUnmount(() => {
   mounted = false
   if (repositoryCleanupPollTimer != null) window.clearTimeout(repositoryCleanupPollTimer)
   repositoryCleanupPollTimer = null
+  if (repositoryCreatePollTimer != null) window.clearTimeout(repositoryCreatePollTimer)
+  repositoryCreatePollTimer = null
   unbindDrawerResize()
   stopRepositoryTasksPolling()
 })

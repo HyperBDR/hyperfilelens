@@ -433,6 +433,8 @@ class RepositoryViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         repository = serializer.save()
         out = RepositorySerializer(repository, context=self.get_serializer_context())
+        if repository.status == Repository.Status.CREATING:
+            return Response(out.data, status=status.HTTP_202_ACCEPTED)
         return Response(out.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -724,4 +726,6 @@ class RepositoryViewSet(viewsets.ModelViewSet):
             # Busy errors include structured task detail; surface them as 409.
             raise exc
         out = RepositorySerializer(repository, context=self.get_serializer_context())
+        if repository.status == Repository.Status.CREATING:
+            return Response(out.data, status=status.HTTP_202_ACCEPTED)
         return Response(out.data, status=status.HTTP_200_OK)

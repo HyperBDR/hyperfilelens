@@ -150,11 +150,26 @@ async function onSubmit() {
   busy.value = true
   try {
     const created = await createStorageRepository(buildCreatePayload())
-    ElMessage.success({ message: t('repositoriesPage.msgCreated'), grouping: true })
+    const accepted = String(created.status || '').toLowerCase() === 'creating'
+    ElMessage.success({
+      message: t(accepted ? 'repositoriesPage.msgCreateAccepted' : 'repositoriesPage.msgCreated'),
+      grouping: true,
+    })
     if (props.embedded) {
       emit('created', created)
     } else {
-      router.push({ path: '/node/repositories', query: { tab: 'nas' } })
+      router.push({
+        path: '/node/repositories',
+        query: {
+          tab: 'nas',
+          ...(accepted && created.active_create_task?.task_uuid
+            ? {
+                pending_create_id: String(created.id),
+                pending_create_task: created.active_create_task.task_uuid,
+              }
+            : {}),
+        },
+      })
     }
   } catch (err) {
     ElMessage.error({ message: storageRepositoryCreateErrorMessage(err, t), grouping: true })

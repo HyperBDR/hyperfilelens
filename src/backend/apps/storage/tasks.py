@@ -308,9 +308,15 @@ def execute_repository_operation(*, repository_task_id: int):
         RepositoryTask.OperationType.CLEANUP_TARGET,
         RepositoryTask.OperationType.CLEANUP_REPOSITORY,
     }
+    is_create = operation_type in {
+        RepositoryTask.OperationType.CREATE_REPOSITORY,
+        RepositoryTask.OperationType.REPAIR_BIND,
+        RepositoryTask.OperationType.REPAIR_REMOUNT,
+    }
     if (
         owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
         and not is_cleanup
+        and not is_create
     ):
         return _execute_repository_operation(repository_task_id=repository_task_id)
 
@@ -341,6 +347,16 @@ def _execute_repository_operation(*, repository_task_id: int):
     repository_task = RepositoryTask.objects.select_related(
         "task", "repository", "execution_target"
     ).get(pk=repository_task_id)
+    if repository_task.operation_type in {
+        RepositoryTask.OperationType.CREATE_REPOSITORY,
+        RepositoryTask.OperationType.REPAIR_BIND,
+        RepositoryTask.OperationType.REPAIR_REMOUNT,
+    }:
+        from apps.storage.services.internal.repository_create import (
+            run_repository_create_task,
+        )
+
+        return run_repository_create_task(repository_task_id=repository_task.id)
     if repository_task.operation_type in {
         RepositoryTask.OperationType.CLEANUP_TARGET,
         RepositoryTask.OperationType.CLEANUP_REPOSITORY,

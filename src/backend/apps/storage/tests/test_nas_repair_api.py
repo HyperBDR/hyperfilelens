@@ -25,7 +25,7 @@ from apps.iam.models import Membership, Organization
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.protection.models import BackupConfig
-from apps.storage.repositories.models import Credential, Repository
+from apps.storage.repositories.models import Credential, Repository, RepositoryTask
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     RepositoryAlreadyExistsError,
@@ -76,6 +76,34 @@ class NasRepairApiTests(TestCase):
 
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
+
+    def _patch_repair(self, repo_id, payload):
+        with mock.patch(
+            "apps.storage.tasks.execute_repository_operation.apply_async"
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                return self.client.patch(
+                    f"/api/v1/storage/repositories/{repo_id}/repair/",
+                    payload,
+                    format="json",
+                    **self._headers(),
+                )
+
+    def _run_create_task(
+        self,
+        repository,
+        *,
+        operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+    ):
+        from apps.storage.services.internal.repository_create import (
+            run_repository_create_task,
+        )
+
+        repository_task = RepositoryTask.objects.get(
+            repository=repository,
+            operation_type=operation_type,
+        )
+        return run_repository_create_task(repository_task_id=repository_task.id)
 
     def _make_unbound_nas(self, *, protocol=Repository.NasProtocol.SMB):
         return Repository.objects.create(
@@ -184,40 +212,44 @@ class NasRepairApiTests(TestCase):
 
     # --- bind (currently unbound) ----------------------------------------
 
-    @mock.patch("apps.storage.services.internal.nas_repair.enqueue_repository_usage_refresh")
-    @mock.patch("apps.storage.services.internal.nas_repair.initialize_proxy_nas_repository")
-    def test_repair_unbound_binds_proxy_and_inits_kopia(
-        self, init_proxy, _sync,
-    ):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_proxy_nas_repository"
+    )
+    def test_repair_unbound_binds_proxy_and_inits_kopia(self, init_proxy):
         repo = self._make_unbound_nas()
-        response = self.client.patch(
-            f"/api/v1/storage/repositories/{repo.id}/repair/",
-            {"bind_node_id": self.proxy_a.id},
-            format="json",
-            **self._headers(),
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        response = self._patch_repair(repo.id, {"bind_node_id": self.proxy_a.id})
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.data["status"], Repository.Status.CREATING)
+        self.assertIsNotNone(response.data.get("active_create_task"))
         repo.refresh_from_db()
         self.assertEqual(repo.bind_node_id, self.proxy_a.id)
         self.assertEqual(repo.bind_node_type, Repository.BindNodeType.PROXY)
+        result = self._run_create_task(
+            repo,
+            operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+        )
+        self.assertEqual(result["status"], "success")
+        repo.refresh_from_db()
         self.assertEqual(repo.status, Repository.Status.CREATED)
         self.assertEqual(repo.health, Repository.Health.ONLINE)
         init_proxy.assert_called_once()
 
-    @mock.patch("apps.storage.services.internal.nas_repair.initialize_proxy_nas_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_proxy_nas_repository"
+    )
     def test_repair_unbound_rejects_existing_repository_and_restores_binding(self, initialize):
         repository = self._make_unbound_nas()
         initialize.side_effect = RepositoryAlreadyExistsError("repository already exists")
 
-        response = self.client.patch(
-            f"/api/v1/storage/repositories/{repository.id}/repair/",
-            {"bind_node_id": self.proxy_a.id},
-            format="json",
-            **self._headers(),
-        )
+        response = self._patch_repair(repository.id, {"bind_node_id": self.proxy_a.id})
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
-        self.assertEqual(response.data["data"]["code"], REPOSITORY_ALREADY_EXISTS_CODE)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        result = self._run_create_task(
+            repository,
+            operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], REPOSITORY_ALREADY_EXISTS_CODE)
         repository.refresh_from_db()
         self.assertIsNone(repository.bind_node_type)
         self.assertIsNone(repository.bind_node_id)
@@ -236,8 +268,7 @@ class NasRepairApiTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @mock.patch("apps.storage.services.internal.nas_repair.initialize_proxy_nas_repository")
-    def test_repair_unbound_bind_rejected_after_backup_config_associated(self, init_proxy):
+    def test_repair_unbound_bind_rejected_after_backup_config_associated(self):
         repo = self._make_unbound_nas()
         BackupConfig.objects.create(
             organization_id=self.org.id,
@@ -257,7 +288,12 @@ class NasRepairApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         repo.refresh_from_db()
         self.assertFalse(repo.bind_node_id)
-        init_proxy.assert_not_called()
+        self.assertFalse(
+            RepositoryTask.objects.filter(
+                repository=repo,
+                operation_type=RepositoryTask.OperationType.REPAIR_BIND,
+            ).exists()
+        )
 
     # --- swap (currently bound) ------------------------------------------
 
@@ -272,15 +308,18 @@ class NasRepairApiTests(TestCase):
             ok=True,
         )
         repo = self._make_bound_nas()
-        response = self.client.patch(
-            f"/api/v1/storage/repositories/{repo.id}/repair/",
-            {"bind_node_id": self.proxy_b.id},
-            format="json",
-            **self._headers(),
+        response = self._patch_repair(repo.id, {"bind_node_id": self.proxy_b.id})
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.data["status"], Repository.Status.CREATING)
+        self.assertIsNotNone(response.data.get("active_create_task"))
+        result = self._run_create_task(
+            repo,
+            operation_type=RepositoryTask.OperationType.REPAIR_REMOUNT,
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertEqual(result["status"], "success")
         repo.refresh_from_db()
         self.assertEqual(repo.bind_node_id, self.proxy_b.id)
+        self.assertEqual(repo.status, Repository.Status.CREATED)
         self.assertEqual(repo.health, Repository.Health.ONLINE)
         self.assertEqual(
             repo.config["proxy_mount_path"],
@@ -298,10 +337,10 @@ class NasRepairApiTests(TestCase):
         )
         self.assertEqual(unmount_call.kwargs["node_id"], self.proxy_a.id)
 
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
     @mock.patch("apps.storage.services.internal.nas_repair.enqueue_repository_usage_refresh")
-    @mock.patch("apps.storage.services.internal.nas_repair.initialize_proxy_nas_repository")
     def test_repair_bound_swap_rejected_when_busy(
-        self, init_proxy, _sync,
+        self, _sync, apply_async,
     ):
         repo = self._make_bound_nas()
         config = BackupConfig.objects.create(
@@ -329,7 +368,7 @@ class NasRepairApiTests(TestCase):
         # Original binding unchanged.
         repo.refresh_from_db()
         self.assertEqual(repo.bind_node_id, self.proxy_a.id)
-        init_proxy.assert_not_called()
+        apply_async.assert_not_called()
 
     @mock.patch("apps.storage.services.internal.nas_repair.enqueue_repository_usage_refresh")
     def test_repair_bound_swap_rejects_same_proxy(self, _sync):
