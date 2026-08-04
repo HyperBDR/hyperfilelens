@@ -736,6 +736,19 @@ grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
 grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification}" >/dev/null
+# Enrollment preflight treats 403 on /ws/ as reachable; mock must not answer 404.
+grep -F 'path.startswith("/ws/")' "${agent_certification}" >/dev/null
+grep -F 'self.send_error(403, "authentication required")' "${agent_certification}" >/dev/null
+# Installer overhaul (#316) opens an installation session and waits for node-status.
+grep -F '/api/v1/node/enrollment/session' "${agent_certification}" >/dev/null
+grep -F 'installation_session' "${agent_certification}" >/dev/null
+grep -F '/api/v1/node/enrollment/node-status' "${agent_certification}" >/dev/null
+grep -F '"routable": True' "${agent_certification}" >/dev/null
+# Installer overhaul (#316) opens an installation session and waits for node-status.
+grep -F '/api/v1/node/enrollment/session' "${agent_certification}" >/dev/null
+grep -F 'installation_session' "${agent_certification}" >/dev/null
+grep -F '/api/v1/node/enrollment/node-status' "${agent_certification}" >/dev/null
+grep -F '"routable": True' "${agent_certification}" >/dev/null
 grep -F 'apt source: official Ubuntu (HTTPS after CA bootstrap)' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
 grep -F 'using official Ubuntu sources (HTTPS after CA bootstrap)' \
@@ -884,8 +897,8 @@ grep -F 'registry prefix must include host and namespace' \
 	"${sourcelens_image_builder}" >/dev/null
 
 agent_publisher="${ROOT}/tools/agent/publish.sh"
-if rg -n '"hyperfilelens/agent/internal/remote"' \
-	"${ROOT}/src/agent/internal/enroll" -g '*.go' >/dev/null; then
+if grep -R -n --include='*.go' '"hyperfilelens/agent/internal/remote"' \
+	"${ROOT}/src/agent/internal/enroll" >/dev/null; then
 	printf 'ERROR: first-stage enrollment code must use the lightweight enrollment client\n' >&2
 	exit 1
 fi

@@ -312,6 +312,18 @@ class CertificationHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urllib.parse.urlsplit(self.path).path
+        # Enrollment preflight dials the control-plane WebSocket before auth.
+        # Real consoles answer 401/403 on this route; 404 means the path is missing.
+        if path.startswith("/ws/"):
+            self.send_error(403, "authentication required")
+            return
+        if path == "/api/v1/node/health":
+            self.send_json({"status": "ok"})
+            return
+        if path == "/api/v1/node/enrollment/node-status":
+            # Post-install verification waits for a routable online node.
+            self.send_json({"node_id": 1, "status": "online", "routable": True})
+            return
         if path == "/api/v1/node/enrollment/agent/release":
             self.send_json(
                 {
@@ -338,15 +350,39 @@ class CertificationHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length:
             self.rfile.read(length)
+        if path == "/api/v1/node/enrollment/session":
+            # Enrollment opens a resumable installation session before download.
+            self.send_json(
+                {"installation_session": "hfls_certification", "gateway_scope": ""},
+                status=201,
+            )
+            return
         if path == "/api/v1/node/nodes/heartbeat/":
             self.server.heartbeat_count += 1
-            self.send_json({"node_id": 1, "status": "online"})
+            self.send_json(
+                {
+                    "node_id": 1,
+                    "status": "online",
+                    "node_credential": "hfln_certification",
+                }
+            )
             return
         self.send_error(404)
 
-    def send_json(self, value: dict) -> None:
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = urllib.parse.urlsplit(self.path).path
+        length = int(self.headers.get("Content-Length", "0"))
+        if length:
+            self.rfile.read(length)
+        if path == "/api/v1/node/enrollment/session":
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.send_error(404)
+
+    def send_json(self, value: dict, *, status: int = 200) -> None:
         data = json.dumps(value).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

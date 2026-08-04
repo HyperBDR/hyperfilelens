@@ -297,7 +297,7 @@ assert(!JSON.stringify(event).includes('private'))
 assert(!JSON.stringify(event).includes('secret'))
 JS
 
-if rg -n 'ARG SENTRY_DSN|ENV SENTRY_DSN|import\.meta\.env\.SENTRY' \
+if grep -R -n -E 'ARG SENTRY_DSN|ENV SENTRY_DSN|import\.meta\.env\.SENTRY' \
 	"${ROOT}/deploy/docker/frontend.Dockerfile" \
 	"${ROOT}/src/frontend" >/dev/null; then
 	printf 'ERROR: HFL browser DSN must remain runtime-only\n' >&2
