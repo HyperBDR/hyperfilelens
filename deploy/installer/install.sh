@@ -2927,6 +2927,10 @@ check_local_platform_gateway_continuity() {
 	if ! platform_gateway_auto_deploy_enabled; then
 		return 0
 	fi
+	if [[ ! -f "${LOCAL_PLATFORM_AGENT_DATA_DIR}/agent.env" ]]; then
+		skip "Installer-managed platform Gateway is not installed; bootstrap follows the control-plane upgrade"
+		return 0
+	fi
 	# A control-plane release must not mutate independently running Gateway,
 	# Agent, or LensNode workloads. Wait only for their existing control channels
 	# to recover; their upgrade remains a separate lifecycle operation.
@@ -2975,7 +2979,7 @@ local_platform_gateway_readiness_once() {
 		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="active HFL API color is unavailable"
 		return 1
 	}
-	query="from apps.lens_bridge.models import LensGatewayLink; from apps.lens_bridge.services.gateway_readiness import gateway_runtime_state; link = LensGatewayLink.objects.select_related('gateway').filter(gateway_id=${node_id}, scope='platform').first(); state = gateway_runtime_state(link); raise SystemExit(0 if link is not None and state['hfl_usable'] and state['copilot_eligible'] else 1)"
+	query="from apps.lens_bridge.models import LensGatewayLink; from apps.lens_bridge.services.gateway_readiness import gateway_runtime_state; from apps.lens_bridge.services.provisioning import sync_gateway_lensnode_status; link = LensGatewayLink.objects.select_related('gateway').filter(gateway_id=${node_id}, scope='platform').first(); link = sync_gateway_lensnode_status(link) if link is not None else None; state = gateway_runtime_state(link); raise SystemExit(0 if link is not None and state['hfl_usable'] and state['copilot_eligible'] else 1)"
 	if ! compose_in_root exec -T "${api_service}" python manage.py shell -c "${query}" \
 		>/dev/null 2>&1; then
 		LOCAL_PLATFORM_GATEWAY_READINESS_REASON="managed platform Gateway link, Agent WebSocket, or LensNode sidecar is not online and usable"
