@@ -548,6 +548,61 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(row["repository_mount_point"], f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{agent.id}")
         self.assertEqual(row["health"], Repository.Health.ONLINE)
 
+    def test_associated_sources_lists_direct_nas_source_health(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="nas-proxy",
+            role=Node.Role.PROXY,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.8.12",
+        )
+        source = SourceResource.objects.create(
+            organization=self.org,
+            name="source-nas",
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+            config={"protocol": "nfs", "server": "192.168.10.35", "share": "/"},
+        )
+        repo = Repository.objects.create(
+            organization_id=self.org.id,
+            name="direct-nas-source",
+            repo_type=Repository.Type.NAS,
+            nas_protocol=Repository.NasProtocol.NFS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.UNVERIFIED,
+            config={"server_address": "192.168.10.35", "share_path": "/"},
+        )
+        config = BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="nas backup",
+            source_type="nas",
+            source_ref_id=source.id,
+            repository_id=repo.id,
+        )
+        RepositoryUsageShard.objects.create(
+            organization_id=self.org.id,
+            repository_id=repo.id,
+            usage_scope=RepositoryUsageShard.Scope.DIRECT_NAS_AGENT,
+            node_id=proxy.id,
+            repository_subdir=f"hp-repos/agent-{proxy.id}",
+            mount_point=f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{proxy.id}",
+            source_config_count=1,
+            source_config_ids=[config.id],
+            status=RepositoryUsageShard.Status.SUCCESS,
+            is_active=True,
+        )
+
+        response = self.client.get(
+            f"/api/v1/storage/repositories/{repo.id}/associated-sources/",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        row = response.data["results"][0]
+        self.assertEqual(row["repository_subdir"], f"hp-repos/agent-{proxy.id}")
+        self.assertEqual(row["repository_mount_point"], f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{proxy.id}")
+        self.assertEqual(row["health"], Repository.Health.ONLINE)
+
     def test_associated_sources_exposes_nas_registration_and_missing_source_fallback(self):
         repo = Repository.objects.create(
             organization_id=self.org.id,

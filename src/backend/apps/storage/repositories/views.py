@@ -351,10 +351,19 @@ def _associated_sources_payload(
             )
         else:
             source = _nas_source_payload(nas_sources.get(config.source_ref_id), config=config)
-            subdir = ""
-            shard = None
-            probe_status = ""
-            health = repository.health
+            bound_node = nas_sources.get(config.source_ref_id)
+            bound_node = bound_node.bound_node if bound_node is not None else None
+            node_id = int(bound_node.id) if bound_node is not None else 0
+            subdir = nas_agent_repository_subdir(node_id) if node_id > 0 else ""
+            shard = shards.get((node_id, subdir)) if subdir else None
+            probe_status = shard.status if shard else ""
+            health = (
+                Repository.Health.ONLINE
+                if probe_status == RepositoryUsageShard.Status.SUCCESS
+                else Repository.Health.OFFLINE
+                if probe_status in {RepositoryUsageShard.Status.FAILED, RepositoryUsageShard.Status.SKIPPED}
+                else repository.health
+            )
         rows.append({
             "backup_config_id": config.id,
             "backup_config_name": config.name,

@@ -557,6 +557,30 @@ class ProtectionBackupConfigApiTests(TestCase):
 
     @mock.patch("apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh")
     @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
+    def test_create_backup_config_initializes_direct_nas_source_on_bound_proxy(
+        self, run_agent_task_sync, enqueue_usage,
+    ):
+        run_agent_task_sync.return_value = self._successful_agent_task()
+        proxy = self._proxy(name="direct-nas-source-proxy")
+        source = self._nas_source(proxy=proxy, name="direct-nas-source")
+        nas_repo = self._direct_nas_repository(name="direct-nas-source-repo")
+
+        create = self.client.post(
+            "/api/v1/protection/backup-configs/",
+            self._nas_payload(source=source, repository=nas_repo),
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        call = run_agent_task_sync.call_args.kwargs
+        self.assertEqual(call["node_id"], proxy.id)
+        self.assertEqual(call["kind"], "repo.initialize")
+        self.assertEqual(call["payload"]["repository"]["subdir"], f"hp-repos/agent-{proxy.id}")
+        enqueue_usage.assert_called_once()
+
+    @mock.patch("apps.storage.services.internal.repository_usage.enqueue_repository_usage_refresh")
+    @mock.patch("apps.protection.services.backup_config.run_agent_task_sync")
     def test_create_backup_config_rejects_existing_direct_nas_repository(
         self, run_agent_task_sync, _enqueue_usage,
     ):
