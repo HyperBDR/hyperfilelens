@@ -8,9 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"hyperfilelens/agent/internal/service/nas"
 )
+
+const nasTestCleanupTimeout = 25 * time.Second
+
+type nasTestService interface {
+	Test(context.Context, nas.Spec) (nas.SpaceInfo, error)
+	Unmount(context.Context, string) error
+}
 
 func logNasTask(ctx context.Context, event string, taskID string, spec nas.Spec, extra ...any) {
 	args := append([]any{
@@ -197,6 +205,10 @@ func (e *Engine) runNasUnmount(ctx context.Context, p Payload) (string, map[stri
 }
 
 func (e *Engine) runNasTest(ctx context.Context, p Payload) (string, map[string]any, string) {
+	return runNasTestWithService(ctx, p, nas.NewService())
+}
+
+func runNasTestWithService(ctx context.Context, p Payload, service nasTestService) (string, map[string]any, string) {
 	spec, ok, err := parseNASSpec(p.Extra["nas"])
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -208,17 +220,48 @@ func (e *Engine) runNasTest(ctx context.Context, p Payload) (string, map[string]
 		}
 	}
 	logNasTask(ctx, "test_start", "", spec)
-	info, err := nas.NewService().Test(ctx, spec)
-	if err != nil {
-		logNasTask(ctx, "test_failed", "", spec, "err", err.Error())
-		return "failed", map[string]any{
+	info, testErr := service.Test(ctx, spec)
+	cleanupAfterTest, _ := payloadBoolValue(p.Extra["cleanup_after_test"])
+	var cleanupErr error
+	if cleanupAfterTest {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), nasTestCleanupTimeout)
+		cleanupErr = service.Unmount(cleanupCtx, spec.MountPoint)
+		cleanupCancel()
+	}
+	if testErr != nil {
+		errMessage := testErr.Error()
+		if cleanupErr != nil {
+			errMessage += "; cleanup failed: " + cleanupErr.Error()
+		}
+		logNasTask(ctx, "test_failed", "", spec, "err", errMessage)
+		result := map[string]any{
 			"storage_type": "nas",
 			"protocol":     spec.Protocol,
 			"server":       spec.Server,
-		}, err.Error()
+			"mount_point":  spec.MountPoint,
+		}
+		if cleanupAfterTest {
+			result["cleanup_status"] = "success"
+			result["mount_status"] = "unmounted"
+			if cleanupErr != nil {
+				result["cleanup_status"] = "failed"
+				result["mount_status"] = "cleanup_failed"
+			}
+		}
+		return "failed", result, errMessage
 	}
 	result := nasResult(spec, info)
 	result["storage_type"] = "nas"
+	if cleanupAfterTest {
+		if cleanupErr != nil {
+			result["cleanup_status"] = "failed"
+			result["mount_status"] = "cleanup_failed"
+			logNasTask(ctx, "test_cleanup_failed", "", spec, "err", cleanupErr.Error())
+			return "failed", result, "cleanup failed: " + cleanupErr.Error()
+		}
+		result["cleanup_status"] = "success"
+		result["mount_status"] = "unmounted"
+	}
 	logNasTask(ctx, "test_ok", "", spec, "total_bytes", info.TotalBytes)
 	return "success", result, ""
 }

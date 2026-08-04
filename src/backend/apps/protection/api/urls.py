@@ -8,6 +8,7 @@ from apps.protection.api.views import (
     BackupTaskRetryDirectoryView,
     BackupTaskRuntimeView,
     BackupTaskStartView,
+    BackupTargetValidationView,
     BackupPolicyViewSet,
     FileFilterRuleViewSet,
     SnapshotDirectoryBatchDownloadTaskView,
@@ -27,6 +28,11 @@ router.register(r"backup-source-snapshots", BackupSourceSnapshotViewSet, basenam
 urlpatterns = [
     path("health", health, name="protection-health"),
     path("backup-tasks/", BackupTaskStartView.as_view(), name="protection-backup-task-start"),
+    path(
+        "backup-target-validations/",
+        BackupTargetValidationView.as_view(),
+        name="protection-backup-target-validation",
+    ),
     path(
         "backup-tasks/<uuid:task_uuid>/cancel/",
         BackupTaskCancelView.as_view(),

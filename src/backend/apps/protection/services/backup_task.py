@@ -41,8 +41,11 @@ from apps.protection.services.progress.orchestrated_progress import (
     orchestrated_backup_from_agent_progress,
 )
 from apps.protection.services.repository_compatibility import validate_backup_repository_compatible
+from apps.protection.services.source_execution import (
+    ExecutionTarget,
+    resolve_source_execution_target,
+)
 from apps.source.constants import ResourceType
-from apps.source.services.internal.nas_agent import nas_payload_for_resource
 from apps.source.models import SourceResource
 from apps.storage.repositories.models import Repository
 from apps.source.services.internal.selectable_ids import parse_selectable_id
@@ -99,15 +102,6 @@ _AGENT_PHASE_KOPIA_PERCENT = {
 class RequestedBackupSource:
     source_type: str
     source_ref_id: int
-
-
-@dataclass(frozen=True)
-class ExecutionTarget:
-    node: Node
-    source_type: str
-    source_ref_id: int
-    root_path: str = ""
-    nas_payload: dict[str, Any] | None = None
 
 
 def _task_progress(value: int | float | Decimal) -> Decimal:
@@ -859,44 +853,10 @@ def _run_backup_task_locked(
 
 
 def _resolve_execution_target(*, source_snapshot: BackupSourceSnapshot) -> ExecutionTarget:
-    if source_snapshot.source_type == "agent":
-        node = Node.objects.filter(
-            organization_id=source_snapshot.organization_id,
-            id=source_snapshot.source_ref_id,
-            role=NodeRole.AGENT,
-            is_deleted=False,
-        ).first()
-        if node is None:
-            raise ValidationError({"source_ref_id": "Agent source not found."})
-        if node.status != Node.Status.ONLINE:
-            raise ValidationError({"source_ref_id": "Agent source is offline."})
-        return ExecutionTarget(
-            node=node,
-            source_type="agent",
-            source_ref_id=source_snapshot.source_ref_id,
-        )
-
-    resource = SourceResource.objects.filter(
+    return resolve_source_execution_target(
         organization_id=source_snapshot.organization_id,
-        id=source_snapshot.source_ref_id,
-        resource_type=ResourceType.NAS,
-        is_deleted=False,
-    ).select_related("bound_node").first()
-    if resource is None:
-        raise ValidationError({"source_ref_id": "NAS source not found."})
-    if resource.bound_node is None or resource.bound_node.role != NodeRole.PROXY:
-        raise ValidationError({"source_ref_id": "NAS source is not bound to a proxy node."})
-    if resource.bound_node.status != Node.Status.ONLINE:
-        raise ValidationError({"source_ref_id": "NAS bound proxy node is offline."})
-    root_path = _clean_path(resource.effective_mount_point())
-    if not root_path:
-        raise ValidationError({"source_ref_id": "NAS source mount point is empty."})
-    return ExecutionTarget(
-        node=resource.bound_node,
-        source_type="nas",
+        source_type=source_snapshot.source_type,
         source_ref_id=source_snapshot.source_ref_id,
-        root_path=root_path,
-        nas_payload=nas_payload_for_resource(resource),
     )
 
 
