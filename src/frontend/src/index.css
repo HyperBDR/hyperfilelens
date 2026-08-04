@@ -407,6 +407,14 @@ html[data-theme='hybrid'] {
   letter-spacing: 0;
 }
 
+/* Element Plus: add horizontal padding to select dropdown empty state
+   (default padding: 10px 0 leaves text flush against edges) */
+.el-select-dropdown__empty {
+  padding: 10px 12px;
+  white-space: normal;
+  word-break: break-word;
+}
+
 /* Element Plus dark mode — align with --content-bg / --page-bg dark palette */
 html.dark {
   --el-bg-color: #111116;
