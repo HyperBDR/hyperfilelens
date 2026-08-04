@@ -18,4 +18,14 @@ describe('nasMountPath', () => {
       `${DEFAULT_AGENT_DATA_DIR}/mounts/custom/nas-data`,
     )
   })
+
+  it('uses data as the empty SMB share fallback for generated names and mounts', () => {
+    expect(
+      buildGeneratedNasMountDir({
+        protocol: 'smb',
+        smbServer: '192.168.1.100',
+        smbShare: '',
+      }),
+    ).toBe(`${DEFAULT_AGENT_DATA_DIR}/mounts/custom/smb-192.168.1.100-data`)
+  })
 })

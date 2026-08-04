@@ -83,7 +83,10 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
     </el-table-column>
     <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="160">
       <template #default="{ row }">
-        {{ display.nasShareOrExport(row) }}
+        <div class="table-stack-cell">
+          <span class="table-stack-cell__secondary">{{ display.nasPathKindLabel(row) }}</span>
+          <span class="table-stack-cell__primary">{{ display.nasShareOrExport(row) }}</span>
+        </div>
       </template>
     </el-table-column>
     <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="150">

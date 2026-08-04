@@ -406,7 +406,10 @@ onMounted(async () => {
                   <ElFormItem :label="t('repairNasRepo.labelServer')" class="flex-1">
                     <ElInput :model-value="nasServer" disabled />
                   </ElFormItem>
-                  <ElFormItem :label="t('repairNasRepo.labelShare')" class="flex-1">
+                  <ElFormItem
+                    :label="protocol === 'smb' ? t('repairNasRepo.labelShareName') : t('repairNasRepo.labelExportPath')"
+                    class="flex-1"
+                  >
                     <ElInput :model-value="nasShare" disabled />
                   </ElFormItem>
                 </div>

@@ -78,6 +78,7 @@ import {
 } from '../../composables/useProtectionDemoStore'
 import { issueEnrollmentInstall, listNodes, updateNode, type EnrollmentOs } from '../../lib/nodeApi'
 import {
+  createSourceResource,
   getBackupSourcePathInfo,
   listBackupSelectableSources,
   listBackupSourceDirectories,
@@ -85,6 +86,8 @@ import {
   type BackupSelectableSource,
   type BackupSourceDirectoryEntry,
 } from '../../lib/sourceApi'
+import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
+import { resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import {
   selectBackupSourceDirectoryTreeEntries,
   shouldAutoExpandRefreshedDirectory,
@@ -2275,25 +2278,45 @@ function validateNasForm(): boolean {
 }
 
 async function nasSubmit() {
-  if (!nasName.value.trim() || !nasNameTouched.value) {
-    nasName.value = generatedNasName.value
-  }
+  nasName.value = resolveNasSubmitName(nasName.value, generatedNasName.value, nasNameTouched.value)
   if (!nasDir.value.trim() || !nasDirTouched.value) {
     nasDir.value = generatedNasDir.value
   }
   if (!validateNasForm()) return
   nasBusy.value = true
   try {
-    await new Promise((r) => setTimeout(r, 300))
-    store.addNas({
-      id: `nas-${Date.now()}`,
-      name: nasName.value.trim(),
-      hostname: nasSmbServer.value.trim() || nasNfsHost.value.trim() || 'nas.local',
-    })
+    await createSourceResource(
+      buildNasSourceCreatePayload({
+        name: nasName.value.trim(),
+        protocol: nasProtocol.value,
+        mountPath: nasDir.value.trim(),
+        boundNodeId: nasBindNodeId.value ?? null,
+        smb: nasProtocol.value === 'smb'
+          ? {
+              server: nasSmbServer.value,
+              share: nasSmbShare.value,
+              username: nasSmbUsername.value,
+              password: nasSmbPassword.value,
+              domain: nasSmbDomain.value,
+              options: nasNfsOptions.value,
+            }
+          : undefined,
+        nfs: nasProtocol.value === 'nfs'
+          ? {
+              server: nasNfsHost.value,
+              exportPath: nasNfsExport.value,
+              options: nasNfsOptions.value,
+            }
+          : undefined,
+      }),
+    )
     ElMessage.success({ message: t('protection.sourceResources.nasCreated'), grouping: true })
     addSourceOpen.value = false
-  } catch {
-    ElMessage.error({ message: 'Create failed', grouping: true })
+  } catch (e) {
+    ElMessage.error({
+      message: apiErrorMessage(e, t('protection.sourceResources.nasCreateFailed')),
+      grouping: true,
+    })
   } finally {
     nasBusy.value = false
   }

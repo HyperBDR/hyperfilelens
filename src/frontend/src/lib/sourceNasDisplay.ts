@@ -186,6 +186,14 @@ export function nasShareOrExport(row: NasLikeResource): string {
   return fromSummary || '—'
 }
 
+/** Protocol-native label key for the share/export value column. */
+export function nasPathKindLabelKey(row: NasLikeResource): string {
+  const protocol = nasMountProtocol(row)
+  if (protocol === 'smb') return 'protection.sourceResources.colNasShareName'
+  if (protocol === 'nfs') return 'protection.sourceResources.colNasExportPath'
+  return 'protection.sourceResources.colNasShareExport'
+}
+
 export function nasProxyMountPoint(row: NasLikeResource): string {
   const path = configString(row.config, 'path')
   if (path) return path

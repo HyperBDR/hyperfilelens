@@ -47,6 +47,7 @@ import {
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { hasNasSourceNameConflict, resolveNasSubmitName } from '../../lib/nasSourceNaming'
+import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
 import { listNodes, listNodesPaged, updateNode, fetchLatestAgentVersion, type EnrollmentOs } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
 import type { ApiNode } from '../../types/node'
@@ -65,6 +66,7 @@ import {
 } from '../../lib/sourceApi'
 import {
   nasMountProtocol,
+  nasPathKindLabelKey,
   nasProxyMountPoint,
   nasServerAddress,
   nasShareOrExport,
@@ -1635,31 +1637,31 @@ async function nasSubmit() {
   if (!validateNasForm()) return
   nasBusy.value = true
   try {
-    const config: Record<string, string> = {
-      protocol: nasProtocol.value,
-      path: nasDir.value.trim(),
-    }
-    const credentials: Record<string, string> = {}
-    if (nasProtocol.value === 'smb') {
-      config.server = nasSmbServer.value.trim()
-      config.share = nasSmbShare.value.trim()
-      credentials.username = nasSmbUsername.value.trim()
-      credentials.password = nasSmbPassword.value
-      if (nasSmbDomain.value.trim()) credentials.domain = nasSmbDomain.value.trim()
-      if (nasNfsOptions.value.trim()) config.options = nasNfsOptions.value.trim()
-    } else if (nasProtocol.value === 'nfs') {
-      config.server = nasNfsHost.value.trim()
-      config.export_path = nasNfsExport.value.trim()
-      if (nasNfsOptions.value.trim()) config.options = nasNfsOptions.value.trim()
-    }
-    await createSourceResource({
-      name: nasName.value.trim(),
-      description: '',
-      resource_type: 'nas',
-      config,
-      credentials,
-      bound_node_id: nasBindNodeId.value ?? null,
-    })
+    await createSourceResource(
+      buildNasSourceCreatePayload({
+        name: nasName.value.trim(),
+        protocol: nasProtocol.value,
+        mountPath: nasDir.value.trim(),
+        boundNodeId: nasBindNodeId.value ?? null,
+        smb: nasProtocol.value === 'smb'
+          ? {
+              server: nasSmbServer.value,
+              share: nasSmbShare.value,
+              username: nasSmbUsername.value,
+              password: nasSmbPassword.value,
+              domain: nasSmbDomain.value,
+              options: nasNfsOptions.value,
+            }
+          : undefined,
+        nfs: nasProtocol.value === 'nfs'
+          ? {
+              server: nasNfsHost.value,
+              exportPath: nasNfsExport.value,
+              options: nasNfsOptions.value,
+            }
+          : undefined,
+      }),
+    )
     ElMessage.success({ message: t('protection.sourceResources.nasCreated'), grouping: true })
     nasAddOpen.value = false
     selectedNas.value = []
@@ -2136,7 +2138,10 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="130">
                 <template #default="{ row }">
-                  {{ nasShareOrExport(row) }}
+                  <div class="table-stack-cell">
+                    <span class="table-stack-cell__secondary">{{ t(nasPathKindLabelKey(row)) }}</span>
+                    <span class="table-stack-cell__primary">{{ nasShareOrExport(row) }}</span>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="130">
