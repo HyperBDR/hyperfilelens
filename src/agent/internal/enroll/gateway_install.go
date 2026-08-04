@@ -260,7 +260,7 @@ func printGatewayInstallSuccess(info SummaryInfo, lens LensSidecarConfig) {
 }
 
 func gatewayDisplayName(scope string) string {
-	if strings.EqualFold(strings.TrimSpace(scope), "public") {
+	if isPublicGatewayScope(scope) {
 		return "Public Data Gateway"
 	}
 	return "Private Data Gateway"

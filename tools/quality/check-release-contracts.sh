@@ -923,15 +923,20 @@ for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
 done
 grep -F 'HyperFileLens enrollment helper' "${gateway_bootstrap_linux}" >/dev/null
 grep -F 'gateway-install' "${gateway_bootstrap_linux}" >/dev/null
-# Gateway bootstrap must stay lightweight: Docker CE install belongs in hfl-enroll
-# after full preflight / Agent registration, not before downloading the helper.
-if grep -E 'ensure_docker_for_gateway|Installing Docker CE from console offline bundle' \
+grep -F 'requires a systemd-based Linux distribution' "${gateway_bootstrap_linux}" >/dev/null
+# Gateway bootstrap must stay lightweight: no console/SourceLens probes and no Docker
+# install before downloading the enrollment helper (matches Agent bootstrap staging).
+if grep -E 'Checking console connectivity|Checking SourceLens health|hfl_sourcelens_health_retry|ensure_docker_for_gateway|Installing Docker CE from console offline bundle' \
 	"${gateway_bootstrap_linux}" >/dev/null; then
-	printf 'ERROR: gateway bootstrap must not install Docker before enrollment preflight\n' >&2
+	printf 'ERROR: gateway bootstrap must not probe console/SourceLens or install Docker before enrollment preflight\n' >&2
 	exit 1
 fi
 grep -F 'ensureGatewayDocker' \
 	"${ROOT}/src/agent/internal/enroll/gateway_install.go" >/dev/null
+grep -F 'checkSourceLensHealthViaConsole' \
+	"${ROOT}/src/agent/internal/enroll/sidecar_install_unix.go" >/dev/null
+grep -F 'isPublicGatewayScope' \
+	"${ROOT}/src/agent/internal/enroll/download_progress.go" >/dev/null
 grep -F -- '--fail --show-error --location --progress-bar' "${gateway_lifecycle}" >/dev/null
 grep -F -- '--continue-at -' "${gateway_lifecycle}" >/dev/null
 grep -F 'HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5' "${gateway_lifecycle}" >/dev/null
@@ -944,8 +949,14 @@ grep -F '${HFL_SOURCELENS_STATE_ROOT}:${HFL_SOURCELENS_MOUNTPOINT}:rw' \
 	"${gateway_sidecar_installer}" >/dev/null
 grep -F 'LENSNODE_CHECKPOINT_DIR: ${HFL_SOURCELENS_MOUNTPOINT}/checkpoints' \
 	"${gateway_sidecar_installer}" >/dev/null
-grep -F '${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro' \
+# Conversion writes "*.sourcelens" beside sources; workspace cannot stay :ro.
+grep -F '${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:rw' \
 	"${gateway_sidecar_installer}" >/dev/null
+if grep -F '${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro' \
+	"${gateway_sidecar_installer}" >/dev/null; then
+	printf 'ERROR: gateway LensNode workspace mount must be :rw for document conversion\n' >&2
+	exit 1
+fi
 grep -F 'script="${INSTALL_SH%/install.sh}/libexec/gateway-lifecycle.sh"' \
 	"${ROOT}/src/agent/internal/platform/install/gateway_hooks_unix.go" >/dev/null
 grep -F 'Docker CE offline bundle' "${gateway_docker_installer}" >/dev/null

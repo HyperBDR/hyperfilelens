@@ -8,10 +8,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +35,37 @@ const (
 	gatewayMinDockerCompose    = "2.20.0"
 )
 
+var sourceLensHealthOK = regexp.MustCompile(`"health"\s*:\s*"OK"`)
+
+func checkSourceLensHealthViaConsole(ctx context.Context, cfg Config) error {
+	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
+	if base == "" {
+		return fmt.Errorf("SourceLens health check requires console API base URL")
+	}
+	url := base + "/sourcelens/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("SourceLens health request: %w", err)
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	if tlsclient.InsecureTLSEnabled() {
+		client.Transport = tlsclient.Transport()
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("SourceLens unreachable at %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return fmt.Errorf("SourceLens health returned HTTP %s", resp.Status)
+	}
+	if !sourceLensHealthOK.Match(body) {
+		return fmt.Errorf("SourceLens unhealthy at %s", url)
+	}
+	return nil
+}
+
 type lensSidecarRuntime struct {
 	envPath        string
 	appliedPath    string
@@ -43,6 +76,10 @@ type lensSidecarRuntime struct {
 }
 
 func checkGatewayRuntimePreflight(ctx context.Context, cfg Config) gatewayRuntimePreflightResult {
+	if err := checkSourceLensHealthViaConsole(ctx, cfg); err != nil {
+		return gatewayRuntimePreflightResult{Err: err}
+	}
+
 	dockerReady := dockerRuntimeReady()
 	if !dockerReady {
 		if _, err := exec.LookPath("docker"); err == nil {
