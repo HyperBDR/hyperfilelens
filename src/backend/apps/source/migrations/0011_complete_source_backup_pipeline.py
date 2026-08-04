@@ -40,6 +40,9 @@ def complete_source_backup_pipeline(apps, schema_editor):
     Node = apps.get_model("node", "Node")
     SourceResource = apps.get_model("source", "SourceResource")
     Pipeline = apps.get_model("source", "SourceBackupPipelineEntry")
+    # Historical models do not keep SoftDeleteModel.all_objects unless
+    # use_in_migrations=True; fall back to the default manager.
+    pipeline_rows = getattr(Pipeline, "all_objects", Pipeline.objects)
     Task = apps.get_model("task", "Task")
     TaskResource = apps.get_model("task", "TaskResource")
     BackupConfig = apps.get_model("protection", "BackupConfig")
@@ -54,13 +57,9 @@ def complete_source_backup_pipeline(apps, schema_editor):
             source_ref_id=source.id,
             status__in=("active", "resetting", "reset_failed"),
         ).exists()
-        row = Pipeline.objects.filter(
+        row = pipeline_rows.filter(
             organization_id=source.organization_id, source_kind=kind, ref_id=source.id
         ).first()
-        if row is None:
-            row = Pipeline.all_objects.filter(
-                organization_id=source.organization_id, source_kind=kind, ref_id=source.id
-            ).first()
         if row is None:
             Pipeline.objects.create(
                 organization_id=source.organization_id,
