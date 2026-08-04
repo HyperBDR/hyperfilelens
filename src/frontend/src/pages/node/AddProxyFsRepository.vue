@@ -1194,7 +1194,7 @@ watch(enableQuotaAlert, (enabled) => {
 .proxy-dir-tree {
   max-height: 260px;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   border: 0;
   border-radius: 0;
   padding: 2px 0;
@@ -1249,12 +1249,10 @@ watch(enableQuotaAlert, (enabled) => {
 }
 
 .tree-node-content__path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
   line-height: 15px;
   color: rgb(100 116 139);
+  word-break: break-word;
 }
 
 .tree-node-content__status {
