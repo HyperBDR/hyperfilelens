@@ -736,6 +736,9 @@ grep -F 'python3 -m unittest tools/quality/test_agent_certification_gate.py' "${
 grep -F 'release/ci/certify-agent-candidate.py' "${workflow}" >/dev/null
 grep -F '"KOPIA_USE_KEYRING": "false"' "${agent_certification}" >/dev/null
 grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification}" >/dev/null
+# Enrollment preflight treats 403 on /ws/ as reachable; mock must not answer 404.
+grep -F 'path.startswith("/ws/")' "${agent_certification}" >/dev/null
+grep -F 'self.send_error(403, "authentication required")' "${agent_certification}" >/dev/null
 grep -F 'apt source: official Ubuntu (HTTPS after CA bootstrap)' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
 grep -F 'using official Ubuntu sources (HTTPS after CA bootstrap)' \
