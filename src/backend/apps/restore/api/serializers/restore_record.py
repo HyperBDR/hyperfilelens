@@ -1,9 +1,24 @@
 from __future__ import annotations
 
+import posixpath
+
 from rest_framework import serializers
 
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.task.models import Task
+
+
+def _display_target_path(path: str, share_root: str) -> str:
+    value = str(path or "").strip() or "/"
+    root = str(share_root or "").strip()
+    if not root or root == "/":
+        return value
+    normalized_root = posixpath.normpath(root)
+    if not normalized_root.startswith("/"):
+        normalized_root = f"/{normalized_root}"
+    if value == "/":
+        return normalized_root
+    return posixpath.normpath(f"{normalized_root}/{value.lstrip('/')}")
 
 
 class RestoreRecordTaskSummarySerializer(serializers.ModelSerializer):
@@ -14,6 +29,13 @@ class RestoreRecordTaskSummarySerializer(serializers.ModelSerializer):
 
 
 class RestoreRecordItemSerializer(serializers.ModelSerializer):
+    target_display_path = serializers.SerializerMethodField()
+
+    def get_target_display_path(self, obj: RestoreRecordItem) -> str:
+        roots = self.context.get("nas_share_root_by_record_id")
+        share_root = roots.get(obj.restore_record_id, "") if isinstance(roots, dict) else ""
+        return _display_target_path(obj.target_path, share_root)
+
     class Meta:
         model = RestoreRecordItem
         fields = [
@@ -25,6 +47,7 @@ class RestoreRecordItemSerializer(serializers.ModelSerializer):
             "source_path",
             "selected_paths",
             "target_path",
+            "target_display_path",
             "conflict_mode",
             "status",
             "node_task_id",
@@ -42,6 +65,12 @@ class RestoreRecordSerializer(serializers.ModelSerializer):
     items = RestoreRecordItemSerializer(many=True, read_only=True)
     source_snapshot_uid = serializers.SerializerMethodField()
     task_summary = serializers.SerializerMethodField()
+    target_display_path = serializers.SerializerMethodField()
+
+    def get_target_display_path(self, obj: RestoreRecord) -> str:
+        roots = self.context.get("nas_share_root_by_record_id")
+        share_root = roots.get(obj.id, "") if isinstance(roots, dict) else ""
+        return _display_target_path(obj.target_path, share_root)
 
     def get_source_snapshot_uid(self, obj: RestoreRecord) -> str:
         snapshot_uid_by_id = self.context.get("snapshot_uid_by_id")
@@ -75,6 +104,7 @@ class RestoreRecordSerializer(serializers.ModelSerializer):
             "target_type",
             "target_ref_id",
             "target_path",
+            "target_display_path",
             "scope",
             "conflict_mode",
             "request_payload",

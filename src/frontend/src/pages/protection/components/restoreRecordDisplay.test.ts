@@ -3,6 +3,7 @@ import type { RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import {
   restoreRecordPathMappings,
   restoreRecordSnapshotLabel,
+  restoreRecordTargetDisplayPath,
   shouldShowRestoreRecordProgress,
 } from './restoreRecordDisplay'
 
@@ -49,6 +50,19 @@ describe('restore record display', () => {
   it('uses the snapshot UID and falls back to the internal ID', () => {
     expect(restoreRecordSnapshotLabel(record())).toBe('snapshot-uid-81')
     expect(restoreRecordSnapshotLabel(record({ source_snapshot_uid: '' }))).toBe('#81')
+  })
+
+  it('prefers the NAS-visible target path for records and items', () => {
+    const nasRecord = record({
+      target_path: '/restore',
+      target_display_path: '/nasshare/restore',
+    })
+    expect(restoreRecordTargetDisplayPath(nasRecord)).toBe('/nasshare/restore')
+    expect(restoreRecordTargetDisplayPath(nasRecord, {
+      ...item,
+      target_path: '/restore/data',
+      target_display_path: '/nasshare/restore/data',
+    })).toBe('/nasshare/restore/data')
   })
 
   it('flattens selected paths into one-level mappings', () => {

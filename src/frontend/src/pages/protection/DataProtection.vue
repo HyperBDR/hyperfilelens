@@ -89,6 +89,7 @@ import {
   selectBackupSourceDirectoryTreeEntries,
   shouldAutoExpandRefreshedDirectory,
 } from '../../lib/backupSourceDirectoryTree'
+import { restoreDirectoryBrowseSourceId } from '../../lib/restoreDirectoryTarget'
 import { useBackupSourcePipeline } from '../../composables/useBackupSourcePipeline'
 import { isBackupSelectableId } from '../../composables/useDemoFlowStep2Sources'
 import { formatLocalDateTime } from '../../lib/dateTime'
@@ -6249,8 +6250,8 @@ function targetNodeForSource(hostId: string) {
 
 function targetNodeSourceIdForSource(hostId: string) {
   const parsed = parseEndpointUiId(recoveryDestConfiguredEntryForHost(hostId)?.hostId || '')
-  if (parsed) return endpointUiId(parsed.type, parsed.refId)
-  return recoveryDestConfiguredEntryForHost(hostId)?.hostId || ''
+  if (parsed) return restoreDirectoryBrowseSourceId(endpointUiId(parsed.type, parsed.refId))
+  return restoreDirectoryBrowseSourceId(recoveryDestConfiguredEntryForHost(hostId)?.hostId || '')
 }
 
 function hasRecoverySnapshotDirectoryDetail(detail: BackupSourceSnapshot | undefined) {

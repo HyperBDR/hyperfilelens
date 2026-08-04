@@ -91,6 +91,7 @@ import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import {
   restoreRecordPathMappings,
   restoreRecordSnapshotLabel,
+  restoreRecordTargetDisplayPath,
   restoreRecordTaskStatus,
   shouldShowRestoreRecordProgress,
 } from './restoreRecordDisplay'
@@ -938,12 +939,12 @@ function restoreRecordTargetName(record: RestoreRecord) {
 }
 
 function restoreItemTargetSummary(record: RestoreRecord, item: RestoreRecordItem) {
-  const targetPath = item.target_path || record.target_path || '—'
+  const targetPath = restoreRecordTargetDisplayPath(record, item)
   return `${targetPath} (${restoreRecordTargetName(record)})`
 }
 
 function restoreRecordTargetSummary(record: RestoreRecord) {
-  return `${record.target_path || '—'} (${restoreRecordTargetName(record)})`
+  return `${restoreRecordTargetDisplayPath(record)} (${restoreRecordTargetName(record)})`
 }
 
 function restoreItemSourceKind(item: RestoreRecordItem) {

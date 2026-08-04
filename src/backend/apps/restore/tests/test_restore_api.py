@@ -390,6 +390,25 @@ class RestoreApiTests(TestCase):
         )
         record = RestoreRecord.objects.get(target_ref_id=target_nas.id)
         self.assertEqual(record.target_path, "/restored/manual")
+        target_nas.config = {
+            "protocol": "nfs",
+            "server": "10.0.0.20",
+            "export_path": "/nasshare",
+        }
+        target_nas.save(update_fields=["config", "updated_at"])
+
+        detail = self.client.get(
+            f"/api/v1/restore/records/{record.id}/",
+            **self._headers(),
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_200_OK, detail.content)
+        self.assertEqual(detail.data["target_path"], "/restored/manual")
+        self.assertEqual(detail.data["target_display_path"], "/nasshare/restored/manual")
+        self.assertEqual(
+            detail.data["items"][0]["target_display_path"],
+            "/nasshare/restored/manual/file.txt",
+        )
 
     def _active_restore_task(self, *, source_ref_id: int | None = None, status_value: str = Task.Status.RUNNING) -> Task:
         task = Task.objects.create(

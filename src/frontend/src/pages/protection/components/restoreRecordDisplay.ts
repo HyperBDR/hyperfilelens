@@ -19,6 +19,14 @@ export function restoreRecordSnapshotLabel(record: RestoreRecord) {
   return String(record.source_snapshot_uid || '').trim() || `#${record.source_snapshot_id}`
 }
 
+export function restoreRecordTargetDisplayPath(record: RestoreRecord, item?: RestoreRecordItem) {
+  return item?.target_display_path
+    || record.target_display_path
+    || item?.target_path
+    || record.target_path
+    || '—'
+}
+
 export function joinRestoreRecordSourcePath(basePath: string, selectedPath: string) {
   const base = String(basePath || '').trim()
   const selected = String(selectedPath || '').trim()
