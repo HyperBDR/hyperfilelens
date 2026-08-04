@@ -36,7 +36,7 @@ function buildNasResourceKey(params: GeneratedNasSourceParams) {
       protocolLabel: 'SMB',
       protocolDir: 'smb',
       server: normalizeNasMountServer(params.smbServer ?? '', 'smb'),
-      resource: normalizeNasMountResource(params.smbShare ?? '', 'share'),
+      resource: normalizeNasMountResource(params.smbShare ?? '', 'data'),
     }
   }
 

@@ -8,6 +8,7 @@ import {
 } from '../lib/nodeInventoryDisplay'
 import {
   nasMountProtocol,
+  nasPathKindLabelKey,
   nasProxyMountPoint,
   nasServerAddress,
   nasShareOrExport,
@@ -135,6 +136,9 @@ export function useNasSourceListDisplay(proxyNodes: Ref<ApiNode[]>) {
     nasProtocolPillClass,
     nasServerAddress,
     nasShareOrExport,
+    nasPathKindLabel(row: SourceResource) {
+      return t(nasPathKindLabelKey(row))
+    },
     nasProxyMountPoint,
     nasSourceProxyName,
     nasSourceProxyIp,

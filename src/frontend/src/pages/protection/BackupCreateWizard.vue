@@ -75,6 +75,7 @@ import {
   type BackupTargetValidationResult,
 } from '../../lib/protectionBackupTargetValidationApi'
 import {
+  createSourceResource,
   listBackupSelectableSources,
   listBackupSourceDirectories,
   getBackupSourcePathInfo,
@@ -83,6 +84,11 @@ import {
   type BackupSourceDirectoryEntry,
   type SourceResource,
 } from '../../lib/sourceApi'
+import {
+  backupSelectableNasId,
+  buildNasSourceCreatePayload,
+} from '../../lib/nasSourceCreate'
+import { resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import {
   selectBackupSourceDirectoryTreeEntries,
   shouldAutoExpandRefreshedDirectory,
@@ -868,25 +874,67 @@ function validateNasForm(): boolean {
 }
 
 async function nasSubmit() {
-  if (!nasName.value.trim() || !nasNameTouched.value) {
-    nasName.value = generatedNasName.value
-  }
+  nasName.value = resolveNasSubmitName(nasName.value, generatedNasName.value, nasNameTouched.value)
   if (!nasDir.value.trim() || !nasDirTouched.value) {
     nasDir.value = generatedNasDir.value
   }
   if (!validateNasForm()) return
   nasBusy.value = true
   try {
-    await new Promise((r) => setTimeout(r, 300))
-    store.addNas({
-      id: `nas-${Date.now()}`,
-      name: nasName.value.trim(),
-      hostname: nasSmbServer.value.trim() || nasNfsHost.value.trim() || 'nas.local',
-    })
+    const created = await createSourceResource(
+      buildNasSourceCreatePayload({
+        name: nasName.value.trim(),
+        protocol: nasProtocol.value,
+        mountPath: nasDir.value.trim(),
+        boundNodeId: nasBindNodeId.value ?? null,
+        smb: nasProtocol.value === 'smb'
+          ? {
+              server: nasSmbServer.value,
+              share: nasSmbShare.value,
+              username: nasSmbUsername.value,
+              password: nasSmbPassword.value,
+              domain: nasSmbDomain.value,
+              options: nasNfsOptions.value,
+            }
+          : undefined,
+        nfs: nasProtocol.value === 'nfs'
+          ? {
+              server: nasNfsHost.value,
+              exportPath: nasNfsExport.value,
+              options: nasNfsOptions.value,
+            }
+          : undefined,
+      }),
+    )
+    const selectableId = backupSelectableNasId(created.id)
+    await loadWizardSources([selectableId])
+    if (!realSourceById.value.has(selectableId)) {
+      const server = String(created.config?.server || '').trim()
+      const next = new Map(realSourceById.value)
+      next.set(selectableId, {
+        id: selectableId,
+        type: 'nas',
+        name: created.name,
+        hostname: server || created.name,
+        nodeName: created.bound_node_name || created.name,
+        nodeIp: '',
+        status: created.availability === 'online' ? 'online' : 'offline',
+        protocol: nasProtocol.value,
+        boundNodeId: created.bound_node ?? nasBindNodeId.value ?? null,
+        registeredAt: created.created_at ?? null,
+      })
+      realSourceById.value = next
+    }
+    if (realSourceById.value.has(selectableId) && !step1Selection.value.includes(selectableId)) {
+      step1Selection.value = [...step1Selection.value, selectableId]
+    }
     ElMessage.success({ message: t('protection.sourceResources.nasCreated'), grouping: true })
     addSourceOpen.value = false
-  } catch {
-    ElMessage.error({ message: t('protection.sourceResources.nasCreateFailed'), grouping: true })
+  } catch (e) {
+    ElMessage.error({
+      message: apiErrorMessage(e, t('protection.sourceResources.nasCreateFailed')),
+      grouping: true,
+    })
   } finally {
     nasBusy.value = false
   }

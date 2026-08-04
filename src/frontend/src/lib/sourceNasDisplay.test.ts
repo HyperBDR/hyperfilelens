@@ -5,6 +5,7 @@ import { customMountPath } from './nasMountPath'
 import {
   nasMountProtocol,
   nasMountSourceUri,
+  nasPathKindLabelKey,
   nasProxyMountPoint,
   nasServerAddress,
   nasShareOrExport,
@@ -102,6 +103,44 @@ describe('nas list column helpers', () => {
         config: {},
       }),
     ).toBe(smbMount)
+  })
+  it('formats SMB and NFS path values with protocol-native kind labels', () => {
+    expect(
+      nasShareOrExport({
+        resource_type: 'nas',
+        config: { protocol: 'smb', server: '192.168.10.33', share: 'source' },
+      }),
+    ).toBe('source')
+    expect(
+      nasPathKindLabelKey({
+        resource_type: 'nas',
+        config: { protocol: 'smb', server: '192.168.10.33', share: 'source' },
+      }),
+    ).toBe('protection.sourceResources.colNasShareName')
+    expect(
+      nasShareOrExport({
+        resource_type: 'nas',
+        config: {
+          protocol: 'nfs',
+          server: '192.168.10.33',
+          export_path: '/source',
+        },
+      }),
+    ).toBe('/source')
+    expect(
+      nasPathKindLabelKey({
+        resource_type: 'nas',
+        config: {
+          protocol: 'nfs',
+          server: '192.168.10.33',
+          export_path: '/source',
+        },
+      }),
+    ).toBe('protection.sourceResources.colNasExportPath')
+    expect(enProtectionPages.sourceResources.colNasShareName).toBe('Share name')
+    expect(enProtectionPages.sourceResources.colNasExportPath).toBe('Export path')
+    expect(enProtectionPages.sourceResources.colNasShareExport).toBe('Path')
+    expect(enProtectionPages.sourceResources.nasPhSmbShare).toBe('data')
   })
 })
 
