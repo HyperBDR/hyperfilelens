@@ -403,6 +403,107 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             ],
             multimodal_ref,
         )
+        self.assertEqual(
+            payload["settings"]["retrieval_policy"],
+            {
+                "include_hidden": True,
+                "exclude_dirs": [],
+                "exclude_extensions": [],
+            },
+        )
+
+
+class UpdateAssistantRetrievalPolicyTests(SimpleTestCase):
+    @patch("apps.lens_bridge.services.provisioning._assistant_is_chat_managed")
+    @patch("apps.lens_bridge.services.provisioning.indexed_dirs_for_ks")
+    @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_chat_sync_forces_include_hidden_without_excludes(
+        self,
+        request_json,
+        indexed_dirs,
+        is_chat_managed,
+    ):
+        from apps.lens_bridge.services import provisioning
+
+        is_chat_managed.return_value = True
+        indexed_dirs.return_value = [{"path": "/workspace/org-1/ks-42"}]
+        request_json.side_effect = [
+            {
+                "settings": {
+                    "retrieval_policy": {
+                        "include_hidden": False,
+                        "exclude_dirs": [".git"],
+                        "exclude_extensions": [".lock"],
+                    }
+                }
+            },
+            {"uuid": "50b5d33c-7028-4c0b-a3bb-b907db06dfc4"},
+        ]
+        knowledge_source = MagicMock(
+            sl_assistant_uuid="50b5d33c-7028-4c0b-a3bb-b907db06dfc4",
+            ingest_policy_json={"document": True},
+        )
+        gateway_link = MagicMock(
+            sl_lensnode_uuid="de240f46-eccd-4e4b-868f-b1f504fbe67b"
+        )
+
+        provisioning.update_sl_assistant_for_ks(
+            org=MagicMock(key="tenant-one"),
+            ks=knowledge_source,
+            gateway_link=gateway_link,
+        )
+
+        patch_body = request_json.call_args_list[1].kwargs["json_body"]
+        self.assertEqual(
+            patch_body["settings"]["retrieval_policy"],
+            {
+                "include_hidden": True,
+                "exclude_dirs": [],
+                "exclude_extensions": [],
+            },
+        )
+
+    @patch("apps.lens_bridge.services.provisioning._assistant_is_chat_managed")
+    @patch("apps.lens_bridge.services.provisioning.indexed_dirs_for_ks")
+    @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_manual_sync_preserves_operator_retrieval_policy(
+        self,
+        request_json,
+        indexed_dirs,
+        is_chat_managed,
+    ):
+        from apps.lens_bridge.services import provisioning
+
+        is_chat_managed.return_value = False
+        indexed_dirs.return_value = [{"path": "/workspace/org-1/ks-42"}]
+        existing_policy = {
+            "include_hidden": False,
+            "exclude_dirs": [".git", "node_modules"],
+            "exclude_extensions": [".lock"],
+        }
+        request_json.side_effect = [
+            {"settings": {"retrieval_policy": existing_policy}},
+            {"uuid": "50b5d33c-7028-4c0b-a3bb-b907db06dfc4"},
+        ]
+        knowledge_source = MagicMock(
+            sl_assistant_uuid="50b5d33c-7028-4c0b-a3bb-b907db06dfc4",
+            ingest_policy_json={"document": True},
+        )
+        gateway_link = MagicMock(
+            sl_lensnode_uuid="de240f46-eccd-4e4b-868f-b1f504fbe67b"
+        )
+
+        provisioning.update_sl_assistant_for_ks(
+            org=MagicMock(key="tenant-one"),
+            ks=knowledge_source,
+            gateway_link=gateway_link,
+        )
+
+        patch_body = request_json.call_args_list[1].kwargs["json_body"]
+        self.assertEqual(
+            patch_body["settings"]["retrieval_policy"],
+            existing_policy,
+        )
 
 
 class BrowseGatewayDirectoryTests(SimpleTestCase):

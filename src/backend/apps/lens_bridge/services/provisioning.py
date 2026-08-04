@@ -22,7 +22,7 @@ from apps.lens_bridge.models import (
     LensOrgLink,
     LensWorkspaceBinding,
 )
-from apps.lens_bridge.services import ingest_policy, org_models, sl_client
+from apps.lens_bridge.services import ingest_policy, org_models, retrieval_policy, sl_client
 from apps.node.models.base import NodeRole
 from apps.node.models.node import Node
 
@@ -371,6 +371,21 @@ def assistant_uuid_for_ks(ks: LensKnowledgeSource) -> uuid.UUID | None:
     return None
 
 
+def _assistant_is_chat_managed(
+    *,
+    org: Organization,
+    assistant_uuid: uuid.UUID,
+) -> bool:
+    """Return whether HFL Chat owns this SourceLens assistant lifecycle."""
+    from apps.lens_bridge.models import LensAssistantLink
+
+    return LensAssistantLink.objects.filter(
+        organization=org,
+        sl_assistant_uuid=assistant_uuid,
+        lifecycle_owner=LensAssistantLink.LifecycleOwner.CHAT,
+    ).exists()
+
+
 def sync_linked_assistant_for_ks(
     *,
     org: Organization,
@@ -407,6 +422,10 @@ def update_sl_assistant_for_ks(
     settings["ingestion"] = {
         "conversion": ingest_policy.conversion_payload_for_sl(policy),
     }
+    # Chat-owned workspaces are user restore data: keep every restored path
+    # searchable. Manual Insight assistants keep operator-configured excludes.
+    if _assistant_is_chat_managed(org=org, assistant_uuid=ks.sl_assistant_uuid):
+        settings["retrieval_policy"] = retrieval_policy.managed_chat_retrieval_policy()
     sl_client.request_json(
         "PATCH",
         f"/api/lens/assistants/{ks.sl_assistant_uuid}/",
@@ -464,7 +483,9 @@ def create_sl_assistant_for_ks(
     payload["settings"] = {
         "ingestion": {
             "conversion": ingest_policy.conversion_payload_for_sl(policy),
-        }
+        },
+        # Chat workspace is user data: keep restored dotfiles searchable.
+        "retrieval_policy": retrieval_policy.managed_chat_retrieval_policy(),
     }
     data = sl_client.request_json("POST", "/api/lens/assistants/", json_body=payload)
     assistant_uuid = data.get("uuid")
