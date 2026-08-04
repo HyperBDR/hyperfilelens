@@ -76,6 +76,7 @@ AGENT_ACTIVE=1
 READINESS_OK=1
 LOCAL_GATEWAY_IS_DEFAULT=0
 READINESS_QUERY=""
+READINESS_WAIT_CALLS=0
 read_env_value() {
 	case "$1" in
 	HFL_PLATFORM_GATEWAY_AUTO_DEPLOY) printf '%s' "${AUTO_DEPLOY}" ;;
@@ -98,6 +99,7 @@ systemctl() {
 converge_local_platform_gateway_lensnode() { :; }
 wait_for_local_platform_gateway_readiness() {
 	[[ "$1" == "180" ]]
+	READINESS_WAIT_CALLS=$((READINESS_WAIT_CALLS + 1))
 	LOCAL_PLATFORM_GATEWAY_READINESS_REASON=""
 	if [[ "${READINESS_OK}" == "1" ]]; then
 		return 0
@@ -123,6 +125,14 @@ ENROLLMENT_ORG=__platform_lens__
 export TEST_DESIRED_VERSION=main-1111111
 printf '%s\n' "${TEST_DESIRED_VERSION}" >"${ROOT}/VERSION"
 
+# Enabling auto-deploy on an existing control plane must not spend the upgrade
+# recovery window waiting for a Gateway that has never been installed.
+AUTO_DEPLOY=true
+READINESS_WAIT_CALLS=0
+check_local_platform_gateway_continuity
+[[ "${READINESS_WAIT_CALLS}" == "0" ]]
+
+AUTO_DEPLOY=false
 ensure_local_platform_gateway
 [[ ! -e "${marker}" ]]
 
@@ -246,6 +256,7 @@ converge_local_platform_gateway_lensnode
 source <(sed -n '/^local_platform_gateway_readiness_once()/,/^local_platform_gateway_installed_agent_version()/p' "${installer}" | sed '$d')
 wait_for_local_platform_gateway_readiness 0
 [[ "${READINESS_QUERY}" == *"gateway_id=99, scope='platform'"* ]]
+[[ "${READINESS_QUERY}" == *"sync_gateway_lensnode_status(link)"* ]]
 if [[ "${READINESS_QUERY}" == *"is_platform_default=True"* ]]; then
 	printf 'ERROR: local Gateway readiness was coupled to platform default selection\n' >&2
 	exit 1

@@ -1006,10 +1006,24 @@ grep -F 'hfl-sentry-sitecustomize.py' \
 	"${ROOT}/deploy/installer/sourcelens/docker-compose.template.yml" >/dev/null
 grep -F './tools/quality/test-payload-tree-hash.sh' "${workflow}" >/dev/null
 grep -F 'Verify Internal Health' "${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'Ensure Platform Gateway' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'platform-gateway ensure' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+grep -F 'platform-gateway verify --required --timeout 0' \
+	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'Verify Platform Gateway Readiness' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'platform-gateway verify --required --timeout 180' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
+platform_gateway_ensure_line="$(grep -nF 'platform-gateway ensure' \
+	"${ROOT}/.github/workflows/deploy_target.yml" | head -1 | cut -d: -f1)"
+platform_gateway_verify_line="$(grep -nF 'platform-gateway verify --required --timeout 180' \
+	"${ROOT}/.github/workflows/deploy_target.yml" | head -1 | cut -d: -f1)"
+[[ "${platform_gateway_ensure_line}" -lt "${platform_gateway_verify_line}" ]] || {
+	printf 'ERROR: deployment must ensure the Platform Gateway before readiness verification\n' >&2
+	exit 1
+}
 grep -F 'https://127.0.0.1:11443/health/ready' \
 	"${ROOT}/.github/workflows/deploy_target.yml" >/dev/null
 grep -F 'https://127.0.0.1:11442/en/' \
