@@ -25,6 +25,19 @@ var managedSentryEnvKeys = []string{
 	"HFL_SENTRY_LENSNODE_RELEASE",
 }
 
+// bundledKopiaBinaryName is the install-dir Kopia filename for this OS.
+// Windows packages ship kopia.exe; Unix packages ship kopia.
+func bundledKopiaBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "kopia.exe"
+	}
+	return "kopia"
+}
+
+func bundledKopiaPath() string {
+	return filepath.Join(install.DefaultInstallDir(), bundledKopiaBinaryName())
+}
+
 // WriteNodeID updates or appends HFL_NODE_ID in agent.env.
 func WriteNodeID(envPath, nodeID string) error {
 	return writeOrReplaceEnvKey(envPath, "HFL_NODE_ID", nodeID)
@@ -187,7 +200,7 @@ func WriteEnrollmentEnv(cfg Config) error {
 		}
 		dataDir = filepath.Join(pd, "HyperFileLens", "Agent")
 	}
-	kopiaPath := filepath.Join(install.DefaultInstallDir(), "kopia")
+	kopiaPath := bundledKopiaPath()
 	insecure := "1"
 	if !cfg.InsecureTLS {
 		insecure = "0"
@@ -234,7 +247,7 @@ func syncEnrollmentConsoleSettingsAt(envPath string, cfg Config) error {
 		}
 		dataDir = filepath.Join(pd, "HyperFileLens", "Agent")
 	}
-	kopiaPath := filepath.Join(install.DefaultInstallDir(), "kopia")
+	kopiaPath := bundledKopiaPath()
 	insecure := "1"
 	if !cfg.InsecureTLS {
 		insecure = "0"

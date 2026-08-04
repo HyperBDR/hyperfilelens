@@ -3,6 +3,7 @@ package enroll
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -123,6 +124,7 @@ func TestSyncEnrollmentConsoleSettingsPreservesDurableCredential(t *testing.T) {
 		"HFL_NODE_CREDENTIAL=hfln_durable",
 		"HFL_NODE_TOKEN=legacy-shared-token",
 		"HFL_NODE_ID=42",
+		"HFL_KOPIA_PATH=" + bundledKopiaPath(),
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in %q", want, text)
@@ -130,5 +132,25 @@ func TestSyncEnrollmentConsoleSettingsPreservesDurableCredential(t *testing.T) {
 	}
 	if strings.Contains(text, "hfls_temporary_session") {
 		t.Fatalf("session secret was written to disk: %q", text)
+	}
+}
+
+func TestBundledKopiaBinaryNameMatchesPlatform(t *testing.T) {
+	name := bundledKopiaBinaryName()
+	path := bundledKopiaPath()
+	if !strings.HasSuffix(path, string(filepath.Separator)+name) && !strings.HasSuffix(path, "/"+name) && !strings.HasSuffix(path, `\`+name) {
+		t.Fatalf("bundledKopiaPath=%q does not end with %q", path, name)
+	}
+	if runtime.GOOS == "windows" {
+		if name != "kopia.exe" {
+			t.Fatalf("windows kopia binary = %q, want kopia.exe", name)
+		}
+		return
+	}
+	if name != "kopia" {
+		t.Fatalf("unix kopia binary = %q, want kopia", name)
+	}
+	if strings.HasSuffix(name, ".exe") {
+		t.Fatalf("unix kopia binary unexpectedly has .exe: %q", name)
 	}
 }
