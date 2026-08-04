@@ -39,7 +39,7 @@ export PATH HFL_TEST_CURL_LOG="${tmp}/curl.log"
 
 destination="${tmp}/hfl-enroll"
 output="$(hfl_download "HyperFileLens enrollment helper" https://example.invalid/helper "${destination}" 2>&1)"
-grep -F '[STEP ] Downloading HyperFileLens enrollment helper.' <<<"${output}" >/dev/null
+grep -F '[....] Downloading HyperFileLens enrollment helper.' <<<"${output}" >/dev/null
 grep -F '[ OK  ] HyperFileLens enrollment helper downloaded (' <<<"${output}" >/dev/null
 grep -Fx -- '--progress-bar' "${HFL_TEST_CURL_LOG}" >/dev/null
 grep -Fx -- '--retry' "${HFL_TEST_CURL_LOG}" >/dev/null

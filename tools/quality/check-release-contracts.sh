@@ -884,8 +884,8 @@ grep -F 'registry prefix must include host and namespace' \
 	"${sourcelens_image_builder}" >/dev/null
 
 agent_publisher="${ROOT}/tools/agent/publish.sh"
-if rg -n '"hyperfilelens/agent/internal/remote"' \
-	"${ROOT}/src/agent/internal/enroll" -g '*.go' >/dev/null; then
+if grep -R -n --include='*.go' '"hyperfilelens/agent/internal/remote"' \
+	"${ROOT}/src/agent/internal/enroll" >/dev/null; then
 	printf 'ERROR: first-stage enrollment code must use the lightweight enrollment client\n' >&2
 	exit 1
 fi
