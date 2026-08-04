@@ -312,6 +312,11 @@ class CertificationHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urllib.parse.urlsplit(self.path).path
+        # Enrollment preflight dials the control-plane WebSocket before auth.
+        # Real consoles answer 401/403 on this route; 404 means the path is missing.
+        if path.startswith("/ws/"):
+            self.send_error(403, "authentication required")
+            return
         if path == "/api/v1/node/enrollment/agent/release":
             self.send_json(
                 {
