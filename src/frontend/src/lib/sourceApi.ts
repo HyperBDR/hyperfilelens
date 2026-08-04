@@ -144,6 +144,32 @@ export type BackupSelectableSource = {
 }
 
 export type BackupPipelineStep = 1 | 2 | 3
+export type BackupSelectableSearchField = 'source_name' | 'source_hostname' | 'source_ip'
+export type BackupSelectableRunningTask = 'backup' | 'restore'
+export type BackupSelectableAvailability = 'online' | 'offline'
+export type BackupSelectableQueryParams = {
+  page?: number
+  page_size?: number
+  search?: string
+  search_field?: BackupSelectableSearchField
+  source_name?: string
+  source_hostname?: string
+  source_ip?: string
+  status?: 'online' | 'reconnecting' | 'offline'
+  source_status?: 'active' | 'error' | 'inactive' | 'offline' | 'online' | 'reconnecting' | 'remove_failed' | 'removing'
+  availability?: BackupSelectableAvailability
+  type?: 'host' | 'nas'
+  running_task?: BackupSelectableRunningTask
+  backup_running?: boolean
+  restore_running?: boolean
+  backup_policy_id?: number
+  file_filter_rule_id?: number
+  repository_id?: number
+  exclude?: string
+  ids?: string
+  step?: BackupPipelineStep
+  expand?: string
+}
 
 export type BackupSourceDirectoryEntry = {
   label: string
@@ -240,17 +266,7 @@ export type SourceDeleteResult = {
   warnings?: Array<Record<string, unknown>>
 }
 
-export async function listBackupSelectableSources(params?: {
-  page?: number
-  page_size?: number
-  search?: string
-  status?: 'online' | 'reconnecting' | 'offline'
-  type?: 'host' | 'nas'
-  exclude?: string
-  ids?: string
-  step?: BackupPipelineStep
-  expand?: string
-}, init?: RequestInit) {
+export async function listBackupSelectableSources(params?: BackupSelectableQueryParams, init?: RequestInit) {
   const qs = new URLSearchParams()
   if (params) {
     for (const [k, v] of Object.entries(params)) {
