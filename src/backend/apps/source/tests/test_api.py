@@ -21,6 +21,7 @@ from apps.protection.models import (
     FileFilterRule,
 )
 from apps.restore.models import RestorePlan
+from apps.source.constants import PipelineStep
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 from apps.source.services.internal.source_credentials import resolve_source_credentials
@@ -1574,11 +1575,12 @@ class SourceResourceApiTests(TestCase):
         source_host.refresh_from_db()
         self.assertFalse(agent.is_deleted)
         self.assertFalse(source_host.is_deleted)
-        self.assertFalse(
+        self.assertTrue(
             SourceBackupPipelineEntry.objects.filter(
                 organization=self.org,
                 source_kind="agent",
                 ref_id=agent.id,
+                step=PipelineStep.SOURCE_POOL,
             ).exists()
         )
 

@@ -33,8 +33,8 @@ from apps.source.services.internal.bound_node_rules import validate_bound_node_r
 from apps.source.services.internal.nas_path_normalize import normalize_resource_config
 from apps.source.services.internal.validators import validate_resource_payload
 from apps.source.services.internal.source_pipeline import (
+    delete_pipeline_entry,
     ensure_pipeline_entry,
-    purge_pipeline_entry,
 )
 from apps.source.services.internal.source_credentials import (
     merge_source_credentials,
@@ -62,7 +62,7 @@ def _purge_soft_deleted_name_collision(*, organization_id: int, name: str) -> No
     )
     for ghost in ghosts:
         if ghost.resource_type == ResourceType.NAS:
-            purge_pipeline_entry(
+            delete_pipeline_entry(
                 organization_id=organization_id,
                 source_kind=SelectableSourceKind.NAS,
                 ref_id=ghost.id,

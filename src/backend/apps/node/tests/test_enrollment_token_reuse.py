@@ -68,10 +68,12 @@ class EnrollmentTokenReuseTests(TestCase):
         "apps.node.api.views.node.sync_agent_source_host",
         side_effect=RuntimeError("sync failed"),
     )
-    def test_source_host_sync_failure_does_not_break_registration(self, _mock_sync):
-        response = self._heartbeat(name="host-sync-fails")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(Node.objects.filter(organization=self.org).count(), 1)
+    def test_source_host_sync_failure_rolls_back_registration(self, _mock_sync):
+        with self.assertRaises(RuntimeError):
+            self._heartbeat(name="host-sync-fails")
+        self.assertEqual(Node.objects.filter(organization=self.org).count(), 0)
+        self.token_row.refresh_from_db()
+        self.assertIsNone(self.token_row.used_at)
 
     def test_expired_token_rejects_new_registration(self):
         self.token_row.expires_at = timezone.now() - timedelta(minutes=1)

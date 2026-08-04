@@ -28,7 +28,6 @@ from apps.node.services.internal.node_registry import (
 )
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.source.services.internal.source_pipeline import (
-    delete_pipeline_entry,
     force_set_pipeline_steps,
 )
 
@@ -114,10 +113,10 @@ def _revert_step2_to_step1(*, organization_id: int, selectable_id: str) -> str:
                 )
             ],
         )
-    delete_pipeline_entry(
+    force_set_pipeline_steps(
         organization_id=organization_id,
-        source_kind=source_kind,
-        ref_id=ref_id,
+        ids=[selectable_id],
+        step=PipelineStep.SOURCE_POOL,
     )
     return selectable_id
 

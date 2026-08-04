@@ -101,3 +101,25 @@ class PipelineStep:
     )
 
     VALID = frozenset({SOURCE_POOL, CONFIG, READY})
+
+
+class PipelineTaskStatus:
+    NONE = "none"
+    QUEUED = "queued"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    SUCCESS = "success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMEOUT = "timeout"
+
+    CHOICES = (
+        (NONE, "None"),
+        (QUEUED, "Queued"),
+        (RUNNING, "Running"),
+        (STOPPING, "Stopping"),
+        (SUCCESS, "Success"),
+        (FAILED, "Failed"),
+        (CANCELLED, "Cancelled"),
+        (TIMEOUT, "Timeout"),
+    )
