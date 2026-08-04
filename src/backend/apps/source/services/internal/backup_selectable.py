@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
+import logging
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from typing import Any
 
-from django.db.models import Q
+from django.conf import settings
+from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils import timezone
 
 from apps.node import conf as node_conf
@@ -29,8 +34,13 @@ from apps.protection.services import (
 )
 from apps.restore.models import RestorePlan, RestoreRecord
 from apps.node.services.internal.node_registry import agent_connection_status
-from apps.source.constants import PipelineStep, ResourceType
-from apps.source.models import SourceResource
+from apps.source.constants import PipelineStep, PipelineTaskStatus, ResourceType, SelectableSourceKind
+from apps.source.metrics import (
+    BACKUP_SELECTABLE_QUERY_DURATION,
+    BACKUP_SELECTABLE_QUERY_REQUESTS,
+    BACKUP_SELECTABLE_SHADOW_COMPARISONS,
+)
+from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.nas_display import nas_mount_source_uri
 from apps.source.services.internal.selectable_ids import parse_selectable_id
 from apps.source.services.internal.source_pipeline import (
@@ -50,6 +60,18 @@ _RESTORABLE_SNAPSHOT_STATUSES = (
     BackupSourceSnapshot.Status.AVAILABLE,
     BackupSourceSnapshot.Status.PARTIAL,
 )
+_ACTIVE_PIPELINE_TASK_STATUSES = (
+    PipelineTaskStatus.QUEUED,
+    PipelineTaskStatus.RUNNING,
+    PipelineTaskStatus.STOPPING,
+)
+_SEARCH_FIELDS = {
+    "source_name": "source_name",
+    "source_hostname": "source_hostname",
+    "source_ip": "source_ip",
+}
+_QUERY_MODES = {"legacy", "shadow", "pipeline"}
+logger = logging.getLogger(__name__)
 
 
 def _merged_inventory(node: Node) -> dict[str, Any]:
@@ -894,17 +916,194 @@ def fetch_backup_selectable_by_ids(*, organization_id: int, ids: list[str], expa
     return items
 
 
-def list_backup_selectable_sources(
+def _filter_pipeline_ip(queryset: QuerySet, value: str, *, field: str = "source_ip") -> QuerySet:
+    term = value.strip().lower()
+    if not term:
+        return queryset
+    try:
+        normalized = str(ipaddress.ip_address(term))
+    except ValueError:
+        return queryset.filter(**{f"{field}__startswith": term})
+    return queryset.filter(**{field: normalized})
+
+
+def _pipeline_queryset(
     *,
     organization_id: int,
-    page: int = 1,
-    page_size: int = 10,
-    search: str | None = None,
-    status: str | None = None,
-    source_type: str | None = None,
-    exclude_ids: list[str] | None = None,
-    pipeline_step: int | None = None,
-    expand: str | None = None,
+    search: str | None,
+    search_field: str | None,
+    source_name: str | None,
+    source_hostname: str | None,
+    source_ip: str | None,
+    status: str | None,
+    source_status: str | None,
+    availability: str | None,
+    source_type: str | None,
+    exclude_ids: list[str] | None,
+    pipeline_step: int | None,
+    running_task: str | None,
+    backup_running: bool | None,
+    restore_running: bool | None,
+    backup_policy_id: int | None,
+    file_filter_rule_id: int | None,
+    repository_id: int | None,
+) -> QuerySet[SourceBackupPipelineEntry]:
+    queryset = SourceBackupPipelineEntry.objects.filter(
+        organization_id=organization_id,
+        is_deleted=False,
+    )
+    if pipeline_step in PipelineStep.VALID:
+        queryset = queryset.filter(step=pipeline_step)
+    if source_type:
+        source_kind = SelectableSourceKind.AGENT if source_type == "host" else source_type
+        queryset = queryset.filter(source_kind=source_kind)
+
+    excluded: dict[str, list[int]] = defaultdict(list)
+    for raw_id in exclude_ids or []:
+        parsed = parse_selectable_id(raw_id)
+        if parsed:
+            excluded[parsed[0]].append(parsed[1])
+    for source_kind, ref_ids in excluded.items():
+        queryset = queryset.exclude(source_kind=source_kind, ref_id__in=ref_ids)
+
+    if search and search.strip():
+        selected_field = _SEARCH_FIELDS.get(search_field or "source_name", "source_name")
+        if selected_field == "source_ip":
+            queryset = _filter_pipeline_ip(queryset, search, field=selected_field)
+        else:
+            queryset = queryset.filter(**{f"{selected_field}__icontains": search.strip()})
+    if source_name:
+        queryset = queryset.filter(source_name__icontains=source_name.strip())
+    if source_hostname:
+        queryset = queryset.filter(source_hostname__icontains=source_hostname.strip())
+    if source_ip:
+        queryset = _filter_pipeline_ip(queryset, source_ip)
+
+    if source_status:
+        queryset = queryset.filter(source_status=source_status)
+    elif status:
+        # The legacy `status=online` contract represented reachability. The
+        # Pipeline's availability projection is the compatible indexed field.
+        queryset = queryset.filter(source_availability=status)
+    if availability:
+        queryset = queryset.filter(source_availability=availability)
+
+    backup_is_running = backup_running is True or running_task == "backup"
+    restore_is_running = restore_running is True or running_task == "restore"
+    if backup_is_running:
+        queryset = queryset.filter(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+    elif backup_running is False:
+        queryset = queryset.exclude(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+    if restore_is_running:
+        queryset = queryset.filter(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+    elif restore_running is False:
+        queryset = queryset.exclude(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+
+    if any(value is not None for value in (backup_policy_id, file_filter_rule_id, repository_id)):
+        configs = BackupConfig.objects.filter(
+            organization_id=organization_id,
+            source_type=OuterRef("source_kind"),
+            source_ref_id=OuterRef("ref_id"),
+        )
+        if backup_policy_id is not None:
+            configs = configs.filter(backup_policy_id=backup_policy_id)
+        if file_filter_rule_id is not None:
+            configs = configs.filter(file_filter_rule_id=file_filter_rule_id)
+        if repository_id is not None:
+            configs = configs.filter(repository_id=repository_id)
+        queryset = queryset.annotate(has_matching_backup_config=Exists(configs)).filter(
+            has_matching_backup_config=True
+        )
+    return queryset.order_by("-created_at", "-id")
+
+
+def _materialize_pipeline_page(
+    *,
+    organization_id: int,
+    entries: list[SourceBackupPipelineEntry],
+    expand: str | None,
+) -> list[dict[str, Any]]:
+    agent_ids = [entry.ref_id for entry in entries if entry.source_kind == SelectableSourceKind.AGENT]
+    nas_ids = [entry.ref_id for entry in entries if entry.source_kind == SelectableSourceKind.NAS]
+    items_by_id: dict[str, dict[str, Any]] = {}
+    if agent_ids:
+        agents = Node.objects.filter(
+            organization_id=organization_id,
+            role=NodeRole.AGENT,
+            id__in=agent_ids,
+            is_deleted=False,
+        )
+        items_by_id.update((str(item["id"]), item) for item in map(_agent_item, agents))
+    if nas_ids:
+        resources = SourceResource.objects.filter(
+            organization_id=organization_id,
+            resource_type=ResourceType.NAS,
+            id__in=nas_ids,
+            is_deleted=False,
+        ).select_related("bound_node")
+        items_by_id.update((str(item["id"]), item) for item in map(_nas_item, resources))
+
+    items: list[dict[str, Any]] = []
+    for entry in entries:
+        item = items_by_id.get(f"{entry.source_kind}:{entry.ref_id}")
+        if item is None:
+            continue
+        item["pipeline_step"] = int(entry.step)
+        items.append(item)
+    _attach_expansions(organization_id=organization_id, items=items, expand=expand)
+    return items
+
+
+def _list_pipeline_backup_selectable_sources(
+    *,
+    organization_id: int,
+    page: int,
+    page_size: int,
+    expand: str | None,
+    **filters: Any,
+) -> tuple[list[dict[str, Any]], int]:
+    queryset = _pipeline_queryset(organization_id=organization_id, **filters)
+    total = queryset.count()
+    start = (page - 1) * page_size
+    entries = list(queryset[start : start + page_size])
+    return _materialize_pipeline_page(
+        organization_id=organization_id,
+        entries=entries,
+        expand=expand,
+    ), total
+
+
+def _pipeline_filter_is_requested(filters: dict[str, Any], *, search: str | None) -> bool:
+    return bool(search and filters.get("search_field")) or any(
+        filters.get(name) not in (None, "", [])
+        for name in (
+            "source_name",
+            "source_hostname",
+            "source_ip",
+            "source_status",
+            "availability",
+            "running_task",
+            "backup_running",
+            "restore_running",
+            "backup_policy_id",
+            "file_filter_rule_id",
+            "repository_id",
+        )
+    )
+
+
+def _list_legacy_backup_selectable_sources(
+    *,
+    organization_id: int,
+    page: int,
+    page_size: int,
+    search: str | None,
+    status: str | None,
+    source_type: str | None,
+    exclude_ids: list[str] | None,
+    pipeline_step: int | None,
+    expand: str | None,
+    **filters: Any,
 ) -> tuple[list[dict[str, Any]], int]:
     exclude = {value.strip() for value in (exclude_ids or []) if value and value.strip()}
     items = _build_catalog(organization_id=organization_id)
@@ -927,7 +1126,20 @@ def list_backup_selectable_sources(
     elif exclude:
         items = [item for item in items if item["id"] not in exclude]
 
-    if search and search.strip():
+    pipeline_filter_requested = _pipeline_filter_is_requested(filters, search=search)
+    if pipeline_filter_requested:
+        matching_rows = _pipeline_queryset(
+            organization_id=organization_id,
+            search=search if filters.get("search_field") else None,
+            status=None,
+            source_type=None,
+            exclude_ids=None,
+            pipeline_step=None,
+            **filters,
+        ).values_list("source_kind", "ref_id")
+        matching_keys = {_source_key(str(kind), int(ref_id)) for kind, ref_id in matching_rows}
+        items = [item for item in items if str(item.get("id")) in matching_keys]
+    elif search and search.strip():
         items = [item for item in items if _matches_search(item, search)]
     if status and status.strip():
         expected_status = status.strip().lower()
@@ -943,3 +1155,123 @@ def list_backup_selectable_sources(
     page_items = items[start : start + page_size]
     _attach_expansions(organization_id=organization_id, items=page_items, expand=expand)
     return page_items, total
+
+
+def _query_mode() -> str:
+    mode = str(getattr(settings, "SOURCE_BACKUP_SELECTABLE_QUERY_MODE", "legacy") or "legacy").lower()
+    return mode if mode in _QUERY_MODES else "legacy"
+
+
+def _ordered_id_digest(items: list[dict[str, Any]]) -> str:
+    payload = "\n".join(str(item.get("id") or "") for item in items).encode()
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def list_backup_selectable_sources(
+    *,
+    organization_id: int,
+    page: int = 1,
+    page_size: int = 10,
+    search: str | None = None,
+    search_field: str | None = None,
+    source_name: str | None = None,
+    source_hostname: str | None = None,
+    source_ip: str | None = None,
+    status: str | None = None,
+    source_status: str | None = None,
+    availability: str | None = None,
+    source_type: str | None = None,
+    exclude_ids: list[str] | None = None,
+    pipeline_step: int | None = None,
+    running_task: str | None = None,
+    backup_running: bool | None = None,
+    restore_running: bool | None = None,
+    backup_policy_id: int | None = None,
+    file_filter_rule_id: int | None = None,
+    repository_id: int | None = None,
+    expand: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+    filters = {
+        "search": search,
+        "search_field": search_field,
+        "source_name": source_name,
+        "source_hostname": source_hostname,
+        "source_ip": source_ip,
+        "status": status,
+        "source_status": source_status,
+        "availability": availability,
+        "source_type": source_type,
+        "exclude_ids": exclude_ids,
+        "pipeline_step": pipeline_step,
+        "running_task": running_task,
+        "backup_running": backup_running,
+        "restore_running": restore_running,
+        "backup_policy_id": backup_policy_id,
+        "file_filter_rule_id": file_filter_rule_id,
+        "repository_id": repository_id,
+    }
+    mode = _query_mode()
+    BACKUP_SELECTABLE_QUERY_REQUESTS.labels(mode=mode).inc()
+    if mode == "pipeline":
+        started = time.monotonic()
+        try:
+            return _list_pipeline_backup_selectable_sources(
+                organization_id=organization_id,
+                page=page,
+                page_size=page_size,
+                expand=expand,
+                **filters,
+            )
+        finally:
+            BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="pipeline").observe(time.monotonic() - started)
+
+    started = time.monotonic()
+    legacy_items, legacy_total = _list_legacy_backup_selectable_sources(
+        organization_id=organization_id,
+        page=page,
+        page_size=page_size,
+        expand=expand,
+        **filters,
+    )
+    BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="legacy").observe(time.monotonic() - started)
+    if mode != "shadow":
+        return legacy_items, legacy_total
+
+    shadow_started = time.monotonic()
+    pipeline_items, pipeline_total = _list_pipeline_backup_selectable_sources(
+        organization_id=organization_id,
+        page=page,
+        page_size=page_size,
+        expand=None,
+        **filters,
+    )
+    BACKUP_SELECTABLE_QUERY_DURATION.labels(engine="pipeline_shadow").observe(
+        time.monotonic() - shadow_started
+    )
+    legacy_ids = [str(item.get("id")) for item in legacy_items]
+    pipeline_ids = [str(item.get("id")) for item in pipeline_items]
+    if legacy_total != pipeline_total:
+        outcome = "count_mismatch"
+    elif legacy_ids != pipeline_ids:
+        outcome = "ordered_ids_mismatch"
+    else:
+        outcome = "match"
+    BACKUP_SELECTABLE_SHADOW_COMPARISONS.labels(outcome=outcome).inc()
+    if outcome != "match":
+        logger.warning(
+            "backup selectable shadow mismatch organization_id=%s page=%s page_size=%s step=%s "
+            "outcome=%s legacy_count=%s pipeline_count=%s "
+            "legacy_ids_sha256=%s pipeline_ids_sha256=%s",
+            organization_id,
+            page,
+            page_size,
+            pipeline_step,
+            outcome,
+            legacy_total,
+            pipeline_total,
+            _ordered_id_digest(legacy_items),
+            _ordered_id_digest(pipeline_items),
+        )
+    return legacy_items, legacy_total

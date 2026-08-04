@@ -54,13 +54,12 @@ def complete_source_backup_pipeline(apps, schema_editor):
             source_ref_id=source.id,
             status__in=("active", "resetting", "reset_failed"),
         ).exists()
-        row = Pipeline.objects.filter(
+        # Historical models do not serialize the runtime ``all_objects``
+        # manager. Their base manager is always available and includes rows
+        # that were soft-deleted by the sparse pre-#293 pipeline model.
+        row = Pipeline._base_manager.filter(
             organization_id=source.organization_id, source_kind=kind, ref_id=source.id
         ).first()
-        if row is None:
-            row = Pipeline.all_objects.filter(
-                organization_id=source.organization_id, source_kind=kind, ref_id=source.id
-            ).first()
         if row is None:
             Pipeline.objects.create(
                 organization_id=source.organization_id,

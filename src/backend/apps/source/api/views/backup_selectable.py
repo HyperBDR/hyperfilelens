@@ -40,8 +40,48 @@ def _query_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _optional_query_bool(params, name: str) -> bool | None:
+    if name not in params or str(params.get(name) or "").strip() == "":
+        return None
+    value = str(params.get(name) or "").strip().lower()
+    if value not in {"1", "true", "yes", "y", "on", "0", "false", "no", "n", "off"}:
+        raise ValidationError({name: "Must be a boolean value."})
+    return _query_bool(value)
+
+
+def _optional_positive_int(params, name: str) -> int | None:
+    value = str(params.get(name) or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValidationError({name: "Must be a positive integer."}) from exc
+    if parsed <= 0:
+        raise ValidationError({name: "Must be a positive integer."})
+    return parsed
+
+
+def _optional_choice(params, name: str, choices: set[str]) -> str | None:
+    value = str(params.get(name) or "").strip().lower()
+    if not value:
+        return None
+    if value not in choices:
+        raise ValidationError({name: f"Must be one of: {', '.join(sorted(choices))}."})
+    return value
+
+
+def _optional_text(params, name: str, *, max_length: int = 255) -> str | None:
+    value = str(params.get(name) or "").strip()
+    if not value:
+        return None
+    if len(value) > max_length:
+        raise ValidationError({name: f"Must be at most {max_length} characters."})
+    return value
+
+
 class BackupSelectableListView(APIView):
-    """Unified paginated catalog of agent hosts + NAS sources for backup wizard step 1."""
+    """Unified paginated Agent/NAS catalog for Backup Wizard source steps."""
 
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
@@ -56,9 +96,29 @@ class BackupSelectableListView(APIView):
 
         page_raw = (request.query_params.get("page") or "1").strip()
         page_size_raw = (request.query_params.get("page_size") or "10").strip()
-        search = (request.query_params.get("search") or "").strip() or None
-        status_filter = (request.query_params.get("status") or "").strip() or None
-        source_type = (request.query_params.get("type") or "").strip() or None
+        search = _optional_text(request.query_params, "search")
+        search_field = _optional_choice(
+            request.query_params,
+            "search_field",
+            {"source_name", "source_hostname", "source_ip"},
+        )
+        source_name = _optional_text(request.query_params, "source_name")
+        source_hostname = _optional_text(request.query_params, "source_hostname")
+        source_ip = _optional_text(request.query_params, "source_ip", max_length=64)
+        status_filter = _optional_text(request.query_params, "status", max_length=32)
+        source_status = _optional_choice(
+            request.query_params,
+            "source_status",
+            {"active", "error", "inactive", "offline", "online", "reconnecting", "remove_failed", "removing"},
+        )
+        availability = _optional_choice(request.query_params, "availability", {"online", "offline"})
+        running_task = _optional_choice(request.query_params, "running_task", {"backup", "restore"})
+        backup_running = _optional_query_bool(request.query_params, "backup_running")
+        restore_running = _optional_query_bool(request.query_params, "restore_running")
+        backup_policy_id = _optional_positive_int(request.query_params, "backup_policy_id")
+        file_filter_rule_id = _optional_positive_int(request.query_params, "file_filter_rule_id")
+        repository_id = _optional_positive_int(request.query_params, "repository_id")
+        source_type = _optional_choice(request.query_params, "type", {"host", "nas"})
         exclude_param = (request.query_params.get("exclude") or "").strip()
         exclude_ids = [value.strip() for value in exclude_param.split(",") if value.strip()]
         step_raw = (request.query_params.get("step") or "").strip()
@@ -66,10 +126,11 @@ class BackupSelectableListView(APIView):
         if step_raw:
             try:
                 parsed_step = int(step_raw)
-            except ValueError:
-                parsed_step = None
-            if parsed_step in PipelineStep.VALID:
-                pipeline_step = parsed_step
+            except ValueError as exc:
+                raise ValidationError({"step": "Must be 1, 2, or 3."}) from exc
+            if parsed_step not in PipelineStep.VALID:
+                raise ValidationError({"step": "Must be 1, 2, or 3."})
+            pipeline_step = parsed_step
 
         try:
             page = max(1, int(page_raw))
@@ -85,13 +146,25 @@ class BackupSelectableListView(APIView):
             page=page,
             page_size=page_size,
             search=search,
+            search_field=search_field,
+            source_name=source_name,
+            source_hostname=source_hostname,
+            source_ip=source_ip,
             status=status_filter,
+            source_status=source_status,
+            availability=availability,
             source_type=source_type,
             exclude_ids=exclude_ids if pipeline_step is None else None,
             pipeline_step=pipeline_step,
+            running_task=running_task,
+            backup_running=backup_running,
+            restore_running=restore_running,
+            backup_policy_id=backup_policy_id,
+            file_filter_rule_id=file_filter_rule_id,
+            repository_id=repository_id,
             expand=expand,
         )
-        return Response({"count": total, "results": results})
+        return Response({"page": page, "page_size": page_size, "count": total, "results": results})
 
 
 class BackupSelectablePipelineView(APIView):

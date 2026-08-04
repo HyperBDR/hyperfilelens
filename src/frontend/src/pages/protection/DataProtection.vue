@@ -83,6 +83,9 @@ import {
   listBackupSelectableSources,
   listBackupSourceDirectories,
   updateSourceResource,
+  type BackupSelectableAvailability,
+  type BackupSelectableRunningTask,
+  type BackupSelectableSearchField,
   type BackupSelectableSource,
   type BackupSourceDirectoryEntry,
 } from '../../lib/sourceApi'
@@ -778,6 +781,16 @@ const initialFlowMainStep = flowStepFromRouteQuery(route.query.step) ?? consumeS
 const flowMainStep = ref<0 | 1 | 2>(initialFlowMainStep)
 const taskSearchQuery = ref('')
 const debouncedTaskSearchQuery = ref('')
+const step3SearchField = ref<BackupSelectableSearchField>('source_name')
+const step3SourceStatus = ref<'' | 'active' | 'error' | 'inactive' | 'offline' | 'online' | 'reconnecting' | 'remove_failed' | 'removing'>('')
+const step3Availability = ref<BackupSelectableAvailability | ''>('')
+const step3RunningTask = ref<BackupSelectableRunningTask | ''>('')
+const step3AdvancedSourceName = ref('')
+const step3AdvancedHostname = ref('')
+const step3AdvancedIp = ref('')
+const step3BackupPolicyId = ref<number | ''>('')
+const step3FileFilterRuleId = ref<number | ''>('')
+const step3RepositoryId = ref<number | ''>('')
 const TASK_SEARCH_DELAY_MS = 300
 let taskSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -815,7 +828,6 @@ const flowStep2Pager = reactive({ page: 1, pageSize: 10 })
 type FlowSourceTypeFilter = 'host' | 'nas' | 'nas_smb' | 'nas_nfs'
 type FlowSourceStatusFilter = 'online' | 'offline'
 type FlowBindingFilter = 'bound' | 'unbound'
-type FlowTaskTypeFilter = 'backup' | 'restore'
 type FlowBackupTaskStatusFilter = 'running' | 'completed' | 'failed' | 'idle'
 type FlowRestoreTaskFilter = 'running' | 'none'
 type FlowRepoHealthFilter = 'online' | 'offline' | 'unknown'
@@ -832,7 +844,6 @@ type FlowHeaderFilterOption = { text: string; value: string }
 const flowAdvancedFilterOpen = ref(false)
 const flowFilterSourceTypes = ref<FlowSourceTypeFilter[]>([])
 const flowFilterSourceStatuses = ref<FlowSourceStatusFilter[]>([])
-const flowFilterTaskType = ref<FlowTaskTypeFilter | ''>('')
 const flowFilterPolicyBinding = ref<FlowBindingFilter[]>([])
 const flowFilterFileFilterBinding = ref<FlowBindingFilter[]>([])
 const flowFilterBackupTaskStatuses = ref<FlowBackupTaskStatusFilter[]>([])
@@ -1388,6 +1399,16 @@ async function loadStep3Selectable(options: { signal?: AbortSignal } = {}) {
     page: flowStep2Pager.page,
     page_size: flowStep2Pager.pageSize,
     search: debouncedTaskSearchQuery.value.trim() || undefined,
+    search_field: step3SearchField.value,
+    source_name: step3AdvancedSourceName.value.trim() || undefined,
+    source_hostname: step3AdvancedHostname.value.trim() || undefined,
+    source_ip: step3AdvancedIp.value.trim() || undefined,
+    source_status: step3SourceStatus.value || undefined,
+    availability: step3Availability.value || undefined,
+    running_task: step3RunningTask.value || undefined,
+    backup_policy_id: step3BackupPolicyId.value || undefined,
+    file_filter_rule_id: step3FileFilterRuleId.value || undefined,
+    repository_id: step3RepositoryId.value || undefined,
     step: 3,
     expand: STEP3_EXPAND,
   }, signal ? { signal } : undefined)
@@ -3297,12 +3318,6 @@ function restoreRunningCountForSource(sourceId: string) {
   return restoreRecordsForSource(sourceId).filter(restoreRecordIsRunning).length
 }
 
-function restoreTotalCountForSource(sourceId: string) {
-  const runtime = runtimeSection(sourceId, 'restore')
-  if (Object.keys(runtime).length) return runtimeNumber(runtime.total)
-  return restoreRecordsForSource(sourceId).length
-}
-
 function openTaskDetail(taskUuid?: string | null) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
@@ -3379,11 +3394,6 @@ const flowBindingFilterOptions = computed(() => [
   { text: t('protection.backupsPage.flowFilterUnbound'), value: 'unbound' },
 ])
 
-const flowTaskTypeFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.flowTaskKindBackupCreate'), value: 'backup' },
-  { text: t('protection.backupsPage.flowTaskKindRestore'), value: 'restore' },
-])
-
 const flowBackupTaskStatusFilterOptions = computed(() => [
   { text: t('protection.backupsPage.flowTaskStatusRunning'), value: 'running' },
   { text: t('protection.backupsPage.flowTaskStatusCompleted'), value: 'completed' },
@@ -3411,7 +3421,57 @@ const flowLastBackupModeOptions = computed(() => [
   { label: t('protection.backupsPage.flowFilterTimeCustom'), value: 'custom' },
 ])
 
+const step3SearchFieldOptions = computed(() => [
+  { label: t('protection.backupsPage.step3SearchSourceName'), value: 'source_name' as const },
+  { label: t('protection.backupsPage.step3SearchHostname'), value: 'source_hostname' as const },
+  { label: t('protection.backupsPage.step3SearchIp'), value: 'source_ip' as const },
+])
+
+const step3SourceStatusOptions = computed(() => [
+  { label: t('protection.backupsPage.step3StatusOnline'), value: 'online' },
+  { label: t('protection.backupsPage.step3StatusOffline'), value: 'offline' },
+  { label: t('protection.backupsPage.step3StatusReconnecting'), value: 'reconnecting' },
+  { label: t('protection.backupsPage.step3StatusActive'), value: 'active' },
+  { label: t('protection.backupsPage.step3StatusInactive'), value: 'inactive' },
+  { label: t('protection.backupsPage.step3StatusError'), value: 'error' },
+  { label: t('protection.backupsPage.step3StatusRemoving'), value: 'removing' },
+  { label: t('protection.backupsPage.step3StatusRemoveFailed'), value: 'remove_failed' },
+])
+
+const step3AvailabilityOptions = computed(() => [
+  { label: t('protection.backupsPage.step3StatusOnline'), value: 'online' as const },
+  { label: t('protection.backupsPage.step3StatusOffline'), value: 'offline' as const },
+])
+
+const step3RunningTaskOptions = computed(() => [
+  { label: t('protection.backupsPage.step3BackupRunning'), value: 'backup' as const },
+  { label: t('protection.backupsPage.step3RestoreRunning'), value: 'restore' as const },
+])
+
+const step3BackupPolicyOptions = computed(() =>
+  [...backupPolicyById.value.values()].sort((a, b) => a.name.localeCompare(b.name)),
+)
+const step3FileFilterOptions = computed(() =>
+  [...fileFilterById.value.values()].sort((a, b) => a.name.localeCompare(b.name)),
+)
+const step3RepositoryOptions = computed(() =>
+  [...repositoryById.value.values()].sort((a, b) => a.name.localeCompare(b.name)),
+)
+
 const flowActiveFilterCount = computed(() => {
+  if (flowMainStep.value === 2) {
+    return [
+      step3SourceStatus.value,
+      step3Availability.value,
+      step3RunningTask.value,
+      step3AdvancedSourceName.value.trim(),
+      step3AdvancedHostname.value.trim(),
+      step3AdvancedIp.value.trim(),
+      step3BackupPolicyId.value,
+      step3FileFilterRuleId.value,
+      step3RepositoryId.value,
+    ].filter(Boolean).length
+  }
   let count = 0
   const buckets = [
     flowFilterSourceTypes.value,
@@ -3423,7 +3483,6 @@ const flowActiveFilterCount = computed(() => {
     flowFilterRepoHealth.value,
   ]
   count += buckets.filter((list) => list.length > 0).length
-  if (flowFilterTaskType.value) count += 1
   if (flowFilterNodeQuery.value.trim()) count += 1
   if (flowFilterTargetQuery.value.trim()) count += 1
   if (flowFilterDirectoryQuery.value.trim()) count += 1
@@ -3543,19 +3602,6 @@ function flowTaskSearchMatches(row: FlowSourceRow, query: string) {
   ].some((value) => String(value).toLowerCase().includes(q))
 }
 
-function flowTaskTypeMatches(row: FlowSourceRow) {
-  if (!flowFilterTaskType.value) return true
-  if (flowFilterTaskType.value === 'restore') return restoreTotalCountForSource(row.id) > 0
-  return sourceBackupConfigs(row.id).length > 0 || aggregateForSource(row.id).backupCount > 0
-}
-
-function setFlowBackupTaskStatusFilter(value: string | number | boolean | undefined) {
-  const next = String(value || '')
-  flowFilterBackupTaskStatuses.value = next
-    ? [next as FlowBackupTaskStatusFilter]
-    : []
-}
-
 function applyTaskSearchImmediately() {
   if (taskSearchDebounceTimer) {
     clearTimeout(taskSearchDebounceTimer)
@@ -3576,6 +3622,15 @@ function applyTaskSearchImmediately() {
   }
 }
 
+function onStep3SearchFieldChange() {
+  flowStep2Pager.page = 1
+  const searchChanged = debouncedTaskSearchQuery.value !== taskSearchQuery.value
+  applyTaskSearchImmediately()
+  if (flowMainStep.value === 2 && !searchChanged) {
+    void refreshFlowStepData(2)
+  }
+}
+
 function flowStep3FiltersMatch(row: FlowSourceRow) {
   const targetQuery = flowFilterTargetQuery.value.trim().toLowerCase()
   const directoryQuery = flowFilterDirectoryQuery.value.trim().toLowerCase()
@@ -3590,7 +3645,6 @@ function flowStep3FiltersMatch(row: FlowSourceRow) {
         : 'idle'
   return (
     flowCommonFiltersMatch(row) &&
-    flowTaskTypeMatches(row) &&
     (!flowFilterBackupTaskStatuses.value.length || flowFilterBackupTaskStatuses.value.includes(taskStatus)) &&
     (!flowFilterRestoreTasks.value.length || flowFilterRestoreTasks.value.includes(restoreRunningCountForSource(row.id) > 0 ? 'running' : 'none')) &&
     flowBindingMatches(sourceHasPolicyBinding(row.id), flowFilterPolicyBinding.value) &&
@@ -3607,7 +3661,6 @@ function flowStep3FiltersMatch(row: FlowSourceRow) {
 function clearFlowFilters() {
   flowFilterSourceTypes.value = []
   flowFilterSourceStatuses.value = []
-  flowFilterTaskType.value = ''
   flowFilterPolicyBinding.value = []
   flowFilterFileFilterBinding.value = []
   flowFilterBackupTaskStatuses.value = []
@@ -3618,6 +3671,15 @@ function clearFlowFilters() {
   flowFilterDirectoryQuery.value = ''
   flowFilterLastBackupMode.value = 'all'
   flowFilterLastBackupRange.value = null
+  step3SourceStatus.value = ''
+  step3Availability.value = ''
+  step3RunningTask.value = ''
+  step3AdvancedSourceName.value = ''
+  step3AdvancedHostname.value = ''
+  step3AdvancedIp.value = ''
+  step3BackupPolicyId.value = ''
+  step3FileFilterRuleId.value = ''
+  step3RepositoryId.value = ''
 }
 
 const filteredBackupSelectableRows = computed(() =>
@@ -3636,6 +3698,12 @@ const filteredStep2SourceList = computed(() => {
 const flowStep0DisplayTotal = computed(() => flowActiveFilterCount.value > 0 ? filteredBackupSelectableRows.value.length : backupSelectableCount.value)
 
 const filteredStep3SourceList = computed(() => {
+  if (flowMainStep.value === 2) {
+    return sourcePendingOps.injectPendingRows(
+      step3SourceList.value,
+      { activeRemovalNodeIds: wizardActiveRemovalNodeIds.value },
+    )
+  }
   const q = debouncedTaskSearchQuery.value
   return sourcePendingOps.injectPendingRows(
     step3SourceList.value
@@ -3685,12 +3753,27 @@ watch(debouncedTaskSearchQuery, () => {
   }
 })
 watch(
-  () => [
-    flowFilterTaskType.value,
-    flowFilterBackupTaskStatuses.value.join(','),
-  ],
+  () => flowFilterBackupTaskStatuses.value.join(','),
   () => {
     flowStep2Pager.page = 1
+  },
+)
+watch(
+  () => [
+    step3SourceStatus.value,
+    step3Availability.value,
+    step3RunningTask.value,
+    step3AdvancedSourceName.value,
+    step3AdvancedHostname.value,
+    step3AdvancedIp.value,
+    step3BackupPolicyId.value,
+    step3FileFilterRuleId.value,
+    step3RepositoryId.value,
+  ],
+  () => {
+    if (flowMainStep.value !== 2) return
+    flowStep2Pager.page = 1
+    void refreshFlowStepData(2)
   },
 )
 watch(
@@ -8869,43 +8952,68 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             v-model="taskSearchQuery"
             clearable
             size="small"
-            :placeholder="t('protection.listSearch.backupWizard')"
+            :placeholder="flowMainStep === 2 ? t('protection.backupsPage.step3SearchPlaceholder') : t('protection.listSearch.backupWizard')"
             class="hfl-list-search"
+            :class="{ 'hfl-list-search-group': flowMainStep === 2 }"
             @keyup.enter="applyTaskSearchImmediately"
             @clear="applyTaskSearchImmediately"
           >
-            <template #prefix>
+            <template v-if="flowMainStep === 2" #prepend>
+              <ElSelect v-model="step3SearchField" @change="onStep3SearchFieldChange">
+                <ElOption
+                  v-for="item in step3SearchFieldOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+            </template>
+            <template v-else #prefix>
               <Search :size="16" class="hfl-list-search__icon" />
             </template>
           </ElInput>
           <ElSelect
             v-if="flowMainStep === 2"
-            v-model="flowFilterTaskType"
+            v-model="step3SourceStatus"
             clearable
             size="small"
-            :placeholder="t('ops.task.filterType')"
+            :placeholder="t('protection.backupsPage.step3SourceStatus')"
             style="width: 130px"
           >
             <ElOption
-              v-for="item in flowTaskTypeFilterOptions"
+              v-for="item in step3SourceStatusOptions"
               :key="item.value"
-              :label="item.text"
+              :label="item.label"
               :value="item.value"
             />
           </ElSelect>
           <ElSelect
             v-if="flowMainStep === 2"
-            :model-value="flowFilterBackupTaskStatuses[0] || ''"
+            v-model="step3Availability"
             clearable
             size="small"
-            :placeholder="t('ops.task.filterStatus')"
+            :placeholder="t('protection.backupsPage.step3Availability')"
             style="width: 130px"
-            @update:model-value="setFlowBackupTaskStatusFilter"
           >
             <ElOption
-              v-for="item in flowBackupTaskStatusFilterOptions"
+              v-for="item in step3AvailabilityOptions"
               :key="item.value"
-              :label="item.text"
+              :label="item.label"
+              :value="item.value"
+            />
+          </ElSelect>
+          <ElSelect
+            v-if="flowMainStep === 2"
+            v-model="step3RunningTask"
+            clearable
+            size="small"
+            :placeholder="t('protection.backupsPage.step3RunningTask')"
+            style="width: 150px"
+          >
+            <ElOption
+              v-for="item in step3RunningTaskOptions"
+              :key="item.value"
+              :label="item.label"
               :value="item.value"
             />
           </ElSelect>
@@ -8964,6 +9072,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.colBackupSource') }}</span>
               <HflPopover
+                v-if="flowMainStep !== 2"
                 v-model:visible="flowHeaderFilterOpen.sourceType"
                 trigger="click"
                 placement="bottom"
@@ -9055,7 +9164,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.colStatus') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }" @click.stop>
                     <Filter :size="14" />
@@ -9144,7 +9253,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.colBackupSource') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.sourceType" trigger="click" placement="bottom" :width="224" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceType" trigger="click" placement="bottom" :width="224" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceType') }" @click.stop>
                     <Filter :size="14" />
@@ -9221,7 +9330,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.colStatus') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }" @click.stop>
                     <Filter :size="14" />
@@ -9313,7 +9422,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.colBackupSource') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.sourceType" trigger="click" placement="bottom" :width="224" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceType" trigger="click" placement="bottom" :width="224" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceType') }" @click.stop>
                     <Filter :size="14" />
@@ -9362,7 +9471,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.colStatus') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.sourceStatus" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('sourceStatus') }" @click.stop>
                     <Filter :size="14" />
@@ -9513,7 +9622,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.flowBackupColTargetRepo') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.repoHealth" trigger="click" placement="bottom" :width="224" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.repoHealth" trigger="click" placement="bottom" :width="224" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('repoHealth') }" @click.stop>
                     <Filter :size="14" />
@@ -9634,7 +9743,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.flowBackupColBoundBackupPolicy') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.policyBinding" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.policyBinding" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('policyBinding') }" @click.stop>
                     <Filter :size="14" />
@@ -9730,7 +9839,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           <template #header>
             <span class="flow-filterable-header">
               <span>{{ t('protection.backupsPage.flowBackupColBoundFileFilter') }}</span>
-              <HflPopover v-model:visible="flowHeaderFilterOpen.fileFilterBinding" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
+              <HflPopover v-if="flowMainStep !== 2" v-model:visible="flowHeaderFilterOpen.fileFilterBinding" trigger="click" placement="bottom" :width="210" popper-class="flow-header-filter-popper">
                 <template #reference>
                   <button type="button" class="flow-header-filter-trigger" :class="{ 'flow-header-filter-trigger--active': hasFlowHeaderFilterValue('fileFilterBinding') }" @click.stop>
                     <Filter :size="14" />
@@ -9851,7 +9960,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           class="hfl-list-footer__pagination"
           v-model:current-page="flowStep2Pager.page"
           v-model:page-size="flowStep2Pager.pageSize"
-          :total="step3SelectableCount || filteredStep3SourceList.length"
+          :total="step3SelectableCount"
         />
       </div>
       </div>
@@ -9875,6 +9984,61 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       </template>
       <div class="flow-filter-drawer">
         <div class="flow-filter-drawer__body scrollbar">
+          <template v-if="flowMainStep === 2">
+            <section class="flow-filter-section">
+              <h3>{{ t('protection.backupsPage.flowFilterSectionSource') }}</h3>
+              <p class="text-sm text-slate-500">
+                {{ t('protection.backupsPage.step3NasProxyHelp') }}
+              </p>
+              <ElForm label-position="top" class="flow-filter-form">
+                <ElFormItem :label="t('protection.backupsPage.step3SearchSourceName')">
+                  <ElInput v-model="step3AdvancedSourceName" clearable />
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.step3SearchHostname')">
+                  <ElInput v-model="step3AdvancedHostname" clearable />
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.step3SearchIp')">
+                  <ElInput v-model="step3AdvancedIp" clearable />
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.step3SourceStatus')">
+                  <ElSelect v-model="step3SourceStatus" clearable class="w-full">
+                    <ElOption v-for="item in step3SourceStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.step3Availability')">
+                  <ElSelect v-model="step3Availability" clearable class="w-full">
+                    <ElOption v-for="item in step3AvailabilityOptions" :key="item.value" :label="item.label" :value="item.value" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.step3RunningTask')">
+                  <ElSelect v-model="step3RunningTask" clearable class="w-full">
+                    <ElOption v-for="item in step3RunningTaskOptions" :key="item.value" :label="item.label" :value="item.value" />
+                  </ElSelect>
+                </ElFormItem>
+              </ElForm>
+            </section>
+            <section class="flow-filter-section flow-filter-section--divided">
+              <h3>{{ t('protection.backupsPage.flowFilterSectionTarget') }}</h3>
+              <ElForm label-position="top" class="flow-filter-form">
+                <ElFormItem :label="t('protection.backupsPage.flowFilterPolicyBinding')">
+                  <ElSelect v-model="step3BackupPolicyId" clearable filterable class="w-full">
+                    <ElOption v-for="item in step3BackupPolicyOptions" :key="item.id" :label="item.name" :value="item.id" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.flowFilterFileFilterBinding')">
+                  <ElSelect v-model="step3FileFilterRuleId" clearable filterable class="w-full">
+                    <ElOption v-for="item in step3FileFilterOptions" :key="item.id" :label="item.name" :value="item.id" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem :label="t('protection.backupsPage.flowFilterTargetRepo')">
+                  <ElSelect v-model="step3RepositoryId" clearable filterable class="w-full">
+                    <ElOption v-for="item in step3RepositoryOptions" :key="item.id" :label="item.name" :value="item.id" />
+                  </ElSelect>
+                </ElFormItem>
+              </ElForm>
+            </section>
+          </template>
+          <template v-else>
           <section class="flow-filter-section">
             <h3>{{ t('protection.backupsPage.flowFilterSectionSource') }}</h3>
             <ElForm label-position="top" class="flow-filter-form">
@@ -9991,6 +10155,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </ElFormItem>
           </ElForm>
           </section>
+          </template>
         </div>
       </div>
       <template #footer>

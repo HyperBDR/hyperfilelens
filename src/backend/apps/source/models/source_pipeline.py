@@ -1,6 +1,7 @@
 """Backup wizard pipeline step for real selectable sources (agent / NAS)."""
 
 from django.db import models
+from django.contrib.postgres.indexes import GinIndex
 from django.utils import timezone
 
 from apps.node.models.base import OrganizationScopedModel
@@ -39,6 +40,24 @@ class SourceBackupPipelineEntry(OrganizationScopedModel):
             )
         ]
         indexes = [
+            GinIndex(
+                fields=["source_name"],
+                name="src_pipe_name_trgm_idx",
+                opclasses=["gin_trgm_ops"],
+                condition=models.Q(is_deleted=False),
+            ),
+            GinIndex(
+                fields=["source_hostname"],
+                name="src_pipe_host_trgm_idx",
+                opclasses=["gin_trgm_ops"],
+                condition=models.Q(is_deleted=False),
+            ),
+            models.Index(
+                fields=["source_ip"],
+                name="src_pipe_ip_prefix_idx",
+                opclasses=["varchar_pattern_ops"],
+                condition=models.Q(is_deleted=False),
+            ),
             models.Index(
                 fields=["organization", "step", "-created_at", "-id"],
                 condition=models.Q(is_deleted=False),
@@ -52,6 +71,10 @@ class SourceBackupPipelineEntry(OrganizationScopedModel):
             models.Index(fields=["organization", "source_availability", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_org_avail_idx"),
             models.Index(fields=["organization", "last_backup_status", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_org_bkstat_idx"),
             models.Index(fields=["organization", "last_restore_status", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_org_rststat_idx"),
+            models.Index(fields=["organization", "step", "source_status", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_step_status_idx"),
+            models.Index(fields=["organization", "step", "source_availability", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_step_avail_idx"),
+            models.Index(fields=["organization", "step", "last_backup_status", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_step_bkstat_idx"),
+            models.Index(fields=["organization", "step", "last_restore_status", "-created_at", "-id"], condition=models.Q(is_deleted=False), name="src_pipe_step_rststat_idx"),
         ]
 
     def __str__(self) -> str:

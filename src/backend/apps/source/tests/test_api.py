@@ -559,6 +559,60 @@ class SourceResourceApiTests(TestCase):
         for row in by_ids.data["results"]:
             self.assertEqual(row["pipeline_step"], 1)
 
+    @override_settings(SOURCE_BACKUP_SELECTABLE_QUERY_MODE="pipeline")
+    def test_backup_selectable_pipeline_query_contract(self):
+        agent = Node.objects.create(
+            organization=self.org,
+            name="query-contract-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            availability=Node.Availability.ONLINE,
+            ip_address="198.51.100.42",
+            metadata={"inventory": {"hostname": "contract-host"}},
+        )
+        SourceBackupPipelineEntry.objects.create(
+            organization=self.org,
+            source_kind="agent",
+            ref_id=agent.id,
+            step=PipelineStep.READY,
+            source_name=agent.name,
+            source_hostname="contract-host",
+            source_ip="198.51.100.42",
+            source_status="online",
+            source_availability="online",
+            last_backup_status="running",
+        )
+        config = self._create_backup_config_for_agent(agent, name="query-contract")
+
+        response = self.client.get(
+            "/api/v1/source/backup-selectable/",
+            {
+                "page": 1,
+                "page_size": 10,
+                "step": 3,
+                "search": "contract-host",
+                "search_field": "source_hostname",
+                "availability": "online",
+                "running_task": "backup",
+                "repository_id": config.repository_id,
+            },
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["page"], 1)
+        self.assertEqual(response.data["page_size"], 10)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], f"agent:{agent.id}")
+
+    def test_backup_selectable_rejects_invalid_advanced_filters(self):
+        response = self.client.get(
+            "/api/v1/source/backup-selectable/?search_field=all&backup_running=maybe&repository_id=0",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_backup_selectable_step3_expand_includes_configured_source(self):
         agent = Node.objects.create(
             organization=self.org,
