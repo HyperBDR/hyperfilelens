@@ -666,7 +666,7 @@
   justify-content: flex-end;
 }
 
-.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note {
+.agent-install-wizard--source-host .install-flow-note {
   margin-top: 12px;
   padding: 12px 14px;
   border: 1px solid #f2f3f5;
@@ -674,7 +674,7 @@
   background: #f7f8fa;
 }
 
-.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__label {
+.agent-install-wizard--source-host .install-flow-note__label {
   margin: 0 0 10px;
   color: #1d2129;
   font-size: 13px;
@@ -683,25 +683,25 @@
   text-transform: none;
 }
 
-.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__steps {
+.agent-install-wizard--source-host .install-flow-note__steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px 16px;
 }
 
-.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step {
+.agent-install-wizard--source-host .install-flow-note__step {
   margin: 0;
   color: #4e5969;
   font-size: 12px;
   line-height: 1.5;
 }
 
-.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step:not(:first-child) {
+.agent-install-wizard--source-host .install-flow-note__step:not(:first-child) {
   border-left: 1px solid #e5e6eb;
   padding-left: 16px;
 }
 
-.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step strong {
+.agent-install-wizard--source-host .install-flow-note__step strong {
   display: block;
   margin-bottom: 2px;
   color: #1d2129;
@@ -728,12 +728,12 @@
     grid-template-columns: 1fr;
   }
 
-  .resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__steps {
+  .agent-install-wizard--source-host .install-flow-note__steps {
     grid-template-columns: 1fr;
     gap: 8px;
   }
 
-  .resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step:not(:first-child) {
+  .agent-install-wizard--source-host .install-flow-note__step:not(:first-child) {
     border-left: none;
     padding-left: 0;
     border-top: 1px solid #e5e6eb;

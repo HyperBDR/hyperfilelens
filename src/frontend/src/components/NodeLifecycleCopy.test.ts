@@ -55,4 +55,19 @@ describe('Node lifecycle copy', () => {
     expect(locale).not.toContain('installs left')
     expect(locale).not.toContain("generateNewInstallCommand: 'New command'")
   })
+
+  it('styles install-flow steps outside resource-add fullscreen layouts', () => {
+    const wizard = source('src/components/NodeLifecycleWizard.vue')
+    const css = source('src/styles/agent-install-wizard.css')
+
+    expect(wizard).toContain("t('nodeLifecycle.installFlowStepDownload')")
+    expect(wizard).toMatch(
+      /installFlowStepDownload[\s\S]*?<\/strong>\s*\n\s*\{\{ t\('nodeLifecycle\.installFlowDownload'\) \}\}/,
+    )
+    expect(css).toContain('.agent-install-wizard--source-host .install-flow-note__step strong')
+    expect(css).toContain('display: block')
+    expect(css).not.toContain(
+      '.resource-add-fullscreen .agent-install-wizard--source-host .install-flow-note__step strong',
+    )
+  })
 })
