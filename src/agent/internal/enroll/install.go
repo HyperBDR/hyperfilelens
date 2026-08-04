@@ -6,37 +6,48 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
+	"hyperfilelens/agent/internal/enrollmentclient"
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/platform/release"
-	"hyperfilelens/agent/internal/remote"
 )
 
 // RunInstall performs the full console enrollment pipeline.
 func RunInstall(ctx context.Context, opts InstallOptions) error {
+	if opts.Invalid != "" {
+		abortInstall("Initialization", opts.Invalid, 2, "HFL-INSTALL-OPTIONS")
+	}
+	if opts.Mode == InstallModeUninstall {
+		LoadInstalledCommandEnv()
+	}
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
-		logFail(err.Error(), 2)
+		abortInstall("Initialization", err.Error(), 2, "HFL-INSTALL-CONFIG")
 	}
+	if opts.Mode == InstallModeUninstall {
+		return runExplicitUninstall(ctx, cfg, opts)
+	}
+	existingNodeCredential := installedNodeCredential()
 
 	envReport, err := RunEnvironmentChecks(ctx, cfg)
 	if err != nil {
-		logFail(err.Error(), 1)
+		return err
 	}
+	cfg.InstallationID = envReport.InstallationID
 
 	state := envReport.Existing
 	agentVer := state.Version
-
-	if !state.Installed {
-		if err := installAgentPackage(ctx, cfg, &agentVer); err != nil {
+	plan := ReinstallPlan{Action: ActionFreshInstall}
+	if state.Installed {
+		plan, err = PlanInstall(ctx, cfg, state, opts.Mode)
+		if err != nil {
 			logFail(err.Error(), 3)
 		}
-		return finishEnrollment(ctx, cfg, agentVer)
-	}
-
-	plan, err := PlanReinstall(ctx, cfg, state)
-	if err != nil {
-		logFail(err.Error(), 3)
+	} else if opts.Mode != InstallModeAuto {
+		logFail(fmt.Sprintf("--%s requires an existing HyperFileLens Agent installation", opts.Mode), 2)
 	}
 
 	switch plan.Action {
@@ -50,30 +61,157 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			agentVer = ver
 		}
 		info := summaryFromState(cfg.APIBase, state.NodeID, agentVer, state.Service)
+		info.Role = roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
 		printAlreadyEnrolled(info)
 		return nil
 	}
-
 	if plan.NeedsConfirm {
 		if err := confirmAction(plan.ConfirmMessage, opts.AutoYes); err != nil {
 			logFail(err.Error(), 1)
 		}
 	}
+	commitInstallLog()
+	if err := persistInstallationID(cfg.InstallationID); err != nil {
+		logFail("Failed to persist the installation identity: "+err.Error(), 3)
+	}
+
+	session, err := enrollmentclient.OpenInstallationSession(
+		ctx,
+		cfg.AgentConfig(),
+		cfg.InstallationID,
+	)
+	if err != nil {
+		logFail("Installation session could not be started: "+err.Error(), 2)
+	}
+	cfg.NodeToken = session.Secret
+	sessionCompleted := false
+	configCommitted := false
+	var stagedConfig enrollmentEnvSnapshot
+	configStaged := false
+	restartAfterConfigRestore := false
+	defer func() {
+		if sessionCompleted {
+			return
+		}
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		if releaseErr := enrollmentclient.ReleaseInstallationSession(
+			releaseCtx,
+			cfg.AgentConfig(),
+			cfg.InstallationID,
+		); releaseErr != nil {
+			logWarn("Installation session release failed: " + releaseErr.Error())
+		}
+	}()
+	defer func() {
+		if !configStaged || configCommitted {
+			return
+		}
+		if restoreErr := stagedConfig.restore(); restoreErr != nil {
+			logWarn("Original Agent configuration could not be restored: " + restoreErr.Error())
+			return
+		}
+		logOK("Original Agent configuration was restored.")
+		if restartAfterConfigRestore {
+			restartCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if restartErr := RestartInstalledService(restartCtx); restartErr != nil {
+				logWarn("Agent service could not be restarted with the restored configuration: " + restartErr.Error())
+				return
+			}
+			logOK("Agent service was restarted with the restored configuration.")
+		}
+	}()
+	freshInstallAttempted := false
+	defer func() {
+		if plan.Action != ActionFreshInstall || !freshInstallAttempted || sessionCompleted {
+			return
+		}
+		logStep("Rolling back the incomplete Agent installation.")
+		if _, statErr := os.Stat(filepath.Join(install.DefaultInstallDir(), installerScriptName())); statErr != nil {
+			logSkip("No installed Agent bundle was available for rollback.")
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		// Keep the installation identity so a retry reuses the same console record.
+		if rollbackErr := install.RunRollbackIncompleteInstall(
+			rollbackCtx,
+			install.DefaultInstallDir(),
+		); rollbackErr != nil {
+			logWarn("Rollback did not complete: " + rollbackErr.Error())
+			return
+		}
+		logOK("Incomplete Agent installation was removed; installation identity and Agent data were preserved.")
+	}()
+	if session.GatewayScope != "" {
+		cfg.GatewayScope = session.GatewayScope
+		_ = os.Setenv("HFL_GATEWAY_SCOPE", session.GatewayScope)
+	}
+	stageExistingConfig := func() {
+		stagedConfig, err = captureEnrollmentEnv()
+		if err != nil {
+			logFail("Existing Agent configuration could not be preserved: "+err.Error(), 3)
+		}
+		if err := refreshAgentConfig(cfg); err != nil {
+			logFail(err.Error(), 3)
+		}
+		configStaged = true
+	}
+	markEnrollmentComplete := func() {
+		sessionCompleted = true
+		configCommitted = true
+	}
+	rememberIssuedCredential := func(credential string) {
+		if configStaged {
+			if !stagedConfig.exists {
+				recovery, captureErr := captureEnrollmentEnv()
+				if captureErr != nil {
+					logWarn("Credential recovery configuration could not be captured: " + captureErr.Error())
+					return
+				}
+				stagedConfig = recovery
+			}
+			stagedConfig = stagedConfig.withNodeCredential(credential)
+			stagedConfig = stagedConfig.withInstallationID(cfg.InstallationID)
+		}
+	}
+
+	if plan.Action == ActionFreshInstall {
+		freshInstallAttempted = true
+		if err := installAgentPackage(ctx, cfg, &agentVer); err != nil {
+			logFail(err.Error(), 3)
+		}
+		err = finishEnrollment(
+			ctx,
+			cfg,
+			agentVer,
+			existingNodeCredential,
+			nil,
+			markEnrollmentComplete,
+		)
+		return err
+	}
 
 	switch plan.Action {
 	case ActionRepair:
-		if err := refreshAgentConfig(cfg); err != nil {
-			logFail(err.Error(), 3)
-		}
+		stageExistingConfig()
 		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
 			agentVer = ver
 		}
-		return finishEnrollment(ctx, cfg, agentVer)
+		err = finishEnrollment(
+			ctx,
+			cfg,
+			agentVer,
+			existingNodeCredential,
+			rememberIssuedCredential,
+			markEnrollmentComplete,
+		)
+		return err
 
-	case ActionUpgrade:
-		if err := refreshAgentConfig(cfg); err != nil {
-			logFail(err.Error(), 3)
-		}
+	case ActionUpgrade, ActionReinstall:
+		stageExistingConfig()
+		restartAfterConfigRestore = true
 		dl := plan.DownloadURL
 		releaseVer := plan.ReleaseVersion
 		if dl == "" {
@@ -93,19 +231,64 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 		} else if releaseVer != "" {
 			agentVer = releaseVer
 		}
-		return finishEnrollment(ctx, cfg, agentVer)
+		err = finishEnrollment(
+			ctx,
+			cfg,
+			agentVer,
+			existingNodeCredential,
+			rememberIssuedCredential,
+			markEnrollmentComplete,
+		)
+		return err
 
 	case ActionRebind:
-		if err := refreshAgentConfig(cfg); err != nil {
-			logFail(err.Error(), 3)
-		}
+		stageExistingConfig()
 		if ver, verErr := InstalledAgentVersion(ctx); verErr == nil && ver != "" {
 			agentVer = ver
 		}
-		return finishEnrollment(ctx, cfg, agentVer)
+		err = finishEnrollment(
+			ctx,
+			cfg,
+			agentVer,
+			existingNodeCredential,
+			rememberIssuedCredential,
+			markEnrollmentComplete,
+		)
+		return err
 	}
 
 	logFail("Unsupported reinstall action.", 3)
+	return nil
+}
+
+func runExplicitUninstall(ctx context.Context, cfg Config, opts InstallOptions) error {
+	state := DetectInstallState()
+	if !state.Installed {
+		logSkip("No HyperFileLens Agent installation was found.")
+		return nil
+	}
+	if state.OrgKey != "" && !strings.EqualFold(state.OrgKey, cfg.OrgKey) {
+		logFail("This Agent belongs to a different organization. Use its original installation environment to uninstall it.", 1)
+	}
+	message := "Uninstall the HyperFileLens Agent and preserve its data directory?"
+	if opts.PurgeAll {
+		message = "Uninstall the HyperFileLens Agent and permanently remove its managed data?"
+	}
+	if err := confirmAction(message, opts.AutoYes); err != nil {
+		logFail(err.Error(), 1)
+	}
+	if cfg.NodeRole == model.RoleGateway {
+		return RunGatewayUninstall(ctx, opts.PurgeAll)
+	}
+	logStep("Removing the HyperFileLens Agent.")
+	if err := install.RunUninstallWithDataPolicy(
+		ctx,
+		install.DefaultInstallDir(),
+		!opts.PurgeAll,
+	); err != nil {
+		return err
+	}
+	logOK("HyperFileLens Agent uninstall completed.")
 	return nil
 }
 
@@ -118,14 +301,23 @@ func validateInstalledAgent(ctx context.Context) error {
 
 func refreshAgentConfig(cfg Config) error {
 	logStep("Refreshing agent configuration.")
-	if err := WriteEnrollmentEnv(cfg); err != nil {
+	// Keep durable credentials on disk. The installation session secret remains
+	// in-memory for registration/download calls while the Agent may still run.
+	if err := syncEnrollmentConsoleSettings(cfg); err != nil {
 		return err
 	}
 	logOK("Agent configuration was refreshed successfully.")
 	return nil
 }
 
-func finishEnrollment(ctx context.Context, cfg Config, agentVer string) error {
+func finishEnrollment(
+	ctx context.Context,
+	cfg Config,
+	agentVer string,
+	existingNodeCredential string,
+	onCredentialIssued func(string),
+	onRegistered func(),
+) error {
 	if err := validateInstalledAgent(ctx); err != nil {
 		logFail(err.Error(), 3)
 	}
@@ -133,16 +325,28 @@ func finishEnrollment(ctx context.Context, cfg Config, agentVer string) error {
 
 	logStep("Registering node with the console.")
 	agentCfg := cfg.AgentConfig()
-	nodeID, err := remote.RegisterNodeHTTP(ctx, agentCfg, agentVer)
+	// Enrollment sessions bind to the identity for this installation lifetime.
+	// Omitting a stale node id keeps repair, upgrade, and rebind on the
+	// enrollment path; regular Agent heartbeats use their persisted node id.
+	agentCfg.NodeID = ""
+	if err := WriteInstallationID(EnvFilePath(), cfg.InstallationID); err != nil {
+		logFail("Failed to persist the installation identity: "+err.Error(), 5)
+	}
+	registration, err := enrollmentclient.RegisterNodeHTTP(
+		ctx,
+		agentCfg,
+		agentVer,
+		existingNodeCredential,
+	)
+	nodeID := registration.NodeID
 	if err != nil {
-		if remote.IsInvalidEnrollmentToken(err) && agentCfg.NodeID != "" {
-			nodeID = agentCfg.NodeID
-			logOK(fmt.Sprintf("Using existing node %s because this enrollment link was already used.", nodeID))
-		} else if remote.IsInvalidEnrollmentToken(err) {
-			state := DetectInstallState()
-			info := summaryFromState(cfg.APIBase, state.NodeID, state.Version, state.Service)
-			printTokenAlreadyUsed(info)
-			return nil
+		if enrollmentclient.IsInvalidEnrollmentToken(err) {
+			abortInstall(
+				"Registration",
+				"The installation authorization expired or was revoked. Generate a new installation command and try again.",
+				5,
+				"HFL-REGISTER-005",
+			)
 		} else {
 			logFail("Node registration failed: "+err.Error(), 5)
 		}
@@ -151,8 +355,30 @@ func finishEnrollment(ctx context.Context, cfg Config, agentVer string) error {
 	}
 
 	envPath := EnvFilePath()
+	if registration.CredentialReused {
+		if strings.TrimSpace(existingNodeCredential) == "" {
+			logFail("Console reported credential reuse, but no existing node credential is available", 5)
+		}
+		if err := WriteNodeCredential(envPath, existingNodeCredential); err != nil {
+			logFail("Failed to restore the existing node credential: "+err.Error(), 5)
+		}
+		cfg.NodeToken = existingNodeCredential
+		agentCfg.NodeToken = existingNodeCredential
+	} else if registration.NodeCredential != "" {
+		if onCredentialIssued != nil {
+			onCredentialIssued(registration.NodeCredential)
+		}
+		if err := WriteNodeCredential(envPath, registration.NodeCredential); err != nil {
+			logFail("Failed to persist the node credential: "+err.Error(), 5)
+		}
+		cfg.NodeToken = registration.NodeCredential
+		agentCfg.NodeToken = registration.NodeCredential
+	}
 	if err := WriteNodeID(envPath, nodeID); err != nil {
 		logFail("Failed to update agent.env: "+err.Error(), 5)
+	}
+	if onRegistered != nil {
+		onRegistered()
 	}
 
 	logStep("Starting the agent service.")
@@ -165,10 +391,31 @@ func finishEnrollment(ctx context.Context, cfg Config, agentVer string) error {
 		service = "active"
 	}
 	logOK(fmt.Sprintf("Agent service is %s.", service))
+	logStep("Waiting for the Agent to come online")
+	if err := enrollmentclient.WaitNodeOnline(ctx, agentCfg, nodeID, 30*time.Second); err != nil {
+		abortInstall(
+			"Post-install verification",
+			"The Agent could not establish a control-plane WebSocket connection: "+err.Error(),
+			3,
+			"HFL-VERIFY-003",
+		)
+	}
+	logOK("Node is online in HyperFileLens")
 
 	info := summaryFromState(cfg.APIBase, nodeID, agentVer, service)
+	info.Role = roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
+	if cfg.NodeRole == model.RoleGateway {
+		return nil
+	}
 	printEnrollmentSuccess(info)
 	return nil
+}
+
+func installerScriptName() string {
+	if runtime.GOOS == "windows" {
+		return "install.ps1"
+	}
+	return "install.sh"
 }
 
 func installAgentPackage(ctx context.Context, cfg Config, agentVer *string) error {

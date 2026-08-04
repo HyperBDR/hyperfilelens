@@ -89,6 +89,17 @@ class NodeHeartbeatSerializer(serializers.Serializer):
     """Agent HTTP heartbeat payload (``NodeViewSet.heartbeat``)."""
 
     node_id = serializers.IntegerField(required=False)
+    installation_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=128,
+    )
+    existing_node_credential = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=256,
+        write_only=True,
+    )
     name = serializers.CharField(required=False, allow_blank=True)
     role = serializers.ChoiceField(choices=Node.Role.choices)
     version = serializers.CharField(required=False, allow_blank=True)

@@ -38,6 +38,27 @@ func TestInstallPs1SafeDataPathRequiresHyperFileLensDescendant(t *testing.T) {
 	}
 }
 
+func TestInstallPs1RetiresIdentityBeforeRemovingAgent(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	retire := `& $agentBinary config retire-installation --data-dir $dataRoot`
+	remove := `Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent.exe")`
+	if !strings.Contains(source, retire) {
+		t.Fatalf("install.ps1 missing %q", retire)
+	}
+	if strings.Index(source, retire) > strings.Index(source, remove) {
+		t.Fatal("install.ps1 removes hfl-agent before retiring installation identity")
+	}
+	if !strings.Contains(source, "the next install will create a new console record") {
+		t.Fatal("install.ps1 does not explain the new-record uninstall behavior")
+	}
+	if !strings.Contains(source, "-KeepInstallationIdentity") {
+		t.Fatal("install.ps1 missing incomplete-install rollback flag")
+	}
+	if !strings.Contains(source, `(-not $PurgeAll) -and (-not $KeepInstallationIdentity)`) {
+		t.Fatal("install.ps1 must skip identity retirement during incomplete-install rollback")
+	}
+}
+
 func readPackagingInstallScript(t *testing.T) string {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)

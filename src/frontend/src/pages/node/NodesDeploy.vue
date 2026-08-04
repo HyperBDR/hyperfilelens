@@ -40,13 +40,21 @@ const backTarget = computed(() => normalizeReturnTo(route.query.returnTo) || bac
 
 const deployPageTitle = computed(() => {
   if (isProxyDeployment.value) return t('nodesDeploy.pageTitleProxy')
-  if (isGatewayDeployment.value) return t('nodesDeploy.pageTitleGateway')
+  if (isGatewayDeployment.value) {
+    return gatewayScope.value === 'platform'
+      ? t('nodesDeploy.pageTitlePublicGateway')
+      : t('nodesDeploy.pageTitlePrivateGateway')
+  }
   return t('nodesDeploy.pageTitle')
 })
 
 const deployPageDesc = computed(() => {
   if (isProxyDeployment.value) return t('nodesDeploy.proxyIntroDesc')
-  if (isGatewayDeployment.value) return t('nodesDeploy.gatewayIntroDesc')
+  if (isGatewayDeployment.value) {
+    return gatewayScope.value === 'platform'
+      ? t('nodesDeploy.publicGatewayIntroDesc')
+      : t('nodesDeploy.privateGatewayIntroDesc')
+  }
   return t('nodesDeploy.enrollHint')
 })
 

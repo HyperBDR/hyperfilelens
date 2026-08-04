@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/tlsclient"
 )
 
 const (
@@ -38,6 +40,122 @@ type lensSidecarRuntime struct {
 	healthy        func() bool
 	ensureImage    func(context.Context, Config) error
 	installSidecar func(context.Context, Config) error
+}
+
+func checkGatewayRuntimePreflight(ctx context.Context, cfg Config) gatewayRuntimePreflightResult {
+	dockerReady := dockerRuntimeReady()
+	if !dockerReady {
+		if _, err := exec.LookPath("docker"); err == nil {
+			return gatewayRuntimePreflightResult{Err: fmt.Errorf(
+				"Docker is installed but does not meet the requirements (engine >= %s, Compose v2 >= %s, reachable daemon); HyperFileLens will not repair or replace it",
+				gatewayMinDockerEngine,
+				gatewayMinDockerCompose,
+			)}
+		}
+	}
+
+	names := []string{lensSidecarScript, lensnodeImageArchive}
+	if !dockerReady {
+		names = append(names, gatewayDockerInstallScript)
+		archive := gatewayDockerArchiveName()
+		if archive == "" {
+			return gatewayRuntimePreflightResult{Err: fmt.Errorf(
+				"no offline Docker bundle is available for this Ubuntu release",
+			)}
+		}
+		names = append(names, archive)
+	}
+
+	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/") + "/media/gateway-bootstrap/"
+	var downloadBytes uint64
+	for _, name := range names {
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, base+name, nil)
+		if err != nil {
+			return gatewayRuntimePreflightResult{Err: err}
+		}
+		client := &http.Client{Timeout: 20 * time.Second}
+		if tlsclient.InsecureTLSEnabled() {
+			client.Transport = tlsclient.Transport()
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return gatewayRuntimePreflightResult{Err: fmt.Errorf("%s is unavailable: %w", name, err)}
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+			return gatewayRuntimePreflightResult{Err: fmt.Errorf("%s returned HTTP %s", name, resp.Status)}
+		}
+		if resp.ContentLength > 0 {
+			downloadBytes += uint64(resp.ContentLength)
+		}
+	}
+
+	if dockerReady {
+		warnings := []string{}
+		if state := existingLensSidecarState(); state != "" && state != "running (healthy)" && state != "running" {
+			warnings = append(warnings, "existing LensNode container is "+state+"; repair or reinstall will be attempted")
+		}
+		return gatewayRuntimePreflightResult{
+			ExistingDocker: true,
+			Detail: fmt.Sprintf(
+				"Docker engine %s and Compose %s will be reused; LensNode artifacts are available",
+				dockerEngineVersion(),
+				dockerComposeVersion(),
+			),
+			RequiredSpace: downloadBytes * 3,
+			Warnings:      warnings,
+		}
+	}
+	return gatewayRuntimePreflightResult{
+		Detail:        "Docker is not installed; verified offline Docker and LensNode bundles will be used",
+		RequiredSpace: downloadBytes * 3,
+	}
+}
+
+func existingLensSidecarState() string {
+	for _, name := range []string{
+		"hyperfilelens-gateway-lensnode-1",
+		"hyperfilelens-gateway_lensnode_1",
+	} {
+		out, err := exec.Command(
+			"docker", "inspect", "--format",
+			"{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+			name,
+		).Output()
+		if err != nil {
+			continue
+		}
+		fields := strings.Fields(string(out))
+		if len(fields) == 0 {
+			return "unknown"
+		}
+		if len(fields) > 1 {
+			return fields[0] + " (" + fields[1] + ")"
+		}
+		return fields[0]
+	}
+	return ""
+}
+
+func gatewayDockerArchiveName() string {
+	raw, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "VERSION_ID=") {
+			continue
+		}
+		switch strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), `"`) {
+		case "20.04":
+			return "docker-debs-ubuntu2004-amd64.tar.gz"
+		case "22.04":
+			return "docker-debs-ubuntu2204-amd64.tar.gz"
+		case "24.04":
+			return "docker-debs-ubuntu2404-amd64.tar.gz"
+		}
+	}
+	return ""
 }
 
 func defaultLensSidecarRuntime() lensSidecarRuntime {

@@ -122,6 +122,15 @@
   line-height: 1.35;
 }
 
+.resource-add-fullscreen .agent-install-wizard__token-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #a9b0bc;
+  white-space: nowrap;
+}
+
 .resource-add-fullscreen .agent-install-wizard__console-body {
   position: relative;
   min-height: 88px;
@@ -166,6 +175,24 @@
 
 .resource-add-fullscreen .agent-install-wizard__copy-btn {
   flex-shrink: 0;
+}
+
+@media (max-width: 767.98px) {
+  .resource-add-fullscreen .agent-install-wizard__console-bar,
+  .resource-add-fullscreen .agent-install-wizard__console-foot {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard__token-status {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .resource-add-fullscreen .agent-install-wizard__command-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 .resource-add-fullscreen .agent-install-wizard__warn {

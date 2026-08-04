@@ -31,6 +31,8 @@ import hashlib
 import json
 import pathlib
 import sys
+import tarfile
+import zipfile
 
 root = pathlib.Path(sys.argv[1])
 manifest = json.loads((root / "MANIFEST.json").read_text(encoding="utf-8"))
@@ -55,9 +57,60 @@ for artifact in tls_artifacts.values():
         raise SystemExit(f"default TLS checksum mismatch: {artifact['file']}")
 if len(tls_artifacts) != 3:
     raise SystemExit("release manifest must describe three default TLS artifacts")
+
+installer_root = root / "payload" / "media" / "enroll-bootstrap"
+installer_manifest_path = installer_root / "INSTALLER_MANIFEST.json"
+if not installer_manifest_path.is_file():
+    raise SystemExit("missing minimal installer manifest")
+installer_manifest = json.loads(installer_manifest_path.read_text(encoding="utf-8"))
+if installer_manifest.get("schema_version") != 1:
+    raise SystemExit("unsupported minimal installer manifest schema")
+expected_installers = {
+    "linux-amd64",
+    "linux-arm64",
+    "darwin-amd64",
+    "darwin-arm64",
+    "windows-amd64",
+}
+max_installer_bytes = 3_670_016
+installers = installer_manifest.get("artifacts") or {}
+if set(installers) != expected_installers:
+    raise SystemExit("minimal installer manifest does not contain the complete platform matrix")
+release_id = (root / "VERSION").read_text(encoding="utf-8").strip()
+for key, artifact in installers.items():
+    extension = "zip" if key.startswith("windows-") else "tar.gz"
+    expected_filename = f"{release_id}/hfl-installer-{key}.{extension}"
+    if artifact.get("filename") != expected_filename:
+        raise SystemExit(f"invalid minimal installer path: {artifact.get('filename')}")
+    path = installer_root / artifact["filename"]
+    if not path.is_file():
+        raise SystemExit(f"missing minimal installer archive: {artifact['filename']}")
+    if path.stat().st_size != artifact.get("size"):
+        raise SystemExit(f"minimal installer size mismatch: {artifact['filename']}")
+    if path.stat().st_size > max_installer_bytes:
+        raise SystemExit(
+            f"minimal installer exceeds 3.5 MiB: {artifact['filename']} "
+            f"({path.stat().st_size} bytes)"
+        )
+    if hashlib.sha256(path.read_bytes()).hexdigest() != artifact.get("sha256"):
+        raise SystemExit(f"minimal installer checksum mismatch: {artifact['filename']}")
+    if key.startswith("windows-"):
+        with zipfile.ZipFile(path) as archive:
+            if archive.namelist() != ["hfl-enroll.exe"]:
+                raise SystemExit(f"invalid Windows minimal installer layout: {artifact['filename']}")
+    else:
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+            if len(members) != 1 or members[0].name != "hfl-enroll":
+                raise SystemExit(f"invalid POSIX minimal installer layout: {artifact['filename']}")
+            if not members[0].isfile():
+                raise SystemExit(f"minimal installer is not a regular file: {artifact['filename']}")
+            if members[0].mode & 0o111 == 0:
+                raise SystemExit(f"minimal installer is not executable: {artifact['filename']}")
 print(
     f"verified {len(manifest.get('images', []))} image archives "
-    f"and {len(tls_artifacts)} default TLS artifacts"
+    f"and {len(tls_artifacts)} default TLS artifacts; "
+    f"verified {len(installers)} minimal installers"
 )
 PY
 

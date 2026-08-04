@@ -16,7 +16,9 @@ var Registry = []Field{
 	{Env: "HFL_CONTROL_PLANE_API", Key: "api_base_url", Persistent: false, Description: "Alias for HFL_API_BASE"},
 	{Env: "HFL_ORG_KEY", Key: "org_key", Persistent: true, Description: "Organization enrollment key"},
 	{Env: "HFL_NODE_ID", Key: "node_id", Persistent: true, Description: "Known node ID"},
-	{Env: "HFL_NODE_TOKEN", Key: "node_token", Secret: true, Persistent: true, Description: "Node enrollment token"},
+	{Env: "HFL_INSTALLATION_ID", Key: "installation_id", Persistent: true, Description: "Current installation identity"},
+	{Env: "HFL_NODE_CREDENTIAL", Key: "node_token", Secret: true, Persistent: true, Description: "Long-lived node credential"},
+	{Env: "HFL_NODE_TOKEN", Key: "node_token", Secret: true, Persistent: false, Description: "Legacy enrollment or installation-session credential"},
 	{Env: "HFL_DATA_DIR", Key: "data_dir", Persistent: true, Description: "Agent state directory"},
 	{Env: "HFL_LOG_DIR", Key: "log_dir", Persistent: true, Description: "Rolling log directory"},
 	{Env: "HFL_KOPIA_PATH", Key: "kopia_path", Persistent: true, Description: "Kopia CLI absolute path"},
@@ -26,7 +28,7 @@ var Registry = []Field{
 
 func envByKey(key string) string {
 	for _, f := range Registry {
-		if f.Key == key && f.Env != "HFL_CONTROL_PLANE_API" {
+		if f.Key == key && f.Persistent {
 			return f.Env
 		}
 	}

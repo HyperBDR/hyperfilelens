@@ -10,7 +10,7 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 )
 
-const minEnrollmentFreeBytes = 200 * 1024 * 1024
+const defaultEnrollmentRequiredBytes = 500 * 1024 * 1024
 
 type diskCheckResult struct {
 	OK      bool
@@ -19,32 +19,51 @@ type diskCheckResult struct {
 	Detail  string
 }
 
-func checkEnrollmentDiskSpace() diskCheckResult {
+func checkEnrollmentDiskSpace(requiredValues ...uint64) diskCheckResult {
+	required := uint64(defaultEnrollmentRequiredBytes)
+	if len(requiredValues) > 0 && requiredValues[0] > required {
+		required = requiredValues[0]
+	}
 	paths := enrollmentDiskPaths()
 	var lowParts []string
+	var inodeParts []string
+	var noExecParts []string
 	var okParts []string
 	checked := 0
 
 	for _, path := range paths {
 		checkPath := diskCheckPath(path)
-		free, err := freeBytes(checkPath)
+		usage, err := disk.Usage(checkPath)
 		if err != nil {
 			continue
 		}
 		checked++
 		label := diskPathLabel(path)
-		part := fmt.Sprintf("%s %s free", label, humanBytes(free))
-		if free < minEnrollmentFreeBytes {
+		part := fmt.Sprintf("%s %s free", label, humanBytes(usage.Free))
+		if usage.Free < required {
 			lowParts = append(lowParts, part)
 		} else {
 			okParts = append(okParts, part)
 		}
+		if usage.InodesTotal > 0 {
+			if usage.InodesFree < 1024 {
+				inodeParts = append(inodeParts, fmt.Sprintf("%s %d inodes free", label, usage.InodesFree))
+			} else {
+				okParts = append(okParts, fmt.Sprintf("%s %d inodes free", label, usage.InodesFree))
+			}
+		}
+		if noExec, mount := pathOnNoExecMount(checkPath); path == defaultInstallPath() && noExec {
+			noExecParts = append(noExecParts, fmt.Sprintf("%s is mounted noexec (%s)", label, mount))
+		}
 	}
 
-	if len(lowParts) > 0 {
+	if len(lowParts) > 0 || len(inodeParts) > 0 || len(noExecParts) > 0 {
+		problems := append([]string{}, lowParts...)
+		problems = append(problems, inodeParts...)
+		problems = append(problems, noExecParts...)
 		return diskCheckResult{
-			Title:  "Disk space insufficient",
-			Detail: strings.Join(lowParts, ", ") + fmt.Sprintf("; need %s each", humanBytes(minEnrollmentFreeBytes)),
+			Title:  "Filesystem requirements are not met",
+			Detail: strings.Join(problems, ", ") + fmt.Sprintf("; need %s and at least 1024 free inodes", humanBytes(required)),
 		}
 	}
 	if checked == 0 {
@@ -112,14 +131,6 @@ func enrollmentDiskPaths() []string {
 	return []string{installDir, dataDir, tmp}
 }
 
-func freeBytes(path string) (uint64, error) {
-	usage, err := disk.Usage(path)
-	if err != nil {
-		return 0, err
-	}
-	return usage.Free, nil
-}
-
 func humanBytes(n uint64) string {
 	const unit = 1024
 	if n < unit {
@@ -136,13 +147,13 @@ func humanBytes(n uint64) string {
 	return fmt.Sprintf("%.1f %s", val, suffix[exp])
 }
 
-func logDiskResult(r diskCheckResult) {
+func logDiskResult(r diskCheckResult, failures *preflightFailures) {
 	switch {
 	case r.OK:
 		logOKDetail(r.Title, r.Detail)
 	case r.Warning:
 		logWarnDetail(r.Title, r.Detail)
 	default:
-		logFailDetail(r.Title, r.Detail, 2)
+		failures.add(r.Title, r.Detail, 2)
 	}
 }

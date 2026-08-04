@@ -37,6 +37,8 @@ func applyEnvMap(cfg *model.AgentConfig, values map[string]string) {
 			cfg.OrgKey = val
 		case "node_id":
 			cfg.NodeID = val
+		case "installation_id":
+			cfg.InstallationID = val
 		case "node_token":
 			cfg.NodeToken = val
 		case "data_dir":
@@ -108,6 +110,7 @@ func configToEnvMap(cfg *model.AgentConfig) map[string]string {
 	set("api_base_url", cfg.APIBaseURL)
 	set("org_key", cfg.OrgKey)
 	set("node_id", cfg.NodeID)
+	set("installation_id", cfg.InstallationID)
 	set("node_token", cfg.NodeToken)
 	set("data_dir", cfg.DataDir)
 	set("log_dir", cfg.LogDir)

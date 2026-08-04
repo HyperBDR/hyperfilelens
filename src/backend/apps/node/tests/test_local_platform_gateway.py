@@ -130,8 +130,11 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         )
         first_response = NodeViewSet.as_view({"post": "heartbeat"})(first_request)
         self.assertEqual(first_response.status_code, 200)
+        node_credential = first_response.data["node_credential"]
         node = Node.objects.get(pk=first_response.data["node_id"])
-        self.assertEqual(node.metadata["install_key"], LOCAL_PLATFORM_GATEWAY_INSTALL_KEY)
+        self.assertEqual(
+            node.metadata["install_key"], LOCAL_PLATFORM_GATEWAY_INSTALL_KEY
+        )
 
         second_request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
@@ -145,12 +148,14 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
             },
             format="json",
             HTTP_X_ORG_KEY=token.organization.key,
-            HTTP_X_NODE_TOKEN=token.token,
+            HTTP_X_NODE_TOKEN=node_credential,
         )
         second_response = NodeViewSet.as_view({"post": "heartbeat"})(second_request)
         self.assertEqual(second_response.status_code, 200)
         node.refresh_from_db()
-        self.assertEqual(node.metadata["install_key"], LOCAL_PLATFORM_GATEWAY_INSTALL_KEY)
+        self.assertEqual(
+            node.metadata["install_key"], LOCAL_PLATFORM_GATEWAY_INSTALL_KEY
+        )
         self.assertEqual(node.metadata["agent_version"], "1.0.0")
         self.assertEqual(
             mock_provision.call_args_list[0].kwargs["scope"],
@@ -244,7 +249,9 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
             "token": "lensnode-token",
         },
     )
-    def test_installer_gateway_does_not_override_existing_platform_default(self, _mock_sl):
+    def test_installer_gateway_does_not_override_existing_platform_default(
+        self, _mock_sl
+    ):
         org = platform_lens.get_or_create_platform_org()
         current_gateway = Node.objects.create(
             organization=org,

@@ -97,8 +97,8 @@ UPLINK_DLQ_MIN_AGE_SECONDS = 3_600
 TASK_UPLINK_PROJECTION_GRACE_SECONDS = 30
 TASK_RESULT_UPLINK_PROJECTION_GRACE_SECONDS = 300
 
-# Default enrollment install-link lifetime (seconds). Set 0 to disable auto-expiry.
+# Enrollment install-link lifetime.
 ENROLLMENT_TOKEN_TTL_SECONDS = env_int(
     "ENROLLMENT_TOKEN_TTL_SECONDS",
-    7 * 24 * 3600,
+    24 * 3600,
 )

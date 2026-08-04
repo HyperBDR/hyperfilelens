@@ -53,6 +53,22 @@ func TestPlanReinstallCrossOrg(t *testing.T) {
 	}
 }
 
+func TestPlanReinstallRejectsRoleReplacement(t *testing.T) {
+	_, err := PlanReinstall(t.Context(), Config{
+		OrgKey:   "org-a",
+		NodeRole: model.RoleGateway,
+	}, InstallState{
+		Installed: true,
+		OrgKey:    "org-a",
+		Role:      string(model.RoleAgent),
+		NodeID:    "1",
+		Service:   "active",
+	})
+	if err == nil {
+		t.Fatal("expected cross-role replacement to be rejected")
+	}
+}
+
 func TestPlanReinstallAlreadyEnrolled(t *testing.T) {
 	plan, err := PlanReinstall(t.Context(), Config{OrgKey: "org-a"}, InstallState{
 		Installed: true,

@@ -2,13 +2,14 @@ package enroll
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"hyperfilelens/agent/internal/platform/tlsclient"
 )
@@ -45,9 +46,8 @@ func checkConsoleReachable(ctx context.Context, apiBase string) reachResult {
 	healthURL := base + "/api/v1/node/health"
 	if base == "" {
 		return reachResult{
-			Warning: true,
-			Title:   "Console API reachability inconclusive",
-			Detail:  "no console URL configured",
+			Title:  "Console API URL is not configured",
+			Detail: "no console URL configured",
 		}
 	}
 
@@ -56,23 +56,21 @@ func checkConsoleReachable(ctx context.Context, apiBase string) reachResult {
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		return reachResult{
-			Warning: true,
-			Title:   "Console API reachability inconclusive",
-			Detail:  healthURL,
+			Title:  "Console API URL is invalid",
+			Detail: healthURL,
 		}
 	}
 
 	client := &http.Client{Timeout: 8 * time.Second}
 	if tlsclient.InsecureTLSEnabled() {
-		client.Transport = &http.Transport{TLSClientConfig: tlsclient.Config()}
+		client.Transport = tlsclient.Transport()
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return reachResult{
-			Warning: true,
-			Title:   "Console API is unreachable",
-			Detail:  fmt.Sprintf("GET %s — %s", healthURL, shortenErr(err)),
+			Title:  "Console API is unreachable",
+			Detail: fmt.Sprintf("GET %s - %s", healthURL, shortenErr(err)),
 		}
 	}
 	resp.Body.Close()
@@ -81,13 +79,12 @@ func checkConsoleReachable(ctx context.Context, apiBase string) reachResult {
 		return reachResult{
 			OK:     true,
 			Title:  "Console API is reachable",
-			Detail: fmt.Sprintf("GET %s → %d", healthURL, resp.StatusCode),
+			Detail: fmt.Sprintf("GET %s returned %d", healthURL, resp.StatusCode),
 		}
 	}
 	return reachResult{
-		Warning: true,
-		Title:   "Console API unreachable",
-		Detail:  fmt.Sprintf("GET %s → %d", healthURL, resp.StatusCode),
+		Title:  "Console API is unreachable",
+		Detail: fmt.Sprintf("GET %s returned %d", healthURL, resp.StatusCode),
 	}
 }
 
@@ -95,18 +92,16 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 	wssURL = strings.TrimSpace(wssURL)
 	if wssURL == "" {
 		return reachResult{
-			Warning: true,
-			Title:   "WebSocket reachability inconclusive",
-			Detail:  "control plane URL not configured",
+			Title:  "Control-plane WebSocket URL is not configured",
+			Detail: "control plane URL not configured",
 		}
 	}
 
 	parsed, err := url.Parse(wssURL)
 	if err != nil || parsed.Host == "" {
 		return reachResult{
-			Warning: true,
-			Title:   "WebSocket reachability inconclusive",
-			Detail:  wssURL,
+			Title:  "Control-plane WebSocket URL is invalid",
+			Detail: wssURL,
 		}
 	}
 
@@ -114,55 +109,53 @@ func checkWSSReachable(ctx context.Context, wssURL string) reachResult {
 	dialCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	host := websocketDialAddress(parsed)
-	dialer := net.Dialer{Timeout: 8 * time.Second}
+	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
+		return reachResult{
+			Title:  "Control-plane WebSocket scheme is unsupported",
+			Detail: wssURL,
+		}
+	}
 
-	switch parsed.Scheme {
-	case "wss":
-		tlsConfig := tlsclient.Config()
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-		} else {
-			tlsConfig = tlsConfig.Clone()
-		}
-		if tlsConfig.ServerName == "" {
-			tlsConfig.ServerName = parsed.Hostname()
-		}
-		conn, err := tls.DialWithDialer(&dialer, "tcp", host, tlsConfig)
-		if err != nil {
-			return reachResult{
-				Warning: true,
-				Title:   "WebSocket endpoint unreachable",
-				Detail:  fmt.Sprintf("%s — %s", endpoint, shortenErr(err)),
-			}
-		}
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 8 * time.Second,
+		Proxy:            http.ProxyFromEnvironment,
+		TLSClientConfig:  tlsclient.Config(),
+	}
+	conn, response, err := dialer.DialContext(dialCtx, wssURL, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if conn != nil {
 		_ = conn.Close()
+	}
+	if err == nil {
 		return reachResult{
 			OK:     true,
 			Title:  "Control plane WebSocket endpoint reachable",
-			Detail: endpoint,
+			Detail: endpoint + " accepted the WebSocket handshake",
 		}
-	case "ws":
-		conn, err := dialer.DialContext(dialCtx, "tcp", host)
-		if err != nil {
-			return reachResult{
-				Warning: true,
-				Title:   "WebSocket endpoint unreachable",
-				Detail:  fmt.Sprintf("%s — %s", endpoint, shortenErr(err)),
-			}
-		}
-		_ = conn.Close()
+	}
+	if response != nil &&
+		(response.StatusCode == http.StatusBadRequest ||
+			response.StatusCode == http.StatusUnauthorized ||
+			response.StatusCode == http.StatusForbidden) {
 		return reachResult{
-			OK:     true,
-			Title:  "Control plane WebSocket endpoint reachable",
-			Detail: endpoint,
+			OK:    true,
+			Title: "Control plane WebSocket endpoint reachable",
+			Detail: fmt.Sprintf(
+				"%s returned %d before node authentication",
+				endpoint,
+				response.StatusCode,
+			),
 		}
-	default:
-		return reachResult{
-			Warning: true,
-			Title:   "WebSocket reachability inconclusive",
-			Detail:  wssURL,
-		}
+	}
+	detail := fmt.Sprintf("%s - %s", endpoint, shortenErr(err))
+	if response != nil {
+		detail = fmt.Sprintf("%s returned %d", endpoint, response.StatusCode)
+	}
+	return reachResult{
+		Title:  "WebSocket endpoint unreachable",
+		Detail: detail,
 	}
 }
 
@@ -216,7 +209,7 @@ func checkClockSync(ctx context.Context, apiBase string) clockCheckResult {
 
 	client := &http.Client{Timeout: 8 * time.Second}
 	if tlsclient.InsecureTLSEnabled() {
-		client.Transport = &http.Transport{TLSClientConfig: tlsclient.Config()}
+		client.Transport = tlsclient.Transport()
 	}
 
 	resp, err := client.Do(req)
@@ -276,14 +269,14 @@ func shortenErr(err error) string {
 	return msg
 }
 
-func logReachResult(r reachResult) {
+func logReachResult(r reachResult, failures *preflightFailures) {
 	switch {
 	case r.OK:
 		logOKDetail(r.Title, r.Detail)
 	case r.Warning:
 		logWarnDetail(r.Title, r.Detail)
 	default:
-		logFailDetail(r.Title, r.Detail, 2)
+		failures.add(r.Title, r.Detail, 2)
 	}
 }
 

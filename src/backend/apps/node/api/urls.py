@@ -13,6 +13,9 @@ from apps.node.api.views import (
     EnrollmentTokenCreateView,
     GatewayInstallStatusView,
     GatewayLensConfigView,
+    InstallationSessionView,
+    InstallerMetadataView,
+    EnrollmentNodeStatusView,
     NodeOperationBatchPreviewView,
     NodeOperationBatchStartView,
     NodeTaskViewSet,
@@ -30,6 +33,21 @@ router.register(r"node-tasks", NodeTaskViewSet, basename="node-task")
 urlpatterns = [
     path("health", health, name="node-health"),
     path("enrollment/health", enrollment_health, name="enrollment-health"),
+    path(
+        "enrollment/session",
+        InstallationSessionView.as_view(),
+        name="enrollment-session",
+    ),
+    path(
+        "enrollment/installer-metadata",
+        InstallerMetadataView.as_view(),
+        name="enrollment-installer-metadata",
+    ),
+    path(
+        "enrollment/node-status",
+        EnrollmentNodeStatusView.as_view(),
+        name="enrollment-node-status",
+    ),
     path(
         "agent-uninstall/completion/",
         AgentUninstallCompletionView.as_view(),

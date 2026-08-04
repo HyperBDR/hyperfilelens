@@ -303,6 +303,24 @@ try {
     Stop-Or-ContinueAfterFailure
   }
 
+  if ($keep -eq '1') {
+    $agentBinary = Join-Path $install 'hfl-agent.exe'
+    if (-not (Test-Path -LiteralPath $agentBinary)) {
+      Add-CleanupFailure -code 'installation_identity_retirement_failed' -detail "Agent binary is unavailable: $agentBinary" -retained @('installation_identity')
+      throw "Cannot retire the installation identity."
+    }
+    try {
+      & $agentBinary config retire-installation --data-dir $data
+      if ($LASTEXITCODE -ne 0) {
+        throw "hfl-agent exited with code $LASTEXITCODE"
+      }
+      Log "retired installation identity; the next install will create a new console record"
+    } catch {
+      Add-CleanupFailure -code 'installation_identity_retirement_failed' -detail $_.Exception.Message -retained @('installation_identity')
+      throw
+    }
+  }
+
   $installCmd = Join-Path $install "install.cmd"
   $installPs1 = Join-Path $install "install.ps1"
   $failureCountBefore = $cleanupFailures.Count

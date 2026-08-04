@@ -2,6 +2,7 @@
 
 import logging
 
+from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -25,8 +26,7 @@ from apps.node.api.views.node_operation import _lifecycle_error_response
 from common.drf.org_scoped import OrgScopedMixin
 from apps.node.api.views.mixins import SoftDeleteDestroyMixin
 from apps.node.api.pagination import NodePagination
-from apps.node.api.views.enrollment_helpers import get_valid_enrollment_token
-from apps.node.models import Node, NodeToken
+from apps.node.models import Node, NodeInstallationSession, NodeToken
 from apps.node.models.base import NodeRole
 from apps.node.selectors.internal.node_query import node_field_search_q, node_search_q
 from apps.monitor.services.internal.node_metrics import ingest_node_heartbeat_metrics
@@ -49,6 +49,14 @@ from apps.node.exceptions import NodeLifecycleError
 from apps.node.services.internal.agent_uninstall import ProxyHasBoundResources
 from apps.node.services.internal.bindings import collect_proxy_bindings
 from apps.node.services.internal.client_ip import resolve_agent_client_ip
+from apps.node.services.internal.enrollment_auth import (
+    EnrollmentAuthorization,
+    complete_enrollment_authorization,
+    issue_node_credential,
+    legacy_enrollment_token_for_node,
+    resolve_enrollment_authorization,
+    validate_node_credential,
+)
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host
 
 logger = logging.getLogger(__name__)
@@ -118,7 +126,9 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         search = (request.query_params.get("search") or "").strip()
         search_field = (request.query_params.get("search_field") or "").strip()
         if search:
-            field_query = node_field_search_q(search_field, search) if search_field else None
+            field_query = (
+                node_field_search_q(search_field, search) if search_field else None
+            )
             queryset = queryset.filter(field_query or node_search_q(search))
 
         page_size_raw = request.query_params.get("page_size")
@@ -255,6 +265,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         """
         node = self.get_object()
         from apps.node.services.internal.bindings import collect_proxy_bindings
+
         return Response(
             collect_proxy_bindings(
                 organization_id=node.organization_id,
@@ -287,10 +298,16 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
         client_ip = resolve_agent_client_ip(request)
+        installation_id = str(payload.get("installation_id") or "").strip()
+        existing_node_credential = str(
+            payload.get("existing_node_credential") or ""
+        ).strip()
 
         node_id = payload.get("node_id")
         node = None
         token_row = None
+        node_credential = ""
+        credential_reused = False
         metadata_payload, network_state = split_network_from_metadata(
             payload.get("metadata")
         )
@@ -299,45 +316,178 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
 
         observed_at = timezone.now()
         if node is None and node_token:
-            token_row = get_valid_enrollment_token(
+            authorization = resolve_enrollment_authorization(
                 org=org,
-                token=node_token,
+                secret=node_token,
                 role=payload["role"],
             )
-            if token_row is None:
+            if authorization is None:
                 return Response(
                     {"error": "invalid enrollment token"},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
-            node = Node.objects.create(
-                organization=org,
-                name=uniquify_node_name(
-                    organization_id=org.id,
-                    name=resolve_registration_node_name(payload=payload),
-                ),
-                role=payload["role"],
-                version=payload.get("version", ""),
-                os_name=payload.get("os_name", ""),
-                availability_updated_at=observed_at,
-                metadata=registration_metadata(
-                    metadata_payload,
-                    token_note=token_row.note,
-                ),
-                last_seen_at=observed_at,
-                ip_address=network_state.primary_ip_address,
-                connection_ip_address=client_ip,
-                network_inventory=network_state.inventory or {},
-            )
-            unique_name = uniquify_node_name(
-                organization_id=org.id,
-                name=node.name,
-                exclude_node_id=node.id,
-            )
-            if unique_name != node.name:
-                node.name = unique_name
-                node.save(update_fields=["name", "updated_at"])
-            NodeToken.objects.filter(pk=token_row.pk).update(used_at=timezone.now())
+            token_row = authorization.token
+            with transaction.atomic():
+                # Match the token -> session lock order used by session creation.
+                # A consistent order prevents open/register deadlocks under load.
+                session = authorization.session
+                locked_token = NodeToken.all_objects.select_for_update().get(
+                    pk=authorization.token.pk
+                )
+                authorization = EnrollmentAuthorization(
+                    token=locked_token,
+                    session=session,
+                )
+                token_row = locked_token
+                if session is not None:
+                    locked_session = (
+                        NodeInstallationSession.objects.select_for_update().get(
+                            pk=session.pk
+                        )
+                    )
+                    now = timezone.now()
+                    if (
+                        locked_session.status != NodeInstallationSession.Status.ACTIVE
+                        or locked_session.idle_expires_at <= now
+                        or locked_session.absolute_expires_at <= now
+                    ):
+                        return Response(
+                            {
+                                "error": "installation session expired or is no longer active"
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    if locked_session.installation_id != installation_id:
+                        return Response(
+                            {
+                                "error": (
+                                    "installation session does not match "
+                                    "this installation identity"
+                                )
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    authorization = EnrollmentAuthorization(
+                        token=authorization.token,
+                        session=locked_session,
+                    )
+                node = None
+                if installation_id:
+                    node = (
+                        Node.objects.select_for_update()
+                        .filter(
+                            organization=org,
+                            role=payload["role"],
+                            installation_id=installation_id,
+                        )
+                        .first()
+                    )
+                created_node = node is None
+                if node is None:
+                    try:
+                        with transaction.atomic():
+                            node = Node.objects.create(
+                                organization=org,
+                                name=uniquify_node_name(
+                                    organization_id=org.id,
+                                    name=resolve_registration_node_name(
+                                        payload=payload
+                                    ),
+                                ),
+                                role=payload["role"],
+                                version=payload.get("version", ""),
+                                os_name=payload.get("os_name", ""),
+                                availability_updated_at=observed_at,
+                                installation_id=installation_id,
+                                metadata=registration_metadata(
+                                    metadata_payload,
+                                    token_note=token_row.note,
+                                ),
+                                last_seen_at=observed_at,
+                                ip_address=network_state.primary_ip_address,
+                                connection_ip_address=client_ip,
+                                network_inventory=network_state.inventory or {},
+                            )
+                    except IntegrityError:
+                        if not installation_id:
+                            raise
+                        node = (
+                            Node.objects.select_for_update()
+                            .filter(
+                                organization=org,
+                                role=payload["role"],
+                                installation_id=installation_id,
+                            )
+                            .first()
+                        )
+                        if node is None:
+                            raise
+                        created_node = False
+                    else:
+                        unique_name = uniquify_node_name(
+                            organization_id=org.id,
+                            name=node.name,
+                            exclude_node_id=node.id,
+                        )
+                        if unique_name != node.name:
+                            node.name = unique_name
+                            node.save(update_fields=["name", "updated_at"])
+                credential_reused = bool(
+                    not created_node
+                    and existing_node_credential
+                    and validate_node_credential(
+                        node,
+                        existing_node_credential,
+                        touch=False,
+                    )
+                )
+                if not credential_reused:
+                    node_credential = issue_node_credential(
+                        node=node,
+                        enrollment_token=token_row,
+                        installation_id=installation_id,
+                    )
+                try:
+                    complete_enrollment_authorization(authorization)
+                except PermissionError as exc:
+                    transaction.set_rollback(True)
+                    return Response(
+                        {"error": str(exc)},
+                        status=status.HTTP_409_CONFLICT,
+                    )
         elif node is not None:
+            legacy_token = None
+            credential_valid = validate_node_credential(node, node_token)
+            if not credential_valid:
+                legacy_token = legacy_enrollment_token_for_node(
+                    node,
+                    node_token,
+                    expected_role=node.role,
+                )
+            if legacy_token is None and not credential_valid:
+                return Response(
+                    {"error": "invalid node credential"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            if legacy_token is not None:
+                token_row = legacy_token
+                node_credential = issue_node_credential(
+                    node=node,
+                    enrollment_token=legacy_token,
+                    installation_id=installation_id or node.installation_id,
+                )
+            if installation_id and not node.installation_id:
+                identity_in_use = (
+                    Node.objects.filter(
+                        organization=org,
+                        role=node.role,
+                        installation_id=installation_id,
+                    )
+                    .exclude(pk=node.pk)
+                    .exists()
+                )
+                if not identity_in_use:
+                    node.installation_id = installation_id
             node.last_seen_at = observed_at
             if is_auto_assigned_node_name(node.name):
                 next_name = resolve_registration_node_name(
@@ -379,14 +529,26 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
         try:
             ingest_node_heartbeat_metrics(node=node)
         except Exception:
-            logger.warning("node heartbeat metrics ingest failed node_id=%s", node.id, exc_info=True)
+            logger.warning(
+                "node heartbeat metrics ingest failed node_id=%s",
+                node.id,
+                exc_info=True,
+            )
 
         try:
             sync_agent_source_host(node=node)
         except Exception:
-            logger.warning("node heartbeat source-host sync failed node_id=%s", node.id, exc_info=True)
+            logger.warning(
+                "node heartbeat source-host sync failed node_id=%s",
+                node.id,
+                exc_info=True,
+            )
 
-        payload: dict = {"node_id": node.id, "status": node.status}
+        response_payload: dict = {"node_id": node.id, "status": node.status}
+        if node_credential:
+            response_payload["node_credential"] = node_credential
+        if credential_reused:
+            response_payload["credential_reused"] = True
         if node.role == NodeRole.GATEWAY:
             from apps.lens_bridge.services import provisioning
 
@@ -397,6 +559,6 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 scope=token_row.gateway_scope if token_row is not None else None,
             )
             if lens:
-                payload["lens"] = lens
+                response_payload["lens"] = lens
 
-        return Response(payload)
+        return Response(response_payload)

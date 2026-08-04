@@ -7,6 +7,9 @@ from .bootstrap import BootstrapGatewayView, BootstrapView
 from .enrollment import EnrollmentTokenCreateView, enrollment_health
 from .gateway_install_status import GatewayInstallStatusView
 from .gateway_lens import GatewayLensConfigView
+from .installation_session import InstallationSessionView
+from .installer_metadata import InstallerMetadataView
+from .enrollment_node_status import EnrollmentNodeStatusView
 from .node import NodeViewSet, health
 from .node_operation import NodeOperationBatchPreviewView, NodeOperationBatchStartView
 from .node_task import NodeTaskViewSet
@@ -23,6 +26,9 @@ __all__ = [
     "EnrollmentTokenCreateView",
     "GatewayInstallStatusView",
     "GatewayLensConfigView",
+    "InstallationSessionView",
+    "InstallerMetadataView",
+    "EnrollmentNodeStatusView",
     "NodeOperationBatchPreviewView",
     "NodeOperationBatchStartView",
     "NodeTaskViewSet",

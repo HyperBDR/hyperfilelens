@@ -15,6 +15,7 @@ type JSONOverlay struct {
 	APIBaseURL                string `json:"api_base_url,omitempty"`
 	OrgKey                    string `json:"org_key,omitempty"`
 	NodeID                    string `json:"node_id,omitempty"`
+	InstallationID            string `json:"installation_id,omitempty"`
 	NodeToken                 string `json:"node_token,omitempty"`
 	DataDir                   string `json:"data_dir,omitempty"`
 	LogDir                    string `json:"log_dir,omitempty"`
@@ -66,6 +67,7 @@ func overlayToEnvMap(o JSONOverlay) map[string]string {
 	put("HFL_API_BASE", o.APIBaseURL)
 	put("HFL_ORG_KEY", o.OrgKey)
 	put("HFL_NODE_ID", o.NodeID)
+	put("HFL_INSTALLATION_ID", o.InstallationID)
 	put("HFL_NODE_TOKEN", o.NodeToken)
 	put("HFL_DATA_DIR", o.DataDir)
 	put("HFL_LOG_DIR", o.LogDir)
@@ -86,6 +88,7 @@ func envMapToOverlay(values map[string]string) JSONOverlay {
 	o.APIBaseURL = values["HFL_API_BASE"]
 	o.OrgKey = values["HFL_ORG_KEY"]
 	o.NodeID = values["HFL_NODE_ID"]
+	o.InstallationID = values["HFL_INSTALLATION_ID"]
 	o.NodeToken = values["HFL_NODE_TOKEN"]
 	o.DataDir = values["HFL_DATA_DIR"]
 	o.LogDir = values["HFL_LOG_DIR"]

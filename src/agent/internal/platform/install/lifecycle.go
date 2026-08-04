@@ -26,7 +26,22 @@ func RunUpgrade(ctx context.Context, archivePath string) error {
 
 // RunUninstall invokes bundled uninstall (keepData=false).
 func RunUninstall(ctx context.Context, bundleDir string) error {
-	script, args := uninstallCommand(bundleDir, false)
+	return RunUninstallWithDataPolicy(ctx, bundleDir, false)
+}
+
+// RunUninstallWithDataPolicy invokes bundled uninstall with explicit data retention.
+func RunUninstallWithDataPolicy(ctx context.Context, bundleDir string, keepData bool) error {
+	return runUninstall(ctx, bundleDir, keepData, false)
+}
+
+// RunRollbackIncompleteInstall removes an incomplete Agent install while
+// preserving the data directory and installation identity for a retry.
+func RunRollbackIncompleteInstall(ctx context.Context, bundleDir string) error {
+	return runUninstall(ctx, bundleDir, true, true)
+}
+
+func runUninstall(ctx context.Context, bundleDir string, keepData, keepInstallationIdentity bool) error {
+	script, args := uninstallCommand(bundleDir, keepData, keepInstallationIdentity)
 	cmd := exec.CommandContext(ctx, script, args...)
 	cmd.Dir = bundleDir
 	cmd.Stdout = os.Stdout
@@ -46,17 +61,21 @@ func upgradeCommand(archivePath string) (string, []string) {
 	return filepath.Join(installDir, "install.sh"), []string{"upgrade", "--from", archivePath, "--yes"}
 }
 
-func uninstallCommand(bundleDir string, keepData bool) (string, []string) {
+func uninstallCommand(bundleDir string, keepData, keepInstallationIdentity bool) (string, []string) {
 	if runtime.GOOS == "windows" {
 		args := []string{"uninstall"}
 		if !keepData {
 			args = append(args, "-PurgeAll")
+		} else if keepInstallationIdentity {
+			args = append(args, "-KeepInstallationIdentity")
 		}
 		return filepath.Join(bundleDir, "install.ps1"), args
 	}
 	args := []string{"uninstall"}
 	if !keepData {
 		args = append(args, "--purge-all")
+	} else if keepInstallationIdentity {
+		args = append(args, "--keep-installation-identity")
 	}
 	return filepath.Join(bundleDir, "install.sh"), args
 }

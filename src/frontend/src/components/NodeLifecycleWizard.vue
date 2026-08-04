@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import { Copy, Check, TriangleAlert, RefreshCw, ChevronDown, Info, Cpu, MemoryStick, HardDrive } from 'lucide-vue-next'
 import AgentPlatformBrandIcon from './agent-deploy/AgentPlatformBrandIcon.vue'
@@ -16,10 +16,13 @@ import {
   type NodeLifecycleTab,
 } from '../lib/nodeInstallCommands'
 import {
+  createNodeToken,
   fetchAgentRelease,
   issueEnrollmentInstall,
   issueGatewayEnrollmentInstall,
   issuePlatformGatewayEnrollmentInstall,
+  revokeEnrollmentToken,
+  revokePlatformGatewayEnrollment,
   type EnrollmentOs,
 } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
@@ -38,7 +41,6 @@ const props = withDefaults(
     installOnly?: boolean
     /** Require an explicit operator action before issuing an enrollment token. */
     generateOnDemand?: boolean
-    enrollmentTtlSeconds?: 900 | 3600 | 14400 | 86400
   }>(),
   {
     roleLocked: false,
@@ -47,7 +49,6 @@ const props = withDefaults(
     initialTab: 'install',
     installOnly: false,
     generateOnDemand: false,
-    enrollmentTtlSeconds: 900,
   },
 )
 
@@ -72,6 +73,11 @@ const installGenerated = ref(false)
 const purgeAll = ref(true)
 const serviceAction = ref<'status' | 'start' | 'stop' | 'restart'>('status')
 const supportOpen = ref(false)
+const enrollmentTokenId = ref<number | null>(null)
+const enrollmentTokenIsPlatform = ref(false)
+const enrollmentExpiresAt = ref<string | null>(null)
+const tokenClock = ref(Date.now())
+let tokenStatusTimer: ReturnType<typeof setInterval> | null = null
 
 const LINUX_DISTROS = {
   deb: ['Ubuntu', 'Debian'],
@@ -82,6 +88,28 @@ const LINUX_DISTROS = {
 const visibleTabs = computed((): NodeLifecycleTab[] =>
   props.installOnly ? ['install'] : ['install', 'upgrade', 'uninstall', 'service'],
 )
+
+const tokenIsUsable = computed(() => {
+  if (!installGenerated.value) return false
+  if (!enrollmentExpiresAt.value) return true
+  return new Date(enrollmentExpiresAt.value).getTime() > tokenClock.value
+})
+
+const tokenValidityLabel = computed(() => {
+  if (!installGenerated.value) return ''
+  if (!tokenIsUsable.value) {
+    return t('nodeLifecycle.installCommandExpired')
+  }
+  if (!enrollmentExpiresAt.value) return t('nodeLifecycle.installCommandActive')
+  const seconds = Math.max(0, Math.floor((new Date(enrollmentExpiresAt.value).getTime() - tokenClock.value) / 1000))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return t('nodeLifecycle.installCommandValidFor', { hours, minutes })
+})
+
+const localCommandWarning = computed(() => (
+  installGenerated.value && /(?:127\.0\.0\.1|localhost)/i.test(installCommand.value)
+))
 
 const isUbuntuHostDeploy = computed(
   () => props.installOnly && (props.role === 'proxy' || props.role === 'gateway'),
@@ -182,7 +210,11 @@ const installLeadKey = computed(() => {
 
 const installFlowRegisterText = computed(() => {
   if (props.role === 'proxy') return t('nodeLifecycle.installFlowRegisterProxy')
-  if (props.role === 'gateway') return t('nodeLifecycle.installFlowRegisterGateway')
+  if (props.role === 'gateway') {
+    return props.gatewayScope === 'platform'
+      ? t('nodeLifecycle.installFlowRegisterPublicGateway')
+      : t('nodeLifecycle.installFlowRegisterPrivateGateway')
+  }
   return t('nodeLifecycle.installFlowRegister')
 })
 
@@ -229,13 +261,13 @@ async function refreshInstallCommand(gen: number) {
   }
   loading.value = true
   installCommand.value = ''
+  const platformEnrollment = props.role === 'gateway' && props.gatewayScope === 'platform'
   try {
     const issued =
       props.role === 'gateway' && props.os === 'linux'
-        ? props.gatewayScope === 'platform'
+        ? platformEnrollment
           ? await issuePlatformGatewayEnrollmentInstall({
               note: 'deploy:platform-gateway',
-              ttlSeconds: props.enrollmentTtlSeconds,
             })
           : await issueGatewayEnrollmentInstall({ note: `deploy:${props.role}`, orgKey: props.orgKey })
         : await issueEnrollmentInstall({
@@ -243,9 +275,15 @@ async function refreshInstallCommand(gen: number) {
             os: props.os,
             note: `deploy:${props.role}`,
           })
-    if (gen !== generation) return
+    if (gen !== generation) {
+      await revokeIssuedEnrollment(issued.tokenId, platformEnrollment)
+      return
+    }
     installCommand.value = issued.command
     installGenerated.value = true
+    enrollmentTokenId.value = issued.tokenId
+    enrollmentTokenIsPlatform.value = platformEnrollment
+    enrollmentExpiresAt.value = issued.expiresAt
     emit('enrollmentIssued', {
       tokenId: issued.tokenId,
       expiresAt: 'expiresAt' in issued ? issued.expiresAt : null,
@@ -260,6 +298,14 @@ async function refreshInstallCommand(gen: number) {
   }
 }
 
+async function revokeIssuedEnrollment(tokenId: number, platformEnrollment: boolean) {
+  if (platformEnrollment) {
+    await revokePlatformGatewayEnrollment(tokenId).catch(() => undefined)
+  } else {
+    await revokeEnrollmentToken(tokenId).catch(() => undefined)
+  }
+}
+
 async function refreshUpgradeCommand(gen: number) {
   if (!props.orgKey) {
     upgradeCommand.value = ''
@@ -267,14 +313,24 @@ async function refreshUpgradeCommand(gen: number) {
   }
   loading.value = true
   upgradeCommand.value = ''
+  let issuedTokenId: number | null = null
   try {
-    const { token, tlsVerify } = await issueEnrollmentInstall({
+    // Upgrade only needs a short-lived enrollment token for the signed release URL.
+    // Do not depend on minimal installer metadata used by fresh install commands.
+    const issued = await createNodeToken({
       role: props.role,
-      os: props.os,
       note: `upgrade:${props.role}`,
     })
-    const release = await fetchAgentRelease({ role: props.role, token, os: props.os })
-    if (gen !== generation) return
+    issuedTokenId = issued.id
+    const release = await fetchAgentRelease({
+      role: props.role,
+      token: issued.token,
+      os: props.os,
+    })
+    if (gen !== generation) {
+      await revokeEnrollmentToken(issued.id).catch(() => undefined)
+      return
+    }
     releaseVersion.value = release.version
     const pkg = defaultPackagePath(props.os, release.version)
     upgradeCommand.value = buildLocalUpgradeCommand(
@@ -283,9 +339,16 @@ async function refreshUpgradeCommand(gen: number) {
       true,
       release.download_url,
       props.role,
-      tlsVerify,
+      issued.tls_verify,
     )
+    const cleanupDelayMs = (Math.max(1, release.expires_in ?? 600) + 5) * 1000
+    setTimeout(() => {
+      void revokeEnrollmentToken(issued.id).catch(() => undefined)
+    }, cleanupDelayMs)
   } catch {
+    if (issuedTokenId) {
+      await revokeEnrollmentToken(issuedTokenId).catch(() => undefined)
+    }
     if (gen === generation) {
       releaseVersion.value = ''
       upgradeCommand.value = buildLocalUpgradeCommand(
@@ -317,13 +380,17 @@ function refreshAll() {
 }
 
 watch(
-  () => [props.orgKey, props.role, props.os] as const,
+  () => [props.orgKey, props.role, props.os, props.gatewayScope] as const,
   () => {
     if (isLinuxOnlyRole(props.role) && props.os !== 'linux') {
       emit('update:os', 'linux')
     }
-    installGenerated.value = false
-    installCommand.value = ''
+    const staleTokenId = enrollmentTokenId.value
+    const staleTokenIsPlatform = enrollmentTokenIsPlatform.value
+    clearInstallCommand()
+    if (staleTokenId) {
+      void revokeIssuedEnrollment(staleTokenId, staleTokenIsPlatform)
+    }
     refreshAll()
   },
   { immediate: true },
@@ -379,7 +446,20 @@ function clearInstallCommand() {
   installGenerated.value = false
   installCommand.value = ''
   copied.value = false
+  enrollmentTokenId.value = null
+  enrollmentTokenIsPlatform.value = false
+  enrollmentExpiresAt.value = null
 }
+
+onMounted(() => {
+  tokenStatusTimer = setInterval(() => {
+    tokenClock.value = Date.now()
+  }, 60_000)
+})
+
+onBeforeUnmount(() => {
+  if (tokenStatusTimer) clearInterval(tokenStatusTimer)
+})
 
 defineExpose({ clearInstallCommand })
 </script>
@@ -609,6 +689,9 @@ defineExpose({ clearInstallCommand })
             <div class="source-script-shell agent-install-wizard__console">
               <div class="agent-install-wizard__console-bar">
                 <span>{{ consoleBarTitle }}</span>
+                <span v-if="installGenerated" class="agent-install-wizard__token-status">
+                  <span>{{ tokenValidityLabel }}</span>
+                </span>
               </div>
               <div
                 v-loading="loading"
@@ -618,6 +701,9 @@ defineExpose({ clearInstallCommand })
                 <pre class="agent-install-wizard__console-pre">{{ displayCommand }}</pre>
               </div>
               <div class="agent-install-wizard__console-foot agent-install-wizard__console-foot--copy-only">
+                <span v-if="installGenerated" class="agent-install-wizard__console-hint">
+                  {{ t('nodeLifecycle.installCommandReusable') }}
+                </span>
                 <button
                   v-if="generateOnDemand && !installGenerated"
                   type="button"
@@ -629,17 +715,25 @@ defineExpose({ clearInstallCommand })
                   <span>{{ t('nodeLifecycle.generateInstallCommand') }}</span>
                 </button>
                 <button
-                  v-else
+                  v-else-if="installGenerated"
                   type="button"
                   class="btn btn-primary agent-install-wizard__copy-btn"
                   :class="{ 'agent-install-wizard__copy-btn--done': copied }"
-                  :disabled="!displayCommand || loading"
+                  :disabled="!displayCommand || loading || !tokenIsUsable"
                   @click="onCopy"
                 >
                   <Check v-if="copied" :size="12" aria-hidden="true" />
                   <Copy v-else :size="12" aria-hidden="true" />
                   <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                 </button>
+              </div>
+            </div>
+
+            <div v-if="localCommandWarning" class="add-s3-warning agent-install-wizard__warn" role="note">
+              <TriangleAlert :size="16" aria-hidden="true" />
+              <div class="agent-install-wizard__warn-body">
+                <p class="agent-install-wizard__warn-title">{{ t('nodeLifecycle.localInstallCommandTitle') }}</p>
+                <p class="agent-install-wizard__warn-desc">{{ t('nodeLifecycle.localInstallCommandWarning') }}</p>
               </div>
             </div>
 
@@ -704,6 +798,12 @@ defineExpose({ clearInstallCommand })
                 <div class="agent-install-wizard__console-bar">
                   <span>{{ consoleBarTitle }}</span>
                   <span v-if="activeTab === 'upgrade' && releaseVersion">v{{ releaseVersion }}</span>
+                  <span
+                    v-else-if="activeTab === 'install' && installGenerated"
+                    class="agent-install-wizard__token-status"
+                  >
+                    <span>{{ tokenValidityLabel }}</span>
+                  </span>
                 </div>
                 <div
                   v-loading="loading && (activeTab === 'install' || activeTab === 'upgrade')"
@@ -717,18 +817,36 @@ defineExpose({ clearInstallCommand })
                   <pre v-else class="agent-install-wizard__console-pre">{{ displayCommand }}</pre>
                 </div>
                 <div class="agent-install-wizard__console-foot">
-                  <span class="agent-install-wizard__console-hint">{{ t(`nodeLifecycle.footnote.${activeTab}`) }}</span>
+                  <span class="agent-install-wizard__console-hint">
+                    <template v-if="activeTab === 'install' && installGenerated">
+                      {{ t('nodeLifecycle.installCommandReusable') }}
+                    </template>
+                    <template v-else>
+                      {{ t(`nodeLifecycle.footnote.${activeTab}`) }}
+                    </template>
+                  </span>
                   <button
                     type="button"
                     class="btn btn-primary agent-install-wizard__copy-btn"
                     :class="{ 'agent-install-wizard__copy-btn--done': copied }"
-                    :disabled="!displayCommand || loading"
+                    :disabled="!displayCommand || loading || (activeTab === 'install' && !tokenIsUsable)"
                     @click="onCopy"
                   >
                     <Check v-if="copied" :size="12" aria-hidden="true" />
                     <Copy v-else :size="12" aria-hidden="true" />
                     <span>{{ copied ? t('nodesDeploy.copied') : t('nodesDeploy.clickCopyCmd') }}</span>
                   </button>
+                </div>
+              </div>
+
+              <div
+                v-if="activeTab === 'install' && localCommandWarning"
+                class="add-s3-warning agent-install-wizard__warn"
+                role="note"
+              >
+                <TriangleAlert class="add-s3-warning__icon" :size="16" stroke-width="2" />
+                <div class="agent-install-wizard__warn-body">
+                  <p class="agent-install-wizard__warn-desc">{{ t('nodeLifecycle.localInstallCommandWarning') }}</p>
                 </div>
               </div>
 

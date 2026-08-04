@@ -72,7 +72,7 @@ class PlatformOpsLensGatewayEnrollmentTest(TestCase):
         self.assertIn("FRONTEND_URL", response.data["detail"])
         self.assertFalse(NodeToken.objects.exists())
 
-    def test_supports_bounded_expiry_and_revoke(self):
+    def test_uses_standard_batch_expiry_and_revoke(self):
         response = self.client.post(
             "/api/v1/platform-ops/lens/gateways/enrollment",
             {"ttl_seconds": 900},
@@ -81,7 +81,8 @@ class PlatformOpsLensGatewayEnrollmentTest(TestCase):
         )
         self.assertEqual(response.status_code, 201)
         token = NodeToken.objects.get(pk=response.data["token_id"])
-        self.assertGreater(token.expires_at, timezone.now() + timedelta(minutes=14))
+        self.assertGreater(token.expires_at, timezone.now() + timedelta(hours=23))
+        self.assertEqual(token.enrollment_mode, NodeToken.EnrollmentMode.CURRENT)
 
         revoked = self.client.delete(
             f"/api/v1/platform-ops/lens/gateways/enrollment/{token.id}",

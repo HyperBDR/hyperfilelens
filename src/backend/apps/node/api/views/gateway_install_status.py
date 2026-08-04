@@ -12,6 +12,7 @@ from apps.lens_bridge.services import provisioning
 from apps.node.api import permissions as node_permissions
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
 
 
 class GatewayInstallStatusView(APIView):
@@ -29,10 +30,14 @@ class GatewayInstallStatusView(APIView):
         node_token = str(request.headers.get("X-Node-Token", "") or "").strip()
         payload = request.data if isinstance(request.data, dict) else {}
 
-        node_id_raw = str(payload.get("node_id") or request.query_params.get("node_id") or "").strip()
+        node_id_raw = str(
+            payload.get("node_id") or request.query_params.get("node_id") or ""
+        ).strip()
         install_status = str(payload.get("status") or "").strip().lower()
         phase = str(payload.get("phase") or "install").strip().lower()
-        error_message = str(payload.get("error_message") or payload.get("message") or "").strip()
+        error_message = str(
+            payload.get("error_message") or payload.get("message") or ""
+        ).strip()
 
         if not org_key or not node_token or not node_id_raw or not install_status:
             return Response(
@@ -54,11 +59,15 @@ class GatewayInstallStatusView(APIView):
         try:
             node_id = int(node_id_raw)
         except ValueError:
-            return Response({"error": "invalid node_id"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "invalid node_id"}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         org = Organization.objects.filter(key=org_key, is_active=True).first()
         if org is None:
-            return Response({"error": "organization not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "organization not found"}, status=status.HTTP_404_NOT_FOUND
+            )
 
         node = Node.objects.filter(
             organization=org,
@@ -67,7 +76,18 @@ class GatewayInstallStatusView(APIView):
             is_deleted=False,
         ).first()
         if node is None:
-            return Response({"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        if not validate_agent_ws_credentials(
+            node.id,
+            node_token,
+            expected_role=NodeRole.GATEWAY,
+        ):
+            return Response(
+                {"error": "invalid node credentials"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         link = provisioning.record_gateway_install_status(
             org=org,
@@ -77,7 +97,10 @@ class GatewayInstallStatusView(APIView):
             phase=phase,
         )
         if link is None:
-            return Response({"error": "gateway lens link unavailable"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "gateway lens link unavailable"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         return Response(
             {

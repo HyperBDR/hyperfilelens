@@ -4,7 +4,7 @@ from rest_framework.test import APIRequestFactory
 from apps.iam.models import Organization
 from apps.node.api.views.node import NodeViewSet
 from apps.node.api.serializers.node import NodeSerializer
-from apps.node.models import Node, NodeToken
+from apps.node.models import Node, NodeCredential, NodeToken
 from apps.node.models.base import NodeRole
 from common.http.client_ip import client_ip_from_meta, client_ip_from_scope
 
@@ -53,6 +53,18 @@ class NodeHeartbeatClientIpTests(TestCase):
         )
         self.factory = APIRequestFactory()
 
+    def _credential_for(self, node: Node) -> str:
+        secret = f"hfln_node-ip-{node.id}"
+        credential = NodeCredential(
+            organization=self.org,
+            node=node,
+            role=node.role,
+            installation_id=f"node-ip-{node.id}",
+        )
+        credential.set_secret(secret)
+        credential.save()
+        return secret
+
     def test_heartbeat_separates_reported_host_ip_from_forwarded_client_ip(self):
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
@@ -90,6 +102,7 @@ class NodeHeartbeatClientIpTests(TestCase):
             role=NodeRole.AGENT,
             ip_address="10.20.1.40",
         )
+        node_credential = self._credential_for(node)
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
             {
@@ -105,7 +118,7 @@ class NodeHeartbeatClientIpTests(TestCase):
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
-            HTTP_X_NODE_TOKEN="ignored",
+            HTTP_X_NODE_TOKEN=node_credential,
             HTTP_X_FORWARDED_FOR="192.168.7.51",
             REMOTE_ADDR="172.18.0.7",
         )
@@ -123,6 +136,7 @@ class NodeHeartbeatClientIpTests(TestCase):
             role=NodeRole.AGENT,
             ip_address="10.20.1.50",
         )
+        node_credential = self._credential_for(node)
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
             {
@@ -132,7 +146,7 @@ class NodeHeartbeatClientIpTests(TestCase):
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
-            HTTP_X_NODE_TOKEN="ignored",
+            HTTP_X_NODE_TOKEN=node_credential,
             HTTP_X_FORWARDED_FOR="203.0.113.20",
             REMOTE_ADDR="172.18.0.7",
         )
@@ -146,6 +160,4 @@ class NodeHeartbeatClientIpTests(TestCase):
     def test_host_ip_is_read_only_in_tenant_serializer(self):
         self.assertTrue(NodeSerializer().fields["ip_address"].read_only)
         self.assertTrue(NodeSerializer().fields["availability"].read_only)
-        self.assertTrue(
-            NodeSerializer().fields["availability_updated_at"].read_only
-        )
+        self.assertTrue(NodeSerializer().fields["availability_updated_at"].read_only)

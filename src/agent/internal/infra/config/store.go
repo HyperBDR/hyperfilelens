@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -161,6 +162,34 @@ func (s *Store) SaveSnapshot(ctx context.Context) error {
 // SetNodeID persists the control-plane node id to agent.env.
 func (s *Store) SetNodeID(ctx context.Context, nodeID string) error {
 	return s.SetEnv(ctx, "HFL_NODE_ID", strings.TrimSpace(nodeID))
+}
+
+// SetInstallationID persists the identity for the current installation lifetime.
+func (s *Store) SetInstallationID(ctx context.Context, installationID string) error {
+	return s.SetEnv(ctx, "HFL_INSTALLATION_ID", strings.TrimSpace(installationID))
+}
+
+// SetNodeCredential replaces temporary enrollment material with a node credential.
+func (s *Store) SetNodeCredential(_ context.Context, credential string) error {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		return os.ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ClearNodeTokenJSONOverride(filepath.Dir(s.jsonPath)); err != nil {
+		return err
+	}
+	values, err := ParseEnvFile(s.envPath)
+	if err != nil {
+		return err
+	}
+	delete(values, "HFL_NODE_TOKEN")
+	values["HFL_NODE_CREDENTIAL"] = credential
+	if err := WriteEnvFile(s.envPath, values); err != nil {
+		return err
+	}
+	return s.reloadLocked()
 }
 
 // Watch polls config files and reloads when they change.

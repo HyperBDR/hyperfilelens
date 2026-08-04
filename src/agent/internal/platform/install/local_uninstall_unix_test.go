@@ -88,10 +88,15 @@ func TestWriteUnixUninstallScriptIncludesLogFile(t *testing.T) {
 	if !strings.Contains(body, `Agent-managed NAS mount cleanup failed; preserving Agent files and data for manual retry`) {
 		t.Fatalf("script must stop removal when managed mounts remain:\n%s", body)
 	}
+	if !strings.Contains(body, `config retire-installation --data-dir "$DATA_DIR"`) {
+		t.Fatalf("script must retire installation identity when data is preserved:\n%s", body)
+	}
 	unmountAt := strings.Index(body, `unmount_agent_mounts "$DATA_DIR"`)
 	stopAt := strings.Index(body, `systemctl stop "$SERVICE_NAME"`)
+	retireAt := strings.Index(body, `config retire-installation --data-dir "$DATA_DIR"`)
 	removeAt := strings.Index(body, `for target in "$INSTALL_DIR/hfl-agent"`)
-	if unmountAt < 0 || stopAt < 0 || removeAt < 0 || unmountAt > stopAt || stopAt > removeAt {
+	if unmountAt < 0 || stopAt < 0 || retireAt < 0 || removeAt < 0 ||
+		unmountAt > stopAt || stopAt > retireAt || retireAt > removeAt {
 		t.Fatalf("script must unmount managed shares before stopping and removing the Agent:\n%s", body)
 	}
 	if !strings.Contains(body, `report_uninstall_completion "$rc"`) {

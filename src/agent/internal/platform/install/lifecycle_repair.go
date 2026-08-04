@@ -13,10 +13,10 @@ const (
 	lifecycleKindUpgrade   = "agent.upgrade"
 	lifecycleKindUninstall = "agent.uninstall"
 
-	upgradeSuccessLogMarkerSH        = "install.sh upgrade succeeded"
-	upgradeSuccessLogMarkerPS1       = "install.ps1 upgrade succeeded"
-	upgradeSuccessLogMarkerDetached  = "Upgrade completed successfully"
-	uninstallSuccessLogMarker        = "detached uninstall script finished"
+	upgradeSuccessLogMarkerSH       = "install.sh upgrade succeeded"
+	upgradeSuccessLogMarkerPS1      = "install.ps1 upgrade succeeded"
+	upgradeSuccessLogMarkerDetached = "Upgrade completed successfully"
+	uninstallSuccessLogMarker       = "detached uninstall script finished"
 )
 
 var upgradeSuccessLogMarkers = []string{

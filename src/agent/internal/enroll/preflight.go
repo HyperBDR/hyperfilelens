@@ -12,21 +12,24 @@ import (
 
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/hostinfo"
+	"hyperfilelens/agent/internal/platform/release"
 )
 
 // EnvironmentReport is the result of pre-install environment checks.
 type EnvironmentReport struct {
-	Platform     string
-	PrivilegesOK bool
-	ArchOK       bool
-	ServiceMgr   string
-	Existing     InstallState
-	RoleOK       bool
-	RoleError    string
+	Platform       string
+	PrivilegesOK   bool
+	ArchOK         bool
+	ServiceMgr     string
+	Existing       InstallState
+	RoleOK         bool
+	RoleError      string
+	InstallationID string
 }
 
 // RunEnvironmentChecks validates the host and prints user-facing results.
 func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, error) {
+	failures := &preflightFailures{}
 	report := &EnvironmentReport{
 		Platform: platformDescription(),
 		ArchOK:   supportedRuntimeArch(),
@@ -40,9 +43,16 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	}
 
 	report.ServiceMgr = detectServiceManager(ctx)
+	persistedInstallationID := readEnvKey(EnvFilePath(), "HFL_INSTALLATION_ID")
+	installationID, identityErr := installationID(ctx, cfg)
+	if identityErr == nil {
+		report.InstallationID = installationID
+	}
+	hostname := checkHostname()
+	printEnrollmentContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, report.Platform, hostname.Name)
+
 	consoleReach := checkConsoleReachable(ctx, cfg.APIBase)
 	wssReach := checkWSSReachable(ctx, resolveWSSURL(cfg))
-	hostname := checkHostname()
 	clock := checkClockSync(ctx, cfg.APIBase)
 
 	if err := roleConstraints(cfg.NodeRole); err != nil {
@@ -55,24 +65,22 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 		report.RoleOK = true
 	}
 
-	printEnrollmentContext(cfg.APIBase, cfg.OrgKey, cfg.NodeRole, report.Platform, hostname.Name)
-
 	if report.PrivilegesOK {
 		logOKDetail("Running with administrator privileges", adminPrivilegeDetail())
 	} else {
-		logFailDetail("Administrator privileges are required", "re-run with sudo or as Administrator", 1)
+		failures.add("Administrator privileges are required", "re-run with sudo or as Administrator", 1)
 	}
 
 	if report.ArchOK {
 		logOKDetail("CPU architecture is supported", runtime.GOARCH)
 	} else {
-		logFailDetail("CPU architecture is not supported", runtime.GOARCH+" ("+supportedArchDescription()+")", 4)
+		failures.add("CPU architecture is not supported", runtime.GOARCH+" ("+supportedArchDescription()+")", 4)
 	}
 
 	if report.RoleOK {
 		logOKDetail("Role is supported on this platform", fmt.Sprintf("%s on %s", cfg.NodeRole, runtime.GOOS))
 	} else {
-		logFail(ensureSentence(report.RoleError), 1)
+		failures.add("Role is not supported on this platform", report.RoleError, 1)
 	}
 
 	switch report.ServiceMgr {
@@ -85,18 +93,80 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 	}
 
 	logHostnameResult(hostname)
+	if identityErr != nil {
+		failures.add(
+			"Installation identity cannot be prepared",
+			identityErr.Error(),
+			2,
+		)
+	} else if report.Existing.Installed && persistedInstallationID != "" {
+		logOKDetail("Installation identity is ready", "the existing installation identity will be reused")
+	} else if report.Existing.Installed {
+		logOKDetail("Installation identity is ready", "a new identity will be attached to the existing installation")
+	} else {
+		logOKDetail("Installation identity is ready", "a new identity will be persisted when installation begins")
+	}
 	logClockResult(clock)
-	logReachResult(consoleReach)
-	logReachResult(wssReach)
+	logReachResult(consoleReach, failures)
+	logReachResult(wssReach, failures)
+	logHostResources(checkHostResources(cfg.NodeRole), failures)
 
 	if err := checkRequiredCommands(); err != nil {
-		logFailDetail("Required commands are missing", err.Error(), 2)
+		failures.add("Required commands are missing", err.Error(), 2)
 	} else {
 		logOKDetail("Required commands are available", requiredCommandsDetail())
 	}
 
-	logWritableResult(checkInstallPathsWritable())
-	logDiskResult(checkEnrollmentDiskSpace())
+	logWritableResult(checkInstallPathsWritable(), failures)
+	requiredSpace := uint64(defaultEnrollmentRequiredBytes)
+	var gatewayCheck gatewayRuntimePreflightResult
+	if consoleReach.OK {
+		artifact, artifactErr := release.FetchArtifact(ctx, cfg.AgentConfig())
+		if artifactErr != nil {
+			if report.Existing.Installed {
+				logWarnDetail(
+					"Agent package metadata is unavailable",
+					artifactErr.Error()+"; the requested existing-install action will validate authorization before making changes",
+				)
+			} else {
+				failures.add("Agent package metadata is unavailable", artifactErr.Error(), 3)
+			}
+		} else {
+			if artifact.RequiredSpace > requiredSpace {
+				requiredSpace = artifact.RequiredSpace
+			}
+			logOKDetail(
+				"Agent package metadata is available",
+				fmt.Sprintf("version %s, download %s", artifact.Version, humanBytes(artifact.DownloadSize)),
+			)
+		}
+	}
+	if cfg.NodeRole == model.RoleGateway {
+		gatewayCheck = checkGatewayRuntimePreflight(ctx, cfg)
+		requiredSpace += gatewayCheck.RequiredSpace
+		if lockDetail := packageManagerLockDetail(); lockDetail != "" &&
+			!gatewayCheck.ExistingDocker && gatewayCheck.Err == nil {
+			gatewayCheck.Err = fmt.Errorf("package manager is busy: %s", lockDetail)
+		}
+	}
+	logDiskResult(checkEnrollmentDiskSpace(requiredSpace), failures)
+	if cfg.NodeRole == model.RoleGateway {
+		if gatewayCheck.Err != nil {
+			failures.add(
+				roleDisplayName(cfg.NodeRole, cfg.GatewayScope)+" runtime requirements are not met",
+				gatewayCheck.Err.Error(),
+				3,
+			)
+		} else {
+			logOKDetail(
+				roleDisplayName(cfg.NodeRole, cfg.GatewayScope)+" runtime plan is ready",
+				gatewayCheck.Detail,
+			)
+		}
+		for _, warning := range gatewayCheck.Warnings {
+			logWarnDetail(roleDisplayName(cfg.NodeRole, cfg.GatewayScope)+" runtime needs attention", warning)
+		}
+	}
 
 	nasOK, nasWarn, nasTitle, nasDetail := checkNASMountHelpers(string(cfg.NodeRole))
 	switch {
@@ -119,7 +189,7 @@ func RunEnvironmentChecks(ctx context.Context, cfg Config) (*EnvironmentReport, 
 		logOKDetail("No existing agent installation was found", defaultInstallPath())
 	}
 
-	return report, nil
+	return report, failures.err()
 }
 
 func adminPrivilegeDetail() string {

@@ -72,9 +72,6 @@ normalize_release_permissions() {
 			-type f -name '*.sh' -exec chmod 755 {} +
 	fi
 	find "${pkg_root}/payload/media" -type f -name '*.sh' -exec chmod 755 {} +
-	if [[ -d "${pkg_root}/payload/media/enroll-bootstrap" ]]; then
-		find "${pkg_root}/payload/media/enroll-bootstrap" -type f -exec chmod 755 {} +
-	fi
 	if [[ -f "${pkg_root}/deploy/nginx/certs/tls.key" ]]; then
 		chmod 600 "${pkg_root}/deploy/nginx/certs/tls.key"
 	fi
@@ -1037,6 +1034,24 @@ validate_release_publish_artifacts() {
 		|| die "release package missing agent-releases artifacts"
 	[[ -d "${enroll}" && -n "$(ls -A "${enroll}" 2>/dev/null)" ]] \
 		|| die "release package missing enroll-bootstrap artifacts"
+	[[ -s "${enroll}/INSTALLER_MANIFEST.json" ]] \
+		|| die "release package missing minimal installer manifest"
+	local installer_count
+	installer_count="$(jq -r 'select(.schema_version == 1) | .artifacts | length' \
+		"${enroll}/INSTALLER_MANIFEST.json")"
+	[[ "${installer_count}" == "5" ]] \
+		|| die "release package minimal installer manifest must contain five platforms"
+	while IFS=$'\t' read -r installer_file installer_sha installer_size; do
+		[[ -s "${enroll}/${installer_file}" ]] \
+			|| die "release package missing minimal installer ${installer_file}"
+		[[ "$(stat -c '%s' "${enroll}/${installer_file}")" == "${installer_size}" ]] \
+			|| die "release package minimal installer size mismatch: ${installer_file}"
+		((installer_size <= 3670016)) \
+			|| die "release package minimal installer exceeds 3.5 MiB: ${installer_file}"
+		[[ "$(sha256sum "${enroll}/${installer_file}" | cut -d' ' -f1)" == "${installer_sha}" ]] \
+			|| die "release package minimal installer checksum mismatch: ${installer_file}"
+	done < <(jq -r '.artifacts[] | [.filename, .sha256, (.size | tostring)] | @tsv' \
+		"${enroll}/INSTALLER_MANIFEST.json")
 	if [[ ! -d "${pkg_root}/sourcelens" ]]; then
 		return 0
 	fi

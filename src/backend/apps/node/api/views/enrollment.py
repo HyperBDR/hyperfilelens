@@ -38,7 +38,10 @@ class EnrollmentTokenCreateView(APIView):
         ser.is_valid(raise_exception=True)
         org = require_org_matching_body(request, ser.validated_data.pop("org", None))
         token_row = ser.save(organization=org)
-        data = NodeTokenSerializer(token_row).data
+        data = NodeTokenSerializer(
+            token_row,
+            context={"request": request, "include_token": True},
+        ).data
         return Response(
             {
                 "org": org.key,

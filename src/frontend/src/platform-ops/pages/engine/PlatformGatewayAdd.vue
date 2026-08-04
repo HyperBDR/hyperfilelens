@@ -15,7 +15,6 @@ import { apiErrorMessage } from '../../../lib/api'
 
 const { t } = useI18n()
 const wizardRef = ref<{ clearInstallCommand: () => void } | null>(null)
-const ttlSeconds = ref<900 | 3600 | 14400 | 86400>(900)
 const tokenId = ref<number | null>(null)
 const expiresAt = ref<string | null>(null)
 const revokeOpen = ref(false)
@@ -28,6 +27,23 @@ const expiresLabel = computed(() => {
     timeStyle: 'short',
   }).format(new Date(expiresAt.value))
 })
+
+const tokenExpired = computed(() => {
+  if (!expiresAt.value) return false
+  return new Date(expiresAt.value).getTime() <= Date.now()
+})
+
+const tokenStatusTitle = computed(() => (
+  tokenExpired.value
+    ? t('platformOps.engineGateway.tokenExpired')
+    : t('platformOps.engineGateway.tokenActive')
+))
+
+const tokenStatusDetail = computed(() => (
+  tokenExpired.value
+    ? t('platformOps.engineGateway.tokenExpiredHint')
+    : t('platformOps.engineGateway.tokenExpires', { time: expiresLabel.value })
+))
 
 function onEnrollmentIssued(payload: { tokenId: number; expiresAt: string | null }) {
   tokenId.value = payload.tokenId
@@ -79,15 +95,6 @@ async function confirmRevoke() {
         <h1>{{ t('platformOps.engineGateway.addTitle') }}</h1>
         <p>{{ t('platformOps.engineGateway.addSubtitle') }}</p>
       </div>
-      <div class="platform-gateway-add__lifetime">
-        <label for="gateway-token-ttl">{{ t('platformOps.engineGateway.tokenLifetime') }}</label>
-        <ElSelect id="gateway-token-ttl" v-model="ttlSeconds" :disabled="tokenId != null">
-          <ElOption :value="900" :label="t('platformOps.engineGateway.lifetime15m')" />
-          <ElOption :value="3600" :label="t('platformOps.engineGateway.lifetime1h')" />
-          <ElOption :value="14400" :label="t('platformOps.engineGateway.lifetime4h')" />
-          <ElOption :value="86400" :label="t('platformOps.engineGateway.lifetime24h')" />
-        </ElSelect>
-      </div>
     </header>
 
     <ElAlert type="warning" :closable="false" show-icon class="platform-gateway-add__security">
@@ -97,8 +104,8 @@ async function confirmRevoke() {
     <section v-if="tokenId != null" class="platform-gateway-add__token-status" aria-live="polite">
       <span class="platform-gateway-add__token-icon"><ShieldCheck :size="18" aria-hidden="true" /></span>
       <span class="platform-gateway-add__token-copy">
-        <strong>{{ t('platformOps.engineGateway.tokenActive') }}</strong>
-        <span><Clock3 :size="14" aria-hidden="true" />{{ t('platformOps.engineGateway.tokenExpires', { time: expiresLabel }) }}</span>
+        <strong>{{ tokenStatusTitle }}</strong>
+        <span><Clock3 :size="14" aria-hidden="true" />{{ tokenStatusDetail }}</span>
       </span>
       <ElButton type="danger" plain @click="revokeOpen = true">
         {{ t('platformOps.engineGateway.revoke') }}
@@ -114,7 +121,6 @@ async function confirmRevoke() {
       os="linux"
       role-locked
       gateway-scope="platform"
-      :enrollment-ttl-seconds="ttlSeconds"
       @copy="copyCommand"
       @enrollment-issued="onEnrollmentIssued"
     />
@@ -173,19 +179,6 @@ async function confirmRevoke() {
   font-size: 13px;
 }
 
-.platform-gateway-add__lifetime {
-  display: grid;
-  width: 200px;
-  flex-shrink: 0;
-  gap: 6px;
-}
-
-.platform-gateway-add__lifetime label {
-  color: #475569;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .platform-gateway-add__token-status {
   display: flex;
   min-height: 64px;
@@ -227,10 +220,6 @@ async function confirmRevoke() {
     align-items: stretch;
     flex-direction: column;
     gap: 12px;
-  }
-
-  .platform-gateway-add__lifetime {
-    width: 100%;
   }
 
   .platform-gateway-add__token-status {

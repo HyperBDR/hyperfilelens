@@ -1,18 +1,17 @@
-"""
-Validate Agent ↔ control plane WebSocket credentials (query token vs enrollment rows).
+"""Validate Agent ↔ control plane WebSocket credentials (query token vs enrollment rows).
 
 Note: enrollment tokens stay active until ``expires_at`` (or manual revoke) and may
-register multiple nodes. Legacy tokens deactivated after first use are still accepted
-for WebSocket auth on nodes that enrolled with them.
+register multiple nodes. Legacy tokens are accepted only as a one-time bridge until
+the node receives a long-lived NodeCredential.
 """
 
 from __future__ import annotations
 
-import secrets
-
-from django.utils import timezone
-
-from apps.node.models import Node, NodeToken
+from apps.node.models import Node
+from apps.node.services.internal.enrollment_auth import (
+    legacy_enrollment_token_for_node,
+    validate_node_credential,
+)
 
 
 def validate_agent_ws_credentials(
@@ -28,29 +27,16 @@ def validate_agent_ws_credentials(
     node = Node.objects.filter(pk=int(node_pk)).first()
     if node is None:
         return False
-    now = timezone.now()
-    qs = NodeToken.objects.filter(organization_id=node.organization_id)
-    for row in qs.only(
-        "token",
-        "role",
-        "gateway_scope",
-        "is_active",
-        "expires_at",
-        "used_at",
-    ).iterator():
-        if not secrets.compare_digest(row.token, token):
-            continue
-        if expected_role is not None and row.role != expected_role:
-            continue
-        if (
-            expected_gateway_scope is not None
-            and row.gateway_scope != expected_gateway_scope
-        ):
-            continue
-        if row.is_active:
-            if row.expires_at and row.expires_at <= now:
-                continue
-            return True
-        if row.used_at is not None:
-            return True
-    return False
+    if validate_node_credential(node, token):
+        if expected_role is not None and node.role != expected_role:
+            return False
+        return True
+    return (
+        legacy_enrollment_token_for_node(
+            node,
+            token,
+            expected_role=expected_role,
+            expected_gateway_scope=expected_gateway_scope,
+        )
+        is not None
+    )

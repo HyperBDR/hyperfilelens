@@ -12,7 +12,11 @@ from .base import NodeRole, OrganizationScopedModel
 
 
 class NodeToken(OrganizationScopedModel):
-    """Reusable enrollment token for install scripts (valid until ``expires_at``)."""
+    """Time-bounded enrollment token used to start host installations."""
+
+    class EnrollmentMode(models.TextChoices):
+        LEGACY = "legacy", "Legacy"
+        CURRENT = "current", "Current"
 
     organization = models.ForeignKey(
         "iam.Organization",
@@ -25,6 +29,12 @@ class NodeToken(OrganizationScopedModel):
     is_active = models.BooleanField(default=True, db_index=True)
     expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
     used_at = models.DateTimeField(blank=True, null=True)
+    enrollment_mode = models.CharField(
+        max_length=16,
+        choices=EnrollmentMode.choices,
+        default=EnrollmentMode.CURRENT,
+        db_index=True,
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

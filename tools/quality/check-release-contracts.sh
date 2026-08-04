@@ -884,9 +884,20 @@ grep -F 'registry prefix must include host and namespace' \
 	"${sourcelens_image_builder}" >/dev/null
 
 agent_publisher="${ROOT}/tools/agent/publish.sh"
+if rg -n '"hyperfilelens/agent/internal/remote"' \
+	"${ROOT}/src/agent/internal/enroll" -g '*.go' >/dev/null; then
+	printf 'ERROR: first-stage enrollment code must use the lightweight enrollment client\n' >&2
+	exit 1
+fi
 grep -F 'all | standard | ubuntu2004 | ubuntu2204 | ubuntu2404' "${agent_publisher}" >/dev/null
 grep -F 'for ubuntu_flavor in ubuntu2004 ubuntu2204 ubuntu2404' "${agent_publisher}" >/dev/null
 grep -F 'build/dependencies/docker/ubuntu-${ubuntu_release}/amd64' "${agent_publisher}" >/dev/null
+grep -F 'Publishing compressed minimal installers' "${agent_publisher}" >/dev/null
+grep -F 'minimal installer exceeds 3.5 MiB' "${agent_publisher}" >/dev/null
+grep -F 'minimal installer matrix mismatch' "${ROOT}/release/ci/assemble-release.sh" >/dev/null
+grep -F 'minimal installer exceeds 3.5 MiB' "${ROOT}/release/ci/assemble-release.sh" >/dev/null
+grep -F 'minimal installer checksum mismatch' "${ROOT}/release/ci/verify-release.sh" >/dev/null
+grep -F 'minimal installer exceeds 3.5 MiB' "${ROOT}/release/ci/verify-release.sh" >/dev/null
 
 agent_bootstrap_linux="${ROOT}/deploy/bootstrap/agent-bootstrap-linux.sh"
 agent_bootstrap_macos="${ROOT}/deploy/bootstrap/agent-bootstrap-macos.sh"

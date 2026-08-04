@@ -2,6 +2,7 @@ package tlsclient
 
 import (
 	"crypto/tls"
+	"net/http"
 	"os"
 	"strings"
 )
@@ -13,6 +14,14 @@ func InsecureTLSEnabled() bool {
 		return true
 	}
 	return v != "0"
+}
+
+// Transport clones Go's default HTTP transport so proxy and connection-pool
+// behavior are preserved when custom TLS policy is required.
+func Transport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = Config()
+	return transport
 }
 
 // Config returns TLS settings for outbound HTTPS/WSS clients.

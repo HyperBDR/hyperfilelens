@@ -514,6 +514,66 @@ publish_archives() {
 		hfl_log_ok "Published ${enroll_name}"
 	done
 
+	hfl_log_step "Publishing compressed minimal installers"
+	MATRIX_VALUE="${MATRIX}" BUILD_ROOT_VALUE="${BUILD_DIR}/${VERSION}" VERSION_VALUE="${VERSION}" \
+		OUTPUT_VALUE="${ENROLL_BOOTSTRAP_DIR}" python3 - <<'PY'
+import hashlib
+import json
+import os
+import tarfile
+import zipfile
+from pathlib import Path
+
+matrix = os.environ["MATRIX_VALUE"].split()
+build_root = Path(os.environ["BUILD_ROOT_VALUE"])
+output = Path(os.environ["OUTPUT_VALUE"])
+version = os.environ["VERSION_VALUE"]
+version_output = output / version
+version_output.mkdir(parents=True, exist_ok=True)
+manifest = {"schema_version": 1, "artifacts": {}}
+max_installer_bytes = 3_670_016
+
+for item in matrix:
+    goos, goarch = item.split(":", 1)
+    binary_name = f"hfl-enroll-{goos}-{goarch}"
+    if goos == "windows":
+        binary_name += ".exe"
+    source = build_root / goos / goarch / binary_name
+    if not source.is_file():
+        raise SystemExit(f"missing enrollment binary: {source}")
+    if goos == "windows":
+        filename = f"hfl-installer-{goos}-{goarch}.zip"
+        with zipfile.ZipFile(version_output / filename, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+            archive.write(source, "hfl-enroll.exe")
+    else:
+        filename = f"hfl-installer-{goos}-{goarch}.tar.gz"
+        with tarfile.open(version_output / filename, "w:gz", compresslevel=9) as archive:
+            info = archive.gettarinfo(str(source), "hfl-enroll")
+            info.mode = 0o755
+            with source.open("rb") as handle:
+                archive.addfile(info, handle)
+    artifact = version_output / filename
+    if artifact.stat().st_size > max_installer_bytes:
+        raise SystemExit(
+            f"minimal installer exceeds 3.5 MiB: {filename} "
+            f"({artifact.stat().st_size} bytes)"
+        )
+    manifest["artifacts"][f"{goos}-{goarch}"] = {
+        "filename": f"{version}/{filename}",
+        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        "size": artifact.stat().st_size,
+    }
+
+(output / "INSTALLER_MANIFEST.json").write_text(
+    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+	find "${ENROLL_BOOTSTRAP_DIR}/${VERSION}" -type f -name 'hfl-installer-*' -exec chmod 644 {} +
+	chmod 644 \
+		"${ENROLL_BOOTSTRAP_DIR}/INSTALLER_MANIFEST.json"
+	hfl_log_ok "Published compressed minimal installers"
+
 	hfl_log_step "Publishing gateway sidecar bootstrap"
 	mkdir -p "${GATEWAY_BOOTSTRAP_DIR}"
 	gateway_bootstrap_src="${BOOTSTRAP_DIR}/${GATEWAY_BOOTSTRAP_LINUX_SCRIPT}"
