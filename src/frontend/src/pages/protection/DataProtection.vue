@@ -1642,6 +1642,7 @@ function openRecoveryWithBackupIds(backupIds: string[]) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBackupForRecovery'), grouping: true })
     return
   }
+  invalidateRecoverySnapshotLists(backupIds)
   recOpen.value = true
   ensureRecoveryNodes()
   recEntryStage.value = 'chooser'
@@ -6336,6 +6337,16 @@ function recoverySnapshotSourceKey(hostId: string) {
   const parsed = parseEndpointUiId(hostId)
   if (!parsed || (parsed.type !== 'agent' && parsed.type !== 'nas')) return ''
   return `${parsed.type}:${parsed.refId}`
+}
+
+function invalidateRecoverySnapshotLists(backupIds: string[]) {
+  const sourceKeys = new Set(
+    backupIds
+      .map((backupId) => recoverySnapshotSourceKey(backupSourceHostId(backupId)))
+      .filter(Boolean),
+  )
+  for (const sourceKey of sourceKeys) delete recoverySnapshotLists[sourceKey]
+  recoveryPlanSnapshotMap.value = {}
 }
 
 function recoverySnapshotListState(sourceKey: string): RecoverySnapshotListState {
