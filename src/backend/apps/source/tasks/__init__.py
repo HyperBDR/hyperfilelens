@@ -12,6 +12,7 @@ from .source_unregister import (
     execute_source_unregister_task,
     reconcile_stuck_source_unregister_tasks_task,
 )
+from .pipeline import reconcile_source_pipeline_task
 
 __all__ = [
     "execute_source_unregister_task",
@@ -21,5 +22,6 @@ __all__ = [
     "queue_source_resource_capacity_probe",
     "reconcile_stale_source_connection_probes_task",
     "reconcile_source_availability_task",
+    "reconcile_source_pipeline_task",
     "reconcile_stuck_source_unregister_tasks_task",
 ]
