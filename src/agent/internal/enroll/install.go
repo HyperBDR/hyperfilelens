@@ -436,14 +436,14 @@ func installAgentPackage(ctx context.Context, cfg Config, agentVer *string) erro
 	archivePath, cleanup, err := downloadReleaseArchive(
 		ctx,
 		dl,
-		agentPackageLabel(cfg.NodeRole),
+		agentPackageLabel(cfg.NodeRole, cfg.GatewayScope),
 	)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	label := roleDisplayName(cfg.NodeRole) + " Agent package"
+	label := agentPackageLabel(cfg.NodeRole, cfg.GatewayScope)
 	logStep("Extracting " + label + ".")
 	bundleRoot, err := extractReleaseBundle(ctx, archivePath)
 	if err != nil {
@@ -481,13 +481,13 @@ func upgradeAgentPackage(ctx context.Context, cfg Config, downloadURL, releaseVe
 	archivePath, cleanup, err := downloadReleaseArchive(
 		ctx,
 		downloadURL,
-		agentPackageLabel(cfg.NodeRole),
+		agentPackageLabel(cfg.NodeRole, cfg.GatewayScope),
 	)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	label := roleDisplayName(cfg.NodeRole) + " Agent package"
+	label := agentPackageLabel(cfg.NodeRole, cfg.GatewayScope)
 	logStep("Extracting " + label + ".")
 	bundleRoot, err := extractReleaseBundle(ctx, archivePath)
 	if err != nil {

@@ -3,11 +3,13 @@
 # Rendered by GET /enrollment/bootstrap-gateway.
 #
 # Stage order (matches Agent bootstrap):
-#   1) minimal connectivity / platform gates
+#   1) local platform gates only (curl / arch / root / systemd)
 #   2) download lightweight hfl-enroll
-#   3) hfl-enroll runs full preflight, then Agent package install + register
+#   3) hfl-enroll runs full preflight (console, SourceLens, packages, …),
+#      then Agent package install + register
 #   4) hfl-enroll installs Docker (if needed) and LensNode during AI engine setup
-# Docker CE must not be installed here — that would mutate the host before preflight.
+# Network checks and Docker CE must not run here — that would mutate or probe
+# before the enrollment helper's full preflight.
 set -euo pipefail
 
 # Avoid getcwd / job-working-directory noise when the caller cwd was removed
@@ -90,28 +92,6 @@ hfl_build_enroll_args() {
 	fi
 }
 
-hfl_sourcelens_health_retry() {
-	local url="$1"
-	local label="$2"
-	local attempts="${3:-3}"
-	local delay="${4:-5}"
-	local n=1
-	local response=""
-	while [[ "${n}" -le "${attempts}" ]]; do
-		if response="$(curl "${CURL_TLS[@]}" -fsSL "${url}" 2>/dev/null)" \
-			&& grep -Eq '"health"[[:space:]]*:[[:space:]]*"OK"' <<<"${response}"; then
-			return 0
-		fi
-		if [[ "${n}" -lt "${attempts}" ]]; then
-			printf '[%s] [WARN ] %s not ready (attempt %s/%s); retrying in %ss.\n' \
-				"$(hfl_now)" "${label}" "${n}" "${attempts}" "${delay}" >&2
-			sleep "${delay}"
-		fi
-		n=$((n + 1))
-	done
-	hfl_fail "${label} unreachable or unhealthy at ${url} after ${attempts} attempts." 3
-}
-
 CURL_TLS=(-k)
 if [[ "${HFL_INSECURE_TLS}" == "0" ]]; then
 	CURL_TLS=()
@@ -138,15 +118,11 @@ if [[ "$(id -u)" -ne 0 ]]; then
 	hfl_fail "Administrator privileges are required. Re-run with sudo." 1
 fi
 
-CONSOLE_BASE="${HFL_API_BASE%/}"
-
-hfl_step "Checking console connectivity."
-curl "${CURL_TLS[@]}" -fsSL "${CONSOLE_BASE}/health" >/dev/null
-hfl_ok "Console is reachable."
-
-hfl_step "Checking SourceLens health via console proxy."
-hfl_sourcelens_health_retry "${CONSOLE_BASE}/sourcelens/health" "SourceLens health" 3 5
-hfl_ok "SourceLens is reachable."
+if ! command -v systemctl >/dev/null 2>&1 \
+	|| [[ ! -d /run/systemd/system ]] \
+	|| ! systemctl show-environment >/dev/null 2>&1; then
+	hfl_fail "This release requires a systemd-based Linux distribution. OpenRC, non-systemd, and container deployments are not supported." 2
+fi
 
 BIN="${TMPDIR:-/tmp}/hfl-enroll-$$"
 cleanup() { rm -f "${BIN}" "${BIN}.part"; }

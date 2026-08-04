@@ -101,7 +101,7 @@ hfl_step "Verifying SourceLens connectivity at ${LENS_HOST_URL}."
 curl "${CURL_TLS[@]}" -fsSL "${LENS_HOST_URL%/}/health" >/dev/null
 hfl_ok "SourceLens health check passed."
 
-hfl_step "Creating protected Gateway filesystem boundary."
+hfl_step "Preparing Gateway workspace mounts for LensNode."
 mkdir -p "${HFL_WORKSPACE_ROOT}"
 HFL_GATEWAY_STATE_ROOT="$(dirname "${HFL_WORKSPACE_ROOT}")/.hyperfilelens"
 HFL_SOURCELENS_STATE_ROOT="${HFL_GATEWAY_STATE_ROOT}/sourcelens"
@@ -253,10 +253,11 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       SENTRY_SERVICE: lensnode
     volumes:
 ${sentry_volume_block}
-      # LensNode only indexes managed data. The host Agent is the sole writer
-      # and lifecycle owner for this filesystem boundary. SourceLens receives
-      # one isolated writable mount for its runtime/cache state.
-      - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:ro
+      # Workspace must be writable: LensNode document conversion writes
+      # "*.sourcelens" sidecars beside restored source files. The host Agent
+      # remains lifecycle owner; checkpoints/cache stay on the isolated state
+      # mount below, and the Agent trash path stays hidden via tmpfs.
+      - ${HFL_WORKSPACE_ROOT}:${HFL_WORKSPACE_ROOT}:rw
       - ${HFL_SOURCELENS_STATE_ROOT}:${HFL_SOURCELENS_MOUNTPOINT}:rw
     tmpfs:
       # Hide the host Agent's same-filesystem deletion quarantine from LensNode.

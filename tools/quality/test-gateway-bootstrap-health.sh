@@ -4,36 +4,25 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 bootstrap="${ROOT}/deploy/bootstrap/gateway-bootstrap-linux.sh"
 
-# Load only the bootstrap logging and health-check functions, not its installer body.
-# shellcheck disable=SC1090
-source <(
-	sed -n '/^hfl_now()/,/^CURL_TLS=/p' "${bootstrap}" \
-		| sed '$d'
-)
-
-CURL_TLS=()
-
-run_health_check_with_response() {
-	local mock_response="$1"
-	(
-		curl() {
-			printf '%s' "${mock_response}"
-		}
-		hfl_sourcelens_health_retry "https://console.example/sourcelens/health" \
-			"SourceLens health" 1 0
-	)
-}
-
-run_health_check_with_response '{"health":"OK"}'
-
-if run_health_check_with_response '<!doctype html><title>HyperFileLens</title>' 2>/dev/null; then
-	printf 'ERROR: Gateway bootstrap accepted the Admin SPA as SourceLens health\n' >&2
+# Gateway bootstrap must stay Agent-shaped: local gates, then enrollment helper.
+# Console / SourceLens probes belong in hfl-enroll preflight after the helper download.
+if grep -E 'Checking console connectivity|Checking SourceLens health|hfl_sourcelens_health_retry' \
+	"${bootstrap}" >/dev/null; then
+	printf 'ERROR: gateway bootstrap must not probe console/SourceLens before downloading hfl-enroll\n' >&2
 	exit 1
 fi
 
-if run_health_check_with_response '{"health":"DOWN"}' 2>/dev/null; then
-	printf 'ERROR: Gateway bootstrap accepted an unhealthy SourceLens response\n' >&2
+grep -F 'HyperFileLens enrollment helper' "${bootstrap}" >/dev/null
+grep -F 'gateway-install' "${bootstrap}" >/dev/null
+grep -F 'requires a systemd-based Linux distribution' "${bootstrap}" >/dev/null
+grep -F 'systemctl show-environment' "${bootstrap}" >/dev/null
+
+# Ensure helper download appears before gateway-install invocation.
+helper_line="$(grep -n 'HyperFileLens enrollment helper' "${bootstrap}" | head -1 | cut -d: -f1)"
+install_line="$(grep -n 'gateway-install' "${bootstrap}" | tail -1 | cut -d: -f1)"
+if [[ -z "${helper_line}" || -z "${install_line}" || "${helper_line}" -ge "${install_line}" ]]; then
+	printf 'ERROR: gateway bootstrap must download hfl-enroll before invoking gateway-install\n' >&2
 	exit 1
 fi
 
-printf 'Gateway bootstrap SourceLens health validation passed\n'
+printf 'Gateway bootstrap preflight order validation passed\n'

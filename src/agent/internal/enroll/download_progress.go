@@ -221,7 +221,11 @@ func roleDisplayName(role model.Role, gatewayScope ...string) string {
 	case model.RoleProxy:
 		return "Proxy Host"
 	case model.RoleGateway:
-		if len(gatewayScope) > 0 && strings.EqualFold(strings.TrimSpace(gatewayScope[0]), "public") {
+		scope := ""
+		if len(gatewayScope) > 0 {
+			scope = gatewayScope[0]
+		}
+		if isPublicGatewayScope(scope) {
 			return "Public Data Gateway"
 		}
 		return "Private Data Gateway"
@@ -230,8 +234,17 @@ func roleDisplayName(role model.Role, gatewayScope ...string) string {
 	}
 }
 
-func agentPackageLabel(role model.Role) string {
-	return roleDisplayName(role) + " Agent package"
+func isPublicGatewayScope(scope string) bool {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "public", "platform":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentPackageLabel(role model.Role, gatewayScope ...string) string {
+	return roleDisplayName(role, gatewayScope...) + " Agent package"
 }
 
 func safeDownloadFilename(rawURL string) string {

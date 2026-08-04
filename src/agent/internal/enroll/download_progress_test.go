@@ -52,6 +52,34 @@ func TestRoleDownloadLabels(t *testing.T) {
 			t.Fatalf("role %q label=%q, want %q", role, got, expected)
 		}
 	}
+	if got := agentPackageLabel(model.RoleGateway, "platform"); got != "Public Data Gateway Agent package" {
+		t.Fatalf("platform gateway label=%q", got)
+	}
+	if got := agentPackageLabel(model.RoleGateway, "public"); got != "Public Data Gateway Agent package" {
+		t.Fatalf("public gateway label=%q", got)
+	}
+}
+
+func TestIsPublicGatewayScope(t *testing.T) {
+	for _, scope := range []string{"platform", "PLATFORM", "public", " Public "} {
+		if !isPublicGatewayScope(scope) {
+			t.Fatalf("expected public scope %q", scope)
+		}
+	}
+	for _, scope := range []string{"", "user", "private", "tenant"} {
+		if isPublicGatewayScope(scope) {
+			t.Fatalf("expected private scope %q", scope)
+		}
+	}
+	if got := roleDisplayName(model.RoleGateway, "platform"); got != "Public Data Gateway" {
+		t.Fatalf("platform display=%q", got)
+	}
+	if got := gatewayDisplayName("platform"); got != "Public Data Gateway" {
+		t.Fatalf("gatewayDisplayName(platform)=%q", got)
+	}
+	if got := gatewayDisplayName("user"); got != "Private Data Gateway" {
+		t.Fatalf("gatewayDisplayName(user)=%q", got)
+	}
 }
 
 func TestSafeDownloadFilenameExcludesQuery(t *testing.T) {
