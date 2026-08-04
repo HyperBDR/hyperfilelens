@@ -90,6 +90,7 @@ import FlowSourceSummaryCell from './FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from './FlowSourceConnectionCell.vue'
 import {
   restoreRecordPathMappings,
+  restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
   restoreRecordTargetDisplayPath,
   restoreRecordTaskStatus,
@@ -100,6 +101,7 @@ import {
   formatTaskProgressBarPercent,
   formatTaskProgressPercent,
   isTransferProgress,
+  type TaskRuntimePayload,
   type TransferProgress,
 } from '../../../lib/kopiaProgress'
 import type { TaskEventRow, TaskResourceRow, TaskRow } from '../../../lib/taskApi'
@@ -177,6 +179,8 @@ const props = withDefaults(
     initialTab?: FlowSourceDetailTabInput
     initialTaskSubTab?: FlowSourceDetailTaskSubTab
     initialTaskUuid?: string
+    initialRestoreRecordId?: number | null
+    initialRestoreRecordTaskUuid?: string
     scrollTo?: 'dirs' | 'targets' | null
     backupFlowTasks: DemoFlowTask[]
     restoreFlowTasks: DemoFlowTask[]
@@ -193,6 +197,8 @@ const props = withDefaults(
     initialTab: 'overview',
     initialTaskSubTab: 'history',
     initialTaskUuid: '',
+    initialRestoreRecordId: null,
+    initialRestoreRecordTaskUuid: '',
     scrollTo: null,
     sourceRows: () => [],
     backupConfigs: () => [],
@@ -274,6 +280,10 @@ const restoreRecordsLoading = ref(false)
 const restoreRecordsError = ref('')
 const restoreRecordsSilentRefreshing = ref(false)
 const expandedRestoreRecordRowKeys = ref<number[]>([])
+const targetedRestoreRecord = ref<RestoreRecord | null>(null)
+const appliedRestoreRecordTargetId = ref<number | null>(null)
+const restoreRecordRuntimeById = ref<Map<number, TaskRuntimePayload>>(new Map())
+const restoreRecordRuntimeLoadingIds = ref<Set<number>>(new Set())
 let restoreRecordPollingTimer: ReturnType<typeof setInterval> | null = null
 const sourceTaskRows = ref<TaskRow[]>([])
 const sourceTasksLoading = ref(false)
@@ -427,7 +437,12 @@ const selectedBrowserPathList = computed(() => Array.from(selectedBrowserPaths.v
 const selectedBrowserPathCount = computed(() => selectedBrowserPaths.value.size)
 const selectedSnapshotDirectoryIsFile = computed(() => selectedSnapshotDirectory.value?.path_type === 'file')
 const selectedSnapshotFileCount = computed(() => (selectedSnapshotDirectoryIsFile.value && selectedSnapshotFileChecked.value ? 1 : 0))
-const hasActiveRestoreRecords = computed(() => restoreRecords.value.some((record) => {
+const displayedRestoreRecords = computed(() => {
+  const target = targetedRestoreRecord.value
+  if (!target || restoreRecords.value.some((record) => record.id === target.id)) return restoreRecords.value
+  return [target, ...restoreRecords.value]
+})
+const hasActiveRestoreRecords = computed(() => displayedRestoreRecords.value.some((record) => {
   const status = String(record.task_summary?.status || '').toLowerCase()
   return status === 'pending' || status === 'running'
 }))
@@ -636,7 +651,7 @@ async function refreshActiveTransferProgress() {
       return
     }
     if (task.task_type === 'restore') {
-      const record = restoreRecords.value.find((row) => row.task_uuid === task.task_uuid)
+      const record = displayedRestoreRecords.value.find((row) => row.task_uuid === task.task_uuid)
       if (record?.id) {
         const payload = await fetchRestoreRecordRuntime(record.id)
         activeTransferProgress.value = isTransferProgress(payload.transfer_progress)
@@ -956,12 +971,43 @@ function resetExpandedRestoreItems() {
 }
 
 function toggleRestoreRecord(record: RestoreRecord) {
-  expandedRestoreRecordRowKeys.value = expandedRestoreRecordRowKeys.value.includes(record.id) ? [] : [record.id]
+  const expanding = !expandedRestoreRecordRowKeys.value.includes(record.id)
+  expandedRestoreRecordRowKeys.value = expanding ? [record.id] : []
+  if (expanding) void loadRestoreRecordRuntime(record)
 }
 
 function onRestoreRecordExpandChange(record: RestoreRecord, expandedRows: RestoreRecord[]) {
   const expanded = expandedRows.some((item) => item.id === record.id)
   expandedRestoreRecordRowKeys.value = expanded ? [record.id] : []
+  if (expanded) void loadRestoreRecordRuntime(record)
+}
+
+function restoreRecordRuntime(record: RestoreRecord) {
+  return restoreRecordRuntimeById.value.get(record.id) ?? null
+}
+
+function restoreRecordRuntimeLoading(record: RestoreRecord) {
+  return restoreRecordRuntimeLoadingIds.value.has(record.id)
+}
+
+function restoreRecordMetrics(record: RestoreRecord) {
+  return restoreRecordRuntimeMetricParts(t, restoreRecordRuntime(record))
+}
+
+async function loadRestoreRecordRuntime(record: RestoreRecord) {
+  const signal = requests.nextSignal('flow-source-restore-record-runtime')
+  restoreRecordRuntimeLoadingIds.value.add(record.id)
+  try {
+    const runtime = await fetchRestoreRecordRuntime(record.id, { signal })
+    restoreRecordRuntimeById.value.set(record.id, runtime)
+  } catch (err) {
+    if (!requests.isAbortError(err)) {
+      restoreRecordRuntimeById.value.delete(record.id)
+    }
+  } finally {
+    requests.releaseSignal('flow-source-restore-record-runtime', signal)
+    restoreRecordRuntimeLoadingIds.value.delete(record.id)
+  }
 }
 
 function latestSnapshotForConfig(configId: number) {
@@ -1976,6 +2022,52 @@ async function downloadSelectedBrowserPaths() {
   }
 }
 
+function restoreRecordMatchesEndpoint(
+  record: RestoreRecord,
+  endpoint: { sourceType: RestoreEndpointType; sourceRefId: number },
+) {
+  if (record.source_type === endpoint.sourceType
+    && Number(record.source_ref_id) === endpoint.sourceRefId) return true
+  const configId = Number(record.backup_config_id || 0)
+  return configId > 0 && props.backupConfigs.some((config) => (
+    config.id === configId
+    && config.source_type === endpoint.sourceType
+    && Number(config.source_ref_id) === endpoint.sourceRefId
+  ))
+}
+
+async function resolveTargetedRestoreRecord(
+  records: RestoreRecord[],
+  endpoint: { sourceType: RestoreEndpointType; sourceRefId: number },
+  signal: AbortSignal,
+) {
+  const targetId = Number(props.initialRestoreRecordId || 0)
+  if (!targetId) {
+    targetedRestoreRecord.value = null
+    return null
+  }
+  const existing = records.find((record) => record.id === targetId && restoreRecordMatchesEndpoint(record, endpoint))
+  if (existing) {
+    targetedRestoreRecord.value = null
+    return existing
+  }
+  if (targetedRestoreRecord.value?.id === targetId
+    && restoreRecordMatchesEndpoint(targetedRestoreRecord.value, endpoint)) {
+    return targetedRestoreRecord.value
+  }
+  const taskUuid = String(props.initialRestoreRecordTaskUuid || '').trim()
+  if (!taskUuid) {
+    targetedRestoreRecord.value = null
+    return null
+  }
+  const result = await listRestoreRecords({ page: 1, page_size: 1, task_uuid: taskUuid }, { signal })
+  const target = result.results.find((record) => (
+    record.id === targetId && restoreRecordMatchesEndpoint(record, endpoint)
+  )) ?? null
+  targetedRestoreRecord.value = target
+  return target
+}
+
 async function loadRestoreRecordsForSource(options: { silent?: boolean } = {}) {
   const silent = options.silent === true
   if (silent && restoreRecordsSilentRefreshing.value) return
@@ -1999,9 +2091,15 @@ async function loadRestoreRecordsForSource(options: { silent?: boolean } = {}) {
       source_ref_id: endpoint.sourceRefId,
     }, { signal })
     restoreRecords.value = result.results
-    const currentRecordIds = new Set(result.results.map((record) => record.id))
+    const target = await resolveTargetedRestoreRecord(result.results, endpoint, signal)
+    const currentRecordIds = new Set(displayedRestoreRecords.value.map((record) => record.id))
     if (expandedRestoreRecordRowKeys.value.some((id) => !currentRecordIds.has(id))) {
       resetExpandedRestoreItems()
+    }
+    if (target && appliedRestoreRecordTargetId.value !== target.id) {
+      appliedRestoreRecordTargetId.value = target.id
+      expandedRestoreRecordRowKeys.value = [target.id]
+      void loadRestoreRecordRuntime(target)
     }
     restoreRecordPagination.count = result.count
   } catch (err) {
@@ -2028,6 +2126,9 @@ function syncRestoreRecordPolling() {
   if (!props.modelValue || activeTab.value !== 'restoreRecords' || !hasActiveRestoreRecords.value) return
   restoreRecordPollingTimer = setInterval(() => {
     void loadRestoreRecordsForSource({ silent: true })
+    const expandedId = expandedRestoreRecordRowKeys.value[0]
+    const expandedRecord = displayedRestoreRecords.value.find((record) => record.id === expandedId)
+    if (expandedRecord) void loadRestoreRecordRuntime(expandedRecord)
   }, RESTORE_RECORD_POLL_INTERVAL_MS)
 }
 
@@ -2142,13 +2243,24 @@ watch(
 )
 
 watch(
-  () => [props.initialTab, props.initialTaskSubTab, props.scrollTo, props.initialTaskUuid] as const,
+  () => [
+    props.initialTab,
+    props.initialTaskSubTab,
+    props.scrollTo,
+    props.initialTaskUuid,
+    props.initialRestoreRecordId,
+    props.initialRestoreRecordTaskUuid,
+  ] as const,
   async () => {
     if (!props.modelValue) return
     applyInitialTabs()
+    targetedRestoreRecord.value = null
+    appliedRestoreRecordTargetId.value = null
+    resetExpandedRestoreItems()
     await nextTick()
     if (activeTab.value === 'overview' && props.scrollTo) scrollToSection()
     if (props.initialTaskUuid) void openTaskDetailByUuid(props.initialTaskUuid)
+    if (activeTab.value === 'restoreRecords') void loadRestoreRecordsForSource()
   },
 )
 
@@ -2215,6 +2327,10 @@ watch(sourceId, () => {
   sourceSnapshotsError.value = ''
   restoreRecords.value = []
   restoreRecordsError.value = ''
+  targetedRestoreRecord.value = null
+  appliedRestoreRecordTargetId.value = null
+  restoreRecordRuntimeById.value = new Map()
+  restoreRecordRuntimeLoadingIds.value = new Set()
   resetExpandedRestoreItems()
   restoreRecordPagination.page = 1
   restoreRecordPagination.pageSize = DETAIL_PAGE_SIZE
@@ -2267,6 +2383,7 @@ function onClosed() {
   requests.abortScope('flow-source-overview')
   requests.abortScope('flow-source-snapshots')
   requests.abortScope('flow-source-restore-records')
+  requests.abortScope('flow-source-restore-record-runtime')
   requests.abortScope('flow-source-tasks')
   activeTab.value = 'overview'
   activeTaskSubTab.value = 'history'
@@ -2281,6 +2398,10 @@ function onClosed() {
   snapshotPagination.count = 0
   restoreRecords.value = []
   restoreRecordsError.value = ''
+  targetedRestoreRecord.value = null
+  appliedRestoreRecordTargetId.value = null
+  restoreRecordRuntimeById.value = new Map()
+  restoreRecordRuntimeLoadingIds.value = new Set()
   resetExpandedRestoreItems()
   restoreRecordPagination.page = 1
   restoreRecordPagination.pageSize = DETAIL_PAGE_SIZE
@@ -3173,8 +3294,8 @@ function onClosed() {
               v-table-column-resize="'protection.flowBackupSource.restoreRecords'"
               v-table-overflow-title
               v-loading="restoreRecordsLoading"
-              v-if="restoreRecords.length || restoreRecordsLoading"
-              :data="restoreRecords"
+              v-if="displayedRestoreRecords.length || restoreRecordsLoading"
+              :data="displayedRestoreRecords"
               :fit="false"
               row-key="id"
               max-height="calc(var(--app-viewport-height) - 260px)"
@@ -3230,6 +3351,25 @@ function onClosed() {
                           </span>
                         </div>
                       </div>
+                    </div>
+                    <div class="restore-record-runtime-summary">
+                      <span class="restore-record-runtime-summary__label">
+                        {{ t('protection.backupsPage.flowRestoreRecordRuntimeSummary') }}
+                      </span>
+                      <div v-if="restoreRecordMetrics(row).length" class="restore-record-runtime-summary__metrics">
+                        <span
+                          v-for="metric in restoreRecordMetrics(row)"
+                          :key="metric"
+                          class="restore-record-runtime-summary__metric"
+                        >
+                          {{ metric }}
+                        </span>
+                      </div>
+                      <span v-else class="restore-record-runtime-summary__unavailable">
+                        {{ restoreRecordRuntimeLoading(row)
+                          ? t('common.loading')
+                          : t('protection.backupsPage.flowRestoreRecordMetricsUnavailable') }}
+                      </span>
                     </div>
                     <div v-if="row.items?.length" class="dp-flow-restore-plan-card restore-record-structure-card">
                       <div class="create-recovery-plan-cell create-recovery-plan-cell--review create-recovery-plan-cell--enabled">
@@ -3443,7 +3583,7 @@ function onClosed() {
               :description="t('protection.backupsPage.flowSourceDetailRestoreRecordsEmpty')"
               :image-size="72"
             />
-            <div v-if="restoreRecords.length || restoreRecordPagination.count > 0" class="hfl-list-footer">
+            <div v-if="displayedRestoreRecords.length || restoreRecordPagination.count > 0" class="hfl-list-footer">
               <HflPagination
                 v-model:current-page="restoreRecordPagination.page"
                 v-model:page-size="restoreRecordPagination.pageSize"
@@ -4821,6 +4961,50 @@ function onClosed() {
   text-overflow: ellipsis;
 }
 
+.restore-record-runtime-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0 2px 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.restore-record-runtime-summary__label {
+  flex: 0 0 auto;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.restore-record-runtime-summary__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.restore-record-runtime-summary__metric {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 8%, #fff);
+  color: var(--el-text-color-regular);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.restore-record-runtime-summary__unavailable {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .restore-record-time-summary {
     grid-template-columns: minmax(0, 1fr);
@@ -4853,6 +5037,11 @@ function onClosed() {
 
   .restore-record-time-summary__duration-pill {
     box-shadow: none;
+  }
+
+  .restore-record-runtime-summary {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

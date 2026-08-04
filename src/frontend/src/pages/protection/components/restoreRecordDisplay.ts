@@ -1,4 +1,12 @@
 import type { RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
+import {
+  formatCount,
+  transferMetricParts,
+  type TaskRuntimePayload,
+  type TransferProgress,
+} from '../../../lib/kopiaProgress'
+
+type TranslateFn = (key: string, args?: Record<string, unknown>) => string
 
 export type RestoreRecordPathMapping = {
   key: string
@@ -59,4 +67,33 @@ export function restoreRecordPathMappings(record: RestoreRecord): RestoreRecordP
       sourceKind: restoreRecordPathKind(sourcePath),
     }))
   })
+}
+
+function positiveCount(value: number | null | undefined) {
+  const count = Number(value || 0)
+  return Number.isFinite(count) && count > 0 ? count : 0
+}
+
+export function restoreRecordRuntimeMetricParts(
+  t: TranslateFn,
+  runtime?: TaskRuntimePayload | null,
+): string[] {
+  const transfer = runtime?.transfer_progress
+  if (!transfer) return []
+
+  const parts: string[] = []
+  const processed = positiveCount(transfer.processed_count)
+  const total = positiveCount(transfer.total_count)
+  if (total > 0) {
+    parts.push(t('protection.backupsPage.flowRestoreRecordItemsProgress', {
+      done: formatCount(processed),
+      total: formatCount(total),
+    }))
+  } else if (processed > 0) {
+    parts.push(t('protection.backupsPage.flowRestoreRecordItemsProcessed', {
+      n: formatCount(processed),
+    }))
+  }
+  parts.push(...transferMetricParts(t, transfer as TransferProgress))
+  return parts
 }

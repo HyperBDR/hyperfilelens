@@ -302,9 +302,9 @@ export async function listRestoreRecords(params?: {
   return paged<RestoreRecord>(await api<unknown>(path, { ...init, headers: orgHeaders() }))
 }
 
-export async function fetchRestoreRecordRuntime(recordId: number) {
+export async function fetchRestoreRecordRuntime(recordId: number, init?: RequestInit) {
   return unwrapApiPayload<import('./kopiaProgress').TaskRuntimePayload>(
-    await api<unknown>(`${restoreRecordBase}/${recordId}/runtime/`, { headers: orgHeaders() }),
+    await api<unknown>(`${restoreRecordBase}/${recordId}/runtime/`, { ...init, headers: orgHeaders() }),
   )
 }
 
