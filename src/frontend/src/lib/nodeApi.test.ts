@@ -57,6 +57,19 @@ function decodePowerShellCommand(command: string): string {
 }
 
 describe('Minimal installer metadata', () => {
+  it('accepts the standard API envelope used by local and production consoles', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        code: 0,
+        message: 'success',
+        data: installerManifest,
+      }),
+    }))
+
+    await expect(fetchMinimalInstallerManifest()).resolves.toEqual(installerManifest)
+  })
+
   it('rejects malformed artifact metadata before issuing a command', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

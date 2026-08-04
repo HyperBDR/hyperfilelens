@@ -318,7 +318,8 @@ export async function fetchMinimalInstallerManifest(
   if (!response.ok) {
     throw new Error('Minimal installer metadata is unavailable')
   }
-  const payload = await response.json() as MinimalInstallerManifest
+  // Public fetch bypasses api(); still peel the standard { code, data } envelope.
+  const payload = unwrapApiPayload<MinimalInstallerManifest>(await response.json())
   const expected = [
     'linux-amd64',
     'linux-arm64',
