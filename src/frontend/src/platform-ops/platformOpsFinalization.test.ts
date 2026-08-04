@@ -7,19 +7,25 @@ function source(path: string) {
 }
 
 describe('Admin Console finalization contracts', () => {
-  it('does not issue a gateway enrollment token until the operator clicks Generate', () => {
+  it('matches the tenant Private Gateway add shell for Public Data Gateway enrollment', () => {
     const wizard = source('src/components/NodeLifecycleWizard.vue')
     const addPage = source('src/platform-ops/pages/engine/PlatformGatewayAdd.vue')
 
-    expect(addPage).toContain('generate-on-demand')
-    expect(addPage).toContain("<h1>{{ t('platformOps.engineGateway.addTitle') }}</h1>")
-    expect(addPage).not.toContain("<h2>{{ t('platformOps.engineGateway.addTitle') }}</h2>")
+    expect(addPage).toContain('resource-add-fullscreen')
+    expect(addPage).toContain('proxy-deploy-fullscreen')
+    expect(addPage).toContain("<Teleport to=\"body\">")
+    expect(addPage).toContain("t('nodesDeploy.pageTitlePublicGateway')")
+    expect(addPage).toContain("t('nodesDeploy.publicGatewayIntroDesc')")
+    expect(addPage).not.toContain('generate-on-demand')
+    expect(addPage).not.toContain('platformOps.engineGateway.securityNote')
+    expect(addPage).not.toContain('platform-gateway-add__security')
     expect(addPage).not.toContain('enrollment-ttl-seconds')
     expect(addPage).not.toContain('gateway-token-ttl')
     expect(addPage).toContain('@enrollment-issued="onEnrollmentIssued"')
+    expect(addPage).toContain('gateway-scope="platform"')
+    // Wizard still supports on-demand generation for other callers; Admin Public no longer uses it.
     expect(wizard).toContain("activeTab.value === 'install' && !props.generateOnDemand")
     expect(wizard).toContain('v-if="generateOnDemand && !installGenerated"')
-    expect(wizard).toContain('@click="generateInstallCommand"')
   })
 
   it('keeps the Admin gateway table compact and uses Admin pagination', () => {

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Clock3, ShieldCheck } from 'lucide-vue-next'
+import { ArrowLeft } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import NodeLifecycleWizard from '../../../components/NodeLifecycleWizard.vue'
 import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
@@ -12,42 +12,19 @@ import {
   revokePlatformGatewayEnrollment,
 } from '../../../lib/nodeApi'
 import { apiErrorMessage } from '../../../lib/api'
+import { routeLocationWithListRefresh } from '../../../lib/listRouteRefresh'
 
 const { t } = useI18n()
+const router = useRouter()
 const wizardRef = ref<{ clearInstallCommand: () => void } | null>(null)
 const tokenId = ref<number | null>(null)
-const expiresAt = ref<string | null>(null)
 const revokeOpen = ref(false)
 const revoking = ref(false)
 
-const expiresLabel = computed(() => {
-  if (!expiresAt.value) return '—'
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(expiresAt.value))
-})
-
-const tokenExpired = computed(() => {
-  if (!expiresAt.value) return false
-  return new Date(expiresAt.value).getTime() <= Date.now()
-})
-
-const tokenStatusTitle = computed(() => (
-  tokenExpired.value
-    ? t('platformOps.engineGateway.tokenExpired')
-    : t('platformOps.engineGateway.tokenActive')
-))
-
-const tokenStatusDetail = computed(() => (
-  tokenExpired.value
-    ? t('platformOps.engineGateway.tokenExpiredHint')
-    : t('platformOps.engineGateway.tokenExpires', { time: expiresLabel.value })
-))
+const backTarget = '/platform-ops/engine/gateways'
 
 function onEnrollmentIssued(payload: { tokenId: number; expiresAt: string | null }) {
   tokenId.value = payload.tokenId
-  expiresAt.value = payload.expiresAt
 }
 
 async function copyCommand(command: string) {
@@ -62,13 +39,16 @@ async function copyCommand(command: string) {
   }
 }
 
+function handleBack() {
+  router.push(routeLocationWithListRefresh(backTarget))
+}
+
 async function confirmRevoke() {
   if (tokenId.value == null) return
   revoking.value = true
   try {
     await revokePlatformGatewayEnrollment(tokenId.value)
     tokenId.value = null
-    expiresAt.value = null
     wizardRef.value?.clearInstallCommand()
     revokeOpen.value = false
     ElMessage.success({ message: t('platformOps.engineGateway.revokeSuccess'), grouping: true })
@@ -81,163 +61,93 @@ async function confirmRevoke() {
     revoking.value = false
   }
 }
+
+const canRevoke = computed(() => tokenId.value != null)
+
+onMounted(() => {
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = 'hidden'
+  }
+})
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = ''
+  }
+})
 </script>
 
 <template>
-  <div class="platform-gateway-add">
-    <RouterLink to="/platform-ops/engine/gateways" class="platform-gateway-add__back">
-      <ArrowLeft :size="16" aria-hidden="true" />
-      {{ t('platformOps.engineGateway.backToGateways') }}
-    </RouterLink>
+  <Teleport to="body">
+    <div
+      class="fullscreen-form-fullscreen fullscreen-form-animated resource-add-fullscreen source-deploy-fullscreen agent-deploy-fullscreen proxy-deploy-fullscreen"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      @keydown.escape.prevent="handleBack"
+    >
+      <div class="fullscreen-form-page source-deploy-page">
+        <div class="fullscreen-form-header">
+          <button type="button" class="fullscreen-form-header__back" @click="handleBack">
+            <ArrowLeft class="fullscreen-form-header__back-icon" :size="18" />
+          </button>
+          <div class="fullscreen-form-header__content">
+            <h1 class="fullscreen-form-header__title">
+              {{ t('nodesDeploy.pageTitlePublicGateway') }}
+            </h1>
+            <p class="fullscreen-form-header__desc">
+              {{ t('nodesDeploy.publicGatewayIntroDesc') }}
+            </p>
+          </div>
+        </div>
 
-    <header class="platform-gateway-add__header">
-      <div>
-        <h1>{{ t('platformOps.engineGateway.addTitle') }}</h1>
-        <p>{{ t('platformOps.engineGateway.addSubtitle') }}</p>
+        <div class="fullscreen-form-layout">
+          <div class="fullscreen-form-main">
+            <NodeLifecycleWizard
+              ref="wizardRef"
+              install-only
+              org-key="__platform_lens__"
+              role="gateway"
+              os="linux"
+              role-locked
+              gateway-scope="platform"
+              @copy="copyCommand"
+              @enrollment-issued="onEnrollmentIssued"
+            />
+
+            <div class="fullscreen-form-footer fullscreen-form-action-footer">
+              <ElButton @click="handleBack">
+                {{ t('common.back') }}
+              </ElButton>
+              <ElButton
+                v-if="canRevoke"
+                type="danger"
+                plain
+                @click="revokeOpen = true"
+              >
+                {{ t('platformOps.engineGateway.revoke') }}
+              </ElButton>
+            </div>
+          </div>
+        </div>
       </div>
-    </header>
+    </div>
+  </Teleport>
 
-    <ElAlert type="warning" :closable="false" show-icon class="platform-gateway-add__security">
-      {{ t('platformOps.engineGateway.securityNote') }}
-    </ElAlert>
-
-    <section v-if="tokenId != null" class="platform-gateway-add__token-status" aria-live="polite">
-      <span class="platform-gateway-add__token-icon"><ShieldCheck :size="18" aria-hidden="true" /></span>
-      <span class="platform-gateway-add__token-copy">
-        <strong>{{ tokenStatusTitle }}</strong>
-        <span><Clock3 :size="14" aria-hidden="true" />{{ tokenStatusDetail }}</span>
-      </span>
-      <ElButton type="danger" plain @click="revokeOpen = true">
-        {{ t('platformOps.engineGateway.revoke') }}
-      </ElButton>
-    </section>
-
-    <NodeLifecycleWizard
-      ref="wizardRef"
-      install-only
-      generate-on-demand
-      org-key="__platform_lens__"
-      role="gateway"
-      os="linux"
-      role-locked
-      gateway-scope="platform"
-      @copy="copyCommand"
-      @enrollment-issued="onEnrollmentIssued"
-    />
-
-    <DangerConfirmDialog
-      v-model="revokeOpen"
-      :title="t('platformOps.engineGateway.revokeTitle')"
-      :message="t('platformOps.engineGateway.revokeMessage')"
-      confirm-mode="keyword"
-      :confirm-keyword="t('platformOps.engineGateway.revokeKeyword')"
-      :confirm-text="t('platformOps.engineGateway.revoke')"
-      :cancel-text="t('common.cancel')"
-      :loading="revoking"
-      @confirm="confirmRevoke"
-    />
-  </div>
+  <DangerConfirmDialog
+    v-model="revokeOpen"
+    :title="t('platformOps.engineGateway.revokeTitle')"
+    :message="t('platformOps.engineGateway.revokeMessage')"
+    confirm-mode="keyword"
+    :confirm-keyword="t('platformOps.engineGateway.revokeKeyword')"
+    :confirm-text="t('platformOps.engineGateway.revoke')"
+    :cancel-text="t('common.cancel')"
+    :loading="revoking"
+    @confirm="confirmRevoke"
+  />
 </template>
 
-<style scoped>
-.platform-gateway-add {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: min(100%, 1120px);
-  margin: 0 auto;
-}
-
-.platform-gateway-add__back {
-  display: inline-flex;
-  width: fit-content;
-  min-height: 36px;
-  align-items: center;
-  gap: 6px;
-  color: #4338ca;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.platform-gateway-add__header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.platform-gateway-add__header h1 {
-  margin: 0;
-  color: var(--color-text-title, #1d2129);
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.platform-gateway-add__header p {
-  margin: 6px 0 0;
-  color: #475569;
-  font-size: 13px;
-}
-
-.platform-gateway-add__token-status {
-  display: flex;
-  min-height: 64px;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border: 1px solid #bbf7d0;
-  border-radius: 10px;
-  background: #f0fdf4;
-}
-
-.platform-gateway-add__token-icon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 50%;
-  background: #dcfce7;
-  color: #166534;
-}
-
-.platform-gateway-add__token-copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 3px;
-  color: #14532d;
-  font-size: 13px;
-}
-
-.platform-gateway-add__token-copy > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-@media (max-width: 640px) {
-  .platform-gateway-add__header {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .platform-gateway-add__token-status {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .platform-gateway-add__token-copy {
-    flex-basis: calc(100% - 46px);
-  }
-
-  .platform-gateway-add__token-status :deep(.el-button) {
-    width: 100%;
-    min-height: 44px;
-  }
-}
-</style>
-
+<style src="../../../styles/fullscreen-form-shell.css"></style>
 <style src="../../../styles/resource-add.css"></style>
 <style src="../../../styles/source-deploy-ui.css"></style>
 <style src="../../../styles/agent-install-wizard.css"></style>
