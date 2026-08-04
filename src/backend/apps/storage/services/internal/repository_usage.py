@@ -445,17 +445,28 @@ def _is_unbound_nas_repository(repository: Repository) -> bool:
 
 def _direct_nas_agent_config_groups(repository: Repository) -> dict[int, list[int]]:
     backup_config_model = apps.get_model("protection", "BackupConfig")
+    source_resource_model = apps.get_model("source", "SourceResource")
     groups: dict[int, list[int]] = {}
     rows = (
         backup_config_model.objects.filter(
             organization_id=repository.organization_id,
             repository_id=repository.id,
-            source_type="agent",
         )
         .order_by("source_ref_id", "id")
-        .values_list("id", "source_ref_id")
+        .values_list("id", "source_type", "source_ref_id")
     )
-    for config_id, source_ref_id in rows:
+    nas_nodes = {
+        int(row["id"]): int(row["bound_node_id"])
+        for row in source_resource_model.objects.filter(
+            organization_id=repository.organization_id,
+            resource_type="nas",
+            is_deleted=False,
+            bound_node_id__isnull=False,
+        ).values("id", "bound_node_id")
+    }
+    for config_id, source_type, source_ref_id in rows:
+        if source_type == "nas":
+            source_ref_id = nas_nodes.get(int(source_ref_id), 0)
         try:
             node_id = int(source_ref_id)
         except (TypeError, ValueError):
@@ -583,7 +594,7 @@ def _sync_direct_nas_agent_usage_shards(repository: Repository) -> tuple[int | N
         node.id: node
         for node in Node.objects.filter(
             organization_id=repository.organization_id,
-            role=NodeRole.AGENT,
+            role__in=[NodeRole.AGENT, NodeRole.PROXY],
             id__in=list(groups.keys()),
             is_deleted=False,
         )

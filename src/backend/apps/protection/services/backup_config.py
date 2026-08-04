@@ -107,7 +107,7 @@ def create_backup_config(
         payload["name"],
         len(directories_data),
     )
-    _initialize_direct_nas_repository_for_agent(
+    _initialize_direct_nas_repository(
         organization_id=organization_id,
         source_type=payload["source_type"],
         source_ref_id=payload["source_ref_id"],
@@ -496,15 +496,47 @@ def _validate_unique_source_config(
         raise ValidationError({"source_ref_id": "Backup source already has a backup configuration."})
 
 
-def _initialize_direct_nas_repository_for_agent(
+def _direct_nas_execution_node(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+) -> Node:
+    if source_type == "agent":
+        node = Node.objects.filter(
+            organization_id=organization_id,
+            role=NodeRole.AGENT,
+            id=source_ref_id,
+            status=Node.Status.ONLINE,
+            is_deleted=False,
+        ).first()
+        if node is None:
+            raise ValidationError({"source_ref_id": "Agent source is offline."})
+        return node
+    if source_type == "nas":
+        source = SourceResource.objects.filter(
+            organization_id=organization_id,
+            id=source_ref_id,
+            resource_type=ResourceType.NAS,
+            is_deleted=False,
+        ).select_related("bound_node").first()
+        node = source.bound_node if source is not None else None
+        if node is None or node.role != NodeRole.PROXY:
+            raise ValidationError({"source_ref_id": "NAS source is not bound to a proxy node."})
+        if node.status != Node.Status.ONLINE:
+            raise ValidationError({"source_ref_id": "NAS bound proxy node is offline."})
+        return node
+    raise ValidationError({"source_type": "Unsupported backup source type."})
+
+
+def _initialize_direct_nas_repository(
     *,
     organization_id: int,
     source_type: str,
     source_ref_id: int,
     repository_id: int,
+    verify_existing: bool = True,
 ) -> None:
-    if source_type != "agent":
-        return
     repository = Repository.objects.filter(
         organization_id=organization_id,
         id=repository_id,
@@ -515,15 +547,11 @@ def _initialize_direct_nas_repository_for_agent(
     ).exclude(status=Repository.Status.REMOVED).first()
     if repository is None:
         return
-    node = Node.objects.filter(
+    node = _direct_nas_execution_node(
         organization_id=organization_id,
-        role=NodeRole.AGENT,
-        id=source_ref_id,
-        status=Node.Status.ONLINE,
-        is_deleted=False,
-    ).first()
-    if node is None:
-        raise ValidationError({"source_ref_id": "Agent source is offline."})
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+    )
     payload = nas_repository_payload(
         repository=repository,
         subdir=nas_agent_repository_subdir(node.id),
@@ -538,6 +566,8 @@ def _initialize_direct_nas_repository_for_agent(
         repository_subdir=repository_subdir,
         last_success_checked_at__isnull=False,
     ).exists()
+    if previously_initialized and not verify_existing:
+        return
     task_kind = "repo.status" if previously_initialized else "repo.initialize"
     correlation_id = f"{source_type}:{source_ref_id}:{repository_id}"
     log_agent_dispatch(
@@ -608,6 +638,23 @@ def _initialize_direct_nas_repository_for_agent(
         repository.health = Repository.Health.ONLINE
         repository.last_checked_at = checked_at
         repository.save(update_fields=["health", "last_checked_at", "updated_at"])
+
+
+def ensure_direct_nas_repository_for_backup(
+    *,
+    organization_id: int,
+    source_type: str,
+    source_ref_id: int,
+    repository_id: int,
+) -> None:
+    """Initialize a legacy direct-NAS backup config on its execution node."""
+    _initialize_direct_nas_repository(
+        organization_id=organization_id,
+        source_type=source_type,
+        source_ref_id=source_ref_id,
+        repository_id=repository_id,
+        verify_existing=False,
+    )
 
 
 def _should_initialize_direct_nas_repository(
@@ -1041,7 +1088,7 @@ def update_backup_config(
     if _should_initialize_direct_nas_repository(
         current=config, payload=preflight_payload
     ):
-        _initialize_direct_nas_repository_for_agent(
+        _initialize_direct_nas_repository(
             organization_id=config.organization_id,
             source_type=preflight_payload["source_type"],
             source_ref_id=preflight_payload["source_ref_id"],

@@ -602,6 +602,25 @@ def start_backup_tasks(
                     source_ref_id=source.source_ref_id,
                     repository_id=config.repository_id,
                 )
+                repository = Repository.objects.get(
+                    organization_id=organization_id,
+                    id=config.repository_id,
+                )
+                if (
+                    repository.repo_type == Repository.Type.NAS
+                    and not repository.bind_node_type
+                    and not repository.bind_node_id
+                ):
+                    from apps.protection.services.backup_config import (
+                        ensure_direct_nas_repository_for_backup,
+                    )
+
+                    ensure_direct_nas_repository_for_backup(
+                        organization_id=organization_id,
+                        source_type=source.source_type,
+                        source_ref_id=source.source_ref_id,
+                        repository_id=repository.id,
+                    )
                 from apps.protection.services.directory_size_estimate import (
                     ensure_backup_config_directory_estimates,
                 )
@@ -1030,6 +1049,7 @@ def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: 
             or "access denied" in lower
             or "rpc error:" in lower
             or "failed to open repository" in lower
+            or "error connecting to repository" in lower
             or lower.startswith("error:")
             or "unable to get policy tree" in lower
             or "policy not found" in lower
@@ -1069,6 +1089,18 @@ def extract_kopia_failure_message(result: dict[str, Any] | None, *, last_error: 
         if tail:
             return tail[:2000]
     return cleaned_error[:2000]
+
+
+def public_repository_failure_message(message: str) -> str:
+    """Return an actionable repository error without backend implementation details."""
+    text = re.sub(r"https?://\S+", "", str(message or "")).strip()
+    lower = text.lower()
+    if "not initialized" in lower:
+        return "Backup repository is not initialized. Initialize or repair the repository before retrying."
+    if "repository is not connected" in lower or "not connected" in lower:
+        return "Backup repository is not connected. Check the repository and retry."
+    text = re.sub(r"\bKopia\b", "backup repository", text, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", text).strip(" ;")[:2000]
 
 
 def _is_generic_exit_message(message: str) -> bool:

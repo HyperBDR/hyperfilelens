@@ -416,16 +416,17 @@ func TestManagedRepositoryStatusHealthOnlyControlsUsageMetrics(t *testing.T) {
 	}
 }
 
-func TestManagedRepositoryReadyCacheSkipsRepeatedConnectAndStatus(t *testing.T) {
+func TestManagedRepositoryRechecksRepeatedConnectAndStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake Kopia shell script is Unix-only")
 	}
 	tempDir := t.TempDir()
 	commandLog := filepath.Join(tempDir, "commands.log")
+	connectedPath := filepath.Join(tempDir, "connected")
 	kopiaPath := filepath.Join(tempDir, "kopia")
 	script := fmt.Sprintf(
-		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase \"$*\" in *\"repository connect\"*) touch \"${1#--config-file=}\" ;; esac\nexit 0\n",
-		commandLog,
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase \"$*\" in\n  *\"repository connect\"*) touch \"${1#--config-file=}\" %q; exit 0 ;;\n  *\"repository status\"*) if [ -f %q ]; then rm %q; exit 0; fi; exit 1 ;;\nesac\nexit 0\n",
+		commandLog, connectedPath, connectedPath, connectedPath,
 	)
 	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -458,11 +459,11 @@ func TestManagedRepositoryReadyCacheSkipsRepeatedConnectAndStatus(t *testing.T) 
 		t.Fatal(err)
 	}
 	commands := string(raw)
-	if got := strings.Count(commands, "repository connect filesystem"); got != 1 {
-		t.Fatalf("connect ran %d times, want 1: %q", got, commands)
+	if got := strings.Count(commands, "repository connect filesystem"); got != 2 {
+		t.Fatalf("connect ran %d times, want 2: %q", got, commands)
 	}
-	if got := strings.Count(commands, "repository status"); got != 1 {
-		t.Fatalf("status ran %d times, want 1: %q", got, commands)
+	if got := strings.Count(commands, "repository status"); got != 3 {
+		t.Fatalf("status ran %d times, want 3: %q", got, commands)
 	}
 }
 

@@ -138,7 +138,10 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         if str(result.get("error_code") or "") == "POLICY_APPLY_FAILED":
             phase = str(result.get("policy_phase") or "apply")
             message = bt.extract_kopia_failure_message(result, last_error=last_error)
-            return "POLICY_APPLY_FAILED", (message or f"Kopia policy {phase} failed.")[:2000]
+            public_message = bt.public_repository_failure_message(message)
+            return "POLICY_APPLY_FAILED", (
+                public_message or f"Backup repository policy {phase} failed."
+            )[:2000]
         message = bt.extract_kopia_failure_message(result, last_error=last_error)
         if not message:
             message = last_error or "Agent backup command failed."

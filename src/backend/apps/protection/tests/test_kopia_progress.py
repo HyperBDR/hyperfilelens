@@ -358,6 +358,30 @@ class KopiaFailureMessageTests(SimpleTestCase):
         self.assertIn("access denied", message)
         self.assertIn("PermissionDenied", message)
 
+    def test_extract_kopia_failure_message_keeps_repository_connect_failure(self):
+        from apps.protection.services.backup_task import extract_kopia_failure_message
+
+        result = {
+            "repository_connect": {
+                "stderr": "error connecting to repository: repository not initialized in the provided storage"
+            },
+            "repository_status": {
+                "stderr": "open repository: repository is not connected. See https://kopia.io/docs/repositories/"
+            },
+        }
+        message = extract_kopia_failure_message(result, last_error="exit 1: exit status 1")
+        self.assertIn("repository not initialized", message)
+
+    def test_public_repository_failure_message_hides_internal_details(self):
+        from apps.protection.services.backup_task import public_repository_failure_message
+
+        message = public_repository_failure_message(
+            "open repository: repository is not connected. See https://kopia.io/docs/repositories/"
+        )
+        self.assertEqual(message, "Backup repository is not connected. Check the repository and retry.")
+        self.assertNotIn("kopia", message.lower())
+        self.assertNotIn("http", message.lower())
+
     def test_is_generic_exit_message(self):
         from apps.protection.services.backup_task import _is_generic_exit_message
 

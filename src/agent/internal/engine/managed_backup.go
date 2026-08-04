@@ -29,7 +29,6 @@ import (
 const (
 	managedRepositoryFSOperationTimeout  = 30 * time.Second
 	managedRepositoryKopiaCommandTimeout = 2 * time.Minute
-	managedRepositoryReadyTTL            = 30 * time.Second
 	kopiaEstimatedUsageFactor            = 1.05
 	repositoryAlreadyExistsCode          = "STORAGE.REPOSITORY_ALREADY_EXISTS"
 	repositoryAlreadyExistsMessage       = "A Kopia repository already exists at the selected location. Import is not supported in this version. Choose a different storage location."
@@ -66,14 +65,8 @@ type repositorySpec struct {
 	SessionID       string
 }
 
-type repositoryReadyEntry struct {
-	fingerprint string
-	readyAt     time.Time
-}
-
 var (
 	kopiaS3URLStyleCapabilities sync.Map
-	managedRepositoryReadiness  sync.Map
 )
 
 func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
@@ -196,51 +189,6 @@ func kopiaCapabilityCacheKey(bin string) string {
 		return filepath.Clean(bin)
 	}
 	return fmt.Sprintf("%s\x00%d\x00%d", filepath.Clean(bin), info.Size(), info.ModTime().UnixNano())
-}
-
-func repositoryConnectionFingerprint(spec repositorySpec) (string, error) {
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-func repositoryReady(configFile string, spec repositorySpec) bool {
-	if _, err := os.Stat(configFile); err != nil {
-		invalidateRepositoryReady(configFile)
-		return false
-	}
-	fingerprint, err := repositoryConnectionFingerprint(spec)
-	if err != nil {
-		return false
-	}
-	value, ok := managedRepositoryReadiness.Load(filepath.Clean(configFile))
-	if !ok {
-		return false
-	}
-	entry := value.(repositoryReadyEntry)
-	if entry.fingerprint != fingerprint || time.Since(entry.readyAt) > managedRepositoryReadyTTL {
-		managedRepositoryReadiness.Delete(filepath.Clean(configFile))
-		return false
-	}
-	return true
-}
-
-func markRepositoryReady(configFile string, spec repositorySpec) {
-	fingerprint, err := repositoryConnectionFingerprint(spec)
-	if err != nil {
-		return
-	}
-	managedRepositoryReadiness.Store(filepath.Clean(configFile), repositoryReadyEntry{
-		fingerprint: fingerprint,
-		readyAt:     time.Now(),
-	})
-}
-
-func invalidateRepositoryReady(configFile string) {
-	managedRepositoryReadiness.Delete(filepath.Clean(configFile))
 }
 
 func s3ConnectionFingerprint(spec repositorySpec) (string, error) {
@@ -568,19 +516,6 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if spec.Type == "kopia_server" && mode == repositoryPrepareInitialize {
 		return "", nil, result, spec, "kopia_server repositories cannot be initialized"
 	}
-	backupDirectoryID, managedBackupDirectory := payloadIntValue(p.Extra["backup_config_dir_id"])
-	managedBackupDirectory = managedBackupDirectory && backupDirectoryID > 0
-	if mode == repositoryPrepareConnect && managedBackupDirectory && repositoryReady(configFile, spec) {
-		result["repository_cached"] = true
-		slog.Info("managed_repository", "event", "ready_cache_hit", "task_id", taskID, "repo_type", spec.Type)
-		_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
-			"repository_ready",
-			"Repository ready",
-			map[string]any{"config_file": configFile, "cached": true},
-		))
-		return configFile, env, result, spec, ""
-	}
-
 	statusArgs := []string{"--config-file=" + configFile, "repository", "status"}
 	runStatus := func(event string) (process.Result, error) {
 		started := time.Now()
@@ -624,7 +559,6 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	} else {
 		if _, statErr := os.Stat(configFile); statErr == nil {
 			if _, statusErr := runStatus("status_first"); statusErr == nil {
-				markRepositoryReady(configFile, spec)
 				slog.Info("managed_repository", "event", "status_first_ok", "task_id", taskID, "repo_type", spec.Type)
 				_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 					"repository_ready",
@@ -633,7 +567,6 @@ func (e *Engine) prepareManagedRepositoryLocked(
 				))
 				return configFile, env, result, spec, ""
 			}
-			invalidateRepositoryReady(configFile)
 		} else if !errors.Is(statErr, os.ErrNotExist) {
 			return "", nil, result, spec, statErr.Error()
 		}
@@ -677,8 +610,6 @@ func (e *Engine) prepareManagedRepositoryLocked(
 			return "", nil, result, spec, err.Error()
 		}
 	}
-	markRepositoryReady(configFile, spec)
-
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"repository_ready",
 		"Repository ready",
@@ -1097,10 +1028,8 @@ func (e *Engine) runManagedPolicyApply(
 		result[key] = value
 	}
 	if policyErr != nil {
-		invalidateRepositoryReady(configFile)
 		return "failed", result, policyErr.Error()
 	}
-	markRepositoryReady(configFile, repository)
 	return "success", result, ""
 }
 
@@ -1146,7 +1075,6 @@ func (e *Engine) runManagedPreparedSnapshot(
 		ctx, rep, taskID, bin, configFile, env, p.Path, result,
 	)
 	if status != "success" {
-		invalidateRepositoryReady(configFile)
 	}
 	return status, snapshotResult, errMsg
 }
