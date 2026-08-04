@@ -93,6 +93,7 @@ import {
   selectBackupSourceDirectoryTreeEntries,
   shouldAutoExpandRefreshedDirectory,
 } from '../../lib/backupSourceDirectoryTree'
+import { restoreDirectoryBrowseSourceId } from '../../lib/restoreDirectoryTarget'
 import { useBackupSourcePipeline } from '../../composables/useBackupSourcePipeline'
 import {
   createBackupPolicy,
@@ -2238,7 +2239,7 @@ async function loadCreateRecoveryDestTreeNode(
   const parentPath = node.level === 0 ? '' : String(node.data?.path ?? '')
   setDirectoryLoading(loadingKey, true)
   try {
-    const page = await listRealSourceDirChildren(targetHostId, parentPath, { includeFiles: false }).catch((err) => {
+    const page = await listRealSourceDirChildren(restoreDirectoryBrowseSourceId(targetHostId), parentPath, { includeFiles: false }).catch((err) => {
       ElMessage.error({ message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')), grouping: true })
       return { entries: [], hasMore: false, nextCursor: '', limit: SOURCE_TREE_CHILD_LIMIT } as SourceTreePage
     })
@@ -2357,7 +2358,7 @@ function refreshCreateRecoveryDestDirectory(
 ) {
   const treeKey = recoveryDirPlanPickerKey(group, dirPlan, 'dest')
   return refreshCreateRecoveryDirectory(treeKey, data, async () => {
-    const page = await listRealSourceDirChildren(dirPlan.targetHostId, data.path, {
+    const page = await listRealSourceDirChildren(restoreDirectoryBrowseSourceId(dirPlan.targetHostId), data.path, {
       includeFiles: false,
       forceRefresh: true,
     })
@@ -2491,7 +2492,7 @@ async function validateCreateRecoveryDestPathInput(group: WizardSourceGroup, dir
   setDirectoryLoading(key, true)
   try {
     const pathInfo = await getBackupSourcePathInfo({
-      source_id: dirPlan.targetHostId,
+      source_id: restoreDirectoryBrowseSourceId(dirPlan.targetHostId),
       path,
       timeout: 10,
     })

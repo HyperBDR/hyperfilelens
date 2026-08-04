@@ -26,6 +26,9 @@ from apps.restore.selectors.interface import (
     restore_records_queryset,
 )
 from apps.restore.services import interface as restore_services
+from apps.source.constants import ResourceType
+from apps.source.models import SourceResource
+from apps.source.services.internal.nas_share_path import share_root_label
 from apps.task.models import Task
 
 
@@ -107,6 +110,32 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         ).values_list("id", "snapshot_uid")
         return {int(snapshot_id): str(snapshot_uid) for snapshot_id, snapshot_uid in rows}
 
+    @staticmethod
+    def _nas_share_root_by_record_id(records) -> dict[int, str]:
+        records = list(records)
+        if not records:
+            return {}
+        organization_id = records[0].organization_id
+        nas_ids = {record.target_ref_id for record in records if record.target_type == RestoreRecord.EndpointType.NAS}
+        resources = SourceResource.objects.filter(
+            organization_id=organization_id,
+            resource_type=ResourceType.NAS,
+            id__in=nas_ids,
+            is_deleted=False,
+        )
+        roots = {
+            resource.id: share_root_label(
+                resource_type=resource.resource_type,
+                config=resource.config if isinstance(resource.config, dict) else {},
+            )
+            for resource in resources
+        }
+        return {
+            record.id: roots.get(record.target_ref_id, "")
+            for record in records
+            if record.target_type == RestoreRecord.EndpointType.NAS
+        }
+
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
@@ -114,6 +143,7 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         context = self.get_serializer_context()
         context["task_by_uuid"] = self._task_by_uuid(records)
         context["snapshot_uid_by_id"] = self._snapshot_uid_by_id(records)
+        context["nas_share_root_by_record_id"] = self._nas_share_root_by_record_id(records)
         serializer = self.get_serializer(records, many=True, context=context)
         if page is not None:
             return self.get_paginated_response(serializer.data)
@@ -124,6 +154,7 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         context = self.get_serializer_context()
         context["task_by_uuid"] = self._task_by_uuid([record])
         context["snapshot_uid_by_id"] = self._snapshot_uid_by_id([record])
+        context["nas_share_root_by_record_id"] = self._nas_share_root_by_record_id([record])
         serializer = self.get_serializer(record, context=context)
         return Response(serializer.data)
 

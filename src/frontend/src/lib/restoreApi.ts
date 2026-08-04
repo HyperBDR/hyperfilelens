@@ -110,6 +110,7 @@ export type RestoreRecordItem = {
   source_path: string
   selected_paths: string[]
   target_path: string
+  target_display_path?: string
   conflict_mode: RestoreConflictMode
   status: string
   error_code?: string
@@ -140,6 +141,7 @@ export type RestoreRecord = {
   target_type: RestoreEndpointType
   target_ref_id: number
   target_path: string
+  target_display_path?: string
   scope: RestoreScope
   conflict_mode: RestoreConflictMode
   request_payload?: Record<string, unknown>
