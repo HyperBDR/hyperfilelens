@@ -15,3 +15,14 @@
     />
   </svg>
 </template>
+
+<style scoped>
+/* Intrinsic size so Platform Ops (and any page without resource-add-fullscreen
+   sizing rules) never renders the brand mark at the browser SVG default. */
+.ubuntu-brand-icon {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+</style>

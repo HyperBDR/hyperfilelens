@@ -779,15 +779,16 @@
   }
 }
 
-/* Proxy Host deploy — four-card system requirements grid */
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
+/* Proxy / Gateway deploy — four-card system requirements grid.
+   Also applies outside resource-add-fullscreen (Platform Ops gateway add). */
+.agent-install-wizard--ubuntu-host .proxy-req-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
 }
 
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card {
+.agent-install-wizard--ubuntu-host .proxy-req-card {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -800,7 +801,7 @@
   text-align: center;
 }
 
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__icon-wrap {
+.agent-install-wizard--ubuntu-host .proxy-req-card__icon-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -810,25 +811,25 @@
   flex-shrink: 0;
 }
 
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__brand--ubuntu {
+.agent-install-wizard--ubuntu-host .proxy-req-card__brand--ubuntu {
   display: block;
   width: 40px;
   height: 40px;
   color: #e95420;
 }
 
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__brand--hardware {
+.agent-install-wizard--ubuntu-host .proxy-req-card__brand--hardware {
   color: #4e5969;
 }
 
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__title {
+.agent-install-wizard--ubuntu-host .proxy-req-card__title {
   color: #1d2129;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
 }
 
-.resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
+.agent-install-wizard--ubuntu-host .proxy-req-card__meta {
   margin-top: 6px;
   color: #86909c;
   font-size: 11px;
@@ -836,17 +837,17 @@
 }
 
 @media (max-width: 960px) {
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
+  .agent-install-wizard--ubuntu-host .proxy-req-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 520px) {
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-grid {
+  .agent-install-wizard--ubuntu-host .proxy-req-grid {
     grid-template-columns: 1fr;
   }
 
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card {
+  .agent-install-wizard--ubuntu-host .proxy-req-card {
     min-height: 0;
     flex-direction: row;
     align-items: center;
@@ -855,20 +856,20 @@
     text-align: left;
   }
 
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__icon-wrap {
+  .agent-install-wizard--ubuntu-host .proxy-req-card__icon-wrap {
     width: auto;
     height: auto;
     margin: 0;
     flex-shrink: 0;
   }
 
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__title,
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
+  .agent-install-wizard--ubuntu-host .proxy-req-card__title,
+  .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
     display: block;
     width: 100%;
   }
 
-  .resource-add-fullscreen .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
+  .agent-install-wizard--ubuntu-host .proxy-req-card__meta {
     margin-top: 2px;
   }
 }
