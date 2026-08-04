@@ -11,6 +11,9 @@ from apps.protection.api.serializers.backup_source_snapshot import (
     BackupSourceSnapshotListSerializer,
 )
 from apps.protection.api.serializers.backup_task import StartBackupTaskSerializer
+from apps.protection.api.serializers.backup_target_validation import (
+    BackupTargetValidationSerializer,
+)
 from apps.protection.api.serializers.backup_policy import (
     BackupPolicySerializer,
     BackupPolicyWriteSerializer,
@@ -38,4 +41,5 @@ __all__ = [
     "FileFilterRuleSerializer",
     "FileFilterRuleWriteSerializer",
     "StartBackupTaskSerializer",
+    "BackupTargetValidationSerializer",
 ]

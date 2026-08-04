@@ -6,6 +6,7 @@ from apps.protection.api.views.backup_task import (
     BackupTaskStartView,
 )
 from apps.protection.api.views.backup_task_runtime import BackupTaskRuntimeView
+from apps.protection.api.views.backup_target_validation import BackupTargetValidationView
 from apps.protection.api.views.file_filter_rule import FileFilterRuleViewSet
 from apps.protection.api.views.policy import BackupPolicyViewSet, health
 from apps.protection.api.views.snapshot_browser import (
@@ -23,6 +24,7 @@ __all__ = [
     "BackupTaskRetryDirectoryView",
     "BackupTaskRuntimeView",
     "BackupTaskStartView",
+    "BackupTargetValidationView",
     "BackupPolicyViewSet",
     "FileFilterRuleViewSet",
     "SnapshotDirectoryBatchDownloadTaskView",

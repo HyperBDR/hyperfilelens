@@ -8,6 +8,7 @@ MOUNTS_DIR = "mounts"
 MOUNT_REPOSITORIES_DIR = "repositories"
 MOUNT_SOURCES_DIR = "sources"
 MOUNT_CUSTOM_DIR = "custom"
+MOUNT_VALIDATIONS_DIR = "validations"
 
 
 def agent_data_dir(data_dir: str | None = None) -> str:
@@ -34,6 +35,24 @@ def repository_mount_point(
 def source_mount_point(resource_id: int, *, data_dir: str | None = None) -> str:
     return (
         f"{agent_mounts_dir(data_dir)}/{MOUNT_SOURCES_DIR}/source-{int(resource_id)}"
+    )
+
+
+def validation_mount_point(
+    validation_id: str,
+    repository_id: int,
+    node_id: int,
+    *,
+    data_dir: str | None = None,
+) -> str:
+    safe_validation_id = str(validation_id or "").strip().lower()
+    if not safe_validation_id or any(
+        char not in "0123456789abcdef-" for char in safe_validation_id
+    ):
+        raise ValueError("validation id is invalid")
+    return (
+        f"{agent_mounts_dir(data_dir)}/{MOUNT_VALIDATIONS_DIR}/"
+        f"{safe_validation_id}/repo-{int(repository_id)}-node-{int(node_id)}"
     )
 
 

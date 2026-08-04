@@ -1,12 +1,49 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"hyperfilelens/agent/internal/platform/vfs"
+	"hyperfilelens/agent/internal/service/nas"
 )
+
+type fakeNASTestService struct {
+	info              nas.SpaceInfo
+	testErr           error
+	unmountErr        error
+	unmountCalls      int
+	unmountContextErr error
+}
+
+func (f *fakeNASTestService) Test(context.Context, nas.Spec) (nas.SpaceInfo, error) {
+	return f.info, f.testErr
+}
+
+func (f *fakeNASTestService) Unmount(ctx context.Context, _ string) error {
+	f.unmountCalls++
+	f.unmountContextErr = ctx.Err()
+	return f.unmountErr
+}
+
+func nasValidationTestPayload(t *testing.T, cleanup bool) Payload {
+	t.Helper()
+	dataDir := t.TempDir()
+	t.Setenv("HFL_DATA_DIR", dataDir)
+	return Payload{Extra: map[string]any{
+		"cleanup_after_test": cleanup,
+		"nas": map[string]any{
+			"resource_id": 8,
+			"protocol":    "nfs",
+			"server":      "10.0.0.30",
+			"export_path": "/backup",
+			"mount_point": filepath.Join(vfs.UnixDataDir(), "mounts", "validations", "test", "repo-8"),
+		},
+	}}
+}
 
 func nasRestoreTestPayload(t *testing.T) (Payload, string) {
 	t.Helper()
@@ -75,5 +112,113 @@ func TestValidateNASRestoreTargetRejectsSymlinkEscape(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected NAS restore symlink escape rejection")
+	}
+}
+
+func TestRunNASTestWithCleanupUnmountsAfterSuccess(t *testing.T) {
+	service := &fakeNASTestService{info: nas.SpaceInfo{TotalBytes: 1024, FreeBytes: 512}}
+
+	status, result, message := runNasTestWithService(
+		context.Background(),
+		nasValidationTestPayload(t, true),
+		service,
+	)
+
+	if status != "success" || message != "" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if service.unmountCalls != 1 {
+		t.Fatalf("unmount calls=%d want 1", service.unmountCalls)
+	}
+	if result["mount_status"] != "unmounted" || result["cleanup_status"] != "success" {
+		t.Fatalf("unexpected cleanup result: %#v", result)
+	}
+}
+
+func TestRunNASTestWithoutCleanupPreservesExistingBehavior(t *testing.T) {
+	service := &fakeNASTestService{info: nas.SpaceInfo{TotalBytes: 1024}}
+
+	status, result, message := runNasTestWithService(
+		context.Background(),
+		nasValidationTestPayload(t, false),
+		service,
+	)
+
+	if status != "success" || message != "" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if service.unmountCalls != 0 {
+		t.Fatalf("unmount calls=%d want 0", service.unmountCalls)
+	}
+	if result["mount_status"] != "mounted" {
+		t.Fatalf("mount status=%#v want mounted", result["mount_status"])
+	}
+	if _, ok := result["cleanup_status"]; ok {
+		t.Fatalf("unexpected cleanup status: %#v", result)
+	}
+}
+
+func TestRunNASTestCleanupFailureFailsSuccessfulProbe(t *testing.T) {
+	service := &fakeNASTestService{
+		info:       nas.SpaceInfo{TotalBytes: 1024},
+		unmountErr: errors.New("mount remains active"),
+	}
+
+	status, result, message := runNasTestWithService(
+		context.Background(),
+		nasValidationTestPayload(t, true),
+		service,
+	)
+
+	if status != "failed" || message != "cleanup failed: mount remains active" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if result["cleanup_status"] != "failed" || result["mount_status"] != "cleanup_failed" {
+		t.Fatalf("unexpected cleanup failure result: %#v", result)
+	}
+}
+
+func TestRunNASTestReportsProbeAndCleanupFailures(t *testing.T) {
+	service := &fakeNASTestService{
+		testErr:    errors.New("cannot read filesystem space"),
+		unmountErr: errors.New("mount remains active"),
+	}
+
+	status, result, message := runNasTestWithService(
+		context.Background(),
+		nasValidationTestPayload(t, true),
+		service,
+	)
+
+	if status != "failed" || message != "cannot read filesystem space; cleanup failed: mount remains active" {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+	if service.unmountCalls != 1 {
+		t.Fatalf("unmount calls=%d want 1", service.unmountCalls)
+	}
+	if result["cleanup_status"] != "failed" || result["mount_status"] != "cleanup_failed" {
+		t.Fatalf("unexpected combined failure result: %#v", result)
+	}
+}
+
+func TestRunNASTestCleanupIgnoresCanceledProbeContext(t *testing.T) {
+	service := &fakeNASTestService{testErr: context.Canceled}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	status, result, _ := runNasTestWithService(
+		ctx,
+		nasValidationTestPayload(t, true),
+		service,
+	)
+
+	if status != "failed" {
+		t.Fatalf("status=%q want failed", status)
+	}
+	if service.unmountCalls != 1 || service.unmountContextErr != nil {
+		t.Fatalf("cleanup did not use independent context: calls=%d err=%v", service.unmountCalls, service.unmountContextErr)
+	}
+	if result["cleanup_status"] != "success" {
+		t.Fatalf("unexpected cleanup result: %#v", result)
 	}
 }

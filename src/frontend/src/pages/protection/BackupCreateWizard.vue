@@ -52,7 +52,7 @@ import {
   targetNasSidebarIcon,
 } from '../../lib/resourceIcons'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
-import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
+import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { notifyError } from '../../lib/notify'
 import { logger } from '../../lib/logger'
 import {
@@ -70,6 +70,10 @@ import {
   type CompressionLevel,
   type RecoveryPlanCreatePayload,
 } from '../../lib/protectionBackupConfigApi'
+import {
+  validateProtectionBackupTargets,
+  type BackupTargetValidationResult,
+} from '../../lib/protectionBackupTargetValidationApi'
 import {
   listBackupSelectableSources,
   listBackupSourceDirectories,
@@ -1071,6 +1075,10 @@ const dirTreeProps = { label: 'label', children: 'children', isLeaf: 'isLeaf', d
 const targetAssignmentCheckedGroupKeys = ref<string[]>([])
 const targetValidationAttempted = ref(false)
 const highlightedTargetGroupKey = ref('')
+const targetValidationInProgress = ref(false)
+const targetConnectionResults = ref<Record<string, BackupTargetValidationResult>>({})
+let targetValidationController: AbortController | null = null
+const TARGET_VALIDATION_CLIENT_TIMEOUT_MS = 125_000
 const batchTargetPicker = reactive<TargetPickerState>({ search: '', repoType: '', targetId: '' })
 const batchNasTargetMode = ref<NasTargetMode>('per_directory_repo')
 const batchRepositoryEndpointType = ref<RepositoryEndpointType | ''>('')
@@ -2954,6 +2962,8 @@ function targetPayloadFromSourceId(sourceId: string) {
 }
 
 function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
+  cancelTargetValidation()
+  targetConnectionResults.value = {}
   createOpen.value = true
   createStep.value = initialStep
   createCompletedSteps.value = new Set([0, 1, 2, 3].filter((step) => step < initialStep))
@@ -3172,6 +3182,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  cancelTargetValidation()
   if (typeof document !== 'undefined') document.body.style.overflow = ''
 })
 
@@ -3194,6 +3205,8 @@ function openCreate() {
     closeCreate()
     return
   }
+  cancelTargetValidation()
+  targetConnectionResults.value = {}
   createOpen.value = true
   createStep.value = 0
   createCompletedSteps.value = new Set()
@@ -4170,6 +4183,7 @@ watch(
 )
 
 function closeCreate() {
+  cancelTargetValidation()
   if (props.embedded) {
     createOpen.value = false
     emit('closed')
@@ -4251,9 +4265,10 @@ function goCreateStep(step: number) {
   createStep.value = step
 }
 
-function nextCreate() {
-  if (isCreateStepLocked(createStep.value)) return
+async function nextCreate() {
+  if (targetValidationInProgress.value || isCreateStepLocked(createStep.value)) return
   if (!validateCreateStep(createStep.value)) return
+  if (createStep.value === 2 && !await validateCurrentBackupTargets()) return
   markCreateStepDone(createStep.value)
   if (createStep.value < createWizardSteps.value.length - 1) {
     goCreateStep(createStep.value + 1)
@@ -4261,7 +4276,7 @@ function nextCreate() {
 }
 
 function prevCreate() {
-  if (createStep.value <= 0) return
+  if (targetValidationInProgress.value || createStep.value <= 0) return
   const nextStep = createStep.value - 1
   resetCreateCompletedFrom(nextStep)
   goCreateStep(nextStep)
@@ -4441,13 +4456,105 @@ function missingTargetGroups() {
 function targetGroupRowClassName({ row }: { row: WizardSourceGroup }) {
   const classes: string[] = []
   const missing = isTargetGroupMissing(row)
+  const connectionFailed = targetConnectionResults.value[row.key]?.status === 'failed'
   if (targetValidationAttempted.value && missing) {
     classes.push('target-group-row--invalid')
   }
-  if (missing && highlightedTargetGroupKey.value === row.key) {
+  if (connectionFailed) {
+    classes.push('target-group-row--connection-failed')
+  }
+  if ((missing || connectionFailed) && highlightedTargetGroupKey.value === row.key) {
     classes.push('target-group-row--highlighted')
   }
   return classes.join(' ')
+}
+
+function clearTargetConnectionResults() {
+  targetConnectionResults.value = {}
+  if (!targetValidationAttempted.value) highlightedTargetGroupKey.value = ''
+}
+
+function cancelTargetValidation() {
+  targetValidationController?.abort()
+  targetValidationController = null
+  targetValidationInProgress.value = false
+}
+
+function targetConnectionResult(groupKey: string) {
+  return targetConnectionResults.value[groupKey]
+}
+
+async function focusFirstFailedTargetGroup(results: Record<string, BackupTargetValidationResult>) {
+  const first = wizardSourceGroups.value.find((group) => results[group.key]?.status === 'failed')
+  highlightedTargetGroupKey.value = first?.key || ''
+  resetTargetSourceSearch()
+  await nextTick()
+  const row = document.querySelector<HTMLElement>('.create-target-config-table .target-group-row--highlighted')
+  row?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+}
+
+async function validateCurrentBackupTargets() {
+  const groups = [...wizardSourceGroups.value]
+  if (groups.length === 0) return true
+  targetValidationController?.abort()
+  const controller = new AbortController()
+  targetValidationController = controller
+  targetValidationInProgress.value = true
+  clearTargetConnectionResults()
+  let timedOut = false
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, TARGET_VALIDATION_CLIENT_TIMEOUT_MS)
+  try {
+    const response = await validateProtectionBackupTargets({
+      sources: groups.map((group) => ({
+        key: group.key,
+        source_type: group.sourceType === 'nas' ? 'nas' : 'agent',
+        source_ref_id: parseSourceRefId(group.sourceId),
+        repository_id: Number(sourceTargetMap.value[group.key]),
+        repository_endpoint_type: endpointTypeForGroup(group.key),
+      })),
+    }, { signal: controller.signal })
+    const mapped = Object.fromEntries(response.results.map((result) => [result.key, result]))
+    for (const group of groups) {
+      if (!mapped[group.key]) {
+        mapped[group.key] = {
+          key: group.key,
+          status: 'failed',
+          code: 'TARGET_CONNECTION_FAILED',
+          message: t('protection.backupsPage.targetValidationMissingResult'),
+        }
+      }
+    }
+    targetConnectionResults.value = mapped
+    const failed = groups.some((group) => mapped[group.key]?.status !== 'success')
+    if (failed) {
+      await focusFirstFailedTargetGroup(mapped)
+      return false
+    }
+    highlightedTargetGroupKey.value = ''
+    return true
+  } catch (err) {
+    if (timedOut) {
+      ElMessage.error({
+        message: t('protection.backupsPage.targetValidationTimedOut'),
+        grouping: true,
+      })
+    } else if (!isAbortError(err)) {
+      ElMessage.error({
+        message: apiErrorMessageI18n(err, t, t('protection.backupsPage.targetValidationRequestFailed')),
+        grouping: true,
+      })
+    }
+    return false
+  } finally {
+    window.clearTimeout(timeoutId)
+    if (targetValidationController === controller) {
+      targetValidationController = null
+      targetValidationInProgress.value = false
+    }
+  }
 }
 
 function focusIncompleteTargetGroup() {
@@ -5424,6 +5531,8 @@ function submitCreateWizard() {
 
 watch(createOpen, (v) => {
   if (!v) {
+    cancelTargetValidation()
+    targetConnectionResults.value = {}
     createStep.value = 0
     createPhase.value = 'form'
     createCompletedSteps.value = new Set()
@@ -5444,6 +5553,7 @@ watch([sourcePolicyMap, sourceFilterMap, sourceCompressionMap, selPolicy, selGlo
 
 watch([sourceTargetMap, sourceEndpointTypeMap, nasTargetModes], () => {
   resetCreateCompletedFrom(2)
+  clearTargetConnectionResults()
   if (validationPopoverKind.value === 'target') syncOpenValidationPopover()
 }, { deep: true })
 
@@ -5527,6 +5637,8 @@ function preserveShallowestPathOrder(paths: string[]) {
       :aria-label="t('protection.backupsPage.createWizardAria')"
       :waiting-text="editorWaitingText"
       :bootstrapping="createBootstrapping"
+      :busy="targetValidationInProgress"
+      :busy-text="t('protection.backupsPage.targetValidationInProgress')"
       :animated="!embedded"
       :result-title="t('protection.backupsPage.resultCreateTitle')"
       :result-subtitle="t('protection.backupsPage.resultCreateSub')"
@@ -6922,11 +7034,29 @@ function preserveShallowestPathOrder(paths: string[]) {
                       circle
                       size="small"
                       class="create-wizard-icon-action-btn target-assignment-change-btn"
+                      :disabled="targetValidationInProgress"
                       :title="getRealTarget(sourceTargetMap[group.key]) ? t('protection.backupsPage.btnEdit') : t('protection.backupsPage.phTargetForDir')"
                       @click="openSingleTargetDialog(group)"
                     >
                       <Pencil :size="15" />
                     </ElButton>
+                    <div
+                      v-if="targetConnectionResult(group.key)"
+                      class="target-connection-result"
+                      :class="`target-connection-result--${targetConnectionResult(group.key)?.status}`"
+                      role="status"
+                    >
+                      <component
+                        :is="targetConnectionResult(group.key)?.status === 'success' ? ShieldCheck : ShieldAlert"
+                        :size="14"
+                        class="target-connection-result__icon"
+                      />
+                      <span>
+                        {{ targetConnectionResult(group.key)?.status === 'success'
+                          ? t('protection.backupsPage.targetValidationSucceeded')
+                          : targetConnectionResult(group.key)?.message }}
+                      </span>
+                    </div>
                   </div>
                 </template>
               </el-table-column>
@@ -8943,6 +9073,14 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-target-config-table :deep(.target-group-row--invalid > td.el-table__cell:first-child) {
   box-shadow: inset 3px 0 0 rgb(249 115 22);
+}
+
+.create-target-config-table :deep(.target-group-row--connection-failed > td.el-table__cell) {
+  background: rgb(254 242 242) !important;
+}
+
+.create-target-config-table :deep(.target-group-row--connection-failed > td.el-table__cell:first-child) {
+  box-shadow: inset 3px 0 0 rgb(220 38 38);
 }
 
 .create-validation-popover {
@@ -11769,9 +11907,33 @@ function preserveShallowestPathOrder(paths: string[]) {
   min-width: 0;
   min-height: 36px;
   flex-direction: row;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   overflow: visible;
+}
+
+.target-connection-result {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.target-connection-result__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.target-connection-result--success {
+  color: rgb(21 128 61);
+}
+
+.target-connection-result--failed {
+  color: rgb(185 28 28);
 }
 
 .target-assignment-summary {

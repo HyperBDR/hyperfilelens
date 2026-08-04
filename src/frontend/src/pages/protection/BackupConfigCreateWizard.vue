@@ -33,10 +33,13 @@ const props = withDefaults(defineProps<{
   closeLabel: string
   goToStartBackupLabel: string
   bootstrapping?: boolean
+  busy?: boolean
+  busyText?: string
   animated?: boolean
   showSteps?: boolean
 }>(), {
   animated: true,
+  busyText: '',
   showSteps: true,
 })
 
@@ -128,7 +131,12 @@ watch(
               </div>
             </div>
 
-            <div v-else-if="phase === 'form'" class="create-backup-step-body dp-process-page">
+            <div
+              v-else-if="phase === 'form'"
+              v-loading="busy"
+              :element-loading-text="busyText"
+              class="create-backup-step-body dp-process-page"
+            >
               <slot name="form" />
             </div>
 
@@ -157,15 +165,15 @@ watch(
                 <X :size="14" />
                 <span>{{ cancelLabel }}</span>
               </ElButton>
-              <ElButton v-if="canGoPrev" class="hfl-btn-with-icon" :disabled="bootstrapping" @click="emit('prev')">
+              <ElButton v-if="canGoPrev" class="hfl-btn-with-icon" :disabled="bootstrapping || busy" @click="emit('prev')">
                 <ArrowLeft :size="14" />
                 <span>{{ prevLabel }}</span>
               </ElButton>
-              <ElButton v-if="!isLastStep" type="primary" class="hfl-btn-with-icon" :disabled="bootstrapping" @click="emit('next')">
+              <ElButton v-if="!isLastStep" type="primary" class="hfl-btn-with-icon" :loading="busy" :disabled="bootstrapping || busy" @click="emit('next')">
                 <span>{{ nextLabel }}</span>
                 <ArrowRight :size="14" />
               </ElButton>
-              <ElButton v-else type="primary" class="hfl-btn-with-icon" :disabled="bootstrapping" @click="emit('confirm')">
+              <ElButton v-else type="primary" class="hfl-btn-with-icon" :disabled="bootstrapping || busy" @click="emit('confirm')">
                 <Check :size="14" />
                 <span>{{ confirmLabel }}</span>
               </ElButton>
