@@ -242,6 +242,7 @@ jobs:
           ./tools/quality/test-language-pack-runtime-index.sh
           ./tools/quality/test-docker-image-digest-alias.sh
           ./tools/quality/test-docker-pull-retry.sh
+          ./tools/quality/test-gh-release-upload-retry.sh
           ./tools/quality/test-offline-docker-package-plan.sh
           ./tools/quality/test-upgrade-backup-retention.sh
           ./tools/quality/test-blue-green-recovery.sh
@@ -387,7 +388,7 @@ jobs:
           output="_internal-${{ matrix.component }}.json"
           ./release/ci/write-image-metadata.sh \
             "${{ matrix.component }}" "$IMAGE_REF" "$IMAGE_DIGEST" "$output"
-          gh release upload "${{ needs.prepare.outputs.tag }}" "$output" --clobber
+          ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" "$output" --clobber
 
       - name: Disk report
         if: always()
@@ -435,7 +436,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ needs.prepare.outputs.tag }}" \
+          ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" \
             "_internal-sourcelens-${{ matrix.component }}.json" --clobber
 
       - name: Disk report and cleanup
@@ -487,7 +488,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ needs.prepare.outputs.tag }}" \
+          ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" \
             "_internal-agent-${{ matrix.asset }}.tar" --clobber
 
   certify-source-host:
@@ -569,7 +570,7 @@ jobs:
         run: |
           report="build/certification/_internal-agent-cert-${{ matrix.asset }}.json"
           if [[ -s "$report" ]]; then
-            gh release upload "${{ needs.prepare.outputs.tag }}" "$report" --clobber
+            ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" "$report" --clobber
           fi
 
   agent-release-gate:
@@ -614,7 +615,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release upload "${{ needs.prepare.outputs.tag }}"
+          ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}"
           build/certification/_internal-agent-certification-summary.json --clobber
 
   build-host-debs:
@@ -653,7 +654,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release upload "${{ needs.prepare.outputs.tag }}"
+          ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}"
           "_internal-host-debs-${{ matrix.asset }}.tar" --clobber
 
   export-hfl-images:
@@ -687,7 +688,7 @@ jobs:
       - name: Upload offline HFL archive
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar --clobber
+        run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-hfl-images.tar --clobber
 
   export-sourcelens-bundle:
     name: Package · SourceLens
@@ -722,7 +723,7 @@ jobs:
       - name: Upload bundled SourceLens runtime
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-sourcelens-bundle.tar --clobber
+        run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-sourcelens-bundle.tar --clobber
 
   export-runtime-images:
     name: Package · Runtime images
@@ -743,7 +744,7 @@ jobs:
       - name: Upload runtime images
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar --clobber
+        run: ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" _internal-runtime-images.tar --clobber
 
   assemble-release:
     name: Assemble · Release
@@ -786,7 +787,7 @@ jobs:
           done < <(gh release view "${{ needs.prepare.outputs.tag }}" --json assets \
             --jq '.assets[] | select(.name | startswith("_internal-") | not) | .name')
           while IFS= read -r asset; do
-            gh release upload "${{ needs.prepare.outputs.tag }}" \
+            ./release/ci/gh-release-upload.sh "${{ needs.prepare.outputs.tag }}" \
               "build/release/dist/${asset}" --clobber
           done < build/release/release-assets.txt
       - name: Disk report
