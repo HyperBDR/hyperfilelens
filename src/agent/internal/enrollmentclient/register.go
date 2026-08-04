@@ -200,13 +200,9 @@ func httpRegisterNode(
 		return RegistrationResult{}, fmt.Errorf("heartbeat HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
 
-	var parsed map[string]any
-	if err := json.Unmarshal(raw, &parsed); err != nil {
+	data, err := decodeAPIData(raw)
+	if err != nil {
 		return RegistrationResult{}, fmt.Errorf("heartbeat response: %w", err)
-	}
-	data := parsed
-	if nested, ok := parsed["data"].(map[string]any); ok {
-		data = nested
 	}
 	result := RegistrationResult{}
 	if credential, ok := data["node_credential"].(string); ok {
