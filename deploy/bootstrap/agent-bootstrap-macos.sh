@@ -2,6 +2,10 @@
 # HyperFileLens Agent enrollment bootstrap (macOS). Rendered by GET /enrollment/bootstrap.
 set -euo pipefail
 
+# Avoid getcwd / job-working-directory noise when the caller cwd was removed
+# (common if the user ran the one-liner from a stale /opt/hyperfilelens-agent).
+cd / || cd /tmp || true
+
 export HFL_ORG_KEY="__HFL_ORG_KEY__"
 export HFL_NODE_ROLE="__HFL_NODE_ROLE__"
 export HFL_NODE_TOKEN="__HFL_NODE_TOKEN__"
@@ -19,7 +23,7 @@ hfl_fail() {
 }
 
 hfl_step() {
-	printf '[%s] [STEP ] %s\n' "$(hfl_now)" "$1"
+	printf '[%s] [....] %s\n' "$(hfl_now)" "$1"
 }
 
 hfl_ok() {

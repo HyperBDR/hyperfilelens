@@ -17,7 +17,7 @@ hfl_now() {
 }
 
 hfl_step() {
-	printf '[%s] [STEP ] %s\n' "$(hfl_now)" "$1"
+	printf '[%s] [....] %s\n' "$(hfl_now)" "$1"
 }
 
 hfl_ok() {

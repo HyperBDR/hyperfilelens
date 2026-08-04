@@ -420,12 +420,15 @@ function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): 
 /**
  * POSIX one-liner: curl the rendered bootstrap stub into sudo bash.
  * The bootstrap script downloads one slim enroll helper and runs install.
+ *
+ * --chdir avoids getcwd noise when the caller is sitting in a deleted install dir.
+ * No --progress-bar here: the bootstrap stub is tiny; real download progress comes later.
  */
 function buildPosixEnrollmentInstallCommand(url: string, tlsVerify: boolean): string {
   const tlsOptions = tlsVerify
     ? "--proto '=https' --tlsv1.2"
     : '-k'
-  return `curl ${tlsOptions} --fail --show-error --location --progress-bar '${url}' | sudo bash -s`
+  return `curl ${tlsOptions} --fail --show-error --location '${url}' | sudo bash -c 'cd / || cd /tmp; exec bash -s'`
 }
 
 /** Short copy-paste command for the target host. Shown on deploy pages only. */
