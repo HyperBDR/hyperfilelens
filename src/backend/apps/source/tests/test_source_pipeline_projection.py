@@ -10,8 +10,11 @@ from apps.source.constants import PipelineStep, ResourceType, SelectableSourceKi
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.source_pipeline import (
     ensure_pipeline_entry,
+    reconcile_pipeline_projections,
     revert_backup_flow_sources,
 )
+from apps.task.models import Task, TaskResource
+from apps.task.services.interface import complete_task, create_task, start_task
 
 
 class SourcePipelineProjectionTests(TestCase):
@@ -93,6 +96,95 @@ class SourcePipelineProjectionTests(TestCase):
         self.assertEqual(updated, [f"agent:{self.agent.id}"])
         entry.refresh_from_db()
         self.assertEqual(entry.step, PipelineStep.SOURCE_POOL)
+        self.assertFalse(entry.is_deleted)
+
+    def test_newer_task_projection_is_not_overwritten_by_old_terminal_event(self):
+        first = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="older backup",
+            resources=[{
+                "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                "resource_subtype": "agent",
+                "resource_id": self.agent.id,
+                "is_primary": True,
+            }],
+        )
+        second = create_task(
+            organization_id=self.org.id,
+            task_type=Task.Type.BACKUP,
+            display_name="newer backup",
+            resources=[{
+                "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                "resource_subtype": "agent",
+                "resource_id": self.agent.id,
+                "is_primary": True,
+            }],
+        )
+
+        complete_task(
+            task_uuid=first.task_uuid,
+            organization_id=self.org.id,
+            status=Task.Status.SUCCESS,
+        )
+
+        entry = SourceBackupPipelineEntry.objects.get(
+            organization=self.org,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+        self.assertEqual(entry.last_backup_task_id, second.id)
+        self.assertEqual(entry.last_backup_status, "queued")
+
+        start_task(task_uuid=second.task_uuid, organization_id=self.org.id)
+        entry.refresh_from_db()
+        self.assertEqual(entry.last_backup_task_id, second.id)
+        self.assertEqual(entry.last_backup_status, "running")
+
+    def test_proxy_change_fans_out_to_bound_nas_projection(self):
+        proxy = Node.objects.create(
+            organization=self.org,
+            name="proxy-before",
+            role=Node.Role.PROXY,
+            ip_address="198.51.100.20",
+            status=Node.Status.ONLINE,
+            availability=Node.Availability.ONLINE,
+        )
+        nas = SourceResource.objects.create(
+            organization=self.org,
+            name="nas-through-proxy",
+            resource_type=ResourceType.NAS,
+            bound_node=proxy,
+            availability="online",
+        )
+        proxy.name = "proxy-after"
+        proxy.ip_address = "198.51.100.21"
+        proxy.save(update_fields=["name", "ip_address", "updated_at"])
+
+        entry = SourceBackupPipelineEntry.objects.get(
+            organization=self.org,
+            source_kind=SelectableSourceKind.NAS,
+            ref_id=nas.id,
+        )
+        self.assertEqual(entry.source_hostname, "proxy-after")
+        self.assertEqual(entry.source_ip, "198.51.100.21")
+
+    def test_reconciliation_repairs_deleted_projection(self):
+        SourceBackupPipelineEntry.objects.create(
+            organization=self.org,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+            is_deleted=True,
+        )
+
+        result = reconcile_pipeline_projections(limit=10)
+
+        entry = SourceBackupPipelineEntry.objects.get(
+            organization=self.org,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+        self.assertGreaterEqual(result["repaired"], 1)
         self.assertFalse(entry.is_deleted)
 
 

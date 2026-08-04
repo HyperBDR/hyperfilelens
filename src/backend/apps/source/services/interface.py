@@ -35,6 +35,7 @@ from apps.source.services.internal.validators import validate_resource_payload
 from apps.source.services.internal.source_pipeline import (
     delete_pipeline_entry,
     ensure_pipeline_entry,
+    sync_pipeline_projection,
 )
 from apps.source.services.internal.source_credentials import (
     merge_source_credentials,
@@ -271,6 +272,12 @@ def update_source_resource(
         credentials=resolve_source_credentials(resource.credentials),
     )
     resource.save()
+    if resource.resource_type == ResourceType.NAS:
+        sync_pipeline_projection(
+            organization_id=resource.organization_id,
+            source_kind=SelectableSourceKind.NAS,
+            ref_id=resource.id,
+        )
     if bound_node_changed and resource.resource_type in ResourceType.REQUIRES_MOUNT and resource.bound_node:
         _queue_remount_after_proxy_binding(
             resource=resource,
@@ -333,6 +340,12 @@ def test_resource_connection(*, resource: SourceResource) -> dict:
             "updated_at",
         ]
     )
+    if resource.resource_type == ResourceType.NAS:
+        sync_pipeline_projection(
+            organization_id=resource.organization_id,
+            source_kind=SelectableSourceKind.NAS,
+            ref_id=resource.id,
+        )
     try:
         result = run_connection_test(resource=resource)
     except Exception:
@@ -403,6 +416,12 @@ def bind_node(*, resource: SourceResource, node_id: int) -> dict:
             "updated_at",
         ]
     )
+    if resource.resource_type == ResourceType.NAS:
+        sync_pipeline_projection(
+            organization_id=resource.organization_id,
+            source_kind=SelectableSourceKind.NAS,
+            ref_id=resource.id,
+        )
     if resource.resource_type in ResourceType.REQUIRES_MOUNT:
         _queue_remount_after_proxy_binding(
             resource=resource,

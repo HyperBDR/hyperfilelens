@@ -7,10 +7,19 @@ from apps.source.periodic_tasks import register_periodic_tasks
 
 class SourcePeriodicTaskTests(SimpleTestCase):
     @mock.patch("apps.source.periodic_tasks.TASK_REGISTRY.add")
-    def test_registers_probe_and_unregister_reconciliation(self, add):
+    def test_registers_probe_unregister_and_pipeline_reconciliation(self, add):
         register_periodic_tasks()
 
-        self.assertEqual(add.call_count, 3)
+        self.assertEqual(add.call_count, 4)
+        add.assert_any_call(
+            name="source_reconcile_backup_pipeline",
+            task="apps.source.tasks.pipeline.reconcile_source_pipeline_task",
+            schedule=60,
+            args=(),
+            kwargs={"limit": 100},
+            queue=None,
+            enabled=True,
+        )
         add.assert_any_call(
             name="source_reconcile_availability",
             task=(

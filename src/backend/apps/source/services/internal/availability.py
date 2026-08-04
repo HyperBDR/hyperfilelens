@@ -111,6 +111,14 @@ def project_node_availability(
             availability=node.availability,
             availability_updated_at=node.availability_updated_at,
         )
+        from apps.source.constants import SelectableSourceKind
+        from apps.source.services.internal.source_pipeline import sync_pipeline_projection
+
+        sync_pipeline_projection(
+            organization_id=node.organization_id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=node.id,
+        )
         return
 
     if node.role != NodeRole.PROXY:
@@ -124,6 +132,9 @@ def project_node_availability(
             availability=Availability.OFFLINE,
             availability_updated_at=node.availability_updated_at,
         )
+        from apps.source.services.internal.source_pipeline import sync_bound_proxy_pipeline_projections
+
+        sync_bound_proxy_pipeline_projections(proxy_id=node.id)
         return
     if not transitioned:
         return
@@ -139,3 +150,6 @@ def project_node_availability(
             queue=SOURCE_REMOTE_IO_QUEUE,
         )
     )
+    from apps.source.services.internal.source_pipeline import sync_bound_proxy_pipeline_projections
+
+    sync_bound_proxy_pipeline_projections(proxy_id=node.id)

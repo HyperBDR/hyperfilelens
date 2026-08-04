@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.node.models import Node
@@ -96,6 +97,204 @@ def _projection_values(*, organization_id: int, source_kind: str, ref_id: int):
         source_kind=source_kind, source=source, backup_task=backup_task, restore_task=restore_task
     )
     return source, values
+
+
+def _locked_source(*, organization_id: int, source_kind: str, ref_id: int):
+    """Load a source using the projection service lock order."""
+    if source_kind == SelectableSourceKind.AGENT:
+        return Node.objects.select_for_update().filter(
+            organization_id=organization_id,
+            role=NodeRole.AGENT,
+            id=ref_id,
+            is_deleted=False,
+        ).first()
+    if source_kind != SelectableSourceKind.NAS:
+        return None
+
+    binding = SourceResource.objects.filter(
+        organization_id=organization_id,
+        resource_type=ResourceType.NAS,
+        id=ref_id,
+        is_deleted=False,
+    ).values("bound_node_id").first()
+    if binding is None:
+        return None
+    if binding["bound_node_id"]:
+        Node.objects.select_for_update().filter(pk=binding["bound_node_id"]).first()
+    return SourceResource.objects.select_for_update().filter(
+        organization_id=organization_id,
+        resource_type=ResourceType.NAS,
+        id=ref_id,
+        is_deleted=False,
+    ).first()
+
+
+def sync_pipeline_projection(
+    *,
+    organization_id: int,
+    source_kind: str,
+    ref_id: int,
+    minimum_step: int = PipelineStep.SOURCE_POOL,
+) -> SourceBackupPipelineEntry | None:
+    """Synchronize one source read-model row in the caller's transaction."""
+    if minimum_step not in PipelineStep.VALID:
+        raise ValueError(f"invalid pipeline step: {minimum_step}")
+
+    with transaction.atomic():
+        source = _locked_source(
+            organization_id=organization_id,
+            source_kind=source_kind,
+            ref_id=ref_id,
+        )
+        if source is None:
+            return None
+        entry = SourceBackupPipelineEntry.all_objects.select_for_update().filter(
+            organization_id=organization_id,
+            source_kind=source_kind,
+            ref_id=ref_id,
+        ).first()
+        from apps.task.models import Task, TaskResource
+
+        source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+        tasks = Task.objects.filter(
+            organization_id=organization_id,
+            resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resources__resource_subtype=source_type,
+            resources__resource_id=ref_id,
+        ).order_by("-created_at", "-id")
+        values, _inconsistency = build_source_projection(
+            source_kind=source_kind,
+            source=source,
+            backup_task=tasks.filter(task_type=Task.Type.BACKUP).first(),
+            restore_task=tasks.filter(task_type=Task.Type.RESTORE).first(),
+        )
+        current_step = (
+            int(entry.step)
+            if entry is not None and not entry.is_deleted
+            else PipelineStep.SOURCE_POOL
+        )
+        step = max(current_step, minimum_step)
+        if entry is None:
+            return SourceBackupPipelineEntry.objects.create(
+                organization_id=organization_id,
+                source_kind=source_kind,
+                ref_id=ref_id,
+                step=step,
+                created_at=source.created_at,
+                **values,
+            )
+        entry.step = step
+        entry.is_deleted = False
+        entry.deleted_at = None
+        for field, value in values.items():
+            setattr(entry, field, value)
+        entry.save(update_fields=["step", "is_deleted", "deleted_at", *values.keys(), "updated_at"])
+        return entry
+
+
+def sync_bound_proxy_pipeline_projections(*, proxy_id: int, limit: int = 200) -> dict[str, int]:
+    """Refresh bounded NAS projections whose displayed identity comes from a Proxy."""
+    rows = list(
+        SourceResource.objects.filter(
+            bound_node_id=proxy_id,
+            resource_type=ResourceType.NAS,
+            is_deleted=False,
+        ).order_by("id").values_list("organization_id", "id")[: max(1, limit)]
+    )
+    updated = 0
+    for organization_id, ref_id in rows:
+        if sync_pipeline_projection(
+            organization_id=organization_id,
+            source_kind=SelectableSourceKind.NAS,
+            ref_id=ref_id,
+        ) is not None:
+            updated += 1
+    return {"candidates": len(rows), "updated": updated}
+
+
+def sync_task_pipeline_projection(*, task_id: int) -> int:
+    """Project Backup/Restore task state without permitting an older task to win."""
+    from apps.task.models import Task, TaskResource
+
+    task = Task.objects.filter(
+        id=task_id,
+        task_type__in=(Task.Type.BACKUP, Task.Type.RESTORE),
+    ).first()
+    if task is None:
+        return 0
+    resources = TaskResource.objects.filter(
+        task_id=task.id,
+        resource_type=TaskResource.Type.BACKUP_SOURCE,
+    ).values_list("resource_subtype", "resource_id")
+    updated = 0
+    for source_type, ref_id in resources:
+        source_kind = SelectableSourceKind.AGENT if source_type in {"", "agent"} else source_type
+        if source_kind not in {SelectableSourceKind.AGENT, SelectableSourceKind.NAS}:
+            continue
+        if sync_pipeline_projection(
+            organization_id=task.organization_id,
+            source_kind=source_kind,
+            ref_id=int(ref_id),
+        ) is not None:
+            updated += 1
+    return updated
+
+
+def reconcile_pipeline_projections(*, limit: int = 200) -> dict[str, int]:
+    """Repair missing and stale active rows in bounded source order."""
+    batch_size = max(1, limit)
+    candidates: list[tuple[int, str, int]] = []
+    candidates.extend(
+        (organization_id, SelectableSourceKind.AGENT, ref_id)
+        for organization_id, ref_id in Node.objects.filter(
+            role=NodeRole.AGENT,
+            is_deleted=False,
+        ).order_by("id").values_list("organization_id", "id")[:batch_size]
+    )
+    remaining = max(0, batch_size - len(candidates))
+    if remaining:
+        candidates.extend(
+            (organization_id, SelectableSourceKind.NAS, ref_id)
+            for organization_id, ref_id in SourceResource.objects.filter(
+                resource_type=ResourceType.NAS,
+                is_deleted=False,
+            ).order_by("id").values_list("organization_id", "id")[:remaining]
+        )
+    repaired = sum(
+        sync_pipeline_projection(
+            organization_id=organization_id,
+            source_kind=source_kind,
+            ref_id=ref_id,
+        ) is not None
+        for organization_id, source_kind, ref_id in candidates
+    )
+    stale = 0
+    for entry in SourceBackupPipelineEntry.objects.order_by("id")[:batch_size]:
+        if not _source_exists(
+            organization_id=entry.organization_id,
+            source_kind=entry.source_kind,
+            ref_id=entry.ref_id,
+        ):
+            delete_pipeline_entry(
+                organization_id=entry.organization_id,
+                source_kind=entry.source_kind,
+                ref_id=entry.ref_id,
+            )
+            stale += 1
+    active_sources = (
+        Node.objects.filter(role=NodeRole.AGENT, is_deleted=False).count()
+        + SourceResource.objects.filter(
+            resource_type=ResourceType.NAS,
+            is_deleted=False,
+        ).count()
+    )
+    return {
+        "scanned": len(candidates),
+        "repaired": repaired,
+        "stale": stale,
+        "active_sources": active_sources,
+        "active_pipeline_rows": SourceBackupPipelineEntry.objects.count(),
+    }
 
 
 def _pipeline_operation_fenced(
@@ -343,32 +542,12 @@ def ensure_pipeline_entry(
         ref_id=ref_id,
     ):
         return entry
-    source, values = _projection_values(
-        organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+    return sync_pipeline_projection(
+        organization_id=organization_id,
+        source_kind=source_kind,
+        ref_id=ref_id,
+        minimum_step=step,
     )
-    if source is None:
-        return None
-    if entry is None:
-        return SourceBackupPipelineEntry.objects.create(
-            organization_id=organization_id,
-            source_kind=source_kind,
-            ref_id=ref_id,
-            step=step,
-            created_at=source.created_at,
-            **values,
-        )
-
-    current_step = int(entry.step) if not entry.is_deleted else PipelineStep.SOURCE_POOL
-    if step < current_step:
-        return entry
-    entry.step = max(current_step, step)
-    entry.is_deleted = False
-    entry.deleted_at = None
-    entry.updated_at = timezone.now()
-    for field, value in values.items():
-        setattr(entry, field, value)
-    entry.save(update_fields=["step", "is_deleted", "deleted_at", *values.keys(), "updated_at"])
-    return entry
 
 
 def delete_pipeline_entry(*, organization_id: int, source_kind: str, ref_id: int) -> None:

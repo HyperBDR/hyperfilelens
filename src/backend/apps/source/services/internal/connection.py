@@ -169,6 +169,14 @@ def apply_connection_test_result(resource: SourceResource, result: dict) -> None
         resource.mount_error = ""
     apply_result_availability(resource=resource, result=result)
     resource.save()
+    if resource.resource_type == ResourceType.NAS:
+        from apps.source.services.internal.source_pipeline import sync_pipeline_projection
+
+        sync_pipeline_projection(
+            organization_id=resource.organization_id,
+            source_kind="nas",
+            ref_id=resource.id,
+        )
 
 
 def apply_connection_test_result_if_current(

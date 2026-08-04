@@ -9,3 +9,4 @@ class SourceConfig(AppConfig):
 
     def ready(self) -> None:
         import apps.source.tasks  # noqa: F401
+        import apps.source.signals  # noqa: F401
