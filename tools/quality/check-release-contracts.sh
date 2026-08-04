@@ -1037,6 +1037,16 @@ grep -F 'project in {"hyperfilelens-sourcelens", "sourcelens"}' "${remote_deploy
 grep -F './tools/quality/test-shared-host-guard.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-release-download-proxy.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-default-certificates.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-gh-release-upload-retry.sh' "${workflow}" >/dev/null
+grep -F './release/ci/gh-release-upload.sh' "${workflow}" >/dev/null
+grep -F 'HFL_RELEASE_UPLOAD_ATTEMPTS:-5' \
+	"${ROOT}/release/ci/gh-release-upload.sh" >/dev/null
+grep -F 'HFL_RELEASE_UPLOAD_DELAY_S:-3' \
+	"${ROOT}/release/ci/gh-release-upload.sh" >/dev/null
+if grep -E '(^|[[:space:]])gh release upload[[:space:]]' "${workflow}" >/dev/null; then
+	printf 'ERROR: artifact pipeline must upload Release assets through gh-release-upload.sh\n' >&2
+	exit 1
+fi
 grep -F './tools/quality/test-gateway-bootstrap-health.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-gateway-lifecycle-upgrade.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
@@ -1188,6 +1198,8 @@ for executable in \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
 	"${ROOT}/tools/quality/test-docker-pull-retry.sh" \
+	"${ROOT}/tools/quality/test-gh-release-upload-retry.sh" \
+	"${ROOT}/release/ci/gh-release-upload.sh" \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
 	"${ROOT}/tools/quality/test-main-release-freshness.sh" \
 	"${ROOT}/tools/quality/test-main-release-cleanup.sh" \
