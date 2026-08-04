@@ -921,6 +921,17 @@ for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
 	grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${bootstrap}" >/dev/null
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
 done
+grep -F 'HyperFileLens enrollment helper' "${gateway_bootstrap_linux}" >/dev/null
+grep -F 'gateway-install' "${gateway_bootstrap_linux}" >/dev/null
+# Gateway bootstrap must stay lightweight: Docker CE install belongs in hfl-enroll
+# after full preflight / Agent registration, not before downloading the helper.
+if grep -E 'ensure_docker_for_gateway|Installing Docker CE from console offline bundle' \
+	"${gateway_bootstrap_linux}" >/dev/null; then
+	printf 'ERROR: gateway bootstrap must not install Docker before enrollment preflight\n' >&2
+	exit 1
+fi
+grep -F 'ensureGatewayDocker' \
+	"${ROOT}/src/agent/internal/enroll/gateway_install.go" >/dev/null
 grep -F -- '--fail --show-error --location --progress-bar' "${gateway_lifecycle}" >/dev/null
 grep -F -- '--continue-at -' "${gateway_lifecycle}" >/dev/null
 grep -F 'HFL_GATEWAY_DOWNLOAD_MAX_ATTEMPTS:-5' "${gateway_lifecycle}" >/dev/null

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Offline Docker CE install for HyperFileLens Data Gateways (Ubuntu 20.04/22.04/24.04 amd64).
-# Bundled under /media/gateway-bootstrap/ and invoked by gateway-bootstrap-linux.sh.
+# Bundled under /media/gateway-bootstrap/ and invoked by hfl-enroll gateway-install
+# after full preflight and Agent registration (AI engine setup).
 #
 # Host-safe policy: only install packages from the bundled .deb archive. Never run
 # apt-get --fix-broken or other apt operations that can remove or upgrade unrelated
