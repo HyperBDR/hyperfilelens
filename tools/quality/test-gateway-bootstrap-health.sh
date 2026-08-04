@@ -7,7 +7,7 @@ bootstrap="${ROOT}/deploy/bootstrap/gateway-bootstrap-linux.sh"
 # Load only the bootstrap logging and health-check functions, not its installer body.
 # shellcheck disable=SC1090
 source <(
-	sed -n '/^hfl_now()/,/^MIN_ENGINE_VERSION=/p' "${bootstrap}" \
+	sed -n '/^hfl_now()/,/^CURL_TLS=/p' "${bootstrap}" \
 		| sed '$d'
 )
 
