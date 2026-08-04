@@ -62,19 +62,17 @@ func OpenInstallationSession(
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return InstallationSession{}, fmt.Errorf("installation session HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
-	var payload struct {
-		InstallationSession string `json:"installation_session"`
-		GatewayScope        string `json:"gateway_scope"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	data, err := decodeAPIData(raw)
+	if err != nil {
 		return InstallationSession{}, fmt.Errorf("installation session response: %w", err)
 	}
-	if strings.TrimSpace(payload.InstallationSession) == "" {
+	secret := strings.TrimSpace(stringField(data, "installation_session"))
+	if secret == "" {
 		return InstallationSession{}, fmt.Errorf("installation session response is incomplete")
 	}
 	return InstallationSession{
-		Secret:       strings.TrimSpace(payload.InstallationSession),
-		GatewayScope: strings.TrimSpace(payload.GatewayScope),
+		Secret:       secret,
+		GatewayScope: strings.TrimSpace(stringField(data, "gateway_scope")),
 	}, nil
 }
 

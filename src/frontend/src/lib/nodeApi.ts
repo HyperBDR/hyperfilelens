@@ -418,21 +418,14 @@ function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): 
 }
 
 /**
- * POSIX short command: curl the rendered bootstrap stub, then sudo bash.
+ * POSIX one-liner: curl the rendered bootstrap stub into sudo bash.
  * The bootstrap script downloads one slim enroll helper and runs install.
  */
-function buildPosixEnrollmentInstallCommand(
-  url: string,
-  bootstrapName: string,
-  tlsVerify: boolean,
-): string {
+function buildPosixEnrollmentInstallCommand(url: string, tlsVerify: boolean): string {
   const tlsOptions = tlsVerify
     ? "--proto '=https' --tlsv1.2"
     : '-k'
-  const warning = tlsVerify
-    ? ''
-    : "echo 'WARNING: TLS certificate verification is disabled. Use only on a trusted private network.' >&2\n"
-  return `${warning}tmp="$(mktemp /tmp/${bootstrapName}.XXXXXX)" && (\n  trap 'rm -f "$tmp"' EXIT\n  curl ${tlsOptions} --fail --show-error --location --progress-bar '${url}' -o "$tmp"\n  sudo bash "$tmp"\n)`
+  return `curl ${tlsOptions} --fail --show-error --location --progress-bar '${url}' | sudo bash -s`
 }
 
 /** Short copy-paste command for the target host. Shown on deploy pages only. */
@@ -449,7 +442,7 @@ export function buildEnrollmentInstallCommand(params: {
   if (params.os === 'windows') {
     return buildWindowsEnrollmentInstallCommand(url, tlsVerify)
   }
-  return buildPosixEnrollmentInstallCommand(url, 'hfl-agent-bootstrap', tlsVerify)
+  return buildPosixEnrollmentInstallCommand(url, tlsVerify)
 }
 
 /** Short copy-paste command for Data Gateway hosts (Linux). */
@@ -460,11 +453,7 @@ export function buildGatewayEnrollmentInstallCommand(params: {
   tlsVerify?: boolean
 }): string {
   const url = buildGatewayEnrollmentDownloadUrl(params)
-  return buildPosixEnrollmentInstallCommand(
-    url,
-    'hfl-gateway-bootstrap',
-    params.tlsVerify !== false,
-  )
+  return buildPosixEnrollmentInstallCommand(url, params.tlsVerify !== false)
 }
 
 /** Create gateway token + build copy-paste install command. */

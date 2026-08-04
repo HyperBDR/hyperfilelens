@@ -2,7 +2,6 @@ package enrollmentclient
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,12 +61,11 @@ func fetchNodeOnline(ctx context.Context, cfg *model.AgentConfig, nodeID string)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, "", fmt.Errorf("node status HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
-	var payload struct {
-		Status   string `json:"status"`
-		Routable bool   `json:"routable"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	data, err := decodeAPIData(raw)
+	if err != nil {
 		return false, "", err
 	}
-	return payload.Routable && payload.Status == "online", payload.Status, nil
+	status := strings.TrimSpace(stringField(data, "status"))
+	routable := boolField(data, "routable")
+	return routable && status == "online", status, nil
 }

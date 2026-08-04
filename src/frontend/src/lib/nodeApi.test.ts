@@ -96,9 +96,10 @@ describe('Data Gateway enrollment', () => {
 
     expect(result.command).toContain("curl --proto '=https' --tlsv1.2")
     expect(result.command).toContain('/api/v1/node/enrollment/bootstrap-gateway?')
-    expect(result.command).toContain('sudo bash "$tmp"')
+    expect(result.command).toContain('| sudo bash -s')
     expect(result.command).not.toContain('curl -k')
     expect(result.command).not.toContain('installer.tar.gz')
+    expect(result.command.split('\n')).toHaveLength(1)
     expect(result.tlsVerify).toBe(true)
   })
 
@@ -146,10 +147,10 @@ describe('Data Gateway enrollment', () => {
 
     const result = await issuePlatformGatewayEnrollmentInstall()
 
-    expect(result.command).toContain('TLS certificate verification is disabled')
-    expect(result.command).toContain('curl -k --fail --show-error --location')
-    expect(result.command).toContain('--location --progress-bar')
-    expect(result.command).toContain('sudo bash "$tmp"')
+    expect(result.command).toMatch(/^curl -k --fail --show-error --location --progress-bar '/)
+    expect(result.command).toContain('| sudo bash -s')
+    expect(result.command).not.toContain('WARNING:')
+    expect(result.command.split('\n')).toHaveLength(1)
     expect(result.tlsVerify).toBe(false)
   })
 
@@ -198,7 +199,7 @@ describe('Data Gateway enrollment', () => {
     expect(command).not.toContain('Write-Warning')
   })
 
-  it('keeps the Linux copy-paste command short and bootstrap-based', () => {
+  it('keeps the Linux copy-paste command as a single curl one-liner', () => {
     const command = buildEnrollmentInstallCommand({
       org: 'tenant-a',
       role: 'agent',
@@ -208,11 +209,13 @@ describe('Data Gateway enrollment', () => {
       tlsVerify: true,
     })
 
+    expect(command).toMatch(/^curl --proto '=https' --tlsv1\.2 --fail --show-error --location --progress-bar '/)
     expect(command).toContain('/api/v1/node/enrollment/bootstrap?')
-    expect(command).toContain('sudo bash "$tmp"')
+    expect(command).toContain('| sudo bash -s')
     expect(command).not.toContain('installer.tar.gz')
-    expect(command).not.toContain('sha256sum')
-    expect(command.split('\n').length).toBeLessThanOrEqual(6)
+    expect(command).not.toContain('mktemp')
+    expect(command).not.toContain('WARNING:')
+    expect(command.split('\n')).toHaveLength(1)
   })
 
   it('retains the explicit Windows bypass for self-hosted deployments', () => {
