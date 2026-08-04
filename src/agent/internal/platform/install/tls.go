@@ -2,21 +2,21 @@ package install
 
 import (
 	"net/http"
-	"sync"
+	"os"
+	"time"
 
 	"hyperfilelens/agent/internal/platform/tlsclient"
 )
 
-var (
-	insecureOnce sync.Once
-	insecureTr   *http.Transport
-)
+const downloadResponseHeaderTimeout = 2 * time.Minute
 
-func insecureTransport() *http.Transport {
-	insecureOnce.Do(func() {
-		insecureTr = &http.Transport{
-			TLSClientConfig: tlsclient.Config(),
-		}
-	})
-	return insecureTr
+func downloadHTTPClient() *http.Client {
+	transport := tlsclient.Transport()
+	transport.ResponseHeaderTimeout = downloadResponseHeaderTimeout
+	if os.Getenv("HFL_INSECURE_TLS") == "0" {
+		transport.TLSClientConfig = nil
+	}
+	// Do not set Client.Timeout: large offline bundles may legitimately take
+	// longer than an hour. Request cancellation remains controlled by ctx.
+	return &http.Client{Transport: transport}
 }

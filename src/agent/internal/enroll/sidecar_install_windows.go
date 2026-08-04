@@ -7,6 +7,10 @@ import (
 	"fmt"
 )
 
+func checkGatewayRuntimePreflight(_ context.Context, _ Config) gatewayRuntimePreflightResult {
+	return gatewayRuntimePreflightResult{Err: fmt.Errorf("Data Gateway installation requires Linux")}
+}
+
 // InstallLensSidecar is not supported on Windows.
 func InstallLensSidecar(ctx context.Context, cfg Config, lens LensSidecarConfig) error {
 	return fmt.Errorf("AI engine install is Linux-only")

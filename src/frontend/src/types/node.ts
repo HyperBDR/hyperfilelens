@@ -35,6 +35,7 @@ export type ApiNodeToken = {
   created_at?: string
   expires_at?: string | null
   used_at?: string | null
+  status: 'active' | 'expired' | 'revoked'
   tls_verify: boolean
 }
 

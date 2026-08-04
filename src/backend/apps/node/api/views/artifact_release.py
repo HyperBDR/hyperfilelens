@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse, urlsplit, urlunsplit
 
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -16,10 +19,13 @@ from apps.iam.models import Organization
 from apps.iam.permissions_org import resolve_org_key
 from apps.node.api import permissions as node_permissions
 from apps.node.api.views.enrollment_helpers import (
-    get_valid_enrollment_token,
+    resolve_artifact_download_authorization,
     token_usable_for_artifact_download,
 )
-from apps.node.models import Node
+from apps.node.models import Node, NodeInstallationSession, NodeToken
+from apps.node.services.internal.enrollment_auth import (
+    INSTALLATION_SESSION_IDLE_SECONDS,
+)
 from apps.node.services.internal.agent_release import (
     AGENT_RELEASES_URL_PREFIX,
     agent_releases_root,
@@ -36,6 +42,10 @@ try:
 except ImportError:  # pragma: no cover
     redis = None
 
+_REDIS_ERRORS: tuple[type[BaseException], ...] = (OSError, TypeError, ValueError)
+if redis is not None:
+    _REDIS_ERRORS += (redis.exceptions.RedisError,)
+
 
 @dataclass(frozen=True)
 class AgentArtifact:
@@ -47,6 +57,10 @@ class AgentArtifact:
     @property
     def artifact_path(self) -> str:
         return f"{AGENT_RELEASES_URL_PREFIX}/{self.version}/{self.filename}"
+
+    @property
+    def local_path(self) -> Path:
+        return agent_releases_root() / self.version / self.filename
 
 
 def _normalize_platform(value: str | None) -> str | None:
@@ -86,7 +100,9 @@ def _get_agent_artifact(
         machine,
         ubuntu_release=ubuntu_release,
     )
-    return AgentArtifact(platform=plat, arch=machine, version=version, filename=filename)
+    return AgentArtifact(
+        platform=plat, arch=machine, version=version, filename=filename
+    )
 
 
 def _build_download_url(request, artifact: AgentArtifact, signed: str) -> str:
@@ -115,7 +131,10 @@ def _build_download_url(request, artifact: AgentArtifact, signed: str) -> str:
 
 
 def _make_release_token(payload: dict, ttl_seconds: int) -> str:
-    return signing.dumps(payload, salt="agent-releases", compress=True) + f".ttl{ttl_seconds}"
+    return (
+        signing.dumps(payload, salt="agent-releases", compress=True)
+        + f".ttl{ttl_seconds}"
+    )
 
 
 def _load_release_token(token: str, max_age: int) -> dict | None:
@@ -147,12 +166,68 @@ def _release_file_exists(release_path: str) -> bool:
     return (agent_releases_root() / rel).is_file()
 
 
+def _release_authorization_is_valid(
+    *,
+    org: Organization,
+    role: str,
+    token_id: int,
+    session_id: int | None,
+) -> bool:
+    """Validate signed authorization IDs without embedding their secrets."""
+    now = timezone.now()
+    if session_id is not None:
+        session = NodeInstallationSession.objects.filter(
+            pk=session_id,
+            organization=org,
+            role=role,
+            enrollment_token_id=token_id,
+            status=NodeInstallationSession.Status.ACTIVE,
+            idle_expires_at__gt=now,
+            absolute_expires_at__gt=now,
+        ).first()
+        if session is None:
+            return False
+        renewed = min(
+            now + timedelta(seconds=INSTALLATION_SESSION_IDLE_SECONDS),
+            session.absolute_expires_at,
+        )
+        updated = NodeInstallationSession.objects.filter(
+            pk=session.pk,
+            status=NodeInstallationSession.Status.ACTIVE,
+            idle_expires_at__gt=now,
+            absolute_expires_at__gt=now,
+        ).update(
+            last_activity_at=now,
+            idle_expires_at=renewed,
+            updated_at=now,
+        )
+        return updated == 1
+
+    token = NodeToken.objects.filter(
+        pk=token_id,
+        organization=org,
+        role=role,
+    ).first()
+    if token is None:
+        return False
+    if token.enrollment_mode == NodeToken.EnrollmentMode.LEGACY:
+        if token.used_at is not None:
+            return True
+    if not token.is_active or (token.expires_at and token.expires_at <= now):
+        return False
+    return True
+
+
 def _redis_client():
     if redis is None:
         return None
-    url = os.getenv("AGENT_RELEASES_REDIS_URL") or os.getenv("CACHE_REDIS_URL") or os.getenv(
-        "CELERY_BROKER_URL",
-        "redis://redis:6379/0",
+    url = (
+        os.getenv("AGENT_RELEASES_REDIS_URL")
+        or os.getenv("CACHE_REDIS_URL")
+        or os.getenv(
+            "CELERY_BROKER_URL",
+            "redis://redis:6379/0",
+        )
     )
     try:
         return redis.Redis.from_url(url, decode_responses=True)
@@ -194,7 +269,7 @@ def _try_acquire_slot(tenant_key: str, slot_id: str) -> tuple[bool, int]:
     try:
         allowed, count = client.eval(_SLOT_LUA, 1, key, slot_id, str(maxn), str(ttl))
         return bool(int(allowed)), int(count)
-    except (OSError, TypeError, ValueError):
+    except _REDIS_ERRORS:
         return True, 0
 
 
@@ -253,13 +328,13 @@ class AgentReleaseView(APIView):
         if org is None:
             return Response({"error": "organization not found"}, status=404)
 
-        if get_valid_enrollment_token(org=org, token=enroll_token, role=role) is None:
-            if not token_usable_for_artifact_download(
-                org=org,
-                token=enroll_token,
-                role=role,
-            ):
-                return Response({"error": "invalid enrollment token"}, status=401)
+        authorization = resolve_artifact_download_authorization(
+            org=org,
+            token=enroll_token,
+            role=role,
+        )
+        if authorization is None:
+            return Response({"error": "invalid enrollment token"}, status=401)
 
         artifact = _get_agent_artifact(
             role,
@@ -267,18 +342,33 @@ class AgentReleaseView(APIView):
             arch=arch,
             os_version=os_version,
         )
+        if not artifact.local_path.is_file():
+            return Response(
+                {"error": "agent release artifact is unavailable"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         ttl = int(os.getenv("AGENT_RELEASE_URL_TTL_SECONDS", "600"))
         signed = _make_release_token(
             {
                 "p": artifact.artifact_path,
                 "org": org.key,
                 "role": role,
-                "enroll": enroll_token,
+                "token_id": authorization.token.id,
+                "session_id": (
+                    authorization.session.id
+                    if authorization.session is not None
+                    else None
+                ),
             },
             ttl_seconds=ttl,
         )
 
         download_url = _build_download_url(request, artifact, signed)
+        try:
+            download_size = artifact.local_path.stat().st_size
+        except OSError:
+            download_size = 0
+        required_space = max(500 * 1024 * 1024, download_size * 4)
 
         return Response(
             {
@@ -288,6 +378,8 @@ class AgentReleaseView(APIView):
                 "path": artifact.artifact_path,
                 "download_url": download_url,
                 "expires_in": ttl,
+                "download_size": download_size,
+                "required_space": required_space,
             }
         )
 
@@ -311,7 +403,7 @@ class AgentReleasesAuthView(APIView):
 
         expected_path = str(payload.get("p") or "")
         org_key = str(payload.get("org") or "")
-        enroll = str(payload.get("enroll") or "")
+        legacy_enroll = str(payload.get("enroll") or "")
         role = str(payload.get("role") or "")
         releases_prefix = f"{AGENT_RELEASES_URL_PREFIX}/"
         if not expected_path.startswith(releases_prefix):
@@ -347,14 +439,43 @@ class AgentReleasesAuthView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        if get_valid_enrollment_token(org=org, token=enroll, role=role) is None:
-            if not token_usable_for_artifact_download(org=org, token=enroll, role=role):
-                return Response(
-                    {"error": "invalid enrollment token"},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+        try:
+            token_id = int(payload.get("token_id") or 0)
+            raw_session_id = payload.get("session_id")
+            session_id = int(raw_session_id) if raw_session_id is not None else None
+        except (TypeError, ValueError):
+            token_id = 0
+            session_id = None
 
-        ok, _count = _try_acquire_slot(org.key, enroll or token)
+        if token_id > 0:
+            authorization_valid = _release_authorization_is_valid(
+                org=org,
+                role=role,
+                token_id=token_id,
+                session_id=session_id,
+            )
+            slot_id = (
+                f"session:{session_id}"
+                if session_id is not None
+                else f"token:{token_id}"
+            )
+        else:
+            # Compatibility for URLs issued by the immediately previous
+            # deployment. Their maximum lifetime is only a few minutes.
+            authorization_valid = token_usable_for_artifact_download(
+                org=org,
+                token=legacy_enroll,
+                role=role,
+            )
+            slot_id = legacy_enroll or token
+
+        if not authorization_valid:
+            return Response(
+                {"error": "invalid enrollment token"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        ok, _count = _try_acquire_slot(org.key, slot_id)
         if not ok:
             # Nginx auth_request treats only 401/403 as expected denials; 429 becomes 500.
             return Response(

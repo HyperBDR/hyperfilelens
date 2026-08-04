@@ -316,6 +316,21 @@ else
   fi
 fi
 
+if [[ "$KEEP_DATA" == "1" ]]; then
+  if [[ ! -x "$INSTALL_DIR/hfl-agent" ]]; then
+    log "cannot retire installation identity because $INSTALL_DIR/hfl-agent is unavailable"
+    AGENT_ARTIFACTS_FAILED=1
+    exit 1
+  fi
+  if ! HFL_DATA_DIR="$DATA_DIR" \
+    "$INSTALL_DIR/hfl-agent" config retire-installation --data-dir "$DATA_DIR"; then
+    log "failed to retire installation identity; Agent files and data were preserved for retry"
+    AGENT_ARTIFACTS_FAILED=1
+    exit 1
+  fi
+  log "retired installation identity; the next install will create a new console record"
+fi
+
 for target in "$INSTALL_DIR/hfl-agent" "$INSTALL_DIR/kopia" "$INSTALL_DIR/run-agent.sh" "$INSTALL_DIR/INSTALLED_VERSION" "$INSTALL_DIR/install.sh" "$INSTALL_DIR/MANIFEST.json"; do
   if [[ -e "$target" ]]; then
     if rm -f "$target"; then

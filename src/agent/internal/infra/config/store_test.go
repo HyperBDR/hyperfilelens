@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
@@ -74,5 +75,50 @@ func TestParseEnvFileRoundTrip(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o", info.Mode().Perm())
+	}
+}
+
+func TestSetNodeCredentialRemovesStaleJSONOverride(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, agentEnvFileName)
+	jsonPath := filepath.Join(dir, configJSONName)
+	if err := WriteEnvFile(envPath, map[string]string{
+		"HFL_NODE_CREDENTIAL": "old-credential",
+		"HFL_NODE_ROLE":       "agent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		jsonPath,
+		[]byte("{\n  \"node_token\": \"stale-token\",\n  \"role\": \"agent\"\n}\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &Store{
+		base:     &model.AgentConfig{},
+		envPath:  envPath,
+		jsonPath: jsonPath,
+	}
+	if err := store.reloadLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Current().NodeToken; got != "stale-token" {
+		t.Fatalf("initial node credential = %q", got)
+	}
+
+	if err := store.SetNodeCredential(t.Context(), "new-credential"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Current().NodeToken; got != "new-credential" {
+		t.Fatalf("rotated node credential = %q", got)
+	}
+	jsonContent, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(jsonContent), "node_token") {
+		t.Fatalf("stale JSON credential remains: %s", jsonContent)
 	}
 }

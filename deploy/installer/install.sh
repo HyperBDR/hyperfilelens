@@ -1174,10 +1174,37 @@ sync_runtime_media() {
 	find "${ROOT}/data/media/agent-releases" -type f -name '*.sh' \
 		-exec chmod 755 {} + 2>/dev/null || true
 	if [[ -d "${ROOT}/data/media/enroll-bootstrap" ]]; then
-		find "${ROOT}/data/media/enroll-bootstrap" -type f -exec chmod 755 {} +
+		find "${ROOT}/data/media/enroll-bootstrap" -type f -name 'hfl-enroll-*' \
+			-exec chmod 755 {} +
 	fi
 	find "${ROOT}/data/media/gateway-bootstrap" -type f -name '*.sh' \
 		-exec chmod 755 {} + 2>/dev/null || true
+	prune_minimal_installer_media
+}
+
+prune_minimal_installer_media() {
+	local media_root="${ROOT}/data/media/enroll-bootstrap"
+	local current_version="" candidate="" name=""
+	[[ -d "${media_root}" ]] || return 0
+	current_version="$(read_version 2>/dev/null || true)"
+	if [[ -n "${current_version}" && -d "${media_root}/${current_version}" ]]; then
+		touch "${media_root}/${current_version}"
+	fi
+	while IFS= read -r -d '' candidate; do
+		name="$(basename "${candidate}")"
+		[[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+		[[ "${name}" != "${current_version}" ]] || continue
+		if [[ -n "$(find "${candidate}" -maxdepth 0 -mtime +2 -print -quit)" ]]; then
+			safe_assert_path_under_dir "${candidate}" "${media_root}" "minimal installer version"
+			safe_rm_dir "${candidate}"
+			log "Pruned expired minimal installer version ${name}"
+		fi
+	done < <(find "${media_root}" -mindepth 1 -maxdepth 1 -type d -print0)
+	while IFS= read -r -d '' candidate; do
+		safe_assert_path_under_dir "${candidate}" "${media_root}" "legacy minimal installer"
+		safe_rm_file "${candidate}"
+		log "Pruned expired legacy minimal installer $(basename "${candidate}")"
+	done < <(find "${media_root}" -maxdepth 1 -type f -name 'hfl-installer-*' -mtime +2 -print0)
 }
 
 prune_agent_release_media() {

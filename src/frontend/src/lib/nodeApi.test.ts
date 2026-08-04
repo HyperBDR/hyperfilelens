@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { Buffer } from 'node:buffer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import {
@@ -12,6 +13,7 @@ import {
   revokePlatformGatewayEnrollment,
   startNodeOperation,
   startNodeOperationsBatch,
+  fetchMinimalInstallerManifest,
 } from './nodeApi'
 
 vi.mock('./api', async (importOriginal) => {
@@ -31,8 +33,55 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+const installerManifest = {
+  schema_version: 1,
+  artifacts: {
+    'linux-amd64': { filename: '0.1.0/hfl-installer-linux-amd64.tar.gz', sha256: 'a'.repeat(64), size: 100 },
+    'linux-arm64': { filename: '0.1.0/hfl-installer-linux-arm64.tar.gz', sha256: 'b'.repeat(64), size: 100 },
+    'darwin-amd64': { filename: '0.1.0/hfl-installer-darwin-amd64.tar.gz', sha256: 'c'.repeat(64), size: 100 },
+    'darwin-arm64': { filename: '0.1.0/hfl-installer-darwin-arm64.tar.gz', sha256: 'd'.repeat(64), size: 100 },
+    'windows-amd64': { filename: '0.1.0/hfl-installer-windows-amd64.zip', sha256: 'e'.repeat(64), size: 100 },
+  },
+}
+
+function stubInstallerManifest() {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => installerManifest,
+  }))
+}
+
+function decodePowerShellCommand(command: string): string {
+  const encoded = command.split(' ').at(-1) ?? ''
+  return Buffer.from(encoded, 'base64').toString('utf16le')
+}
+
+describe('Minimal installer metadata', () => {
+  it('rejects malformed artifact metadata before issuing a command', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...installerManifest,
+        artifacts: {
+          ...installerManifest.artifacts,
+          'linux-amd64': {
+            filename: '../unexpected.tar.gz',
+            sha256: 'invalid',
+            size: 0,
+          },
+        },
+      }),
+    }))
+
+    await expect(fetchMinimalInstallerManifest()).rejects.toThrow(
+      'Minimal installer metadata is invalid',
+    )
+  })
+})
+
 describe('Data Gateway enrollment', () => {
   it('uses strict TLS for a tenant Gateway when required by the backend', async () => {
+    stubInstallerManifest()
     vi.stubGlobal('window', {
       location: { origin: 'https://hyperfilelens.com' },
     })
@@ -47,12 +96,14 @@ describe('Data Gateway enrollment', () => {
     const result = await issueGatewayEnrollmentInstall({ orgKey: 'tenant-a' })
 
     expect(result.command).toContain("curl --proto '=https' --tlsv1.2")
-    expect(result.command).toContain('https://hyperfilelens.com/api/v1/node/enrollment/')
+    expect(result.command).toContain("base='https://hyperfilelens.com'")
+    expect(result.command).toContain('"$base/media/enroll-bootstrap/$file"')
     expect(result.command).not.toContain('curl -k')
     expect(result.tlsVerify).toBe(true)
   })
 
   it('uses the tenant API base returned by the Admin Console API', async () => {
+    stubInstallerManifest()
     vi.stubGlobal('window', {
       location: { origin: 'https://console.example.com:11444' },
     })
@@ -69,10 +120,9 @@ describe('Data Gateway enrollment', () => {
     const result = await issuePlatformGatewayEnrollmentInstall()
 
     expect(result.command).toContain("curl --proto '=https' --tlsv1.2")
-    expect(result.command).toContain(
-      "'https://console.example.com:11443/api/v1/node/enrollment/bootstrap-gateway?",
-    )
-    expect(result.command).toContain('api_base=https%3A%2F%2Fconsole.example.com%3A11443')
+    expect(result.command).toContain("base='https://console.example.com:11443'")
+    expect(result.command).toContain('"$base/media/enroll-bootstrap/$file"')
+    expect(result.command).toContain("HFL_API_BASE='https://console.example.com:11443'")
     expect(result.command).not.toContain('curl -k')
     expect(result.tlsVerify).toBe(true)
     expect(result.expiresAt).toBe('2026-07-28T06:00:00Z')
@@ -81,12 +131,13 @@ describe('Data Gateway enrollment', () => {
       '/api/v1/platform-ops/lens/gateways/enrollment',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ note: 'deploy:platform-gateway', ttl_seconds: 900 }),
+        body: JSON.stringify({ note: 'deploy:platform-gateway' }),
       }),
     )
   })
 
   it('keeps the explicit insecure mode for self-hosted deployments', async () => {
+    stubInstallerManifest()
     vi.mocked(api).mockResolvedValue({
       token: 'platform-token',
       token_id: 17,
@@ -105,6 +156,7 @@ describe('Data Gateway enrollment', () => {
   })
 
   it('rejects an incomplete response instead of falling back to the Admin origin', async () => {
+    stubInstallerManifest()
     vi.stubGlobal('window', {
       location: { origin: 'https://console.example.com:11444' },
     })
@@ -139,10 +191,38 @@ describe('Data Gateway enrollment', () => {
       apiBase: 'https://console.example.com',
       os: 'windows',
       tlsVerify: true,
+      manifest: installerManifest,
     })
 
-    expect(command).not.toContain('ServerCertificateValidationCallback')
-    expect(command).not.toContain('Write-Warning')
+    const script = decodePowerShellCommand(command)
+    expect(script).not.toContain('ServerCertificateValidationCallback')
+    expect(script).not.toContain('Write-Warning')
+  })
+
+  it('runs directly as root and only falls back to sudo for non-root users', () => {
+    const command = buildEnrollmentInstallCommand({
+      org: 'tenant-a',
+      role: 'agent',
+      token: 'token-a',
+      apiBase: 'https://console.example.com',
+      os: 'linux',
+      tlsVerify: true,
+      manifest: installerManifest,
+    })
+
+    expect(command).toContain('if [ "$(id -u)" -eq 0 ]')
+    expect(command).toContain('elif command -v sudo >/dev/null 2>&1')
+    expect(command).toContain("echo 'Administrator privileges are required. Re-run as root or install sudo.'")
+  })
+
+  it('does not issue a token when installer metadata is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }))
+
+    await expect(issueGatewayEnrollmentInstall({ orgKey: 'tenant-a' })).rejects.toThrow(
+      'Minimal installer metadata is unavailable',
+    )
+
+    expect(vi.mocked(api)).not.toHaveBeenCalled()
   })
 
   it('retains the explicit Windows bypass for self-hosted deployments', () => {
@@ -153,10 +233,12 @@ describe('Data Gateway enrollment', () => {
       apiBase: 'https://console.example.com',
       os: 'windows',
       tlsVerify: false,
+      manifest: installerManifest,
     })
 
-    expect(command).toContain('ServerCertificateValidationCallback')
-    expect(command).toContain('Write-Warning')
+    const script = decodePowerShellCommand(command)
+    expect(script).toContain('ServerCertificateValidationCallback')
+    expect(script).toContain('Write-Warning')
   })
 })
 

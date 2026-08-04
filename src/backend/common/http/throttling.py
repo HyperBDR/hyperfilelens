@@ -24,3 +24,16 @@ class OrgScopedRateThrottle(SimpleRateThrottle):
                 ident = f"ip:{self.get_ident(request)}"
 
         return self.cache_format % {"scope": self.scope, "ident": ident}
+
+
+class EnrollmentRateThrottle(SimpleRateThrottle):
+    """Always-on abuse bound for public enrollment-session exchanges."""
+
+    scope = "enrollment"
+    rate = "60/min"
+
+    def get_cache_key(self, request, view):
+        # Keep the key IP-bound so callers cannot bypass the public-endpoint
+        # limit by cycling arbitrary organization headers.
+        ident = self.get_ident(request)
+        return self.cache_format % {"scope": self.scope, "ident": ident}

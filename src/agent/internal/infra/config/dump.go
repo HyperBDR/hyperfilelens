@@ -65,6 +65,7 @@ func DumpText(cfg *model.AgentConfig) (string, error) {
 	fmt.Fprintf(&b, "backup_snapshot_concurrency=%d\n", effectiveBackupSnapshotConcurrency(cfg))
 	fmt.Fprintf(&b, "org_key=%q\n", cfg.OrgKey)
 	fmt.Fprintf(&b, "node_id=%q\n", cfg.NodeID)
+	fmt.Fprintf(&b, "installation_id=%q\n", cfg.InstallationID)
 	fmt.Fprintf(&b, "node_token=%q\n", tok)
 	return b.String(), nil
 }

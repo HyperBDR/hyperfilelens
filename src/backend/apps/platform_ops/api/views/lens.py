@@ -119,9 +119,7 @@ def _set_platform_default_model_ref(
 ) -> None:
     link = provisioning.get_or_create_org_link(org)
     field_name = (
-        "default_agent_model_ref"
-        if role == "agent"
-        else "default_multimodal_model_ref"
+        "default_agent_model_ref" if role == "agent" else "default_multimodal_model_ref"
     )
     if getattr(link, field_name) == config_uuid:
         return
@@ -140,9 +138,7 @@ class PlatformOpsLensSettingsView(APIView):
             LensOrgSettingsSerializer(
                 {
                     "default_agent_model_ref": link.default_agent_model_ref,
-                    "default_multimodal_model_ref": (
-                        link.default_multimodal_model_ref
-                    ),
+                    "default_multimodal_model_ref": (link.default_multimodal_model_ref),
                 }
             ).data
         )
@@ -248,11 +244,9 @@ class PlatformOpsLensGatewayListView(APIView):
 
 
 class PlatformOpsLensGatewayEnrollmentView(APIView):
-    """Issue an HFL enrollment token for a platform-owned data gateway."""
+    """Issue a time-bounded token for platform-provided Public Data Gateways."""
 
     permission_classes = [IsPlatformOpsStaff]
-
-    allowed_ttl_seconds = {900, 3600, 14400, 86400}
 
     def post(self, request):
         try:
@@ -263,22 +257,12 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        raw_ttl = request.data.get("ttl_seconds")
-        if raw_ttl in (None, ""):
-            ttl_seconds = node_conf.ENROLLMENT_TOKEN_TTL_SECONDS
-        else:
-            try:
-                ttl_seconds = int(raw_ttl)
-            except (TypeError, ValueError):
-                ttl_seconds = 0
-            if ttl_seconds not in self.allowed_ttl_seconds:
-                return Response(
-                    {"detail": "ttl_seconds must be one of 900, 3600, 14400, or 86400"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        ttl_seconds = max(1, node_conf.ENROLLMENT_TOKEN_TTL_SECONDS)
 
         org = _platform_org()
-        expires_at = timezone.now() + timedelta(seconds=ttl_seconds) if ttl_seconds > 0 else None
+        expires_at = (
+            timezone.now() + timedelta(seconds=ttl_seconds) if ttl_seconds > 0 else None
+        )
         token = NodeToken.objects.create(
             organization=org,
             role=NodeRole.GATEWAY,
@@ -286,6 +270,7 @@ class PlatformOpsLensGatewayEnrollmentView(APIView):
             created_by=request.user,
             gateway_scope=LensGatewayLink.GatewayScope.PLATFORM,
             expires_at=expires_at,
+            enrollment_mode=NodeToken.EnrollmentMode.CURRENT,
         )
         write_platform_audit_log(
             request=request,
@@ -323,11 +308,41 @@ class PlatformOpsLensGatewayEnrollmentRevokeView(APIView):
 
     permission_classes = [IsPlatformOpsStaff]
 
+    def get(self, _request, token_id: int):
+        try:
+            token = _platform_gateway_token(token_id)
+        except NodeToken.DoesNotExist:
+            return Response(
+                {"detail": "Enrollment token not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        token_status = "active"
+        if not token.is_active:
+            token_status = "revoked"
+        elif token.expires_at and token.expires_at <= timezone.now():
+            token_status = "expired"
+        return Response(
+            {
+                "id": token.id,
+                "organization": token.organization_id,
+                "token": "",
+                "role": token.role,
+                "is_active": token.is_active,
+                "expires_at": token.expires_at,
+                "used_at": token.used_at,
+                "tls_verify": enrollment_tls_verify(),
+                "status": token_status,
+            }
+        )
+
     def delete(self, request, token_id: int):
         try:
             token = _platform_gateway_token(token_id)
         except NodeToken.DoesNotExist:
-            return Response({"detail": "Enrollment token not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Enrollment token not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         token.is_active = False
         token.save(update_fields=["is_active", "updated_at"])
         write_platform_audit_log(
@@ -349,14 +364,19 @@ class PlatformOpsLensGatewayEnrollmentCopyView(APIView):
         try:
             token = _platform_gateway_token(token_id)
         except NodeToken.DoesNotExist:
-            return Response({"detail": "Enrollment token not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Enrollment token not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         write_platform_audit_log(
             request=request,
             action="gateway.enrollment.copy",
             target_type="node_token",
             target_id=str(token.id),
             org_key=token.organization.key,
-            details={"expires_at": token.expires_at.isoformat() if token.expires_at else None},
+            details={
+                "expires_at": token.expires_at.isoformat() if token.expires_at else None
+            },
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -396,7 +416,9 @@ class PlatformOpsLensGatewaySetDefaultView(APIView):
         ).first()
         if link is None or not link.sl_lensnode_uuid:
             return Response(
-                {"detail": "Enable AI on this gateway before marking it as platform default."},
+                {
+                    "detail": "Enable AI on this gateway before marking it as platform default."
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         gateway_readiness.require_hfl_usable_gateway(link)
@@ -536,7 +558,9 @@ class PlatformOpsLensModelProxyView(APIView):
         elif url_name == "platform-ops-lens-models-catalog":
             data = sl_client.request_json("GET", "/api/v1/admin/llm-config/models/")
         elif config_uuid:
-            data = sl_client.request_json("GET", f"/api/v1/admin/llm-config/{config_uuid}/")
+            data = sl_client.request_json(
+                "GET", f"/api/v1/admin/llm-config/{config_uuid}/"
+            )
             link = (
                 org_models.org_model_links(org)
                 .filter(sl_config_uuid=config_uuid)
@@ -567,7 +591,9 @@ class PlatformOpsLensModelProxyView(APIView):
         body = dict(request.data)
         display_name = body.pop("name", None)
         make_agent_default = body.pop("is_default", None) is True
-        data = sl_client.request_json("POST", "/api/v1/admin/llm-config/", json_body=body)
+        data = sl_client.request_json(
+            "POST", "/api/v1/admin/llm-config/", json_body=body
+        )
         config_uuid_created = data.get("uuid")
         if config_uuid_created:
             # Keep optional display_name metadata on platform org link.
@@ -589,8 +615,7 @@ class PlatformOpsLensModelProxyView(APIView):
         org = _platform_org()
         managed_link = _deployment_managed_model_link(org, config_uuid)
         if managed_link is not None and (
-            managed_link.is_deployment_history
-            or set(request.data) - {"is_default"}
+            managed_link.is_deployment_history or set(request.data) - {"is_default"}
         ):
             return _deployment_managed_model_error()
         body = dict(request.data)
@@ -608,9 +633,7 @@ class PlatformOpsLensModelProxyView(APIView):
                 f"/api/v1/admin/llm-config/{config_uuid}/",
             )
         link = (
-            org_models.org_model_links(org)
-            .filter(sl_config_uuid=config_uuid)
-            .first()
+            org_models.org_model_links(org).filter(sl_config_uuid=config_uuid).first()
         )
         if link is None and display_name is not None:
             link = org_models.register_org_model(
@@ -749,7 +772,9 @@ class PlatformOpsLensSkillView(APIView):
         return Response(data, status=status.HTTP_201_CREATED)
 
     def patch(self, request, skill_uuid):
-        data = skills_service.update_skill(uuid.UUID(str(skill_uuid)), dict(request.data))
+        data = skills_service.update_skill(
+            uuid.UUID(str(skill_uuid)), dict(request.data)
+        )
         return Response(data)
 
     def delete(self, request, skill_uuid):
@@ -764,7 +789,9 @@ class PlatformOpsLensMcpServerView(APIView):
 
     def get(self, request, mcp_uuid=None):
         if mcp_uuid:
-            return Response(mcp_servers_service.get_mcp_server(uuid.UUID(str(mcp_uuid))))
+            return Response(
+                mcp_servers_service.get_mcp_server(uuid.UUID(str(mcp_uuid)))
+            )
         return Response(mcp_servers_service.list_mcp_servers())
 
     def post(self, request):
@@ -789,12 +816,20 @@ class PlatformOpsLensKnowledgeSourceView(APIView):
     def get(self, request, ks_id=None):
         org = _platform_org()
         if ks_id is None:
-            qs = LensKnowledgeSource.objects.filter(organization=org).select_related("gateway")
+            qs = LensKnowledgeSource.objects.filter(organization=org).select_related(
+                "gateway"
+            )
             for ks in qs:
                 knowledge_source_sync.maybe_refresh_degraded_status(ks=ks)
-            data = LensKnowledgeSourceSerializer(qs, many=True, context={"org": org}).data
+            data = LensKnowledgeSourceSerializer(
+                qs, many=True, context={"org": org}
+            ).data
             return Response(data)
-        ks = LensKnowledgeSource.objects.filter(organization=org, pk=ks_id).select_related("gateway").first()
+        ks = (
+            LensKnowledgeSource.objects.filter(organization=org, pk=ks_id)
+            .select_related("gateway")
+            .first()
+        )
         if ks is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         knowledge_source_sync.maybe_refresh_degraded_status(ks=ks)
@@ -867,7 +902,9 @@ class PlatformOpsLensKnowledgeSourceView(APIView):
             raise ValidationError(
                 {"lifecycle_status": "Knowledge source is being deleted."}
             )
-        body = LensKnowledgeSourceUpdateSerializer(ks, data=request.data, partial=True, context={"org": org})
+        body = LensKnowledgeSourceUpdateSerializer(
+            ks, data=request.data, partial=True, context={"org": org}
+        )
         body.is_valid(raise_exception=True)
         scan_changed = "scan_enabled" in body.validated_data
         ks = body.save()

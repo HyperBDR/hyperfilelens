@@ -44,11 +44,15 @@ class GatewayLensConfigView(APIView):
         try:
             node_id = int(node_id_raw)
         except ValueError:
-            return Response({"error": "invalid node_id"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "invalid node_id"}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         org = Organization.objects.filter(key=org_key, is_active=True).first()
         if org is None:
-            return Response({"error": "organization not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "organization not found"}, status=status.HTTP_404_NOT_FOUND
+            )
 
         node = Node.objects.filter(
             organization=org,
@@ -57,11 +61,11 @@ class GatewayLensConfigView(APIView):
             is_deleted=False,
         ).first()
         if node is None:
-            return Response({"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND
+            )
         expected_scope = (
-            LensGatewayLink.GatewayScope.PLATFORM
-            if is_platform_gateway(node)
-            else None
+            LensGatewayLink.GatewayScope.PLATFORM if is_platform_gateway(node) else None
         )
         if not validate_agent_ws_credentials(
             node.id,
@@ -77,7 +81,9 @@ class GatewayLensConfigView(APIView):
         lens = provisioning.provision_gateway_lens_on_register(org=org, gateway=node)
         if lens is None:
             return Response(
-                {"error": "SourceLens bridge is not configured or lens provisioning failed"},
+                {
+                    "error": "SourceLens bridge is not configured or lens provisioning failed"
+                },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         if not lens.get("lensnode_token"):
@@ -89,6 +95,7 @@ class GatewayLensConfigView(APIView):
         response = Response(
             {
                 "node_id": node.id,
+                "gateway_scope": "public" if is_platform_gateway(node) else "private",
                 "lens": lens,
                 "observability": gateway_observability_policy(node),
             }

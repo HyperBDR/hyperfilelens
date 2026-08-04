@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest import mock
 
 import pytest
+from django.utils import timezone
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from apps.node.api.views import artifact_release as release
 from apps.node.services.internal import agent_release as release_service
@@ -119,3 +124,42 @@ def test_try_acquire_slot_reuses_enrollment_id(monkeypatch):
     assert ok1 is True
     assert ok2 is True
     assert ok3 is False
+
+
+def test_try_acquire_slot_fails_open_when_redis_is_unavailable(monkeypatch):
+    class UnavailableRedis:
+        def eval(self, *_args, **_kwargs):
+            raise RedisConnectionError("review Redis is unavailable")
+
+    monkeypatch.setattr(release, "_redis_client", lambda: UnavailableRedis())
+
+    allowed, count = release._try_acquire_slot("default", "session:1")
+
+    assert allowed is True
+    assert count == 0
+
+
+def test_session_download_auth_fails_when_conditional_renewal_loses_race():
+    session = SimpleNamespace(
+        pk=17,
+        absolute_expires_at=timezone.now() + timedelta(hours=1),
+    )
+    lookup = mock.Mock()
+    lookup.first.return_value = session
+    renewal = mock.Mock()
+    renewal.update.return_value = 0
+
+    with mock.patch.object(
+        release.NodeInstallationSession.objects,
+        "filter",
+        side_effect=[lookup, renewal],
+    ):
+        valid = release._release_authorization_is_valid(
+            org=SimpleNamespace(pk=1),
+            role="agent",
+            token_id=3,
+            session_id=17,
+        )
+
+    assert valid is False
+    renewal.update.assert_called_once()

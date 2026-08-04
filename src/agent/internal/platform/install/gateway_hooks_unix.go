@@ -10,7 +10,8 @@ run_gateway_sidecar_upgrade_if_needed() {
   grep -q '^HFL_NODE_ROLE=gateway' "$env_file" || return 0
   api_base="$(grep -E '^HFL_API_BASE=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
   org="$(grep -E '^HFL_ORG_KEY=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
-  token="$(grep -E '^HFL_NODE_TOKEN=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
+  token="$(grep -E '^HFL_NODE_CREDENTIAL=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
+  [[ -n "$token" ]] || token="$(grep -E '^HFL_NODE_TOKEN=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
   node_id="$(grep -E '^HFL_NODE_ID=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
   insecure="$(grep -E '^HFL_INSECURE_TLS=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' || true)"
   [[ -n "$api_base" && -n "$org" && -n "$token" && -n "$node_id" ]] || {
@@ -48,7 +49,8 @@ run_gateway_sidecar_uninstall_if_needed() {
   grep -q '^HFL_NODE_ROLE=gateway' "$env_file" || return 0
   api_base="$(grep -E '^HFL_API_BASE=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
   org="$(grep -E '^HFL_ORG_KEY=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
-  token="$(grep -E '^HFL_NODE_TOKEN=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
+  token="$(grep -E '^HFL_NODE_CREDENTIAL=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
+  [[ -n "$token" ]] || token="$(grep -E '^HFL_NODE_TOKEN=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
   node_id="$(grep -E '^HFL_NODE_ID=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^["'\'' ]//; s/["'\'' ]$//')"
   insecure="$(grep -E '^HFL_INSECURE_TLS=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r' || true)"
   [[ -n "$api_base" && -n "$org" && -n "$token" && -n "$node_id" ]] || {

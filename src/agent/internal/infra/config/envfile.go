@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"hyperfilelens/agent/internal/platform/atomicfile"
 )
 
 const agentEnvFileName = "agent.env"
@@ -85,7 +87,7 @@ func WriteEnvFile(path string, values map[string]string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	return atomicfile.Write(path, []byte(b.String()), 0o600)
 }
 
 // LoadEnvFile parses KEY=value lines from path and calls os.Setenv only when the key is currently unset.

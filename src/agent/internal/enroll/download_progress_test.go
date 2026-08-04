@@ -45,7 +45,7 @@ func TestRoleDownloadLabels(t *testing.T) {
 	cases := map[model.Role]string{
 		model.RoleAgent:   "Source Host Agent package",
 		model.RoleProxy:   "Proxy Host Agent package",
-		model.RoleGateway: "Data Gateway Agent package",
+		model.RoleGateway: "Private Data Gateway Agent package",
 	}
 	for role, expected := range cases {
 		if got := agentPackageLabel(role); got != expected {

@@ -5,10 +5,12 @@ from __future__ import annotations
 import secrets
 from urllib.parse import urlparse
 
-from django.utils import timezone
-
 from apps.iam.models import Organization
 from apps.node.models import NodeToken
+from apps.node.services.internal.enrollment_auth import (
+    EnrollmentAuthorization,
+    resolve_enrollment_authorization,
+)
 
 
 def enrollment_health(_request):
@@ -35,21 +37,13 @@ def get_valid_enrollment_token(
     token: str,
     role: str,
 ) -> NodeToken | None:
-    """Return an active, unexpired token row when ``token`` matches (timing-safe)."""
-    if not token:
-        return None
-    now = timezone.now()
-    for row in NodeToken.objects.filter(
-        organization=org,
+    """Return the token authorizing an enrollment token or active session."""
+    authorization = resolve_enrollment_authorization(
+        org=org,
+        secret=token,
         role=role,
-        is_active=True,
-    ).only("id", "token", "expires_at"):
-        if not secrets.compare_digest(row.token, token):
-            continue
-        if row.expires_at and row.expires_at <= now:
-            continue
-        return row
-    return None
+    )
+    return authorization.token if authorization is not None else None
 
 
 def token_usable_for_artifact_download(
@@ -64,17 +58,43 @@ def token_usable_for_artifact_download(
     Active tokens are always allowed. Legacy one-time tokens that were deactivated
     after first use remain downloadable so existing install links can finish.
     """
-    if get_valid_enrollment_token(org=org, token=token, role=role) is not None:
-        return True
+    return (
+        resolve_artifact_download_authorization(
+            org=org,
+            token=token,
+            role=role,
+        )
+        is not None
+    )
+
+
+def resolve_artifact_download_authorization(
+    *,
+    org: Organization,
+    token: str,
+    role: str,
+) -> EnrollmentAuthorization | None:
+    """Resolve active sessions/tokens and used legacy download links."""
+    authorization = resolve_enrollment_authorization(
+        org=org,
+        secret=token,
+        role=role,
+    )
+    if authorization is not None:
+        return authorization
     if not token:
-        return False
-    for row in NodeToken.objects.filter(organization=org, role=role).only(
+        return None
+    for row in NodeToken.objects.filter(
+        organization=org,
+        role=role,
+        enrollment_mode=NodeToken.EnrollmentMode.LEGACY,
+    ).only(
         "token",
         "used_at",
     ):
         if secrets.compare_digest(row.token, token) and row.used_at is not None:
-            return True
-    return False
+            return EnrollmentAuthorization(token=row)
+    return None
 
 
 def token_usable_for_bootstrap(

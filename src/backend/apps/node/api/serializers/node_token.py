@@ -11,7 +11,9 @@ from common.deploy.site import enrollment_tls_verify
 
 
 class NodeTokenSerializer(serializers.ModelSerializer):
+    token = serializers.SerializerMethodField()
     tls_verify = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = NodeToken
@@ -26,6 +28,7 @@ class NodeTokenSerializer(serializers.ModelSerializer):
             "updated_at",
             "expires_at",
             "used_at",
+            "status",
             "gateway_scope",
             "tls_verify",
             "is_deleted",
@@ -33,10 +36,15 @@ class NodeTokenSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "organization",
             "token",
+            "role",
             "created_at",
             "updated_at",
+            "expires_at",
             "used_at",
+            "status",
+            "gateway_scope",
             "is_deleted",
             "deleted_at",
         ]
@@ -44,6 +52,17 @@ class NodeTokenSerializer(serializers.ModelSerializer):
     def get_tls_verify(self, _instance: NodeToken) -> bool:
         """Return the deployment TLS policy used by generated install commands."""
         return enrollment_tls_verify()
+
+    def get_token(self, instance: NodeToken) -> str:
+        """Expose the capability only in the immediate create response."""
+        return instance.token if self.context.get("include_token") is True else ""
+
+    def get_status(self, instance: NodeToken) -> str:
+        if not instance.is_active:
+            return "revoked"
+        if instance.expires_at and instance.expires_at <= timezone.now():
+            return "expired"
+        return "active"
 
 
 class NodeTokenCreateSerializer(serializers.ModelSerializer):
@@ -53,12 +72,19 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = NodeToken
-        fields = ["org", "role", "note", "expires_at", "is_active", "gateway_scope"]
+        fields = [
+            "org",
+            "role",
+            "note",
+            "expires_at",
+            "is_active",
+            "gateway_scope",
+        ]
+        read_only_fields = ["gateway_scope"]
         extra_kwargs = {
             "note": {"required": False, "default": ""},
             "is_active": {"required": False, "default": True},
             "expires_at": {"required": False},
-            "gateway_scope": {"required": False, "default": ""},
         }
 
     def validate_role(self, value: str) -> str:
@@ -67,8 +93,7 @@ class NodeTokenCreateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        if "expires_at" not in validated_data:
-            ttl = node_conf.ENROLLMENT_TOKEN_TTL_SECONDS
-            if ttl > 0:
-                validated_data["expires_at"] = timezone.now() + timedelta(seconds=ttl)
+        ttl = max(1, node_conf.ENROLLMENT_TOKEN_TTL_SECONDS)
+        validated_data["expires_at"] = timezone.now() + timedelta(seconds=ttl)
+        validated_data["enrollment_mode"] = NodeToken.EnrollmentMode.CURRENT
         return super().create(validated_data)

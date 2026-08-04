@@ -18,6 +18,7 @@ type InstallState struct {
 	Version   string
 	NodeID    string
 	OrgKey    string
+	Role      string
 	Service   string
 }
 
@@ -38,6 +39,7 @@ func DetectInstallState() InstallState {
 	envPath := EnvFilePath()
 	state.NodeID = ReadNodeID(envPath)
 	state.OrgKey = readEnvKey(envPath, "HFL_ORG_KEY")
+	state.Role = readEnvKey(envPath, "HFL_NODE_ROLE")
 	state.Service = serviceState(context.Background())
 	return state
 }

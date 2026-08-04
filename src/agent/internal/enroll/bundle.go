@@ -21,13 +21,22 @@ func RunBundleUpgrade(ctx context.Context, archivePath string) error {
 		script := filepath.Join(installDir, "install.ps1")
 		args := []string{
 			"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script,
-			"upgrade", "-From", archivePath, "-QuietFooter",
+			"upgrade", "-From", archivePath, "-NoRestart", "-QuietFooter",
 		}
 		cmd := exec.CommandContext(ctx, "powershell.exe", args...)
 		return runStreamingCommand(cmd, "Agent upgrade")
 	}
 	script := filepath.Join(installDir, "install.sh")
-	cmd := exec.CommandContext(ctx, script, "upgrade", "--from", archivePath, "--yes", "--quiet-footer")
+	cmd := exec.CommandContext(
+		ctx,
+		script,
+		"upgrade",
+		"--from",
+		archivePath,
+		"--yes",
+		"--no-restart",
+		"--quiet-footer",
+	)
 	return runStreamingCommand(cmd, "Agent upgrade")
 }
 

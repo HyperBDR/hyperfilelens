@@ -83,6 +83,69 @@ for bundle_name in "${required_agent_bundles[@]}"; do
 	tar -xf "${bundle}" -C "${pkg_root}"
 done
 
+python3 - "${pkg_root}/payload/media/enroll-bootstrap" "${version}" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+import tarfile
+import zipfile
+
+root = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+expected = {
+    "linux-amd64",
+    "linux-arm64",
+    "darwin-amd64",
+    "darwin-arm64",
+    "windows-amd64",
+}
+artifacts = {}
+max_installer_bytes = 3_670_016
+pattern = re.compile(r"^hfl-installer-(linux|darwin|windows)-(amd64|arm64)\.(tar\.gz|zip)$")
+for path in sorted(root.glob("*/hfl-installer-*")):
+    match = pattern.fullmatch(path.name)
+    if match is None:
+        continue
+    platform, arch, _ = match.groups()
+    if path.parent.name != version:
+        raise SystemExit(f"unexpected minimal installer version directory: {path.parent.name}")
+    key = f"{platform}-{arch}"
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path) as archive:
+            if archive.namelist() != ["hfl-enroll.exe"]:
+                raise SystemExit(f"invalid Windows minimal installer layout: {path.name}")
+    else:
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+            if len(members) != 1 or members[0].name != "hfl-enroll":
+                raise SystemExit(f"invalid POSIX minimal installer layout: {path.name}")
+            if not members[0].isfile():
+                raise SystemExit(f"minimal installer is not a regular file: {path.name}")
+            if members[0].mode & 0o111 == 0:
+                raise SystemExit(f"minimal installer is not executable: {path.name}")
+    if path.stat().st_size > max_installer_bytes:
+        raise SystemExit(
+            f"minimal installer exceeds 3.5 MiB: {path.name} "
+            f"({path.stat().st_size} bytes)"
+        )
+    artifacts[key] = {
+        "filename": path.relative_to(root).as_posix(),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "size": path.stat().st_size,
+    }
+
+if set(artifacts) != expected:
+    missing = ", ".join(sorted(expected - set(artifacts))) or "none"
+    extra = ", ".join(sorted(set(artifacts) - expected)) or "none"
+    raise SystemExit(f"minimal installer matrix mismatch (missing: {missing}; extra: {extra})")
+(root / "INSTALLER_MANIFEST.json").write_text(
+    json.dumps({"schema_version": 1, "artifacts": artifacts}, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
 for required in \
 	images/00-hyperfilelens.tar.gz \
 	images/01-postgres-17.tar.gz \

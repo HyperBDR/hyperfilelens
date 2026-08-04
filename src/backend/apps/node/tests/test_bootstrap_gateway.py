@@ -12,12 +12,15 @@ from apps.node.models.base import NodeRole
 
 class BootstrapGatewayViewTests(TestCase):
     def setUp(self):
-        self.org = Organization.objects.create(key="gw-bootstrap-org", name="GW Bootstrap Org")
+        self.org = Organization.objects.create(
+            key="gw-bootstrap-org", name="GW Bootstrap Org"
+        )
         self.token_row = NodeToken.objects.create(
             organization=self.org,
             role=NodeRole.GATEWAY,
             token="gw-bootstrap-token",
             is_active=True,
+            enrollment_mode=NodeToken.EnrollmentMode.LEGACY,
         )
         self.factory = APIRequestFactory()
 

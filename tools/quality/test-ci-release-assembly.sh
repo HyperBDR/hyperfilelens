@@ -104,7 +104,7 @@ done
 for asset in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
 	agent="${fixtures}/agent-${asset}"
 	mkdir -p "${agent}/payload/media/agent-releases/${version}" \
-		"${agent}/payload/media/enroll-bootstrap"
+		"${agent}/payload/media/enroll-bootstrap/${version}"
 	printf '%s\n' "${asset}" >"${agent}/payload/media/agent-releases/${version}/${asset}.fixture"
 	if [[ "${asset}" == "linux-amd64" ]]; then
 		printf 'ubuntu 20.04 fixture\n' \
@@ -115,6 +115,31 @@ for asset in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
 			>"${agent}/payload/media/agent-releases/${version}/hfl-agent-${version}-linux-amd64-ubuntu2404.tar.gz"
 	fi
 	printf '%s\n' "${asset}" >"${agent}/payload/media/enroll-bootstrap/${asset}.fixture"
+	ASSET_VALUE="${asset}" OUTPUT_VALUE="${agent}/payload/media/enroll-bootstrap/${version}" python3 - <<'PY'
+import os
+import pathlib
+import tarfile
+import zipfile
+
+asset = os.environ["ASSET_VALUE"]
+output = pathlib.Path(os.environ["OUTPUT_VALUE"])
+platform, arch = asset.split("-", 1)
+binary = output / ("hfl-enroll.exe" if platform == "windows" else "hfl-enroll")
+binary.write_bytes((asset + "\n").encode())
+binary.chmod(0o755)
+if platform == "windows":
+    archive = output / f"hfl-installer-{asset}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as handle:
+        handle.write(binary, "hfl-enroll.exe")
+else:
+    archive = output / f"hfl-installer-{asset}.tar.gz"
+    with tarfile.open(archive, "w:gz") as handle:
+        info = handle.gettarinfo(str(binary), "hfl-enroll")
+        info.mode = 0o755
+        with binary.open("rb") as stream:
+            handle.addfile(info, stream)
+binary.unlink()
+PY
 	tar -C "${agent}" -cf "${input}/_internal-agent-${asset}.tar" payload
 done
 

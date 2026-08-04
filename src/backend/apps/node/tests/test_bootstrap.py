@@ -12,12 +12,15 @@ from apps.node.models.base import NodeRole
 
 class BootstrapViewTests(TestCase):
     def setUp(self):
-        self.org = Organization.objects.create(key="bootstrap-org", name="Bootstrap Org")
+        self.org = Organization.objects.create(
+            key="bootstrap-org", name="Bootstrap Org"
+        )
         self.token_row = NodeToken.objects.create(
             organization=self.org,
             role=NodeRole.AGENT,
             token="bootstrap-token-abc",
             is_active=True,
+            enrollment_mode=NodeToken.EnrollmentMode.LEGACY,
         )
         self.factory = APIRequestFactory()
 

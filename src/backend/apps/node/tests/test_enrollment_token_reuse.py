@@ -1,7 +1,10 @@
 """Enrollment token reuse and expiry."""
 
 from datetime import timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -10,6 +13,13 @@ from rest_framework.test import APIRequestFactory
 from apps.iam.models import Organization
 from apps.node.api.serializers import NodeTokenCreateSerializer, NodeTokenSerializer
 from apps.node.api.views.node import NodeViewSet
+from apps.node.api.views.artifact_release import (
+    AgentArtifact,
+    AgentReleasesAuthView,
+    AgentReleaseView,
+    _load_release_token,
+)
+from apps.node.api.views.enrollment_helpers import token_usable_for_artifact_download
 from apps.node.models import Node, NodeToken
 from apps.node.models.base import NodeRole
 
@@ -25,7 +35,9 @@ class EnrollmentTokenReuseTests(TestCase):
         )
         self.factory = APIRequestFactory()
 
-    def _heartbeat(self, *, name: str, token: str | None = None):
+    def _heartbeat(
+        self, *, name: str, token: str | None = None, installation_id: str = ""
+    ):
         request = self.factory.post(
             "/api/v1/node/nodes/heartbeat/",
             {
@@ -33,6 +45,7 @@ class EnrollmentTokenReuseTests(TestCase):
                 "name": name,
                 "version": "1.0.0",
                 "os_name": "linux",
+                "installation_id": installation_id,
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
@@ -51,7 +64,10 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertIsNotNone(self.token_row.used_at)
         self.assertEqual(Node.objects.filter(organization=self.org).count(), 2)
 
-    @mock.patch("apps.node.api.views.node.sync_agent_source_host", side_effect=RuntimeError("sync failed"))
+    @mock.patch(
+        "apps.node.api.views.node.sync_agent_source_host",
+        side_effect=RuntimeError("sync failed"),
+    )
     def test_source_host_sync_failure_does_not_break_registration(self, _mock_sync):
         response = self._heartbeat(name="host-sync-fails")
         self.assertEqual(response.status_code, 200)
@@ -65,21 +81,165 @@ class EnrollmentTokenReuseTests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(Node.objects.filter(organization=self.org).count(), 0)
 
+    def test_used_current_token_does_not_bypass_expiry_for_artifact_download(self):
+        self.token_row.is_active = False
+        self.token_row.used_at = timezone.now()
+        self.token_row.expires_at = timezone.now() - timedelta(minutes=1)
+        self.token_row.save(update_fields=["is_active", "used_at", "expires_at"])
+
+        self.assertFalse(
+            token_usable_for_artifact_download(
+                org=self.org,
+                token=self.token_row.token,
+                role=NodeRole.AGENT,
+            )
+        )
+
+    def test_used_legacy_token_remains_available_during_migration(self):
+        self.token_row.enrollment_mode = NodeToken.EnrollmentMode.LEGACY
+        self.token_row.is_active = False
+        self.token_row.used_at = timezone.now()
+        self.token_row.expires_at = timezone.now() - timedelta(days=1)
+        self.token_row.save(
+            update_fields=["enrollment_mode", "is_active", "used_at", "expires_at"]
+        )
+
+        self.assertTrue(
+            token_usable_for_artifact_download(
+                org=self.org,
+                token=self.token_row.token,
+                role=NodeRole.AGENT,
+            )
+        )
+
     def test_create_serializer_sets_default_expiry(self):
         ser = NodeTokenCreateSerializer(data={"role": NodeRole.AGENT})
         self.assertTrue(ser.is_valid(), ser.errors)
         row = ser.save(organization=self.org)
         self.assertIsNotNone(row.expires_at)
         self.assertGreater(row.expires_at, timezone.now())
+        self.assertEqual(row.enrollment_mode, NodeToken.EnrollmentMode.CURRENT)
 
-    def test_create_serializer_honors_explicit_null_expiry(self):
-        ser = NodeTokenCreateSerializer(data={"role": NodeRole.AGENT, "expires_at": None})
+    def test_create_serializer_rejects_unbounded_expiry(self):
+        ser = NodeTokenCreateSerializer(
+            data={"role": NodeRole.AGENT, "expires_at": None}
+        )
         self.assertTrue(ser.is_valid(), ser.errors)
         row = ser.save(organization=self.org)
-        self.assertIsNone(row.expires_at)
+        self.assertIsNotNone(row.expires_at)
+
+    def test_create_serializer_cannot_issue_platform_gateway_token(self):
+        ser = NodeTokenCreateSerializer(
+            data={
+                "role": NodeRole.GATEWAY,
+                "gateway_scope": "platform",
+            }
+        )
+        self.assertTrue(ser.is_valid(), ser.errors)
+
+        row = ser.save(organization=self.org)
+
+        self.assertEqual(row.gateway_scope, "")
+
+    def test_update_serializer_cannot_promote_gateway_scope(self):
+        self.token_row.role = NodeRole.GATEWAY
+        self.token_row.save(update_fields=["role"])
+        ser = NodeTokenSerializer(
+            self.token_row,
+            data={"gateway_scope": "platform"},
+            partial=True,
+        )
+        self.assertTrue(ser.is_valid(), ser.errors)
+
+        row = ser.save()
+
+        self.assertEqual(row.gateway_scope, "")
+
+    def test_update_serializer_cannot_extend_expiry_or_change_role(self):
+        original_expiry = self.token_row.expires_at
+        ser = NodeTokenSerializer(
+            self.token_row,
+            data={
+                "role": NodeRole.GATEWAY,
+                "expires_at": timezone.now() + timedelta(days=30),
+            },
+            partial=True,
+        )
+        self.assertTrue(ser.is_valid(), ser.errors)
+
+        row = ser.save()
+
+        self.assertEqual(row.role, NodeRole.AGENT)
+        self.assertEqual(row.expires_at, original_expiry)
 
     @override_settings(HFL_INSECURE_TLS=False)
     def test_token_response_exposes_strict_tls_policy(self):
         data = NodeTokenSerializer(self.token_row).data
 
         self.assertTrue(data["tls_verify"])
+
+    def test_token_secret_is_only_exposed_during_creation(self):
+        hidden = NodeTokenSerializer(self.token_row).data
+        created = NodeTokenSerializer(
+            self.token_row,
+            context={"include_token": True},
+        ).data
+
+        self.assertEqual(hidden["token"], "")
+        self.assertEqual(created["token"], self.token_row.token)
+
+    def test_signed_release_url_does_not_embed_enrollment_secret(self):
+        request = self.factory.get(
+            "/api/v1/node/enrollment/agent/release",
+            {
+                "org": self.org.key,
+                "role": NodeRole.AGENT,
+                "token": self.token_row.token,
+                "platform": "linux",
+                "arch": "amd64",
+                "api_base": "https://console.example",
+            },
+        )
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact = AgentArtifact(
+                platform="linux",
+                arch="amd64",
+                version="1.0.0",
+                filename="agent.tar.gz",
+            )
+            artifact_path = root / artifact.version / artifact.filename
+            artifact_path.parent.mkdir(parents=True)
+            artifact_path.write_bytes(b"agent bundle")
+            with (
+                mock.patch(
+                    "apps.node.api.views.artifact_release._get_agent_artifact",
+                    return_value=artifact,
+                ),
+                mock.patch(
+                    "apps.node.api.views.artifact_release.agent_releases_root",
+                    return_value=root,
+                ),
+            ):
+                response = AgentReleaseView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        signed = parse_qs(urlparse(response.data["download_url"]).query)["t"][0]
+        payload = _load_release_token(signed, max_age=600)
+        self.assertIsNotNone(payload)
+        self.assertNotIn("enroll", payload)
+        self.assertEqual(payload["token_id"], self.token_row.id)
+
+        auth_request = self.factory.get(
+            "/api/v1/node/enrollment/agent/releases-auth",
+            {"t": signed},
+            HTTP_X_ORIGINAL_URI=payload["p"],
+        )
+        authorized = AgentReleasesAuthView.as_view()(auth_request)
+        self.assertEqual(authorized.status_code, 204)
+
+        self.token_row.is_active = False
+        self.token_row.save(update_fields=["is_active"])
+        denied = AgentReleasesAuthView.as_view()(auth_request)
+        self.assertEqual(denied.status_code, 401)

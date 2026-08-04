@@ -175,7 +175,11 @@ func TestWriteWindowsUninstallScriptKeepDataSkipsPurgeAll(t *testing.T) {
 	if !strings.Contains(text, "keep_data=1; preserved data directory") {
 		t.Fatalf("keep_data script missing preserve log line:\n%s", text)
 	}
+	if !strings.Contains(text, `config retire-installation --data-dir $data`) {
+		t.Fatalf("keep_data script does not retire installation identity:\n%s", text)
+	}
 	assertOrdered(t, text,
+		`config retire-installation --data-dir $data`,
 		`if ($keep -eq '0') {`,
 		`Remove-AgentDataDirectory -DataDir $data`,
 		`keep_data=1; preserved data directory`,

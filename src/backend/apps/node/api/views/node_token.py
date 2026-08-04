@@ -35,9 +35,13 @@ class NodeTokenViewSet(
         return NodeTokenSerializer
 
     def get_org_scoped_queryset(self):
-        return NodeToken.objects.select_related("organization").all().order_by(
-            "-created_at",
-            "-id",
+        return (
+            NodeToken.objects.select_related("organization")
+            .all()
+            .order_by(
+                "-created_at",
+                "-id",
+            )
         )
 
     def create(self, request, *args, **kwargs):
@@ -45,5 +49,11 @@ class NodeTokenViewSet(
         ser.is_valid(raise_exception=True)
         org = require_org_matching_body(request, ser.validated_data.pop("org", None))
         token_row = ser.save(organization=org, created_by=request.user)
-        out = NodeTokenSerializer(token_row)
+        out = NodeTokenSerializer(
+            token_row,
+            context={
+                **self.get_serializer_context(),
+                "include_token": True,
+            },
+        )
         return Response(out.data, status=status.HTTP_201_CREATED)

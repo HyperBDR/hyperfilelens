@@ -297,6 +297,58 @@ export async function createEnrollmentToken(params: {
 
 export type EnrollmentOs = 'linux' | 'windows' | 'macos'
 
+export type MinimalInstallerArtifact = {
+  filename: string
+  sha256: string
+  size: number
+}
+
+export type MinimalInstallerManifest = {
+  schema_version: number
+  artifacts: Record<string, MinimalInstallerArtifact>
+}
+
+export async function fetchMinimalInstallerManifest(
+  apiBase = publicApiBase(),
+): Promise<MinimalInstallerManifest> {
+  const base = apiBase.replace(/\/$/, '')
+  const response = await fetch(`${base}/api/v1/node/enrollment/installer-metadata`, {
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    throw new Error('Minimal installer metadata is unavailable')
+  }
+  const payload = await response.json() as MinimalInstallerManifest
+  const expected = [
+    'linux-amd64',
+    'linux-arm64',
+    'darwin-amd64',
+    'darwin-arm64',
+    'windows-amd64',
+  ]
+  const artifacts = payload?.artifacts
+  const valid = payload?.schema_version === 1
+    && artifacts
+    && typeof artifacts === 'object'
+    && Object.keys(artifacts).length === expected.length
+    && expected.every((key) => {
+      const artifact = artifacts[key]
+      const extension = key.startsWith('windows-') ? 'zip' : 'tar.gz'
+      const filenamePattern = new RegExp(
+        `^[A-Za-z0-9._-]+/hfl-installer-${key}\\.${extension.replaceAll('.', '\\.')}$`,
+      )
+      return artifact
+        && filenamePattern.test(artifact.filename)
+        && /^[a-f0-9]{64}$/i.test(artifact.sha256)
+        && Number.isSafeInteger(artifact.size)
+        && artifact.size > 0
+    })
+  if (!valid) {
+    throw new Error('Minimal installer metadata is invalid')
+  }
+  return payload
+}
+
 export function enrollmentDownloadType(os: EnrollmentOs): string {
   if (os === 'windows') return 'windows'
   if (os === 'macos') return 'macos'
@@ -343,39 +395,104 @@ function psSingleQuoted(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
+function shellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function controlPlaneWssURL(apiBase: string): string {
+  const url = new URL(apiBase)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = '/ws/node/agent/'
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
+function powershellEncodedCommand(script: string): string {
+  const bytes = new Uint8Array(script.length * 2)
+  for (let i = 0; i < script.length; i += 1) {
+    const code = script.charCodeAt(i)
+    bytes[i * 2] = code & 0xff
+    bytes[i * 2 + 1] = code >> 8
+  }
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${btoa(binary)}`
+}
+
 /**
  * Windows one-liner: pure PowerShell download + run (no curl).
  * Avoids $variables so pasting works from elevated CMD or PowerShell.
  */
-function buildWindowsEnrollmentInstallCommand(url: string, tlsVerify: boolean): string {
-  const bootstrapPath =
-    "[System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),'hfl-bootstrap.ps1')"
+function buildWindowsEnrollmentInstallCommand(params: {
+  apiBase: string
+  org: string
+  role: NodeRole
+  token: string
+  tlsVerify: boolean
+  artifact: MinimalInstallerArtifact
+  operation: 'install' | 'gateway-install'
+}): string {
+  const archiveUrl = `${params.apiBase.replace(/\/$/, '')}/media/enroll-bootstrap/${params.artifact.filename}`
   const psBody = [
     '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12',
-    ...(tlsVerify
+    ...(params.tlsVerify
       ? []
       : [
           "Write-Warning 'TLS certificate verification is disabled. Use only on a trusted private network.'",
           '[Net.ServicePointManager]::ServerCertificateValidationCallback={[bool]1}',
         ]),
-    `(New-Object Net.WebClient).DownloadFile(${psSingleQuoted(url)},${bootstrapPath})`,
-    `& (${bootstrapPath})`,
+    '$work=Join-Path ([System.IO.Path]::GetTempPath()) ("hfl-installer-"+[guid]::NewGuid().ToString("n"))',
+    'New-Item -ItemType Directory -Path $work -Force|Out-Null',
+    'try {',
+    '$archive=Join-Path $work "installer.zip"',
+    `(New-Object Net.WebClient).DownloadFile(${psSingleQuoted(archiveUrl)},$archive)`,
+    `if((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower() -ne ${psSingleQuoted(params.artifact.sha256.toLowerCase())}){throw 'Minimal installer checksum verification failed'}`,
+    'Expand-Archive -LiteralPath $archive -DestinationPath $work -Force',
+    `$env:HFL_ORG_KEY=${psSingleQuoted(params.org)}`,
+    `$env:HFL_NODE_ROLE=${psSingleQuoted(params.role)}`,
+    `$env:HFL_NODE_TOKEN=${psSingleQuoted(params.token)}`,
+    `$env:HFL_API_BASE=${psSingleQuoted(params.apiBase)}`,
+    `$env:HFL_WSS_URL=${psSingleQuoted(controlPlaneWssURL(params.apiBase))}`,
+    `$env:HFL_INSECURE_TLS=${psSingleQuoted(params.tlsVerify ? '0' : '1')}`,
+    `& (Join-Path $work 'hfl-enroll.exe') ${params.operation}`,
+    'if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}',
+    '} finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }',
   ].join(';')
-  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "${psBody}"`
+  return powershellEncodedCommand(psBody)
 }
 
-function buildPosixEnrollmentInstallCommand(
-  url: string,
-  bootstrapName: string,
-  tlsVerify: boolean,
-): string {
-  const tlsOptions = tlsVerify
+function buildPosixEnrollmentInstallCommand(params: {
+  apiBase: string
+  org: string
+  role: NodeRole
+  token: string
+  tlsVerify: boolean
+  goos: 'linux' | 'darwin'
+  artifacts: Record<string, MinimalInstallerArtifact>
+  operation: 'install' | 'gateway-install'
+  gatewayScope?: 'public' | 'private'
+}): string {
+  const amd64 = params.artifacts[`${params.goos}-amd64`]
+  const arm64 = params.artifacts[`${params.goos}-arm64`]
+  if (!amd64 || !arm64) throw new Error('Minimal installer metadata is incomplete')
+  const tlsOptions = params.tlsVerify
     ? "--proto '=https' --tlsv1.2"
     : '-k'
-  const warning = tlsVerify
+  const warning = params.tlsVerify
     ? ''
     : "echo 'WARNING: TLS certificate verification is disabled. Use only on a trusted private network.' >&2\n"
-  return `${warning}tmp="$(mktemp /tmp/${bootstrapName}.XXXXXX)" && (\n  trap 'rm -f "$tmp"' EXIT\n  curl ${tlsOptions} --fail --show-error --location --progress-bar '${url}' -o "$tmp"\n  sudo bash "$tmp"\n)`
+  const base = params.apiBase.replace(/\/$/, '')
+  const env = [
+    `HFL_ORG_KEY=${shellSingleQuoted(params.org)}`,
+    `HFL_NODE_ROLE=${shellSingleQuoted(params.role)}`,
+    `HFL_NODE_TOKEN=${shellSingleQuoted(params.token)}`,
+    `HFL_API_BASE=${shellSingleQuoted(params.apiBase)}`,
+    `HFL_WSS_URL=${shellSingleQuoted(controlPlaneWssURL(params.apiBase))}`,
+    `HFL_INSECURE_TLS=${params.tlsVerify ? '0' : '1'}`,
+    ...(params.gatewayScope ? [`HFL_GATEWAY_SCOPE=${params.gatewayScope}`] : []),
+  ].join(' ')
+  return `${warning}work="$(mktemp -d /tmp/hfl-installer.XXXXXX)" && (\n  trap 'rm -rf "$work"' EXIT\n  base=${shellSingleQuoted(base)}\n  case "$(uname -m)" in\n    x86_64|amd64) file=${shellSingleQuoted(amd64.filename)}; expected=${shellSingleQuoted(amd64.sha256)} ;;\n    arm64|aarch64) file=${shellSingleQuoted(arm64.filename)}; expected=${shellSingleQuoted(arm64.sha256)} ;;\n    *) echo 'Unsupported CPU architecture.' >&2; exit 4 ;;\n  esac\n  curl ${tlsOptions} --fail --show-error --location --progress-bar "$base/media/enroll-bootstrap/$file" -o "$work/installer.tar.gz"\n  if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$work/installer.tar.gz" | awk '{print $1}')"; else actual="$(shasum -a 256 "$work/installer.tar.gz" | awk '{print $1}')"; fi\n  [ "$actual" = "$expected" ] || { echo 'Minimal installer checksum verification failed.' >&2; exit 3; }\n  tar -xzf "$work/installer.tar.gz" -C "$work"\n  if [ "$(id -u)" -eq 0 ]; then\n    env ${env} "$work/hfl-enroll" ${params.operation}\n  elif command -v sudo >/dev/null 2>&1; then\n    sudo env ${env} "$work/hfl-enroll" ${params.operation}\n  else\n    echo 'Administrator privileges are required. Re-run as root or install sudo.' >&2\n    exit 1\n  fi\n)`
 }
 
 /** One-liner for target host (curl pipe / download + run). Shown on deploy pages only. */
@@ -386,16 +503,32 @@ export function buildEnrollmentInstallCommand(params: {
   apiBase?: string
   os: EnrollmentOs
   tlsVerify?: boolean
+  manifest: MinimalInstallerManifest
 }): string {
-  const url = buildEnrollmentDownloadUrl({ ...params, os: params.os })
   const tlsVerify = params.tlsVerify !== false
   if (params.os === 'windows') {
-    return buildWindowsEnrollmentInstallCommand(url, tlsVerify)
+    const artifact = params.manifest.artifacts['windows-amd64']
+    if (!artifact) throw new Error('Windows minimal installer metadata is unavailable')
+    return buildWindowsEnrollmentInstallCommand({
+      apiBase: params.apiBase ?? publicApiBase(),
+      org: params.org,
+      role: params.role,
+      token: params.token,
+      tlsVerify,
+      artifact,
+      operation: 'install',
+    })
   }
-  if (params.os === 'macos') {
-    return buildPosixEnrollmentInstallCommand(url, 'hfl-agent-bootstrap', tlsVerify)
-  }
-  return buildPosixEnrollmentInstallCommand(url, 'hfl-agent-bootstrap', tlsVerify)
+  return buildPosixEnrollmentInstallCommand({
+    apiBase: params.apiBase ?? publicApiBase(),
+    org: params.org,
+    role: params.role,
+    token: params.token,
+    tlsVerify,
+    goos: params.os === 'macos' ? 'darwin' : 'linux',
+    artifacts: params.manifest.artifacts,
+    operation: 'install',
+  })
 }
 
 /** One-liner for Data Gateway host (Linux): installs agent + LensNode sidecar. */
@@ -404,35 +537,60 @@ export function buildGatewayEnrollmentInstallCommand(params: {
   token: string
   apiBase?: string
   tlsVerify?: boolean
+  manifest: MinimalInstallerManifest
+  gatewayScope: 'public' | 'private'
 }): string {
-  const url = buildGatewayEnrollmentDownloadUrl(params)
-  return buildPosixEnrollmentInstallCommand(
-    url,
-    'hfl-gateway-bootstrap',
-    params.tlsVerify !== false,
-  )
+  return buildPosixEnrollmentInstallCommand({
+    apiBase: params.apiBase ?? publicApiBase(),
+    org: params.org,
+    role: 'gateway',
+    token: params.token,
+    tlsVerify: params.tlsVerify !== false,
+    goos: 'linux',
+    artifacts: params.manifest.artifacts,
+    operation: 'gateway-install',
+    gatewayScope: params.gatewayScope,
+  })
 }
 
 /** Create gateway token + build copy-paste install command. */
 export async function issueGatewayEnrollmentInstall(params: {
   note?: string
   orgKey?: string
-}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean }> {
+}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean; expiresAt: string | null }> {
   const org = params.orgKey || orgKey()
   if (!org) {
     throw new Error('Missing organization key')
   }
-  const { token, tokenId, tlsVerify } = await createEnrollmentToken({
+  const manifest = await fetchMinimalInstallerManifest()
+  const row = await createNodeToken({
     role: 'gateway',
     note: params.note ?? 'deploy:gateway',
   })
-  const command = buildGatewayEnrollmentInstallCommand({ org, token, tlsVerify })
-  return { token, tokenId, command, tlsVerify }
+  let command: string
+  try {
+    command = buildGatewayEnrollmentInstallCommand({
+      org,
+      token: row.token,
+      tlsVerify: row.tls_verify,
+      manifest,
+      gatewayScope: 'private',
+    })
+  } catch (error) {
+    await revokeEnrollmentToken(row.id).catch(() => undefined)
+    throw error
+  }
+  return {
+    token: row.token,
+    tokenId: row.id,
+    command,
+    tlsVerify: row.tls_verify,
+    expiresAt: row.expires_at ?? null,
+  }
 }
 
 export async function issuePlatformGatewayEnrollmentInstall(params?: {
   note?: string
-  ttlSeconds?: 900 | 3600 | 14400 | 86400
 }): Promise<{
   token: string
   tokenId: number
@@ -440,11 +598,11 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
   tlsVerify: boolean
   expiresAt: string | null
 }> {
+  const manifest = await fetchMinimalInstallerManifest()
   const raw = await api<unknown>('/api/v1/platform-ops/lens/gateways/enrollment', {
     method: 'POST',
     body: JSON.stringify({
       note: params?.note ?? 'deploy:platform-gateway',
-      ttl_seconds: params?.ttlSeconds ?? 900,
     }),
   })
   const payload = unwrapApiPayload<{
@@ -455,25 +613,34 @@ export async function issuePlatformGatewayEnrollmentInstall(params?: {
     tls_verify: boolean
     expires_at?: string | null
   }>(raw)
-  if (
-    !payload.token ||
-    !payload.org_key ||
-    !payload.api_base ||
-    typeof payload.tls_verify !== 'boolean'
-  ) {
-    throw new Error('Public Data Gateway enrollment response is incomplete')
-  }
-  return {
-    token: payload.token,
-    tokenId: payload.token_id,
-    command: buildGatewayEnrollmentInstallCommand({
-      org: payload.org_key,
+  try {
+    if (
+      !payload.token ||
+      !payload.org_key ||
+      !payload.api_base ||
+      typeof payload.tls_verify !== 'boolean'
+    ) {
+      throw new Error('Public Data Gateway enrollment response is incomplete')
+    }
+    return {
       token: payload.token,
-      apiBase: payload.api_base,
+      tokenId: payload.token_id,
+      command: buildGatewayEnrollmentInstallCommand({
+        org: payload.org_key,
+        token: payload.token,
+        apiBase: payload.api_base,
+        tlsVerify: payload.tls_verify,
+        manifest,
+        gatewayScope: 'public',
+      }),
       tlsVerify: payload.tls_verify,
-    }),
-    tlsVerify: payload.tls_verify,
-    expiresAt: payload.expires_at ?? null,
+      expiresAt: payload.expires_at ?? null,
+    }
+  } catch (error) {
+    if (Number.isInteger(payload.token_id) && payload.token_id > 0) {
+      await revokePlatformGatewayEnrollment(payload.token_id).catch(() => undefined)
+    }
+    throw error
   }
 }
 
@@ -481,6 +648,10 @@ export async function revokePlatformGatewayEnrollment(tokenId: number): Promise<
   await api(`/api/v1/platform-ops/lens/gateways/enrollment/${tokenId}`, {
     method: 'DELETE',
   })
+}
+
+export async function revokeEnrollmentToken(tokenId: number): Promise<void> {
+  await api(`/api/v1/node/node-tokens/${tokenId}/`, { method: 'DELETE' })
 }
 
 export async function auditPlatformGatewayEnrollmentCopy(tokenId: number): Promise<void> {
@@ -494,20 +665,34 @@ export async function issueEnrollmentInstall(params: {
   role: NodeRole
   os: EnrollmentOs
   note?: string
-}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean }> {
+}): Promise<{ token: string; tokenId: number; command: string; tlsVerify: boolean; expiresAt: string | null }> {
   const org = orgKey()
   if (!org) {
     throw new Error('Missing organization key')
   }
-  const { token, tokenId, tlsVerify } = await createEnrollmentToken(params)
-  const command = buildEnrollmentInstallCommand({
-    org,
-    role: params.role,
-    token,
-    os: params.os,
-    tlsVerify,
-  })
-  return { token, tokenId, command, tlsVerify }
+  const manifest = await fetchMinimalInstallerManifest()
+  const row = await createNodeToken({ role: params.role, note: params.note })
+  let command: string
+  try {
+    command = buildEnrollmentInstallCommand({
+      org,
+      role: params.role,
+      token: row.token,
+      os: params.os,
+      tlsVerify: row.tls_verify,
+      manifest,
+    })
+  } catch (error) {
+    await revokeEnrollmentToken(row.id).catch(() => undefined)
+    throw error
+  }
+  return {
+    token: row.token,
+    tokenId: row.id,
+    command,
+    tlsVerify: row.tls_verify,
+    expiresAt: row.expires_at ?? null,
+  }
 }
 
 import { formatAppTime } from './dateTime'

@@ -30,6 +30,9 @@ class Node(OrganizationScopedModel):
     role = models.CharField(max_length=20, choices=Role.choices)
     version = models.CharField(max_length=50, blank=True, default="")
     os_name = models.CharField(max_length=80, blank=True, default="")
+    installation_id = models.CharField(
+        max_length=128, blank=True, default="", db_index=True
+    )
     ip_address = models.GenericIPAddressField(
         blank=True,
         null=True,
@@ -65,9 +68,7 @@ class Node(OrganizationScopedModel):
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        help_text=(
-            "Agent-reported extension data (labels, env, install hints, etc.)."
-        ),
+        help_text=("Agent-reported extension data (labels, env, install hints, etc.)."),
     )
 
     class Meta:
@@ -83,6 +84,25 @@ class Node(OrganizationScopedModel):
                 name="node_nd_org_seen_idx",
             ),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "role", "installation_id"],
+                condition=models.Q(is_deleted=False) & ~models.Q(installation_id=""),
+                name="node_unique_installation_identity",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.role})"
+
+    def soft_delete(self) -> None:
+        """Revoke the node credential as part of logical node removal."""
+        super().soft_delete()
+        from .node_credential import NodeCredential
+
+        now = timezone.now()
+        NodeCredential.objects.filter(node_id=self.pk, is_active=True).update(
+            is_active=False,
+            revoked_at=now,
+            updated_at=now,
+        )

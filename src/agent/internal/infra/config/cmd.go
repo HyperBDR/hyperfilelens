@@ -2,7 +2,9 @@ package config
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -10,7 +12,7 @@ import (
 // RunCLI handles `hfl-agent config show|set|paths` subcommands.
 func RunCLI(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: hfl-agent config show|set|paths")
+		return fmt.Errorf("usage: hfl-agent config show|set|paths|retire-installation")
 	}
 	switch args[0] {
 	case "show":
@@ -19,9 +21,34 @@ func RunCLI(ctx context.Context, args []string) error {
 		return runConfigSet(ctx, args[1:])
 	case "paths":
 		return runConfigPaths(ctx)
+	case "retire-installation":
+		return runConfigRetireInstallation(args[1:])
 	default:
 		return fmt.Errorf("unknown config command %q", args[0])
 	}
+}
+
+func runConfigRetireInstallation(args []string) error {
+	flags := flag.NewFlagSet("hfl-agent config retire-installation", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	dataDir := flags.String("data-dir", "", "Agent data directory")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return fmt.Errorf(
+			"usage: hfl-agent config retire-installation --data-dir PATH",
+		)
+	}
+	if strings.TrimSpace(*dataDir) == "" {
+		return fmt.Errorf("--data-dir is required")
+	}
+	if err := RetireInstallationIdentity(*dataDir); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(
+		os.Stdout,
+		"retired installation identity in %s\n",
+		strings.TrimSpace(*dataDir),
+	)
+	return err
 }
 
 func runConfigShow(ctx context.Context, args []string) error {

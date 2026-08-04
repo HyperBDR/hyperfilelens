@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/release"
 )
 
@@ -12,12 +13,13 @@ import (
 type ReinstallAction string
 
 const (
-	ActionFreshInstall     ReinstallAction = "fresh_install"
-	ActionAlreadyEnrolled  ReinstallAction = "already_enrolled"
-	ActionRepair           ReinstallAction = "repair"
-	ActionUpgrade          ReinstallAction = "upgrade"
-	ActionRebind           ReinstallAction = "rebind"
-	ActionCrossOrg         ReinstallAction = "cross_org"
+	ActionFreshInstall    ReinstallAction = "fresh_install"
+	ActionAlreadyEnrolled ReinstallAction = "already_enrolled"
+	ActionRepair          ReinstallAction = "repair"
+	ActionUpgrade         ReinstallAction = "upgrade"
+	ActionReinstall       ReinstallAction = "reinstall"
+	ActionRebind          ReinstallAction = "rebind"
+	ActionCrossOrg        ReinstallAction = "cross_org"
 )
 
 // ReinstallPlan is the resolved path for an enrollment run on an existing install.
@@ -31,14 +33,67 @@ type ReinstallPlan struct {
 
 // PlanReinstall decides how to handle enrollment when the agent is already installed.
 func PlanReinstall(ctx context.Context, cfg Config, state InstallState) (ReinstallPlan, error) {
+	return PlanInstall(ctx, cfg, state, InstallModeAuto)
+}
+
+// PlanInstall resolves automatic or explicitly requested existing-install behavior.
+func PlanInstall(
+	ctx context.Context,
+	cfg Config,
+	state InstallState,
+	mode InstallMode,
+) (ReinstallPlan, error) {
 	if state.OrgKey != "" && !strings.EqualFold(state.OrgKey, cfg.OrgKey) {
 		return ReinstallPlan{Action: ActionCrossOrg}, nil
+	}
+	if state.Role != "" && !strings.EqualFold(state.Role, string(cfg.NodeRole)) {
+		return ReinstallPlan{}, fmt.Errorf(
+			"this host is already installed as %s; uninstall that role before installing %s",
+			roleDisplayName(model.Role(state.Role)),
+			roleDisplayName(cfg.NodeRole, cfg.GatewayScope),
+		)
+	}
+	if mode != InstallModeAuto && !state.Installed {
+		return ReinstallPlan{}, fmt.Errorf("--%s requires an existing HyperFileLens Agent installation", mode)
+	}
+	if mode == InstallModeRepair {
+		return ReinstallPlan{
+			Action:         ActionRepair,
+			NeedsConfirm:   true,
+			ConfirmMessage: "Repair the Agent configuration and restart its service?",
+		}, nil
 	}
 
 	healthy := state.ServiceHealthy()
 	hasNode := strings.TrimSpace(state.NodeID) != ""
 
 	dl, releaseVer, releaseErr := release.FetchDownloadURL(ctx, cfg.AgentConfig())
+	if mode == InstallModeUpgrade || mode == InstallModeReinstall {
+		if releaseErr != nil {
+			return ReinstallPlan{}, releaseErr
+		}
+		action := ActionUpgrade
+		verb := "Upgrade"
+		if mode == InstallModeReinstall {
+			action = ActionReinstall
+			verb = "Reinstall"
+		}
+		releaseLabel := strings.TrimSpace(releaseVer)
+		if releaseLabel == "" {
+			releaseLabel = "selected by the console"
+		}
+		return ReinstallPlan{
+			Action:         action,
+			NeedsConfirm:   true,
+			ReleaseVersion: releaseVer,
+			DownloadURL:    dl,
+			ConfirmMessage: fmt.Sprintf(
+				"%s the Agent using console release %s? The service will be interrupted briefly.",
+				verb,
+				releaseLabel,
+			),
+		}, nil
+	}
 	_ = releaseErr
 
 	if hasNode && healthy {
@@ -81,8 +136,8 @@ func PlanReinstall(ctx context.Context, cfg Config, state InstallState) (Reinsta
 	}
 
 	return ReinstallPlan{
-		Action:       ActionRebind,
-		NeedsConfirm: true,
+		Action:         ActionRebind,
+		NeedsConfirm:   true,
 		ConfirmMessage: "The agent is installed but not registered with the console. Bind this host now?",
 	}, nil
 }

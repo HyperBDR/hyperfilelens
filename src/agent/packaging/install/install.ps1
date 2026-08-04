@@ -28,6 +28,7 @@ param(
   [switch]$NoService,
   [switch]$NoStart,
   [switch]$PurgeAll,
+  [switch]$KeepInstallationIdentity,
   [switch]$AgentOnly,
   [switch]$KopiaOnly,
   [switch]$NoRestart,
@@ -74,7 +75,8 @@ Options:
                           migrates agent.db schema, overwrites binaries; removes workspace on success
 
   uninstall:
-    -PurgeAll            Remove data directory and agent.env
+    -PurgeAll                   Remove data directory and agent.env
+    -KeepInstallationIdentity   Keep agent.env installation identity (incomplete-install rollback)
 
 Install paths:
   $InstallRoot         Binaries and installer scripts
@@ -1122,6 +1124,26 @@ function Invoke-Uninstall {
   Remove-HflService
   Stop-HflAgentProcesses -Reason "uninstall"
 
+  if ($PurgeAll -and $KeepInstallationIdentity) {
+    throw "-PurgeAll and -KeepInstallationIdentity are mutually exclusive."
+  }
+
+  if ((-not $PurgeAll) -and (-not $KeepInstallationIdentity)) {
+    $agentBinary = Join-Path $InstallRoot "hfl-agent.exe"
+    if (-not (Test-Path -LiteralPath $agentBinary)) {
+      throw "Cannot retire the installation identity because $agentBinary is unavailable."
+    }
+    Write-HflLog -Level 'STEP ' -Message "Retiring the local installation identity."
+    & $agentBinary config retire-installation --data-dir $dataRoot
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to retire the local installation identity; Agent files and data were preserved for retry."
+    }
+    Write-HflOk "Local installation identity retired; the next install will create a new console record."
+  }
+  elseif ($KeepInstallationIdentity) {
+    Write-HflSkip "installation identity preserved for install retry"
+  }
+
   Remove-HflInstallFile (Join-Path $InstallRoot "hfl-agent.exe")
   Remove-HflInstallFile (Join-Path $InstallRoot "kopia.exe")
   Remove-HflInstallFile (Join-Path $InstallRoot "install.ps1")
@@ -1133,8 +1155,11 @@ function Invoke-Uninstall {
   if ($PurgeAll) {
     Remove-HflInstallFile $envFile
   }
+  elseif ($KeepInstallationIdentity) {
+    Write-HflSkip "remove $envFile (preserved with installation identity for install retry)"
+  }
   else {
-    Write-HflSkip "remove $envFile (preserved; use -PurgeAll)"
+    Write-HflSkip "remove $envFile (preserved without installation identity; use -PurgeAll)"
   }
 
   Write-HflSection "Summary"

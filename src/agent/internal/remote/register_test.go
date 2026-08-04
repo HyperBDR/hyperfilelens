@@ -10,6 +10,29 @@ import (
 	"hyperfilelens/agent/internal/model"
 )
 
+type credentialRegistrar struct {
+	nodeID         string
+	credential     string
+	installationID string
+	nodeIDSetCalls int
+}
+
+func (registrar *credentialRegistrar) SetNodeID(_ context.Context, nodeID string) error {
+	registrar.nodeID = nodeID
+	registrar.nodeIDSetCalls++
+	return nil
+}
+
+func (registrar *credentialRegistrar) SetNodeCredential(_ context.Context, credential string) error {
+	registrar.credential = credential
+	return nil
+}
+
+func (registrar *credentialRegistrar) SetInstallationID(_ context.Context, installationID string) error {
+	registrar.installationID = installationID
+	return nil
+}
+
 func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 	var payload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,14 +59,12 @@ func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 		NodeToken:  "test-token",
 		Role:       model.RoleAgent,
 	}
-	nodeID, err := httpRegisterNode(
-		context.Background(), cfg, server.URL, cfg.OrgKey, cfg.NodeToken, "1.2.3",
-	)
+	result, err := RegisterNodeHTTP(context.Background(), cfg, "1.2.3", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nodeID != "42" {
-		t.Fatalf("nodeID=%q", nodeID)
+	if result.NodeID != "42" {
+		t.Fatalf("nodeID=%q", result.NodeID)
 	}
 
 	metadata, ok := payload["metadata"].(map[string]any)
@@ -63,5 +84,99 @@ func TestHTTPRegisterNodeIncludesPlatformInventory(t *testing.T) {
 	}
 	if got := inventory["agent_version"]; got != "1.2.3" {
 		t.Errorf("agent_version=%v", got)
+	}
+}
+
+func TestEnsureNodeRegisteredMigratesLegacyCredentialForExistingNode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["node_id"] != float64(42) {
+			t.Fatalf("node_id=%v", payload["node_id"])
+		}
+		installationID, _ := payload["installation_id"].(string)
+		if len(installationID) != 45 || installationID[:5] != "hfli_" {
+			t.Fatalf("installation_id=%q", installationID)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"node_id":42,"node_credential":"hfln_replacement"}`))
+	}))
+	defer server.Close()
+
+	provider := staticProvider{cfg: &model.AgentConfig{
+		APIBaseURL: server.URL,
+		OrgKey:     "test-org",
+		NodeID:     "42",
+		NodeToken:  "legacy-token",
+		Role:       model.RoleAgent,
+	}}
+	registrar := &credentialRegistrar{}
+	if err := EnsureNodeRegistered(context.Background(), provider, registrar); err != nil {
+		t.Fatal(err)
+	}
+	if registrar.nodeIDSetCalls != 0 {
+		t.Fatalf("existing node id was rewritten %d time(s)", registrar.nodeIDSetCalls)
+	}
+	if registrar.credential != "hfln_replacement" {
+		t.Fatalf("credential=%q", registrar.credential)
+	}
+	if len(registrar.installationID) != 45 || registrar.installationID[:5] != "hfli_" {
+		t.Fatalf("persisted installation_id=%q", registrar.installationID)
+	}
+}
+
+func TestEnsureNodeRegisteredSkipsDurableCredential(t *testing.T) {
+	provider := staticProvider{cfg: &model.AgentConfig{
+		APIBaseURL:     "http://127.0.0.1:1",
+		OrgKey:         "test-org",
+		NodeID:         "42",
+		NodeToken:      "hfln_durable-credential",
+		InstallationID: "hfli_existing",
+		Role:           model.RoleAgent,
+	}}
+	registrar := &credentialRegistrar{}
+
+	if err := EnsureNodeRegistered(context.Background(), provider, registrar); err != nil {
+		t.Fatal(err)
+	}
+	if registrar.nodeIDSetCalls != 0 || registrar.credential != "" {
+		t.Fatalf("durable credential unexpectedly triggered registration: %#v", registrar)
+	}
+}
+
+func TestRegisterNodeHTTPRequestsExistingCredentialReuse(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"node_id":42,"credential_reused":true}`))
+	}))
+	defer server.Close()
+
+	cfg := &model.AgentConfig{
+		APIBaseURL:     server.URL,
+		OrgKey:         "test-org",
+		NodeToken:      "installation-session",
+		InstallationID: "hfli_existing",
+		Role:           model.RoleAgent,
+	}
+	result, err := RegisterNodeHTTP(
+		context.Background(),
+		cfg,
+		"1.2.3",
+		"hfln_existing",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.CredentialReused || result.NodeCredential != "" {
+		t.Fatalf("result=%#v", result)
+	}
+	if payload["existing_node_credential"] != "hfln_existing" {
+		t.Fatalf("existing_node_credential=%v", payload["existing_node_credential"])
 	}
 }

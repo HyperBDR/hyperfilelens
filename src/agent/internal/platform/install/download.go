@@ -59,10 +59,7 @@ func downloadURLWithInterval(
 	if err != nil {
 		return fmt.Errorf("create download request: %w", sanitizeDownloadError(err))
 	}
-	client := &http.Client{Timeout: 30 * time.Minute}
-	if os.Getenv("HFL_INSECURE_TLS") != "0" {
-		client.Transport = insecureTransport()
-	}
+	client := downloadHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download request failed: %w", sanitizeDownloadError(err))

@@ -74,6 +74,7 @@ Config:
   hfl-agent config show
   hfl-agent config set HFL_WSS_URL=wss://host/ws/node/agent/
   hfl-agent config paths
+  hfl-agent config retire-installation --data-dir PATH
 
 Repo registry (local SQLite at {HFL_DATA_DIR}/agent.db):
   hfl-agent repo list [--json]

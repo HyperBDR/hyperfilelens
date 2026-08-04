@@ -39,6 +39,7 @@ DATA_DIR=""
 NODE_ROLE="agent"
 NO_START=0
 PURGE_ALL=0
+KEEP_INSTALLATION_IDENTITY=0
 AGENT_ONLY=0
 KOPIA_ONLY=0
 NO_RESTART=0
@@ -79,7 +80,8 @@ Options:
     --yes               Non-interactive: continue when target version equals installed version
 
   uninstall:
-    --purge-all         Remove data directory and agent.env (unmounts NAS shares first)
+    --purge-all                   Remove data directory and agent.env (unmounts NAS shares first)
+    --keep-installation-identity  Keep agent.env installation identity (incomplete-install rollback)
 
 Install paths:
   /opt/hyperfilelens-agent                         Binaries and installer scripts
@@ -164,6 +166,7 @@ parse_uninstall_flags() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--purge-all) PURGE_ALL=1; shift ;;
+			--keep-installation-identity) KEEP_INSTALLATION_IDENTITY=1; shift ;;
 			-h|--help) usage; exit 0 ;;
 			*)
 				echo "Unknown option: $1" >&2
@@ -172,6 +175,10 @@ parse_uninstall_flags() {
 				;;
 		esac
 	done
+	if [[ "${PURGE_ALL}" -eq 1 && "${KEEP_INSTALLATION_IDENTITY}" -eq 1 ]]; then
+		echo "ERROR: --purge-all and --keep-installation-identity are mutually exclusive" >&2
+		exit 2
+	fi
 }
 
 require_root() {
@@ -1429,6 +1436,22 @@ remove_install_file() {
 	fi
 }
 
+retire_installation_identity() {
+	local data_dir="$1" agent_bin="${INSTALL_DIR}/hfl-agent"
+	# Incomplete-install rollback keeps the identity so retries reuse the console record.
+	[[ "${KEEP_INSTALLATION_IDENTITY}" -eq 0 ]] || return 0
+	# --purge-all deletes agent.env entirely, so retirement is unnecessary.
+	[[ "${PURGE_ALL}" -eq 0 ]] || return 0
+	[[ -x "${agent_bin}" ]] \
+		|| log_fail "Cannot retire the installation identity because ${agent_bin} is unavailable." 1
+	log_step "Retiring the local installation identity."
+	if ! HFL_DATA_DIR="${data_dir}" \
+		"${agent_bin}" config retire-installation --data-dir "${data_dir}"; then
+		log_fail "Failed to retire the local installation identity; Agent files and data were preserved for retry." 1
+	fi
+	log_ok "Local installation identity retired; the next install will create a new console record."
+}
+
 uninstall_gateway_sidecar_if_needed() {
 	local env_file="$1" role="" purge_args=()
 	[[ "${HFL_SKIP_GATEWAY_SIDECAR_UNINSTALL:-0}" != "1" ]] || return 0
@@ -1464,6 +1487,7 @@ cmd_uninstall() {
 		log_fail "Agent-managed NAS mount cleanup failed; Agent files and data were preserved for manual retry." 1
 	fi
 	remove_service_unit
+	retire_installation_identity "${resolved_data}"
 
 	remove_install_file "${INSTALL_DIR}/hfl-agent"
 	remove_install_file "${INSTALL_DIR}/kopia"
@@ -1491,7 +1515,11 @@ cmd_uninstall() {
 		rm -f "$env_file"
 		log_ok "Removed ${env_file}."
 	elif [[ -f "$env_file" ]]; then
-		log_skip "${env_file} was preserved (use --purge-all to remove it)."
+		if [[ "${KEEP_INSTALLATION_IDENTITY}" -eq 1 ]]; then
+			log_skip "${env_file} and installation identity were preserved for install retry."
+		else
+			log_skip "${env_file} was preserved without installation identity (use --purge-all to remove it)."
+		fi
 	else
 		log_skip "${env_file} was not present."
 	fi

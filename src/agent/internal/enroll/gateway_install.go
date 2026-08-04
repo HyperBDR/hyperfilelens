@@ -17,6 +17,7 @@ import (
 
 // LensSidecarConfig holds SourceLens LensNode credentials for gateway sidecar install.
 type LensSidecarConfig struct {
+	GatewayScope  string
 	LensBaseURL   string
 	LensnodeUUID  string
 	LensnodeToken string
@@ -27,9 +28,12 @@ type LensSidecarConfig struct {
 
 // RunGatewayInstall installs the HFL agent and SourceLens LensNode sidecar for role=gateway.
 func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
+	if opts.Mode == InstallModeUninstall {
+		LoadInstalledCommandEnv()
+	}
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
-		logFail(err.Error(), 2)
+		abortInstall("Initialization", err.Error(), 2, "HFL-INSTALL-CONFIG")
 	}
 	if cfg.NodeRole != model.RoleGateway {
 		logFail("gateway-install requires HFL_NODE_ROLE=gateway (use the Data Gateway enrollment link)", 2)
@@ -37,11 +41,19 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 	if runtime.GOOS != "linux" {
 		logFail("gateway-install is Linux-only", 2)
 	}
+	if opts.Mode == InstallModeUninstall {
+		return RunInstall(ctx, opts)
+	}
+	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
 
 	if err := RunInstall(ctx, opts); err != nil {
 		return err
 	}
-	logStep("Continuing Data Gateway setup (AI engine).")
+	commitInstallLog()
+	if credential := readEnvKey(EnvFilePath(), "HFL_NODE_CREDENTIAL"); credential != "" {
+		cfg.NodeToken = credential
+	}
+	logStep("Continuing " + gatewayName + " setup (AI engine).")
 
 	nodeID := strings.TrimSpace(ReadNodeID(EnvFilePath()))
 	if nodeID == "" {
@@ -54,8 +66,8 @@ func RunGatewayInstall(ctx context.Context, opts InstallOptions) error {
 		_ = ReportGatewayInstallStatus(ctx, cfg, nodeID, "failed", err.Error())
 		logFail("LensNode configuration is unavailable: "+err.Error(), 6)
 	}
-	// The authenticated console response is authoritative. Platform Gateways
-	// receive the deployment Sentry policy; private Gateways receive disabled.
+	// The authenticated console response is authoritative. Public Data Gateways
+	// receive the deployment Sentry policy; Private Data Gateways receive disabled.
 	// Observability convergence must never block enrollment or data operations.
 	if changed, syncErr := SyncManagedObservabilityPolicy(lensCfg.Observability); syncErr != nil {
 		logWarn("Could not persist Gateway Agent observability policy; continuing.")
@@ -101,7 +113,7 @@ func FetchGatewayLensConfig(ctx context.Context, cfg Config, nodeID string) (Len
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	if tlsclient.InsecureTLSEnabled() {
-		client.Transport = &http.Transport{TLSClientConfig: tlsclient.Config()}
+		client.Transport = tlsclient.Transport()
 	}
 
 	resp, err := client.Do(req)
@@ -132,6 +144,7 @@ func parseGatewayLensConfig(raw []byte) (LensSidecarConfig, error) {
 	}
 
 	cfgOut := LensSidecarConfig{
+		GatewayScope:  stringField(data, "gateway_scope"),
 		LensBaseURL:   stringField(lensRaw, "lens_base_url"),
 		LensnodeUUID:  stringField(lensRaw, "lensnode_uuid"),
 		LensnodeToken: stringField(lensRaw, "lensnode_token"),
@@ -188,7 +201,7 @@ func ReportGatewayInstallStatus(ctx context.Context, cfg Config, nodeID, status,
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	if tlsclient.InsecureTLSEnabled() {
-		client.Transport = &http.Transport{TLSClientConfig: tlsclient.Config()}
+		client.Transport = tlsclient.Transport()
 	}
 
 	resp, err := client.Do(req)
@@ -241,9 +254,14 @@ func floatField(m map[string]any, key string) float64 {
 }
 
 func printGatewayInstallSuccess(info SummaryInfo, lens LensSidecarConfig) {
-	printSummaryBlock(info)
-	printNextStep("Data gateway and AI engine are ready. Return to Insights → Data Gateways to add knowledge sources.")
-	if lens.WorkspaceRoot != "" {
-		printResult("Workspace root: " + lens.WorkspaceRoot)
+	info.Role = gatewayDisplayName(lens.GatewayScope)
+	info.LensNode = "running"
+	printEnrollmentSuccess(info)
+}
+
+func gatewayDisplayName(scope string) string {
+	if strings.EqualFold(strings.TrimSpace(scope), "public") {
+		return "Public Data Gateway"
 	}
+	return "Private Data Gateway"
 }

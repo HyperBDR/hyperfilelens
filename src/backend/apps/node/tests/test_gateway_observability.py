@@ -12,7 +12,7 @@ from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
 from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
 from apps.node.api.views.gateway_lens import GatewayLensConfigView
-from apps.node.models import Node, NodeToken
+from apps.node.models import Node, NodeCredential, NodeToken
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.gateway_observability import (
     gateway_observability_policy,
@@ -22,7 +22,9 @@ from apps.node.services.internal.gateway_observability import (
 @override_settings(SENTRY_ENABLED=True, SENTRY_ENVIRONMENT="hfl-test")
 class GatewayObservabilityPolicyTests(TestCase):
     def setUp(self) -> None:
-        self.org = Organization.objects.create(key=PLATFORM_ORG_KEY, name="Platform Lens")
+        self.org = Organization.objects.create(
+            key=PLATFORM_ORG_KEY, name="Platform Lens"
+        )
         self.node = Node.objects.create(
             organization=self.org,
             name="platform-gateway",
@@ -92,7 +94,9 @@ class GatewayObservabilityPolicyTests(TestCase):
 class GatewayLensConfigObservabilityTests(TestCase):
     def setUp(self) -> None:
         self.factory = APIRequestFactory()
-        self.org = Organization.objects.create(key=PLATFORM_ORG_KEY, name="Platform Lens")
+        self.org = Organization.objects.create(
+            key=PLATFORM_ORG_KEY, name="Platform Lens"
+        )
         self.node = Node.objects.create(
             organization=self.org,
             name="platform-gateway",
@@ -111,6 +115,15 @@ class GatewayLensConfigObservabilityTests(TestCase):
             token="platform-gateway-token",
             gateway_scope=LensGatewayLink.GatewayScope.PLATFORM,
         )
+        self.node_credential = "hfln_platform-gateway-credential"
+        credential = NodeCredential(
+            organization=self.org,
+            node=self.node,
+            role=NodeRole.GATEWAY,
+            installation_id="platform-gateway",
+        )
+        credential.set_secret(self.node_credential)
+        credential.save()
 
     def _request(self, token: str):
         request = self.factory.get(
@@ -129,7 +142,9 @@ class GatewayLensConfigObservabilityTests(TestCase):
         },
         clear=False,
     )
-    @patch("apps.node.api.views.gateway_lens.provisioning.provision_gateway_lens_on_register")
+    @patch(
+        "apps.node.api.views.gateway_lens.provisioning.provision_gateway_lens_on_register"
+    )
     def test_authenticated_response_contains_no_store_policy(self, provision) -> None:
         provision.return_value = {
             "lens_base_url": "https://lens.example.com",
@@ -139,7 +154,7 @@ class GatewayLensConfigObservabilityTests(TestCase):
             "workspace_root": "/workspace",
         }
 
-        response = self._request(self.token.token)
+        response = self._request(self.node_credential)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Cache-Control"], "no-store")

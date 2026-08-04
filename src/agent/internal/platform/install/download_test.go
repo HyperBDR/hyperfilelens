@@ -73,6 +73,25 @@ func TestDownloadURLWithProgressKnownLength(t *testing.T) {
 	}
 }
 
+func TestDownloadClientDoesNotCapWholeTransferDuration(t *testing.T) {
+	t.Setenv("HFL_INSECURE_TLS", "0")
+	client := downloadHTTPClient()
+	if client.Timeout != 0 {
+		t.Fatalf("download client timeout = %s, want no whole-transfer timeout", client.Timeout)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("download transport type = %T, want *http.Transport", client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != downloadResponseHeaderTimeout {
+		t.Fatalf(
+			"response header timeout = %s, want %s",
+			transport.ResponseHeaderTimeout,
+			downloadResponseHeaderTimeout,
+		)
+	}
+}
+
 func TestDownloadURLWithProgressUnknownLength(t *testing.T) {
 	t.Setenv("HFL_INSECURE_TLS", "0")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

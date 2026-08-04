@@ -45,21 +45,30 @@ func checkHostname() hostnameCheckResult {
 }
 
 type writableCheckResult struct {
-	OK     bool
-	Title  string
-	Detail string
-	Err    error
+	OK      bool
+	Warning bool
+	Title   string
+	Detail  string
+	Err     error
 }
 
 func checkInstallPathsWritable() writableCheckResult {
 	targets := []string{defaultInstallPath(), dataDirForAgent()}
 	labels := []string{defaultInstallPath(), dataDirForAgent()}
 	for i, target := range targets {
-		if err := checkWritableTarget(target); err != nil {
+		verified, err := checkWritableTarget(target)
+		if err != nil {
 			return writableCheckResult{
 				Title:  "Install paths not writable",
 				Detail: fmt.Sprintf("%s — %s", labels[i], shortenErr(err)),
 				Err:    err,
+			}
+		}
+		if !verified {
+			return writableCheckResult{
+				Warning: true,
+				Title:   "Install path write access could not be verified read-only",
+				Detail:  labels[i] + "; write access will be validated when installation begins",
 			}
 		}
 	}
@@ -70,17 +79,9 @@ func checkInstallPathsWritable() writableCheckResult {
 	}
 }
 
-func checkWritableTarget(path string) error {
+func checkWritableTarget(path string) (bool, error) {
 	target := writableCheckDir(path)
-	testFile := filepath.Join(target, ".hfl-enroll-write-test")
-	f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Remove(testFile)
+	return readOnlyWritableAccess(target)
 }
 
 func writableCheckDir(path string) string {
@@ -175,9 +176,13 @@ func logHostnameResult(r hostnameCheckResult) {
 	}
 }
 
-func logWritableResult(r writableCheckResult) {
+func logWritableResult(r writableCheckResult, failures *preflightFailures) {
 	if r.Err != nil {
-		logFailDetail(r.Title, r.Detail, 2)
+		failures.add(r.Title, r.Detail, 2)
+		return
+	}
+	if r.Warning {
+		logWarnDetail(r.Title, r.Detail)
 		return
 	}
 	logOKDetail(r.Title, r.Detail)

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +18,7 @@ import (
 	platforminstall "hyperfilelens/agent/internal/platform/install"
 )
 
-const nonTerminalProgressInterval = 5 * time.Second
+const nonTerminalProgressInterval = 30 * time.Second
 
 type downloadProgressDisplay struct {
 	label          string
@@ -29,9 +30,13 @@ type downloadProgressDisplay struct {
 }
 
 func newDownloadProgressDisplay(label string) *downloadProgressDisplay {
+	initOutput()
+	stdout := commandStdout()
+	terminal := useColor && !jsonOutput() &&
+		(isatty.IsTerminal(stdout.Fd()) || isatty.IsCygwinTerminal(stdout.Fd()))
 	return &downloadProgressDisplay{
 		label:    label,
-		terminal: isatty.IsTerminal(os.Stdout.Fd()),
+		terminal: terminal,
 	}
 }
 
@@ -45,12 +50,13 @@ func (display *downloadProgressDisplay) report(progress platforminstall.Download
 		}
 		display.lastLogged = progress.Elapsed
 	}
-	line := fmt.Sprintf(
-		"[%s] [PROG ] %s %s",
-		logTimestamp(),
-		display.label,
-		formatDownloadProgress(progress),
-	)
+	line := fmt.Sprintf("[....] %s %s", display.label, formatDownloadProgress(progress))
+	if columns, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); columns > 20 && len(line) > columns {
+		line = fmt.Sprintf("[....] %s %s", display.label, compactDownloadProgress(progress))
+		if len(line) > columns {
+			line = line[:columns]
+		}
+	}
 	if display.terminal {
 		fmt.Fprintf(os.Stdout, "\r%s\033[K", line)
 		display.terminalActive = !progress.Completed
@@ -59,7 +65,28 @@ func (display *downloadProgressDisplay) report(progress platforminstall.Download
 		}
 		return
 	}
-	fmt.Fprintln(os.Stdout, line)
+	if jsonOutput() {
+		emitJSON(os.Stdout, map[string]any{
+			"type":             "download_progress",
+			"label":            display.label,
+			"downloaded_bytes": progress.DownloadedBytes,
+			"total_bytes":      progress.TotalBytes,
+			"bytes_per_second": progress.BytesPerSecond,
+			"elapsed_seconds":  progress.Elapsed.Seconds(),
+			"completed":        progress.Completed,
+		})
+		return
+	}
+	fmt.Fprintf(os.Stdout, "[INFO] Download progress: %s %s\n", display.label, compactDownloadProgress(progress))
+}
+
+func compactDownloadProgress(progress platforminstall.DownloadProgress) string {
+	if progress.TotalBytes <= 0 {
+		return formatByteCount(progress.DownloadedBytes)
+	}
+	percent := float64(progress.DownloadedBytes) / float64(progress.TotalBytes) * 100
+	percent = math.Max(0, math.Min(100, percent))
+	return fmt.Sprintf("%.0f%% %s/%s", percent, formatByteCount(progress.DownloadedBytes), formatByteCount(progress.TotalBytes))
 }
 
 func (display *downloadProgressDisplay) abort() {
@@ -189,12 +216,15 @@ func formatElapsed(duration time.Duration) string {
 	return fmt.Sprintf("%dh %02dm %02ds", hours, minutes, seconds)
 }
 
-func roleDisplayName(role model.Role) string {
+func roleDisplayName(role model.Role, gatewayScope ...string) string {
 	switch role {
 	case model.RoleProxy:
 		return "Proxy Host"
 	case model.RoleGateway:
-		return "Data Gateway"
+		if len(gatewayScope) > 0 && strings.EqualFold(strings.TrimSpace(gatewayScope[0]), "public") {
+			return "Public Data Gateway"
+		}
+		return "Private Data Gateway"
 	default:
 		return "Source Host"
 	}

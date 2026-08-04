@@ -29,6 +29,7 @@ func RunGatewayUpgrade(ctx context.Context, fromArchive string) error {
 	if runtime.GOOS != "linux" {
 		logFail("gateway-upgrade is Linux-only", 2)
 	}
+	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
 
 	fromArchive = strings.TrimSpace(fromArchive)
 	if fromArchive != "" {
@@ -47,7 +48,7 @@ func RunGatewayUpgrade(ctx context.Context, fromArchive string) error {
 	if err := runGatewayLifecycleScript(ctx, cfg, "upgrade-sidecar", false); err != nil {
 		return err
 	}
-	logOK("Data Gateway upgrade completed.")
+	logOK(gatewayName + " upgrade completed.")
 	return nil
 }
 
@@ -63,6 +64,7 @@ func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
 	if runtime.GOOS != "linux" {
 		logFail("gateway-uninstall is Linux-only", 2)
 	}
+	gatewayName := roleDisplayName(cfg.NodeRole, cfg.GatewayScope)
 
 	logStep("Removing AI engine (LensNode sidecar).")
 	if err := runGatewayLifecycleScript(ctx, cfg, "uninstall-sidecar", purgeAll); err != nil {
@@ -88,7 +90,7 @@ func RunGatewayUninstall(ctx context.Context, purgeAll bool) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("agent uninstall: %w", err)
 	}
-	logOK("Data Gateway uninstall completed.")
+	logOK(gatewayName + " uninstall completed.")
 	return nil
 }
 
