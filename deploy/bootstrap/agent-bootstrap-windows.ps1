@@ -1,5 +1,7 @@
 # HyperFileLens Agent enrollment bootstrap (Windows). Rendered by GET /enrollment/bootstrap.
 $ErrorActionPreference = "Stop"
+# Keep a stable working directory if the caller launched from a removed install path.
+Set-Location -LiteralPath $env:SystemDrive\
 
 function Test-HflAdmin {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -72,7 +74,7 @@ function Get-HflEnrollmentBinary {
   $skipCert = ($env:HFL_INSECURE_TLS -ne '0')
   $partial = "$OutFile.part"
   Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
-  Write-HflBootstrapLog "STEP " "Downloading HyperFileLens enrollment helper."
+  Write-HflBootstrapLog ".... " "Downloading HyperFileLens enrollment helper."
 
   if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
     $curlArgs = @(

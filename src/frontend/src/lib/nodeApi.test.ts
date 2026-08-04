@@ -96,8 +96,9 @@ describe('Data Gateway enrollment', () => {
 
     expect(result.command).toContain("curl --proto '=https' --tlsv1.2")
     expect(result.command).toContain('/api/v1/node/enrollment/bootstrap-gateway?')
-    expect(result.command).toContain('| sudo bash -s')
+    expect(result.command).toContain("| sudo bash -c 'cd / || cd /tmp; exec bash -s'")
     expect(result.command).not.toContain('curl -k')
+    expect(result.command).not.toContain('--progress-bar')
     expect(result.command).not.toContain('installer.tar.gz')
     expect(result.command.split('\n')).toHaveLength(1)
     expect(result.tlsVerify).toBe(true)
@@ -147,8 +148,9 @@ describe('Data Gateway enrollment', () => {
 
     const result = await issuePlatformGatewayEnrollmentInstall()
 
-    expect(result.command).toMatch(/^curl -k --fail --show-error --location --progress-bar '/)
-    expect(result.command).toContain('| sudo bash -s')
+    expect(result.command).toMatch(/^curl -k --fail --show-error --location '/)
+    expect(result.command).toContain("| sudo bash -c 'cd / || cd /tmp; exec bash -s'")
+    expect(result.command).not.toContain('--progress-bar')
     expect(result.command).not.toContain('WARNING:')
     expect(result.command.split('\n')).toHaveLength(1)
     expect(result.tlsVerify).toBe(false)
@@ -209,9 +211,10 @@ describe('Data Gateway enrollment', () => {
       tlsVerify: true,
     })
 
-    expect(command).toMatch(/^curl --proto '=https' --tlsv1\.2 --fail --show-error --location --progress-bar '/)
+    expect(command).toMatch(/^curl --proto '=https' --tlsv1\.2 --fail --show-error --location '/)
     expect(command).toContain('/api/v1/node/enrollment/bootstrap?')
-    expect(command).toContain('| sudo bash -s')
+    expect(command).toContain("| sudo bash -c 'cd / || cd /tmp; exec bash -s'")
+    expect(command).not.toContain('--progress-bar')
     expect(command).not.toContain('installer.tar.gz')
     expect(command).not.toContain('mktemp')
     expect(command).not.toContain('WARNING:')

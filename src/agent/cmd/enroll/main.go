@@ -31,6 +31,7 @@ func run() int {
 	defer stop()
 	switch os.Args[1] {
 	case "install":
+		stabilizeInstallWorkingDirectory()
 		opts := enroll.ParseInstallOptions(os.Args[2:])
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunInstall(ctx, opts)
@@ -39,6 +40,7 @@ func run() int {
 			return 1
 		}
 	case "gateway-install":
+		stabilizeInstallWorkingDirectory()
 		opts := enroll.ParseInstallOptions(os.Args[2:])
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunGatewayInstall(ctx, opts)
@@ -47,6 +49,7 @@ func run() int {
 			return 1
 		}
 	case "gateway-upgrade":
+		stabilizeInstallWorkingDirectory()
 		fromArchive := parseFromFlag(os.Args[2:])
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunGatewayUpgrade(ctx, fromArchive)
@@ -55,6 +58,7 @@ func run() int {
 			return 1
 		}
 	case "gateway-uninstall":
+		stabilizeInstallWorkingDirectory()
 		purgeAll := !hasFlag(os.Args[2:], "--keep-data")
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunGatewayUninstall(ctx, purgeAll)
@@ -63,6 +67,7 @@ func run() int {
 			return 1
 		}
 	case "register":
+		stabilizeInstallWorkingDirectory()
 		opts := enroll.ParseInstallOptions(os.Args[2:])
 		if err := enroll.WithInstallLock(ctx, func() error {
 			return enroll.RunRegister(ctx, opts)
@@ -114,6 +119,15 @@ Environment (set by bootstrap stub from console):
   HFL_ORG_KEY, HFL_NODE_ROLE, HFL_NODE_TOKEN, HFL_API_BASE, HFL_WSS_URL
   HFL_INSECURE_TLS       Default 1 (skip TLS verify for dev/self-signed)
 `)
+}
+
+// stabilizeInstallWorkingDirectory moves off a deleted install path so the shell
+// and child tools do not spam getcwd / job-working-directory errors.
+func stabilizeInstallWorkingDirectory() {
+	if err := os.Chdir("/"); err == nil {
+		return
+	}
+	_ = os.Chdir(os.TempDir())
 }
 
 func parseFromFlag(args []string) string {
