@@ -315,6 +315,7 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
             node = list_nodes(organization=org).filter(pk=node_id).first()
 
         observed_at = timezone.now()
+        new_agent_registered = False
         if node is None and node_token:
             authorization = resolve_enrollment_authorization(
                 org=org,
@@ -455,6 +456,11 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                         {"error": str(exc)},
                         status=status.HTTP_409_CONFLICT,
                     )
+                if created_node and node.role == NodeRole.AGENT:
+                    record_node_available(node_id=node.id, observed_at=observed_at)
+                    node.refresh_from_db(fields=["availability", "availability_updated_at"])
+                    sync_agent_source_host(node=node)
+                    new_agent_registered = True
         elif node is not None:
             legacy_token = None
             credential_valid = validate_node_credential(node, node_token)
@@ -523,7 +529,8 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        record_node_available(node_id=node.id, observed_at=observed_at)
+        if not new_agent_registered:
+            record_node_available(node_id=node.id, observed_at=observed_at)
         node.refresh_from_db(fields=["availability", "availability_updated_at"])
 
         try:
@@ -535,14 +542,15 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                 exc_info=True,
             )
 
-        try:
-            sync_agent_source_host(node=node)
-        except Exception:
-            logger.warning(
-                "node heartbeat source-host sync failed node_id=%s",
-                node.id,
-                exc_info=True,
-            )
+        if not new_agent_registered:
+            try:
+                sync_agent_source_host(node=node)
+            except Exception:
+                logger.warning(
+                    "node heartbeat source-host sync failed node_id=%s",
+                    node.id,
+                    exc_info=True,
+                )
 
         response_payload: dict = {"node_id": node.id, "status": node.status}
         if node_credential:

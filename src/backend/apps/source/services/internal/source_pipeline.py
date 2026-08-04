@@ -9,6 +9,7 @@ from apps.node.models.base import NodeRole
 from apps.source.constants import PipelineStep, ResourceType, SelectableSourceKind
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.selectable_ids import parse_selectable_id
+from apps.source.services.internal.source_pipeline_projection import build_source_projection
 
 
 def _selectable_key(source_kind: str, ref_id: int) -> str:
@@ -64,6 +65,39 @@ def _backup_config_exists(*, organization_id: int, source_kind: str, ref_id: int
     ).exists()
 
 
+def _source_and_tasks(*, organization_id: int, source_kind: str, ref_id: int):
+    source = None
+    if source_kind == SelectableSourceKind.AGENT:
+        source = Node.objects.filter(organization_id=organization_id, role=NodeRole.AGENT, id=ref_id).first()
+    elif source_kind == SelectableSourceKind.NAS:
+        source = SourceResource.objects.select_related("bound_node").filter(
+            organization_id=organization_id, resource_type=ResourceType.NAS, id=ref_id
+        ).first()
+    if source is None:
+        return None, None, None
+    from apps.task.models import Task, TaskResource
+    source_type = "agent" if source_kind == SelectableSourceKind.AGENT else source_kind
+    tasks = Task.objects.filter(
+        organization_id=organization_id,
+        resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resources__resource_subtype=source_type,
+        resources__resource_id=ref_id,
+    ).order_by("-created_at", "-id")
+    return source, tasks.filter(task_type=Task.Type.BACKUP).first(), tasks.filter(task_type=Task.Type.RESTORE).first()
+
+
+def _projection_values(*, organization_id: int, source_kind: str, ref_id: int):
+    source, backup_task, restore_task = _source_and_tasks(
+        organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+    )
+    if source is None:
+        return None, None
+    values, _inconsistency = build_source_projection(
+        source_kind=source_kind, source=source, backup_task=backup_task, restore_task=restore_task
+    )
+    return source, values
+
+
 def _pipeline_operation_fenced(
     *,
     organization_id: int,
@@ -109,19 +143,28 @@ def _upsert_pipeline_step(
         source_kind=source_kind,
         ref_id=ref_id,
     ).first()
+    source, values = _projection_values(
+        organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+    )
+    if source is None:
+        return key
     if entry is None:
         SourceBackupPipelineEntry.objects.create(
             organization_id=organization_id,
             source_kind=source_kind,
             ref_id=ref_id,
             step=step,
+            created_at=source.created_at,
+            **values,
         )
     else:
         entry.step = step
         entry.is_deleted = False
         entry.deleted_at = None
         entry.updated_at = timezone.now()
-        entry.save(update_fields=["step", "is_deleted", "deleted_at", "updated_at"])
+        for field, value in values.items():
+            setattr(entry, field, value)
+        entry.save(update_fields=["step", "is_deleted", "deleted_at", *values.keys(), "updated_at"])
     return key
 
 
@@ -264,10 +307,13 @@ def revert_backup_flow_sources(
                 allow_backwards=True,
             ))
         else:
-            delete_pipeline_entry(
+            _upsert_pipeline_step(
                 organization_id=organization_id,
                 source_kind=source_kind,
                 ref_id=ref_id,
+                step=PipelineStep.SOURCE_POOL,
+                current_step=PipelineStep.CONFIG,
+                allow_backwards=True,
             )
             updated.append(key)
     return updated
@@ -297,12 +343,19 @@ def ensure_pipeline_entry(
         ref_id=ref_id,
     ):
         return entry
+    source, values = _projection_values(
+        organization_id=organization_id, source_kind=source_kind, ref_id=ref_id
+    )
+    if source is None:
+        return None
     if entry is None:
         return SourceBackupPipelineEntry.objects.create(
             organization_id=organization_id,
             source_kind=source_kind,
             ref_id=ref_id,
             step=step,
+            created_at=source.created_at,
+            **values,
         )
 
     current_step = int(entry.step) if not entry.is_deleted else PipelineStep.SOURCE_POOL
@@ -312,7 +365,9 @@ def ensure_pipeline_entry(
     entry.is_deleted = False
     entry.deleted_at = None
     entry.updated_at = timezone.now()
-    entry.save(update_fields=["step", "is_deleted", "deleted_at", "updated_at"])
+    for field, value in values.items():
+        setattr(entry, field, value)
+    entry.save(update_fields=["step", "is_deleted", "deleted_at", *values.keys(), "updated_at"])
     return entry
 
 

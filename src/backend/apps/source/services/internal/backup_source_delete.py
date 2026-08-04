@@ -41,7 +41,7 @@ from apps.source.constants import (
 )
 from apps.source.models import BackupSourceRepositoryPurgePending, SourceResource
 from apps.source.services.internal.selectable_ids import parse_selectable_id
-from apps.source.services.internal.source_pipeline import delete_pipeline_entry, purge_pipeline_entry
+from apps.source.services.internal.source_pipeline import delete_pipeline_entry
 from apps.source.services.interface import unmount_resource
 from apps.storage.repositories.models import Repository, RepositoryTask, RepositoryUsageShard
 from apps.storage.services.interface import (
@@ -3642,7 +3642,7 @@ def _soft_delete_identity(
         result=AuditResult.SUCCESS,
         metadata={"reason": "backup_source_delete"},
     )
-    purge_pipeline_entry(
+    delete_pipeline_entry(
         organization_id=org.id,
         source_kind=SelectableSourceKind.NAS,
         ref_id=resource.id,
