@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import {
   restoreRecordPathMappings,
+  restoreRecordRuntimeMetricParts,
   restoreRecordSnapshotLabel,
   restoreRecordTargetDisplayPath,
   shouldShowRestoreRecordProgress,
@@ -83,5 +84,39 @@ describe('restore record display', () => {
     expect(restoreRecordPathMappings(record())).toMatchObject([
       { sourcePath: '/data', sourceKind: 'dir', item: { id: 11 } },
     ])
+  })
+
+  it('formats available restore counts, capacity, speed, and ETA', () => {
+    const t = (key: string, args?: Record<string, unknown>) => {
+      if (key.endsWith('flowRestoreRecordItemsProgress')) return `${args?.done} / ${args?.total} items processed`
+      if (key.endsWith('bytesCapacity')) return `${args?.done} / ${args?.total}`
+      if (key.endsWith('etaSeconds')) return `${args?.n}s remaining`
+      return key
+    }
+
+    expect(restoreRecordRuntimeMetricParts(t, {
+      transfer_progress: {
+        phase: 'transferring',
+        processed_count: 4,
+        total_count: 10,
+        bytes_done: 2_000_000,
+        bytes_total: 8_000_000,
+        bytes_total_known: true,
+        speed_bps: 500_000,
+        eta_seconds: 12,
+      },
+    })).toEqual([
+      '4 / 10 items processed',
+      '2.00 MB / 8.00 MB',
+      '500 KB/s',
+      '12s remaining',
+    ])
+  })
+
+  it('does not fabricate unavailable runtime metrics', () => {
+    expect(restoreRecordRuntimeMetricParts((key) => key, null)).toEqual([])
+    expect(restoreRecordRuntimeMetricParts((key) => key, {
+      transfer_progress: { phase: 'done' },
+    })).toEqual([])
   })
 })

@@ -1593,6 +1593,8 @@ const flowSourceDetailTab = ref<FlowSourceDetailTabInput>('overview')
 const flowSourceDetailTaskSubTab = ref<FlowSourceDetailTaskSubTab>('history')
 const flowSourceDetailScrollTo = ref<'dirs' | 'targets' | null>(null)
 const flowSourceDetailTaskUuid = ref('')
+const flowSourceDetailRestoreRecordId = ref<number | null>(null)
+const flowSourceDetailRestoreRecordTaskUuid = ref('')
 const backupTaskDetailOpen = ref(false)
 const backupTaskDetailUuid = ref('')
 const flowSourceDetailRows = computed(() => {
@@ -1611,6 +1613,8 @@ function openFlowSourceDetail(
     taskSubTab?: FlowSourceDetailTaskSubTab
     scrollTo?: 'dirs' | 'targets'
     taskUuid?: string
+    restoreRecordId?: number
+    restoreRecordTaskUuid?: string
   },
 ) {
   void preloadFlowBackupSourceDetailDrawer().catch(() => undefined)
@@ -1626,6 +1630,8 @@ function openFlowSourceDetail(
   }
   flowSourceDetailScrollTo.value = opts?.scrollTo ?? null
   flowSourceDetailTaskUuid.value = opts?.taskUuid ?? ''
+  flowSourceDetailRestoreRecordId.value = opts?.restoreRecordId ?? null
+  flowSourceDetailRestoreRecordTaskUuid.value = opts?.restoreRecordTaskUuid ?? ''
   flowSourceDetailOpen.value = true
   nextTick(() => {
     requestAnimationFrame(() => updateDrawerWidth())
@@ -1642,6 +1648,8 @@ function onFlowSourceDetailClosed() {
   flowSourceDetailTaskSubTab.value = 'history'
   flowSourceDetailScrollTo.value = null
   flowSourceDetailTaskUuid.value = ''
+  flowSourceDetailRestoreRecordId.value = null
+  flowSourceDetailRestoreRecordTaskUuid.value = ''
 }
 
 watch(backupTaskDetailOpen, (open) => {
@@ -3333,9 +3341,13 @@ function openLatestBackupTask(row: FlowSourceRow) {
 }
 
 function openLatestRestoreTask(row: FlowSourceRow) {
-  const task = latestRestoreTaskForSource(row.id)
   const record = latestRestoreRecordForSource(row.id)
-  openTaskDetail(task?.task_uuid || record?.task_uuid)
+  if (!record) return
+  openFlowSourceDetail(row, {
+    tab: 'restoreRecords',
+    restoreRecordId: record.id,
+    restoreRecordTaskUuid: record.task_uuid,
+  })
 }
 
 function openRestoreTaskStatusDrawer(row: FlowSourceRow) {
@@ -3928,21 +3940,16 @@ function restoreRecordForTaskRow(row: DemoFlowTask) {
 
 function openRestoreTaskDetail(row: DemoFlowTask) {
   const record = restoreRecordForTaskRow(row)
-  const taskUuid = record ? (restoreRecordTaskRow(record, restoreTaskRows.value)?.task_uuid || record.task_uuid) : ''
   const source = drawerSourceRow.value
-  if (!source || !taskUuid) {
+  if (!source || !record) {
     ElMessage.warning({ message: t('protection.backupsPage.flowRecordPendingDetailHint'), grouping: true })
     return
   }
-  activeFlowSource.value = source
-  flowSourceDetailTaskUuid.value = ''
-  nextTick(() => {
-    const drawer = flowSourceDetailDrawerRef.value
-    if (!drawer) {
-      ElMessage.warning({ message: t('protection.backupsPage.flowRecordPendingDetailHint'), grouping: true })
-      return
-    }
-    void drawer.openTaskDetailByUuid(taskUuid)
+  restoreTaskDrawerOpen.value = false
+  openFlowSourceDetail(source, {
+    tab: 'restoreRecords',
+    restoreRecordId: record.id,
+    restoreRecordTaskUuid: record.task_uuid,
   })
 }
 
@@ -10288,6 +10295,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       :initial-tab="flowSourceDetailTab"
       :initial-task-sub-tab="flowSourceDetailTaskSubTab"
       :initial-task-uuid="flowSourceDetailTaskUuid"
+      :initial-restore-record-id="flowSourceDetailRestoreRecordId"
+      :initial-restore-record-task-uuid="flowSourceDetailRestoreRecordTaskUuid"
       :scroll-to="flowSourceDetailScrollTo"
       :backup-flow-tasks="backupFlowTasks"
       :restore-flow-tasks="restoreFlowTasks"
