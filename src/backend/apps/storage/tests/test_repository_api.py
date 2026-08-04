@@ -127,6 +127,34 @@ class StorageRepositoryApiTests(TestCase):
             },
         }
 
+    def _post_repository(self, payload):
+        with mock.patch(
+            "apps.storage.tasks.execute_repository_operation.apply_async"
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                return self.client.post(
+                    "/api/v1/storage/repositories/",
+                    payload,
+                    format="json",
+                    **self._headers(),
+                )
+
+    def _run_create_task(
+        self,
+        repository,
+        *,
+        operation_type=RepositoryTask.OperationType.CREATE_REPOSITORY,
+    ):
+        from apps.storage.services.internal.repository_create import (
+            run_repository_create_task,
+        )
+
+        repository_task = RepositoryTask.objects.get(
+            repository=repository,
+            operation_type=operation_type,
+        )
+        return run_repository_create_task(repository_task_id=repository_task.id)
+
     def test_create_s3_repository_requires_bucket_mode(self):
         payload = self._s3_payload()
         payload.pop("s3_bucket_mode")
@@ -207,22 +235,20 @@ class StorageRepositoryApiTests(TestCase):
             response.data["data"]["errors"],
         )
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_custom_s3_repository_is_not_catalog_managed(self, _initialize, _sync):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_custom_s3_repository_is_not_catalog_managed(self, _initialize, _enqueue):
         payload = self._s3_payload()
         payload["s3_platform"] = Repository.S3Platform.CUSTOM
         payload["config"]["region"] = "private-region"
         payload["config"]["endpoint"] = "https://s3.internal.example.com"
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            payload,
-            format="json",
-            **self._headers(),
-        )
+        response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.data["status"], Repository.Status.CREATING)
         self.assertEqual(response.data["s3_platform"], Repository.S3Platform.CUSTOM)
         self.assertEqual(
             response.data["config"]["endpoint"], "s3.internal.example.com"
@@ -230,6 +256,8 @@ class StorageRepositoryApiTests(TestCase):
         self.assertNotIn("endpoint_type", response.data["config"])
         self.assertNotIn("external_endpoint", response.data["config"])
         self.assertNotIn("internal_endpoint", response.data["config"])
+        result = self._run_create_task(Repository.objects.get(name="primary-s3"))
+        self.assertEqual(result["status"], "success")
 
     def test_create_s3_repository_rejects_derived_endpoint_fields(self):
         payload = self._s3_payload()
@@ -254,9 +282,11 @@ class StorageRepositoryApiTests(TestCase):
             {item["field"] for item in response.data["data"]["errors"]},
         )
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_repository_with_dynamic_catalog_provider(self, _initialize, _sync):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_s3_repository_with_dynamic_catalog_provider(self, _initialize, _enqueue):
         provider = copy.deepcopy(load_default_catalog()["providers"][0])
         provider.update({"id": "tencent", "display_name": "Tencent Cloud COS"})
         region = provider["regions"][0]
@@ -284,14 +314,10 @@ class StorageRepositoryApiTests(TestCase):
             }
         )
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            payload,
-            format="json",
-            **self._headers(),
-        )
+        response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.data["status"], Repository.Status.CREATING)
         self.assertEqual(response.data["s3_platform"], "tencent")
         self.assertNotIn("endpoint_type", response.data["config"])
         self.assertEqual(
@@ -302,21 +328,19 @@ class StorageRepositoryApiTests(TestCase):
             response.data["config"]["external_endpoint"],
             "cos.ap-shanghai.myqcloud.com",
         )
+        result = self._run_create_task(Repository.objects.get(name="primary-s3"))
+        self.assertEqual(result["status"], "success")
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_repository_persists_encrypted_credential(self, initialize, _sync):
-        create = self.client.post(
-            "/api/v1/storage/repositories/",
-            self._s3_payload(),
-            format="json",
-            **self._headers(),
-        )
-        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_s3_repository_persists_encrypted_credential(self, initialize, enqueue_usage):
+        create = self._post_repository(self._s3_payload())
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        self.assertEqual(create.data["status"], Repository.Status.CREATING)
         repo_id = create.data["id"]
         self.assertEqual(create.data["repo_type"], Repository.Type.S3)
-        self.assertEqual(create.data["status"], Repository.Status.CREATED)
-        self.assertEqual(create.data["health"], Repository.Health.ONLINE)
         self.assertNotIn("credential_payload", create.data)
         self.assertNotIn("secret_access_key", create.data["config"])
         self.assertNotIn("kopia_password", create.data["config"])
@@ -333,8 +357,14 @@ class StorageRepositoryApiTests(TestCase):
         secret_payload = credential.get_secret_payload()
         self.assertEqual(secret_payload["secret_access_key"], "super-secret")
         self.assertTrue(secret_payload["kopia_password"])
+
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "success")
+        repo.refresh_from_db()
+        self.assertEqual(repo.status, Repository.Status.CREATED)
+        self.assertEqual(repo.health, Repository.Health.ONLINE)
         initialize.assert_called_once()
-        _sync.assert_called_once()
+        enqueue_usage.assert_called_once()
 
         listing = self.client.get(
             "/api/v1/storage/repositories/",
@@ -345,9 +375,11 @@ class StorageRepositoryApiTests(TestCase):
         rows = listing.data["data"]["list"]
         self.assertIn(repo_id, [row["id"] for row in rows])
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_applies_region_connection_settings(self, _initialize, _sync):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_s3_applies_region_connection_settings(self, _initialize, _enqueue):
         expected = {
             Repository.S3Platform.AWS: (
                 "virtual_hosted",
@@ -381,20 +413,20 @@ class StorageRepositoryApiTests(TestCase):
             payload["config"]["endpoint"] = endpoint
             payload["config"].pop("s3_url_style")
 
-            response = self.client.post(
-                "/api/v1/storage/repositories/",
-                payload,
-                format="json",
-                **self._headers(),
-            )
+            response = self._post_repository(payload)
 
-            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+            self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
             self.assertEqual(response.data["config"]["s3_url_style"], url_style)
+            repo = Repository.objects.get(name=f"provider-{platform}")
+            result = self._run_create_task(repo)
+            self.assertEqual(result["status"], "success")
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
     def test_repository_creation_always_snapshots_and_uses_external_endpoint(
-        self, initialize, _sync
+        self, initialize, _enqueue
     ):
         payload = self._s3_payload()
         payload["s3_platform"] = Repository.S3Platform.ALIYUN
@@ -405,14 +437,9 @@ class StorageRepositoryApiTests(TestCase):
             }
         )
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            payload,
-            format="json",
-            **self._headers(),
-        )
+        response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         config = response.data["config"]
         self.assertNotIn("endpoint_type", config)
         self.assertEqual(config["endpoint"], "oss-cn-hangzhou.aliyuncs.com")
@@ -422,53 +449,54 @@ class StorageRepositoryApiTests(TestCase):
             "oss-cn-hangzhou-internal.aliyuncs.com",
         )
         repository = Repository.objects.get(pk=response.data["id"])
+        result = self._run_create_task(repository)
+        self.assertEqual(result["status"], "success")
+        repository.refresh_from_db()
+        self.assertEqual(repository.status, Repository.Status.CREATED)
         runtime = build_repository_runtime_payload(repository=repository)
         self.assertEqual(runtime["endpoint"], config["endpoint"])
+        self.assertIsNotNone(initialize.call_args)
         initialized_repository = initialize.call_args.args[0]
         self.assertEqual(
             initialized_repository.config["endpoint"],
             "oss-cn-hangzhou.aliyuncs.com",
         )
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_equal_catalog_endpoints_force_external_selection(self, _initialize, _sync):
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_equal_catalog_endpoints_force_external_selection(self, _initialize, _enqueue):
         payload = self._s3_payload()
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            payload,
-            format="json",
-            **self._headers(),
-        )
+        response = self._post_repository(payload)
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         config = response.data["config"]
         self.assertEqual(config["endpoint"], "s3.amazonaws.com")
         self.assertNotIn("endpoint_type", config)
         self.assertNotIn("external_endpoint", config)
         self.assertNotIn("internal_endpoint", config)
+        result = self._run_create_task(Repository.objects.get(name="primary-s3"))
+        self.assertEqual(result["status"], "success")
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_generates_kopia_password_in_credential(self, initialize, _sync):
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            self._s3_payload(),
-            format="json",
-            **self._headers(),
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.enqueue_repository_usage_refresh"
+    )
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_s3_generates_kopia_password_in_credential(self, initialize, _enqueue):
+        response = self._post_repository(self._s3_payload())
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
         repo = Repository.objects.get(name="primary-s3")
         self.assertNotIn("kopia_password", repo.config)
         credential = Credential.objects.get(id=repo.credential_id)
         self.assertTrue(credential.get_secret_payload()["kopia_password"])
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "success")
         initialize.assert_called_once()
 
     @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_proxy_nas_repository")
-    def test_create_nas_without_proxy_is_unverified(self, initialize_nas, _sync, enqueue_usage):
+    def test_create_nas_without_proxy_is_unverified(self, enqueue_usage):
         response = self.client.post(
             "/api/v1/storage/repositories/",
             {
@@ -489,7 +517,6 @@ class StorageRepositoryApiTests(TestCase):
         repo = Repository.objects.get(name="direct-nas")
         self.assertNotIn("kopia_password", repo.config)
         self.assertTrue(Credential.objects.get(id=repo.credential_id).get_secret_payload()["kopia_password"])
-        initialize_nas.assert_not_called()
         enqueue_usage.assert_called_once()
 
     def test_associated_sources_lists_direct_nas_agent_health(self):
@@ -736,10 +763,11 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(local_disk.data["count"], 1)
         self.assertEqual(local_disk.data["results"][0]["repository_mount_point"], "")
 
-    @mock.patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_proxy_nas_repository")
-    def test_create_nas_with_proxy_initializes_repository(self, initialize_nas, _sync, enqueue_usage):
+    @mock.patch("apps.storage.tasks.execute_repository_operation.apply_async")
+    @mock.patch(
+        "apps.storage.services.internal.repository_create.initialize_proxy_nas_repository"
+    )
+    def test_create_nas_with_proxy_initializes_repository(self, initialize_nas, apply_async):
         proxy = Node.objects.create(
             organization=self.org,
             name="proxy-node",
@@ -755,38 +783,46 @@ class StorageRepositoryApiTests(TestCase):
             repository.save(update_fields=["config", "updated_at"])
 
         initialize_nas.side_effect = _mark_real_mount
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            {
-                "name": "proxy-nas",
-                "repo_type": "nas",
-                "nas_protocol": "smb",
-                "bind_node_type": "proxy",
-                "bind_node_id": proxy.id,
-                "config": {
-                    "server_address": "10.0.0.20",
-                    "share_path": "backup",
-                    "smb_username": "backup_user",
-                    "smb_password": "secret-pass",
-                    "proxy_repository_server_host": "Repo-Proxy.Example.Internal.",
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/v1/storage/repositories/",
+                {
+                    "name": "proxy-nas",
+                    "repo_type": "nas",
+                    "nas_protocol": "smb",
+                    "bind_node_type": "proxy",
+                    "bind_node_id": proxy.id,
+                    "config": {
+                        "server_address": "10.0.0.20",
+                        "share_path": "backup",
+                        "smb_username": "backup_user",
+                        "smb_password": "secret-pass",
+                        "proxy_repository_server_host": "Repo-Proxy.Example.Internal.",
+                    },
                 },
-            },
-            format="json",
-            **self._headers(),
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
-        self.assertEqual(response.data["status"], Repository.Status.CREATED)
-        self.assertEqual(response.data["health"], Repository.Health.ONLINE)
+                format="json",
+                **self._headers(),
+            )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.data["status"], Repository.Status.CREATING)
+        self.assertIsNotNone(response.data.get("active_create_task"))
         self.assertEqual(response.data["cross_proxy_access"]["reason"], "ready")
         self.assertEqual(response.data["cross_proxy_access"]["host"], "repo-proxy.example.internal")
         repo = Repository.objects.get(name="proxy-nas")
+        self.assertEqual(repo.status, Repository.Status.CREATING)
         self.assertEqual(repo.config["share_path"], "/backup")
+        apply_async.assert_called_once()
+
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "success")
+        repo.refresh_from_db()
+        self.assertEqual(repo.status, Repository.Status.CREATED)
+        self.assertEqual(repo.health, Repository.Health.ONLINE)
         self.assertEqual(
             repo.config["proxy_mount_path"],
             f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{proxy.id}",
         )
         initialize_nas.assert_called_once()
-        enqueue_usage.assert_called_once()
 
     def test_create_repository_rejects_repository_server_url(self):
         proxy = Node.objects.create(
@@ -813,37 +849,35 @@ class StorageRepositoryApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_repository_deletes_record_when_initializer_fails(self, initialize, _sync):
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_s3_repository_keeps_row_when_initializer_fails(self, initialize):
         initialize.side_effect = RepositoryInitializationError("S3 init failed")
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            self._s3_payload(),
-            format="json",
-            **self._headers(),
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(Repository.objects.filter(name="primary-s3").exists())
+        response = self._post_repository(self._s3_payload())
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        self.assertEqual(response.data["status"], Repository.Status.CREATING)
+        repo = Repository.objects.get(name="primary-s3")
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "failed")
+        repo.refresh_from_db()
+        self.assertEqual(repo.status, Repository.Status.CREATE_FAILED)
+        self.assertEqual(repo.health, Repository.Health.OFFLINE)
+        self.assertTrue(Repository.objects.filter(name="primary-s3").exists())
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_s3_rejects_existing_repository_and_cleans_up(self, initialize, _sync):
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_s3_rejects_existing_repository_and_cleans_up(self, initialize):
         initialize.side_effect = RepositoryAlreadyExistsError("repository already exists")
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
-            self._s3_payload(),
-            format="json",
-            **self._headers(),
-        )
+        response = self._post_repository(self._s3_payload())
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
-        self.assertEqual(response.data["data"]["code"], REPOSITORY_ALREADY_EXISTS_CODE)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        repo = Repository.objects.get(name="primary-s3")
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], REPOSITORY_ALREADY_EXISTS_CODE)
         self.assertFalse(Repository.objects.filter(name="primary-s3").exists())
         self.assertEqual(Credential.objects.filter(organization_id=self.org.id).count(), 0)
 
-    @mock.patch("apps.storage.services.interface.initialize_proxy_fs_repository")
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_proxy_fs_repository")
     def test_create_proxy_fs_rejects_existing_repository_and_cleans_up(self, initialize):
         proxy = Node.objects.create(
             organization=self.org,
@@ -854,21 +888,21 @@ class StorageRepositoryApiTests(TestCase):
         )
         initialize.side_effect = RepositoryAlreadyExistsError("repository already exists")
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
+        response = self._post_repository(
             {
                 "name": "local-disk",
                 "repo_type": "proxy_fs",
                 "bind_node_type": "proxy",
                 "bind_node_id": proxy.id,
                 "config": {"proxy_node_dir": "/data/repository"},
-            },
-            format="json",
-            **self._headers(),
+            }
         )
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
-        self.assertEqual(response.data["data"]["code"], REPOSITORY_ALREADY_EXISTS_CODE)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        repo = Repository.objects.get(name="local-disk")
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], REPOSITORY_ALREADY_EXISTS_CODE)
         self.assertFalse(Repository.objects.filter(name="local-disk").exists())
         self.assertEqual(Credential.objects.filter(organization_id=self.org.id).count(), 0)
 
@@ -901,21 +935,21 @@ class StorageRepositoryApiTests(TestCase):
             ok=False,
         )
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
+        response = self._post_repository(
             {
                 "name": "local-disk-nested-conflict",
                 "repo_type": "proxy_fs",
                 "bind_node_type": "proxy",
                 "bind_node_id": proxy.id,
                 "config": {"proxy_node_dir": "/data/existing-repository"},
-            },
-            format="json",
-            **self._headers(),
+            }
         )
 
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
-        self.assertEqual(response.data["data"]["code"], REPOSITORY_ALREADY_EXISTS_CODE)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        repo = Repository.objects.get(name="local-disk-nested-conflict")
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], REPOSITORY_ALREADY_EXISTS_CODE)
         self.assertFalse(
             Repository.objects.filter(name="local-disk-nested-conflict").exists()
         )
@@ -943,36 +977,37 @@ class StorageRepositoryApiTests(TestCase):
             ok=False,
         )
 
-        response = self.client.post(
-            "/api/v1/storage/repositories/",
+        response = self._post_repository(
             {
                 "name": "local-disk-nested-failure",
                 "repo_type": "proxy_fs",
                 "bind_node_type": "proxy",
                 "bind_node_id": proxy.id,
                 "config": {"proxy_node_dir": "/data/repository"},
-            },
-            format="json",
-            **self._headers(),
+            }
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
-        self.assertEqual(response.data["data"]["meta"]["diagnostic"], "permission denied")
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        repo = Repository.objects.get(name="local-disk-nested-failure")
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("permission denied", result["error"])
         repository = Repository.objects.get(name="local-disk-nested-failure")
         self.assertEqual(repository.status, Repository.Status.CREATE_FAILED)
         self.assertEqual(repository.health, Repository.Health.OFFLINE)
+        repository_task = RepositoryTask.objects.get(repository=repository)
+        self.assertIn("permission denied", repository_task.task.error_message)
 
-    @mock.patch("apps.storage.services.interface.sync_repository_usage", side_effect=lambda repo: repo)
-    @mock.patch("apps.storage.services.interface.initialize_s3_repository")
-    def test_create_failed_repositories_are_listed_by_default(self, initialize, _sync):
+    @mock.patch("apps.storage.services.internal.repository_create.initialize_s3_repository")
+    def test_create_failed_repositories_are_listed_by_default(self, initialize):
         initialize.side_effect = RepositoryInitializationError("S3 init failed")
-        create = self.client.post(
-            "/api/v1/storage/repositories/",
-            self._s3_payload(),
-            format="json",
-            **self._headers(),
-        )
-        self.assertEqual(create.status_code, status.HTTP_400_BAD_REQUEST)
+        create = self._post_repository(self._s3_payload())
+        self.assertEqual(create.status_code, status.HTTP_202_ACCEPTED, create.content)
+        repo = Repository.objects.get(name="primary-s3")
+        result = self._run_create_task(repo)
+        self.assertEqual(result["status"], "failed")
+        repo.refresh_from_db()
+        self.assertEqual(repo.status, Repository.Status.CREATE_FAILED)
         Repository.objects.create(
             organization_id=self.org.id,
             name="legacy-failed-s3",
@@ -990,6 +1025,7 @@ class StorageRepositoryApiTests(TestCase):
         )
         self.assertEqual(listing.status_code, status.HTTP_200_OK)
         names = [row["name"] for row in listing.data["data"]["list"]]
+        self.assertIn("primary-s3", names)
         self.assertIn("legacy-failed-s3", names)
 
     @mock.patch("apps.storage.tasks.reconcile_storage_repositories.apply_async")

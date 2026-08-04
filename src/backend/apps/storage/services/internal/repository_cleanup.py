@@ -262,7 +262,12 @@ def create_repository_cleanup_task(
             ).select_related("task", "execution_target", "triggered_by_task").first()
             if latest is not None:
                 return latest
-        if locked.status not in {Repository.Status.CREATED, Repository.Status.REMOVE_FAILED}:
+        if locked.status not in {
+            Repository.Status.CREATED,
+            Repository.Status.REMOVE_FAILED,
+            Repository.Status.CREATE_FAILED,
+            Repository.Status.CREATING,
+        }:
             raise ValidationError(
                 {"detail": f"Repository in status {locked.status} cannot be cleaned up."}
             )

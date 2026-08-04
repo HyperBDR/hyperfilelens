@@ -59,6 +59,9 @@ export type StorageRepository = {
   bind_node_ip?: string | null
   cross_proxy_access?: StorageRepositoryCrossProxyAccess
   active_cleanup_task?: Pick<TaskRow, 'task_uuid' | 'status' | 'error_code' | 'error_message' | 'created_at'> | null
+  active_create_task?: (Pick<TaskRow, 'task_uuid' | 'status' | 'error_code' | 'error_message' | 'created_at'> & {
+    operation_type?: string
+  }) | null
 }
 
 export type StorageRepositoryAssociatedSource = {

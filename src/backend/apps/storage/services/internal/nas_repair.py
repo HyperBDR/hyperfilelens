@@ -29,20 +29,17 @@ from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import BackupConfig
-from apps.storage.repositories.models import Credential, Repository
+from apps.storage.repositories.models import Credential, Repository, RepositoryTask
 from apps.storage.services.internal.nas_repository import (
     NASRepositoryError,
     check_proxy_nas_repository,
-    initialize_proxy_nas_repository,
     nas_mount_point,
     nas_proxy_repository_subdir,
     nas_repository_payload,
     sync_proxy_mount_path_from_repo_status,
 )
-from apps.storage.services.internal.repository_errors import (
-    REPOSITORY_ALREADY_EXISTS_CODE,
-    REPOSITORY_ALREADY_EXISTS_MESSAGE,
-    RepositoryAlreadyExistsError,
+from apps.storage.services.internal.repository_create import (
+    enqueue_repository_create_task,
 )
 from apps.storage.services.internal.repository_usage import (
     apply_capacity_from_config,
@@ -55,7 +52,6 @@ from apps.storage.services.internal.repository_secrets import (
     sanitize_repository_config,
 )
 from apps.task.models import Task
-from common.errors import AppError
 
 logger = logging.getLogger(__name__)
 
@@ -398,48 +394,10 @@ def repair_nas_repository(
                 "name", "config", "bind_node_type", "bind_node_id", "status", "updated_at",
             ]
         )
-        try:
-            initialize_proxy_nas_repository(repository)
-        except RepositoryAlreadyExistsError as exc:
-            config = dict(repository.config or {})
-            config.pop("proxy_mount_path", None)
-            repository.config = config
-            repository.bind_node_type = None
-            repository.bind_node_id = None
-            repository.status = Repository.Status.CREATED
-            repository.health = Repository.Health.UNVERIFIED
-            repository.save(
-                update_fields=[
-                    "config",
-                    "bind_node_type",
-                    "bind_node_id",
-                    "status",
-                    "health",
-                    "updated_at",
-                ]
-            )
-            raise AppError(
-                code=REPOSITORY_ALREADY_EXISTS_CODE,
-                status=409,
-                retryable=False,
-                title="Repository already exists",
-                diagnostic=REPOSITORY_ALREADY_EXISTS_MESSAGE,
-                meta={"repository_type": repository.repo_type},
-            ) from exc
-        except (NASRepositoryError, ValidationError) as exc:
-            raise DRFValidationError(
-                {"detail": _sanitize(str(exc), repository.config)}
-            ) from exc
-        repository.refresh_from_db()
-        repository.status = Repository.Status.CREATED
-        repository.health = Repository.Health.ONLINE
-        repository.last_checked_at = timezone.now()
-        repository.save(
-            update_fields=[
-                "status", "health", "last_checked_at", "updated_at",
-            ]
+        enqueue_repository_create_task(
+            repository=repository,
+            operation_type=RepositoryTask.OperationType.REPAIR_BIND,
         )
-        _enqueue_usage_refresh(repository, trigger="storage.repository.repair_nas")
         return repository
 
     # Currently bound. Either replacing the proxy or staying on the same one.
@@ -484,49 +442,17 @@ def repair_nas_repository(
             "name", "config", "bind_node_type", "bind_node_id", "status", "updated_at",
         ]
     )
-
-    try:
-        logger.info(
-            "NAS repository proxy swap remount start repository_id=%s old_node_id=%s new_node_id=%s",
-            repository.id,
-            initial_bind_node_id,
-            new_node.id,
-        )
-        _remount_on_new_proxy(
-            organization_id=organization_id,
-            repository=repository,
-            new_node=new_node,
-        )
-        repository.refresh_from_db()
-        logger.info(
-            "NAS repository proxy swap remount ok repository_id=%s new_node_id=%s",
-            repository.id,
-            new_node.id,
-        )
-    except (NASRepositoryError, ValidationError) as exc:
-        logger.warning(
-            "NAS repository proxy swap remount failed repository_id=%s new_node_id=%s error=%s",
-            repository.id,
-            new_node.id,
-            str(exc)[:500],
-        )
-        raise DRFValidationError(
-            {"detail": _sanitize(str(exc), repository.config)}
-        ) from exc
-
-    repository.status = Repository.Status.CREATED
-    repository.health = Repository.Health.ONLINE
-    repository.last_checked_at = timezone.now()
-    repository.save(
-        update_fields=["status", "health", "last_checked_at", "updated_at"]
+    logger.info(
+        "NAS repository proxy swap remount accepted repository_id=%s old_node_id=%s new_node_id=%s",
+        repository.id,
+        initial_bind_node_id,
+        new_node.id,
     )
-    _enqueue_usage_refresh(repository, trigger="storage.repository.repair_nas")
-
-    if initial_bind_node_id:
-        _unmount_on_old_proxy(
-            organization_id=organization_id,
-            repository=repository,
-            old_node_id=int(initial_bind_node_id),
-        )
-
+    enqueue_repository_create_task(
+        repository=repository,
+        operation_type=RepositoryTask.OperationType.REPAIR_REMOUNT,
+        remount_previous_node_id=(
+            int(initial_bind_node_id) if initial_bind_node_id else None
+        ),
+    )
     return repository

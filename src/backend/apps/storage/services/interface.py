@@ -10,18 +10,19 @@ from apps.storage.repositories.models import Credential, Repository
 from apps.storage.services.internal.repository_initializer import (
     RepositoryInitializationError,
     check_s3_repository,
-    initialize_s3_repository,
 )
 from apps.storage.services.internal.nas_repository import (
     NASRepositoryError,
     check_proxy_nas_repository,
-    initialize_proxy_nas_repository,
     nas_mount_point,
 )
 from apps.storage.services.internal.proxy_fs_repository import (
     ProxyFSRepositoryError,
     check_proxy_fs_repository,
-    initialize_proxy_fs_repository,
+)
+from apps.storage.services.internal.repository_create import (
+    enqueue_repository_create_task,
+    preflight_bound_proxy,
 )
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
@@ -199,6 +200,7 @@ def create_repository(
     bind_node_type: str | None = None,
     bind_node_id: int | None = None,
     credential_payload: dict | None = None,
+    requested_by=None,
 ) -> Repository:
     config = _with_default_kopia_password(config)
     secret_payload = build_secret_payload(
@@ -265,70 +267,42 @@ def create_repository(
         if _set_nas_proxy_mount_path(repository):
             repository.save(update_fields=["config", "updated_at"])
         try:
-            initialize_proxy_nas_repository(repository)
-        except RepositoryAlreadyExistsError as exc:
+            preflight_bound_proxy(repository=repository)
+        except ValidationError as exc:
             repository.delete()
             credential.delete()
-            raise _repository_already_exists_app_error(repository) from exc
-        except (NASRepositoryError, ValidationError) as exc:
-            repository.delete()
-            credential.delete()
-            raise DRFValidationError({"detail": _sanitize_secret_message(str(exc), {**config, **secret_payload})}) from exc
-        repository.status = Repository.Status.CREATED
-        repository.health = Repository.Health.ONLINE
-        repository.last_checked_at = timezone.now()
-        repository.save(update_fields=["status", "health", "last_checked_at", "updated_at"])
-        enqueue_repository_usage_refresh(
-            organization_id=repository.organization_id,
-            repository_ids=[repository.id],
-            force=True,
-            trigger="storage.repository.create_nas",
+            raise DRFValidationError(
+                {"detail": _sanitize_secret_message(str(exc), {**config, **secret_payload})}
+            ) from exc
+        enqueue_repository_create_task(
+            repository=repository,
+            requested_by=requested_by,
         )
         return repository
 
     if repository.repo_type == Repository.Type.PROXY_FS:
         try:
-            initialize_proxy_fs_repository(repository)
-        except RepositoryAlreadyExistsError as exc:
+            preflight_bound_proxy(repository=repository)
+        except ValidationError as exc:
             repository.delete()
             credential.delete()
-            raise _repository_already_exists_app_error(repository) from exc
-        except (ProxyFSRepositoryError, ValidationError) as exc:
-            # Keep the row in place so the operator can see the failure reason.
-            repository.status = Repository.Status.CREATE_FAILED
-            repository.health = Repository.Health.OFFLINE
-            repository.last_checked_at = timezone.now()
-            repository.save(
-                update_fields=["status", "health", "last_checked_at", "updated_at"]
-            )
             raise DRFValidationError(
                 {"detail": _sanitize_secret_message(str(exc), {**config, **secret_payload})}
             ) from exc
-        repository.status = Repository.Status.CREATED
-        repository.health = Repository.Health.ONLINE
-        repository.last_checked_at = timezone.now()
-        repository.save(update_fields=["status", "health", "last_checked_at", "updated_at"])
-        return sync_repository_usage(repository)
+        enqueue_repository_create_task(
+            repository=repository,
+            requested_by=requested_by,
+        )
+        return repository
 
     if repository.repo_type != Repository.Type.S3:
         return sync_repository_usage(repository)
 
-    try:
-        initialize_s3_repository(repository)
-    except RepositoryAlreadyExistsError as exc:
-        repository.delete()
-        credential.delete()
-        raise _repository_already_exists_app_error(repository) from exc
-    except RepositoryInitializationError as exc:
-        repository.delete()
-        credential.delete()
-        raise DRFValidationError({"detail": str(exc)}) from exc
-
-    repository.status = Repository.Status.CREATED
-    repository.health = Repository.Health.ONLINE
-    repository.last_checked_at = timezone.now()
-    repository.save(update_fields=["status", "health", "last_checked_at", "updated_at"])
-    return sync_repository_usage(repository)
+    enqueue_repository_create_task(
+        repository=repository,
+        requested_by=requested_by,
+    )
+    return repository
 
 
 def update_repository(

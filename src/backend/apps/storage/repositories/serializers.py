@@ -91,6 +91,7 @@ class RepositorySerializer(serializers.ModelSerializer):
     bind_node_ip = serializers.SerializerMethodField()
     cross_proxy_access = serializers.SerializerMethodField()
     active_cleanup_task = serializers.SerializerMethodField()
+    active_create_task = serializers.SerializerMethodField()
 
     class Meta:
         model = Repository
@@ -123,6 +124,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "bind_node_ip",
             "cross_proxy_access",
             "active_cleanup_task",
+            "active_create_task",
         ]
         read_only_fields = fields
 
@@ -185,6 +187,17 @@ class RepositorySerializer(serializers.ModelSerializer):
             "error_message": task.error_message,
             "created_at": task.created_at,
         }
+
+    def get_active_create_task(self, obj: Repository) -> dict | None:
+        from apps.storage.services.internal.repository_create import (
+            active_repository_create_task,
+            repository_create_task_payload,
+        )
+
+        operation = active_repository_create_task(obj)
+        if operation is None:
+            return None
+        return repository_create_task_payload(operation)
 
 
 class RepositoryWriteSerializer(serializers.ModelSerializer):
@@ -481,6 +494,8 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         organization_id = self.context["organization_id"]
+        request = self.context.get("request")
+        requested_by = getattr(request, "user", None) if request is not None else None
         return create_repository(
             organization_id=organization_id,
             name=validated_data["name"],
@@ -493,6 +508,7 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             bind_node_type=validated_data.get("bind_node_type"),
             bind_node_id=validated_data.get("bind_node_id"),
             credential_payload=validated_data.get("credential_payload") or {},
+            requested_by=requested_by,
         )
 
     def update(self, instance, validated_data):
