@@ -739,6 +739,16 @@ grep -F '"KOPIA_PERSIST_CREDENTIALS_ON_CONNECT": "false"' "${agent_certification
 # Enrollment preflight treats 403 on /ws/ as reachable; mock must not answer 404.
 grep -F 'path.startswith("/ws/")' "${agent_certification}" >/dev/null
 grep -F 'self.send_error(403, "authentication required")' "${agent_certification}" >/dev/null
+# Installer overhaul (#316) opens an installation session and waits for node-status.
+grep -F '/api/v1/node/enrollment/session' "${agent_certification}" >/dev/null
+grep -F 'installation_session' "${agent_certification}" >/dev/null
+grep -F '/api/v1/node/enrollment/node-status' "${agent_certification}" >/dev/null
+grep -F '"routable": True' "${agent_certification}" >/dev/null
+# Installer overhaul (#316) opens an installation session and waits for node-status.
+grep -F '/api/v1/node/enrollment/session' "${agent_certification}" >/dev/null
+grep -F 'installation_session' "${agent_certification}" >/dev/null
+grep -F '/api/v1/node/enrollment/node-status' "${agent_certification}" >/dev/null
+grep -F '"routable": True' "${agent_certification}" >/dev/null
 grep -F 'apt source: official Ubuntu (HTTPS after CA bootstrap)' \
 	"${ROOT}/src/agent/scripts/fetch-deps.sh" >/dev/null
 grep -F 'using official Ubuntu sources (HTTPS after CA bootstrap)' \
