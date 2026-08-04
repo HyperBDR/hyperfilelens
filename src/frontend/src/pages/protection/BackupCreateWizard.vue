@@ -6121,6 +6121,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                     clearable
                     :placeholder="t('protection.backupsPage.phPolicyForDir')"
                     class="w-full"
+                    placement="bottom-start"
                     popper-class="create-policy-select-popper"
                     @visible-change="handleOptionSelectVisibleChange"
                   >
@@ -6130,7 +6131,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :label="pol.name"
                       :value="pol.id"
                     >
-                      <HflPopover ref="optionPopoverRefs" trigger="hover" placement="right-start" :width="420" :persistent="false" popper-class="create-policy-option-popper">
+                      <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="420" :persistent="false" popper-class="create-policy-option-popper">
                         <template #reference>
                           <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
                             <div class="create-policy-option__head">
@@ -6204,6 +6205,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                     :max-collapse-tags="1"
                     :placeholder="t('protection.backupsPage.phBatchFilters')"
                     class="w-full file-filter-multi-select"
+                    placement="bottom-start"
                     popper-class="create-policy-select-popper"
                     @change="closeBatchFilterSelect"
                     @visible-change="handleOptionSelectVisibleChange"
@@ -6214,7 +6216,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                       :label="gf.name"
                       :value="gf.id"
                     >
-                      <HflPopover ref="optionPopoverRefs" trigger="hover" placement="right-start" :width="460" :persistent="false" popper-class="create-policy-option-popper">
+                      <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="460" :persistent="false" popper-class="create-policy-option-popper">
                         <template #reference>
                           <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
                             <div class="create-policy-option__head">
@@ -6404,6 +6406,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 clearable
                                 :placeholder="t('protection.backupsPage.phPolicyForDir')"
                                 class="target-picker-grid__target"
+                                placement="bottom-start"
                                 popper-class="create-policy-select-popper"
                                 @update:model-value="setGroupPolicyId(group, String($event ?? ''))"
                                 @visible-change="handleConfigSelectVisibleChange"
@@ -6414,7 +6417,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   :label="pol.name"
                                   :value="pol.id"
                                 >
-                                  <HflPopover ref="optionPopoverRefs" trigger="hover" placement="right-start" :width="420" :persistent="false" popper-class="create-policy-option-popper">
+                                  <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="420" :persistent="false" popper-class="create-policy-option-popper">
                                     <template #reference>
                                       <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
                                         <div class="create-policy-option__head">
@@ -6589,6 +6592,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 clearable
                                 :placeholder="t('protection.backupsPage.phFilterForDir')"
                                 class="target-picker-grid__target"
+                                placement="bottom-start"
                                 popper-class="create-policy-select-popper"
                                 @update:model-value="(value) => setGroupFilterId(group, String(value || ''))"
                                 @visible-change="handleConfigSelectVisibleChange"
@@ -6599,7 +6603,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   :label="gf.name"
                                   :value="gf.id"
                                 >
-                                  <HflPopover ref="optionPopoverRefs" trigger="hover" placement="right-start" :width="460" :persistent="false" popper-class="create-policy-option-popper">
+                                  <HflPopover ref="optionPopoverRefs" trigger="hover" placement="bottom-start" :fallback-placements="['top-start', 'right-start']" :width="460" :persistent="false" popper-class="create-policy-option-popper">
                                     <template #reference>
                                       <div class="create-policy-option" @pointerdown.capture="hideOptionPopovers">
                                         <div class="create-policy-option__head">
@@ -11666,15 +11670,29 @@ function preserveShallowestPathOrder(paths: string[]) {
   white-space: normal;
 }
 
+:global(.create-policy-select-popper) {
+  max-width: min(560px, calc(100vw - 32px));
+}
+
 :global(.create-policy-select-popper .el-select-dropdown__item) {
   height: auto;
   min-height: 44px;
   padding: 6px 10px;
   line-height: normal;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 :global(.create-policy-select-popper .el-select-dropdown__item.selected) {
   font-weight: 500;
+}
+
+:global(.create-policy-select-popper .el-select-dropdown__empty) {
+  padding: 12px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
 }
 
 :global(.create-policy-option-popper) {
@@ -11684,16 +11702,20 @@ function preserveShallowestPathOrder(paths: string[]) {
 .create-policy-option {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 4px;
+  overflow: hidden;
 }
 
 .create-policy-option__head {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  overflow: hidden;
 }
 
 .create-policy-option__name {
@@ -11720,8 +11742,10 @@ function preserveShallowestPathOrder(paths: string[]) {
 .create-filter-rules-option {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
 }
 
 .create-filter-rules-option__prefix {

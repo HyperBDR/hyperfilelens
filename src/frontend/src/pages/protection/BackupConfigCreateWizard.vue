@@ -238,6 +238,7 @@ watch(
   flex-direction: column;
   gap: 0;
   min-height: 0;
+  padding: 20px;
 }
 
 .create-backup-loading-pane {
