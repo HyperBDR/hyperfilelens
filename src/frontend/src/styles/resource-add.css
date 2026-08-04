@@ -999,12 +999,10 @@ html:not([data-theme='dark']) .resource-add-fullscreen :is(.add-s3-platform-btn:
 }
 
 .resource-add-fullscreen :is(.tree-node-content__path) {
-  overflow: hidden;
   color: #86909c;
   font-size: 11px;
   line-height: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .resource-add-fullscreen .add-form-preview-sidebar {

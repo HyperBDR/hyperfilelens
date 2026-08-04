@@ -4063,7 +4063,7 @@ function onClosed() {
   width: calc(100% - 49px);
   min-width: 0;
   max-width: calc(100% - 49px);
-  overflow-x: hidden;
+  overflow-x: auto;
   margin-left: 35px;
   padding: 8px 0 10px 14px;
   border-left: 2px solid rgb(226 232 240);

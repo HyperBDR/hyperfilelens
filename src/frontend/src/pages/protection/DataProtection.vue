@@ -14485,7 +14485,7 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   max-height: 260px;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   border: 0;
   border-radius: 0;
   padding: 2px 0;
@@ -14614,12 +14614,10 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 }
 
 .create-tree-node-content__path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
   line-height: 15px;
   color: rgb(100 116 139);
+  word-break: break-word;
 }
 
 .dp-added-dir-path {
@@ -15476,7 +15474,7 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   max-height: 260px;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   border: 0;
   border-radius: 0;
   padding: 2px 0;
@@ -15512,12 +15510,10 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 }
 
 .repository-tree-node__path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
   line-height: 15px;
   color: rgb(100 116 139);
+  word-break: break-word;
 }
 
 .repository-add-form--quota {
