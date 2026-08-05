@@ -539,7 +539,14 @@ class StorageRepositoryApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("config.mount_options", response.data)
+        self.assertIn(
+            {
+                "field": "config.mount_options",
+                "code": "VALIDATION.FIELD_INVALID",
+                "message": "SMB backup repositories cannot use the read-only (ro) mount option.",
+            },
+            response.data["data"]["errors"],
+        )
 
     def test_associated_sources_lists_direct_nas_agent_health(self):
         agent = Node.objects.create(
