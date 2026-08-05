@@ -16285,7 +16285,6 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 20px;
 }
 
 .dp-wizard-scroll-card {
