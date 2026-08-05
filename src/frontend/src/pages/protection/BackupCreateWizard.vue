@@ -53,6 +53,7 @@ import {
 } from '../../lib/resourceIcons'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
+import { normalizeThrownError } from '../../lib/errors'
 import { notifyError } from '../../lib/notify'
 import { logger } from '../../lib/logger'
 import {
@@ -1102,6 +1103,7 @@ const createSourceDirKeysBySource = reactive<Record<string, string[]>>({})
 const createSourcePathTypeBySource = reactive<Record<string, Record<string, BackupPathType>>>({})
 const manualSourcePathBySource = reactive<Record<string, string>>({})
 const manualSourcePathValidatingBySource = reactive<Record<string, boolean>>({})
+const manualSourcePathErrorBySource = reactive<Record<string, string>>({})
 const createExpandedSourceIds = ref<string[]>([])
 const createSourceValidationAttempted = ref(false)
 const highlightedCreateSourceId = ref('')
@@ -1907,7 +1909,7 @@ function recoveryDirPlanTargetName(dirPlan: CreateRecoveryDirPlanConfig) {
 }
 
 function recoveryPlanConflictLabel(conflictMode: CreateRecoveryPlanConfig['conflictMode']) {
-  if (!conflictMode) return t('protection.backupsPage.createRecoveryPlanPending')
+  if (!conflictMode) return t('protection.backupsPage.fileConflictPolicyRequiredShort')
   return conflictMode === 'overwrite'
     ? t('protection.backupsPage.createRecoveryConflictOverwriteFull')
     : t('protection.backupsPage.createRecoveryConflictSkipFull')
@@ -1950,7 +1952,7 @@ function isRecoveryPlanComplete(group: WizardSourceGroup) {
 }
 
 function recoveryDirPlanPendingLabel() {
-  return t('protection.backupsPage.createRecoveryPlanPending')
+  return '—'
 }
 
 function recoveryDirPlanFieldLabel(field: CreateRecoveryDirPlanField) {
@@ -1977,6 +1979,32 @@ function isCreateRecoveryDirPlanFieldInvalid(
 
 function isCreateRecoveryConflictPolicyInvalid(group: WizardSourceGroup) {
   return createRecoveryPlanValidationAttempted.value && recoveryPlanMissingFields(group).includes('conflictMode')
+}
+
+function recoveryPlanConflictIssue(group: WizardSourceGroup) {
+  return recoveryPlanMissingFields(group).includes('conflictMode')
+    ? t('protection.backupsPage.fileConflictPolicyRequiredInline')
+    : ''
+}
+
+function recoveryPlanIncompleteReason(group: WizardSourceGroup) {
+  const plan = recoveryPlanForGroup(group)
+  if (!plan.enabled || isRecoveryPlanComplete(group)) return ''
+
+  for (const dirPlan of plan.dirPlans) {
+    const dirMissing = recoveryDirPlanMissingFields(group, dirPlan)
+    if (dirMissing.includes('restoreDir')) {
+      return t('protection.backupsPage.recoveryPlanIncompleteRestoreDir')
+    }
+    if (dirMissing.includes('targetHostId')) {
+      return t('protection.backupsPage.recoveryPlanIncompleteRestoreTarget')
+    }
+    if (dirMissing.includes('sourcePath')) {
+      return t('protection.backupsPage.recoveryPlanIncompleteRestoreScope')
+    }
+  }
+
+  return ''
 }
 
 function incompleteRecoveryPlans() {
@@ -3352,6 +3380,47 @@ function sourceSelectedEntries(sourceId: string) {
   return wizardDirEntries.value.filter((entry) => entry.sourceId === sourceId)
 }
 
+function clearManualSourcePathError(sourceId: string) {
+  delete manualSourcePathErrorBySource[sourceId]
+}
+
+function setManualSourcePathError(sourceId: string, message: string) {
+  if (message) manualSourcePathErrorBySource[sourceId] = message
+  else clearManualSourcePathError(sourceId)
+}
+
+function sourceNameForError(sourceId: string) {
+  const name = getSourceName(sourceId)
+  return name || sourceId
+}
+
+function stringMetaValue(meta: Record<string, unknown> | undefined, key: string) {
+  const value = meta?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function manualPathValidationErrorMessage(err: unknown, sourceId: string, fallbackPath: string) {
+  const normalized = normalizeThrownError(err)
+  const meta = normalized.meta && typeof normalized.meta === 'object'
+    ? normalized.meta as Record<string, unknown>
+    : undefined
+  const path = stringMetaValue(meta, 'path') || fallbackPath
+  const diagnostic = stringMetaValue(meta, 'diagnostic')
+  if ((normalized.errorCode || normalized.code) === 'AGENT.PATH_VALIDATE_FAILED') {
+    return diagnostic
+      ? t('protection.backupsPage.msgManualPathVerifyFailedWithDiagnostic', {
+          path,
+          source: sourceNameForError(sourceId),
+          diagnostic,
+        })
+      : t('protection.backupsPage.msgManualPathVerifyFailedWithPath', {
+          path,
+          source: sourceNameForError(sourceId),
+        })
+  }
+  return apiErrorMessageI18n(err, t, t('protection.backupsPage.msgManualPathVerifyFailed'))
+}
+
 function normalizeBackupPathType(value: unknown): BackupPathType {
   const raw = String(value || '').trim().toLowerCase()
   if (raw === 'file') return 'file'
@@ -3540,6 +3609,14 @@ function syncOpenValidationPopover() {
 
 function isCreateSourceDirsMissing(sourceId: string) {
   return sourceSelectedEntries(sourceId).length === 0
+}
+
+function createSourceDirIssue(sourceId: string) {
+  if (manualSourcePathErrorBySource[sourceId]) return manualSourcePathErrorBySource[sourceId]
+  if (createSourceValidationAttempted.value && isCreateSourceDirsMissing(sourceId)) {
+    return t('protection.backupsPage.validationMissingSourceDirsInline')
+  }
+  return ''
 }
 
 function missingCreateSourceRows() {
@@ -4085,16 +4162,22 @@ function isManualSourcePathValidating(sourceId: string) {
 
 async function addManualSourcePath(sourceId: string) {
   const path = String(manualSourcePathBySource[sourceId] || '').trim()
+  clearManualSourcePathError(sourceId)
   if (!path) {
-    ElMessage.warning({ message: t('protection.backupsPage.msgManualPathRequired'), grouping: true })
+    const message = t('protection.backupsPage.msgManualPathRequired')
+    setManualSourcePathError(sourceId, message)
+    ElMessage.warning({ message, grouping: true })
     return
   }
   if (!isAbsoluteSourcePath(path)) {
-    ElMessage.warning({ message: t('protection.backupsPage.msgManualPathAbsolute'), grouping: true })
+    const message = t('protection.backupsPage.msgManualPathAbsolute')
+    setManualSourcePathError(sourceId, message)
+    ElMessage.warning({ message, grouping: true })
     return
   }
   const blockedReason = addedDirBlockReason(sourceId, path)
   if (blockedReason) {
+    setManualSourcePathError(sourceId, blockedReason)
     ElMessage.warning({ message: blockedReason, grouping: true })
     return
   }
@@ -4108,7 +4191,10 @@ async function addManualSourcePath(sourceId: string) {
       include_metadata: false,
     })
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessageI18n(err, t, t('protection.backupsPage.msgManualPathVerifyFailed')), grouping: true })
+    const message = manualPathValidationErrorMessage(err, sourceId, path)
+    setManualSourcePathError(sourceId, message)
+    highlightedCreateSourceId.value = sourceId
+    ElMessage.error({ message, grouping: true })
     return
   } finally {
     manualSourcePathValidatingBySource[sourceId] = false
@@ -4117,6 +4203,7 @@ async function addManualSourcePath(sourceId: string) {
   const resolvedPathType = backupPathTypeForEntry(pathInfo)
   const resolvedBlockedReason = addedDirBlockReason(sourceId, resolvedPath)
   if (resolvedBlockedReason) {
+    setManualSourcePathError(sourceId, resolvedBlockedReason)
     ElMessage.warning({ message: resolvedBlockedReason, grouping: true })
     return
   }
@@ -4141,6 +4228,7 @@ async function addManualSourcePath(sourceId: string) {
     nasTargetModes[groupKey] = 'per_directory_repo'
   }
   manualSourcePathBySource[sourceId] = ''
+  clearManualSourcePathError(sourceId)
   refreshCreateSourceTreeBlockedState(sourceId)
 }
 
@@ -4501,6 +4589,16 @@ function isTargetGroupMissing(group: WizardSourceGroup) {
   const target = getRealTarget(targetId)
   if (!targetId || !target) return true
   return targetHasDistinctEndpoints(target) && !sourceEndpointTypeMap.value[group.key]
+}
+
+function targetGroupIssue(group: WizardSourceGroup) {
+  const targetId = sourceTargetMap.value[group.key]
+  const target = getRealTarget(targetId)
+  if (!targetId || !target) return t('protection.backupsPage.targetMissingInline')
+  if (targetHasDistinctEndpoints(target) && !sourceEndpointTypeMap.value[group.key]) {
+    return t('protection.backupsPage.targetEndpointMissingInline')
+  }
+  return ''
 }
 
 function missingTargetGroups() {
@@ -5788,16 +5886,22 @@ function preserveShallowestPathOrder(paths: string[]) {
                         :placeholder="manualSourcePathPlaceholder(row.id)"
                         class="create-manual-path__input"
                         :disabled="isManualSourcePathValidating(row.id)"
+                        :class="{ 'create-manual-path__input--error': Boolean(manualSourcePathErrorBySource[row.id]) }"
+                        @input="clearManualSourcePathError(row.id)"
                         @keyup.enter="addManualSourcePath(row.id)"
                       />
                       <ElButton
                         size="small"
                         type="primary"
+                        class="create-manual-path__button"
                         :loading="isManualSourcePathValidating(row.id)"
                         @click="addManualSourcePath(row.id)"
                       >
                         {{ t('protection.backupsPage.btnAdd') }}
                       </ElButton>
+                      <p v-if="manualSourcePathErrorBySource[row.id]" class="create-manual-path__error">
+                        {{ manualSourcePathErrorBySource[row.id] }}
+                      </p>
                     </div>
                     <div class="create-source-config-detail__head create-source-config-detail__head--browse">
                       <div class="create-source-config-detail__title-row">
@@ -5916,8 +6020,23 @@ function preserveShallowestPathOrder(paths: string[]) {
                         <div class="text-xs text-slate-500">{{ t('protection.backupsPage.addedCount', { n: sourceSelectedCount(row.id) }) }}</div>
                       </div>
                     </div>
-                    <div v-if="!sourceSelectedEntries(row.id).length" class="dp-added-dir-empty text-xs text-slate-400 py-8 text-center border border-dashed border-slate-200 rounded-md">
-                      {{ t('protection.backupsPage.addedEmpty') }}
+                    <div
+                      v-if="!sourceSelectedEntries(row.id).length"
+                      class="dp-added-dir-empty text-xs py-8 text-center border border-dashed rounded-md"
+                      :class="{ 'dp-added-dir-empty--error': Boolean(createSourceDirIssue(row.id)) }"
+                    >
+                      <template v-if="createSourceDirIssue(row.id)">
+                        <ShieldAlert :size="18" class="dp-added-dir-empty__icon" />
+                        <div class="dp-added-dir-empty__title">
+                          {{ t('protection.backupsPage.validationMissingSourceDirsShort') }}
+                        </div>
+                        <div class="dp-added-dir-empty__hint">
+                          {{ t('protection.backupsPage.validationMissingSourceDirsHint') }}
+                        </div>
+                      </template>
+                      <template v-else>
+                        {{ t('protection.backupsPage.addedEmpty') }}
+                      </template>
                     </div>
                     <ul v-else class="dp-added-dir-list list-none m-0 p-0">
                       <li
@@ -5995,8 +6114,15 @@ function preserveShallowestPathOrder(paths: string[]) {
             </el-table-column>
             <el-table-column :label="t('protection.backupsPage.labelAddedPaths')" min-width="300">
               <template #default="{ row }">
-                <div v-if="!row.selectedEntries.length" class="create-source-dir-preview-empty">
-                  {{ t('protection.backupsPage.addedEmptyCompact') }}
+                <div
+                  v-if="!row.selectedEntries.length"
+                  class="create-source-dir-preview-empty"
+                  :class="{ 'create-source-dir-preview-empty--error': Boolean(createSourceDirIssue(row.id)) }"
+                >
+                  <div>{{ t('protection.backupsPage.addedEmptyCompact') }}</div>
+                  <div v-if="createSourceDirIssue(row.id)" class="create-source-dir-preview-empty__reason">
+                    {{ createSourceDirIssue(row.id) }}
+                  </div>
                 </div>
                 <HflPopover v-else trigger="hover" placement="top-start" :width="520">
                   <template #reference>
@@ -7106,6 +7232,14 @@ function preserveShallowestPathOrder(paths: string[]) {
                       <Pencil :size="15" />
                     </ElButton>
                     <div
+                      v-if="targetGroupIssue(group)"
+                      class="target-assignment-issue"
+                      role="status"
+                    >
+                      <ShieldAlert :size="14" class="target-assignment-issue__icon" />
+                      <span>{{ targetGroupIssue(group) }}</span>
+                    </div>
+                    <div
                       v-if="targetConnectionResult(group.key)"
                       class="target-connection-result"
                       :class="`target-connection-result--${targetConnectionResult(group.key)?.status}`"
@@ -7740,6 +7874,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                             {{ recoveryPlanConflictSummary(group) }}
                           </span>
                         </div>
+                        <div v-if="recoveryPlanIncompleteReason(group)" class="create-recovery-plan-cell__issue">
+                          {{ recoveryPlanIncompleteReason(group) }}
+                        </div>
                         <div class="create-recovery-plan-cell__mappings">
                           <div
                             v-for="dirPlan in recoveryPlanPreviewDirPlans(group)"
@@ -7808,6 +7945,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                           <span class="create-recovery-plan-cell__policy-text">
                             {{ recoveryPlanConflictSummary(group) }}
                           </span>
+                        </div>
+                        <div v-if="recoveryPlanIncompleteReason(group)" class="create-recovery-plan-tooltip__issue">
+                          {{ recoveryPlanIncompleteReason(group) }}
                         </div>
                         <div
                           v-for="dirPlan in group.plan.dirPlans"
@@ -8176,6 +8316,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                             <span class="create-recovery-plan-cell__policy-text">
                               {{ recoveryPlanConflictSummary(row.recoveryGroup) }}
                             </span>
+                          </div>
+                          <div v-if="recoveryPlanIncompleteReason(row.recoveryGroup)" class="create-recovery-plan-cell__issue">
+                            {{ recoveryPlanIncompleteReason(row.recoveryGroup) }}
                           </div>
                           <div class="create-recovery-plan-cell__mappings">
                             <div
@@ -9141,11 +9284,11 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-target-config-table :deep(.target-group-row--connection-failed > td.el-table__cell) {
-  background: rgb(254 242 242) !important;
+  background: var(--color-error-light) !important;
 }
 
 .create-target-config-table :deep(.target-group-row--connection-failed > td.el-table__cell:first-child) {
-  box-shadow: inset 3px 0 0 rgb(220 38 38);
+  box-shadow: inset 3px 0 0 var(--color-error);
 }
 
 .create-validation-popover {
@@ -9441,6 +9584,17 @@ function preserveShallowestPathOrder(paths: string[]) {
 .create-source-dir-preview-empty {
   color: var(--el-text-color-placeholder);
   font-size: 12px;
+  line-height: 1.45;
+}
+
+.create-source-dir-preview-empty--error {
+  color: var(--color-error-text);
+}
+
+.create-source-dir-preview-empty__reason {
+  margin-top: 3px;
+  color: var(--color-error-text);
+  overflow-wrap: anywhere;
 }
 
 .create-source-dir-preview__item {
@@ -9716,15 +9870,23 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-recovery-plan-cell__policy--skip {
-  color: rgb(22 101 52);
+  color: var(--color-success-text);
 }
 
 .create-recovery-plan-cell__policy--overwrite {
-  color: rgb(180 83 9);
+  color: var(--color-warning-text);
 }
 
 .create-recovery-plan-cell__policy--pending {
   color: var(--el-color-danger);
+}
+
+.create-recovery-plan-cell__issue {
+  color: var(--color-error-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .create-recovery-plan-cell__policy-icon {
@@ -9922,6 +10084,14 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 :global(.create-recovery-plan-tooltip__policy--pending) {
   color: var(--el-color-danger);
+}
+
+:global(.create-recovery-plan-tooltip__issue) {
+  color: var(--color-error-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 :global(.create-recovery-plan-tooltip__line) {
@@ -10425,10 +10595,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 
-.create-recovery-path-input--invalid :deep(.el-input-group__append) {
-  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
-}
-
 .create-recovery-path-input__checking {
   font-size: 11px;
   color: rgb(100 116 139);
@@ -10492,7 +10658,7 @@ function preserveShallowestPathOrder(paths: string[]) {
   padding: 4px 8px;
   border: 1px solid color-mix(in srgb, var(--el-color-danger) 38%, white);
   border-radius: 4px;
-  background: #fff7f7;
+  background: var(--color-error-light);
   box-shadow: 0 3px 8px rgba(127, 29, 29, 0.12);
   color: var(--el-color-danger);
   font-size: 12px;
@@ -11023,7 +11189,7 @@ function preserveShallowestPathOrder(paths: string[]) {
   border: 1px solid rgba(220, 38, 38, 0.22);
   border-radius: 8px;
   background: rgba(254, 242, 242, 0.92);
-  color: rgb(185 28 28);
+  color: var(--color-error-text);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -11173,6 +11339,68 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-manual-path__input {
   min-width: 0;
+}
+
+.create-manual-path__input :deep(.el-input__wrapper),
+.create-manual-path__input :deep(.el-input__inner),
+.create-manual-path .create-manual-path__button.el-button--small {
+  height: 34px !important;
+  min-height: 34px !important;
+}
+
+.create-manual-path .create-manual-path__button.el-button--small {
+  align-self: center;
+  padding-inline: 14px;
+}
+
+.create-manual-path__input--error :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.create-manual-path__error {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  color: var(--color-error-text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dp-added-dir-empty {
+  display: flex;
+  min-height: 112px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 20px;
+  color: rgb(148 163 184);
+  border-color: rgb(226 232 240);
+  line-height: 1.45;
+}
+
+.dp-added-dir-empty--error {
+  border-color: var(--color-error-border);
+  background: var(--color-error-light);
+  color: var(--color-error-text);
+}
+
+.dp-added-dir-empty__icon {
+  color: var(--color-error);
+}
+
+.dp-added-dir-empty__title {
+  color: var(--color-error-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dp-added-dir-empty__hint {
+  max-width: 240px;
+  color: rgb(100 116 139);
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .create-dir-row {
@@ -12016,7 +12244,23 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .target-connection-result--failed {
-  color: rgb(185 28 28);
+  color: var(--color-error-text);
+}
+
+.target-assignment-issue {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--color-error-text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.target-assignment-issue__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .target-assignment-summary {
