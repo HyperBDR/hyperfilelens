@@ -22,7 +22,7 @@ class SourcePipelineOperationFenceTests(TestCase):
             organization=self.org,
             name="pipeline-fence-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.entry = SourceBackupPipelineEntry.objects.create(
             organization=self.org,

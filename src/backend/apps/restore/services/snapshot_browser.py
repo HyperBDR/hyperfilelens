@@ -53,7 +53,7 @@ def _target_node(*, organization_id: int, target_node_id: int) -> Node:
     ).first()
     if node is None:
         raise ValidationError({"target_node_id": "Target node not found."})
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         raise ValidationError({"target_node_id": "Target node is offline."})
     return node
 

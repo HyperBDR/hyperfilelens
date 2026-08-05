@@ -126,16 +126,16 @@ export function useKnowledgeSourceForm(
 
   const aiReadyGateways = computed(() =>
     gateways.value.filter(
-      (row) => row.ai_enabled && row.sidecar_status === 'online' && row.status === 'online',
+      (row) => row.ai_enabled && row.sidecar_status === 'online' && row.availability === 'online',
     ),
   )
 
   const onlineGateways = computed(() =>
-    gateways.value.filter((row) => row.status === 'online'),
+    gateways.value.filter((row) => row.availability === 'online'),
   )
 
   const offlineGatewayCount = computed(() =>
-    gateways.value.filter((row) => row.status !== 'online').length,
+    gateways.value.filter((row) => row.availability !== 'online').length,
   )
 
   const gatewaysForPicker = computed(() => {

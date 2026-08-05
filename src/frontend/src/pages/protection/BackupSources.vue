@@ -813,19 +813,6 @@ function sourceNodeOnlineTagType(row: SourceResource): 'success' | 'warning' | '
   return sourceNasStatusPresentation(row, sourceNodeOnlineStatus(row)).tone
 }
 
-function sourceProxyStatusLabel(row: SourceResource) {
-  const status = sourceNodeOnlineStatus(row)
-  const label = status === 'online'
-    ? t('protection.sourceResources.nodeStatusOnline')
-    : status === 'reconnecting'
-      ? t('protection.sourceResources.nodeStatusReconnecting')
-      : t('protection.sourceResources.nodeStatusOffline')
-  return t('protection.sourceResources.proxyStatus', { status: label })
-}
-
-
-
-
 function sourceRegisteredAt(row: SourceResource) {
   const node = boundNodeForRow(row)
   return node?.created_at || row.created_at || row.updated_at || null
@@ -1361,8 +1348,8 @@ function nasBoundNodeId(row: SourceResource): number | undefined {
   return normalizeProxyNodeId(row.bound_node)
 }
 
-const onlineProxyNodes = computed(() => proxyNodes.value.filter((n) => n.status === 'online'))
-const offlineProxyNodeCount = computed(() => proxyNodes.value.filter((n) => n.status !== 'online').length)
+const onlineProxyNodes = computed(() => proxyNodes.value.filter((n) => n.availability === 'online'))
+const offlineProxyNodeCount = computed(() => proxyNodes.value.filter((n) => n.availability !== 'online').length)
 
 function sharedNasBoundNodeId(): number | undefined {
   if (selectedNas.value.length === 0) return undefined
@@ -1478,7 +1465,7 @@ function openNasRebindDialog() {
   if (nasBatchDisabled.value) return
   const shared = sharedNasBoundNodeId()
   const preset = shared != null ? proxyNodes.value.find((n) => n.id === shared) : undefined
-  rebindNodeId.value = preset?.status === 'online' ? shared : undefined
+  rebindNodeId.value = preset?.availability === 'online' ? shared : undefined
   rebindDialogOpen.value = true
 }
 
@@ -1491,7 +1478,7 @@ watch(rebindDialogOpen, (open) => {
       const shared = sharedNasBoundNodeId()
       if (rebindNodeId.value == null && shared != null) {
         const node = proxyNodes.value.find((n) => n.id === shared)
-        if (node?.status === 'online') rebindNodeId.value = shared
+        if (node?.availability === 'online') rebindNodeId.value = shared
       }
     } finally {
       proxyNodesRefreshing.value = false
@@ -1508,7 +1495,7 @@ async function submitNasRebind() {
     return
   }
   const target = proxyNodes.value.find((n) => n.id === nodeId)
-  if (!target || target.status !== 'online') {
+  if (!target || target.availability !== 'online') {
     ElMessage.warning({ message: t('protection.sourceResources.rebindProxyNodeOffline'), grouping: true })
     return
   }
@@ -2248,6 +2235,19 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
+              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="135" align="center" header-align="center">
+                <template #default="{ row }">
+                  <div class="hfl-table-no-tooltip">
+                    <FlowSourceReadyStatusCell
+                      v-if="resolveSourcePendingStatus(nasSelectableId(row))"
+                      v-bind="resolveSourcePendingStatus(nasSelectableId(row))!"
+                    />
+                    <el-tag v-else :type="sourceNodeOnlineTagType(row)" size="small">
+                      {{ sourceNodeOnlineLabel(row) }}
+                    </el-tag>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colProtocol')" width="85">
                 <template #default="{ row }">
                   <span v-if="nasProtocolType(row) !== 'nas'" :class="nasProtocolPillClass(row)">
@@ -2308,23 +2308,6 @@ onUnmounted(() => {
                     {{ t('protection.sourceResources.capacitySyncing') }}
                   </span>
                   <span v-else>—</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="135" align="center" header-align="center">
-                <template #default="{ row }">
-                  <div class="hfl-table-no-tooltip">
-                    <FlowSourceReadyStatusCell
-                      v-if="resolveSourcePendingStatus(nasSelectableId(row))"
-                      v-bind="resolveSourcePendingStatus(nasSelectableId(row))!"
-                      @click="openSourcePendingFailureDetails(nasSelectableId(row))"
-                    />
-                    <div v-else class="source-nas-status-stack">
-                      <el-tag :type="sourceNodeOnlineTagType(row)" size="small">
-                        {{ sourceNodeOnlineLabel(row) }}
-                      </el-tag>
-                      <span class="source-nas-status-stack__proxy">{{ sourceProxyStatusLabel(row) }}</span>
-                    </div>
-                  </div>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
@@ -2727,19 +2710,6 @@ onUnmounted(() => {
 <style src="../../styles/source-deploy-ui.css"></style>
 <style src="../../styles/agent-install-wizard.css"></style>
 <style scoped>
-.source-nas-status-stack {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-}
-
-.source-nas-status-stack__proxy {
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
 .hfl-table-header-with-tip {
   display: inline-flex;
   align-items: center;

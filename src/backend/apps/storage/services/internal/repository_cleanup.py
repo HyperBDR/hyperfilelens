@@ -1437,7 +1437,7 @@ def _cleanup_target_payloads(
             "owner_node_id": target.owner_node_id,
             "owner_node_name": nodes[target.owner_node_id].name if target.owner_node_id in nodes else "",
             "owner_online": (
-                nodes[target.owner_node_id].status == Node.Status.ONLINE
+                nodes[target.owner_node_id].availability == Node.Availability.ONLINE
                 if target.owner_node_id in nodes
                 else target.owner_type == RepositoryExecutionTarget.OwnerType.CONTROLLER
             ),

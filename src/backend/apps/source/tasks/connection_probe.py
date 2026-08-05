@@ -68,7 +68,7 @@ def run_source_resource_capacity_probe(
         return {"status": "skipped", "reason": skip_reason}
 
     node = resource.bound_node
-    if node is None or node.status != Node.Status.ONLINE:
+    if node is None or node.availability != Node.Availability.ONLINE:
         resource, skip_reason = apply_connection_test_result_if_current(
             resource_id=resource_id,
             probe_token=probe_token,
@@ -88,6 +88,7 @@ def run_source_resource_capacity_probe(
         connection_probe_token=probe_token,
     ).update(
         connection_test_status=ConnectionTestStatus.RUNNING,
+        status=ResourceStatus.PROBING,
         updated_at=timezone.now(),
     )
 
@@ -260,10 +261,12 @@ def _queue_availability_probe(
 
         probe_token = uuid4()
         resource.connection_test_status = ConnectionTestStatus.PENDING
+        resource.status = ResourceStatus.PROBING
         resource.connection_probe_token = probe_token
         resource.save(
             update_fields=[
                 "connection_test_status",
+                "status",
                 "connection_probe_token",
                 "updated_at",
             ]

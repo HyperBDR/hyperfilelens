@@ -26,7 +26,7 @@ class UninstallCompletionTests(TestCase):
             organization=self.org,
             name="uninstall-completion-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
 
     def _task(self, *, force: bool = False) -> NodeTask:

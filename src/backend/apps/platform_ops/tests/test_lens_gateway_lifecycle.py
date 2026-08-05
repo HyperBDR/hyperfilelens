@@ -45,7 +45,7 @@ class PlatformOpsLensGatewayLifecycleTests(TestCase):
             organization=self.platform_org,
             name="platform-gateway",
             role=NodeRole.GATEWAY,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
         )
 
     def _post(self, path: str, body: dict) -> Response:

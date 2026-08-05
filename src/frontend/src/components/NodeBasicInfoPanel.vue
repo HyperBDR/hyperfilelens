@@ -102,7 +102,7 @@ const capacityParts = computed(() => {
 })
 
 const uptimeLabel = computed(() => {
-  if (props.node.status !== 'online') return ''
+  if (props.node.availability !== 'online') return ''
   const seconds = nodeUptimeSeconds(props.node, true)
   if (seconds == null) return ''
   const days = Math.floor(seconds / 86400)
@@ -117,7 +117,7 @@ const uptimeLabel = computed(() => {
 
 function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
   if (props.resolveDisplayStatus) return props.resolveDisplayStatus(node)
-  if (node.status === 'online') {
+  if (node.status === 'active') {
     return { labelKey: 'protection.sourceResources.nodeStatusOnline', tagType: 'success' }
   }
   if (node.status === 'reconnecting') {

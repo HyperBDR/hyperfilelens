@@ -1426,6 +1426,7 @@ export const en = {
     bannerRemove:
       'Batch removal · Running {running} · Queued {queued} · Done {done}/{total} · Failed {failed}',
     state: {
+      active: 'Active',
       queued: 'Queued',
       upgrading: 'Upgrading',
       restarting: 'Restarting',
@@ -1434,6 +1435,8 @@ export const en = {
       removing: 'Removing',
       cleaning_up: 'Cleaning up',
       failed: 'Failed',
+      upgrade_failed: 'Upgrade Failed',
+      deregistration_failed: 'Deregistration Failed',
       completed: 'Completed',
     },
     osStep: 'Select Target Operating System',

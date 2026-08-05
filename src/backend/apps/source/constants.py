@@ -63,6 +63,7 @@ class ResourceStatus:
     ACTIVE = "active"
     INACTIVE = "inactive"
     ERROR = "error"
+    PROBING = "probing"
     REMOVING = "removing"
     REMOVE_FAILED = "remove_failed"
     REMOVED = "removed"
@@ -71,6 +72,7 @@ class ResourceStatus:
         (ACTIVE, "Active"),
         (INACTIVE, "Inactive"),
         (ERROR, "Error"),
+        (PROBING, "Probing"),
         (REMOVING, "Removing"),
         (REMOVE_FAILED, "Remove failed"),
         (REMOVED, "Removed"),

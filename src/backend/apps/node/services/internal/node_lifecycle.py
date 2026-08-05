@@ -353,7 +353,7 @@ def _upgrade_verify_ready(*, node: Node, task: NodeTask) -> bool:
         return False
     if not agent_session_registered(agent_id=node.id):
         return False
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         return False
     result = task.result if isinstance(task.result, dict) else {}
     if not result.get("disconnect_observed_at"):
@@ -1088,7 +1088,7 @@ def preview_batch_operations(
             continue
 
         if kind == LIFECYCLE_KIND_UPGRADE:
-            if node.status != Node.Status.ONLINE or not agent_ws_routable(agent_id=node.id):
+            if node.availability != Node.Availability.ONLINE or not agent_ws_routable(agent_id=node.id):
                 skipped_offline.append({**item, "reason": "offline"})
                 continue
             if _disk_blocks_upgrade(node):

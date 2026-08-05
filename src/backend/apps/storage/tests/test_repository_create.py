@@ -126,7 +126,7 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             name="repair-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.40",
         )
         repository = Repository.objects.create(
@@ -214,7 +214,7 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             name="repair-proxy-resume",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.43",
         )
         repository = Repository.objects.create(
@@ -260,14 +260,14 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             name="old-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         new_proxy = Node.objects.create(
             organization=self.org,
             name="new-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.42",
         )
         repository = Repository.objects.create(
@@ -330,14 +330,14 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             name="old-proxy-step",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.48",
         )
         new_proxy = Node.objects.create(
             organization=self.org,
             name="new-proxy-step",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.49",
         )
         repository = Repository.objects.create(
@@ -387,14 +387,14 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             name="old-proxy-finalize",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.46",
         )
         new_proxy = Node.objects.create(
             organization=self.org,
             name="new-proxy-finalize",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.47",
         )
         repository = Repository.objects.create(
@@ -439,14 +439,14 @@ class RepositoryCreateTaskTests(TestCase):
             organization=self.org,
             name="old-proxy-resume",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.44",
         )
         new_proxy = Node.objects.create(
             organization=self.org,
             name="new-proxy-resume",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.45",
         )
         repository = Repository.objects.create(

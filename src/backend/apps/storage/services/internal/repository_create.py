@@ -502,7 +502,7 @@ def _run_repair_remount(repository_task: RepositoryTask) -> None:
     ).first()
     if new_node is None:
         raise ValidationError("Bound proxy node not found.")
-    if new_node.status != Node.Status.ONLINE:
+    if new_node.availability != Node.Availability.ONLINE:
         raise ValidationError(f'Bound proxy node "{new_node.name}" is not online.')
 
     _remount_on_new_proxy(

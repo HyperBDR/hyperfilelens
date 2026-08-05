@@ -33,7 +33,7 @@ class PolicyExecutionTests(TestCase):
             organization=self.org,
             name="policy-exec-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,

@@ -44,7 +44,7 @@ class SnapshotBrowserApiTests(TestCase):
             organization=self.org,
             name="snapshot-browser-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -145,10 +145,10 @@ class SnapshotBrowserApiTests(TestCase):
             organization=self.org,
             name="snapshot-browser-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
-        self.agent.status = Node.Status.OFFLINE
-        self.agent.save(update_fields=["status"])
+        self.agent.availability = Node.Availability.OFFLINE
+        self.agent.save(update_fields=["availability"])
         self.repository.repo_type = Repository.Type.NAS
         self.repository.nas_protocol = Repository.NasProtocol.NFS
         self.repository.s3_bucket = ""

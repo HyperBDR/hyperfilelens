@@ -119,16 +119,16 @@ const sourceTypeLabel = computed(() => t('protection.sourceResources.addSourceTy
 const connectionUri = computed(() => (row.value ? nasMountSourceUri(row.value) : DETAIL_EMPTY))
 
 const proxyNode = computed(() => boundProxyNode())
-const onlineProxyNodes = computed(() => props.proxyNodes.filter((node) => node.status === 'online'))
+const onlineProxyNodes = computed(() => props.proxyNodes.filter((node) => node.availability === 'online'))
 
 function proxyNodeStatusLabel(node: ApiNode) {
-  return node.status === 'online'
+  return node.availability === 'online'
     ? t('protection.sourceResources.nodeStatusOnline')
     : t('protection.sourceResources.nodeStatusOffline')
 }
 
 function proxyNodeStatusTagType(node: ApiNode): 'success' | 'danger' | 'warning' | 'info' {
-  if (node.status === 'online') return 'success'
+  if (node.availability === 'online') return 'success'
   if (node.status === 'offline') return 'danger'
   return 'info'
 }
@@ -775,7 +775,12 @@ onUnmounted(() => {
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldConnectionStatus') }}</span>
                   <span class="hfl-detail-row__value">
-                    <ElTag v-bind="connectionStatusTagAttrs" size="small">
+                    <ElTag
+                      v-bind="connectionStatusTagAttrs"
+                      size="small"
+                      class="nas-detail-status-tag"
+                      :title="connectionStatusLabel"
+                    >
                       {{ connectionStatusLabel }}
                     </ElTag>
                   </span>
@@ -822,6 +827,22 @@ onUnmounted(() => {
 <style scoped>
 .hfl-detail-row__value--stacked > .hfl-detail-row__text {
   width: 100%;
+}
+
+.nas-detail-status-tag {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.nas-detail-status-tag :deep(.el-tag__content) {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nas-detail-proxy-option {

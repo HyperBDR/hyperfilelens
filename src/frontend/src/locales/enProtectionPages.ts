@@ -886,7 +886,7 @@ export const enProtectionPages = {
     deleteReasonNasUmountFailed: 'Could not unmount NAS share for [{name}]. {detail}',
     msgDeleteSourcePending: 'Source deregistration task submitted. Agent uninstall is in progress.',
     sourcePendingDeleting: 'Deregistering...',
-    sourcePendingDeleteFailed: 'Deregistration failed',
+    sourcePendingDeleteFailed: 'Deregistration Failed',
     sourcePendingRemoving: 'Removing Agent…',
     sourcePendingRevertStep3: 'Reverting Backup…',
     sourcePendingRevertStep2: 'Reverting to Step 1…',

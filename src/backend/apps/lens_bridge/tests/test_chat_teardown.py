@@ -45,7 +45,7 @@ class CopilotChatTeardownTests(TestCase):
             organization=self.platform_org,
             name="platform-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.gateway_link = LensGatewayLink.objects.create(
             organization=self.platform_org,
@@ -1375,7 +1375,7 @@ class CopilotChatTeardownTests(TestCase):
             organization=self.tenant,
             name="private-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         private_link = LensGatewayLink.objects.create(
             organization=self.tenant,

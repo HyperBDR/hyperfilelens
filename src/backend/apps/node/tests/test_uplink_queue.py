@@ -200,7 +200,7 @@ class UplinkQueueTests(TestCase):
             organization=self.org,
             name="agent-uplink",
             role=NodeRole.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
             last_seen_at=timezone.now(),
         )
         self.redis = _StreamRedis()

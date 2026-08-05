@@ -35,7 +35,7 @@ class GatewayExecutionContextTests(TestCase):
             organization=platform_org,
             name="shared-platform-gateway",
             role=NodeRole.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         link = LensGatewayLink.objects.create(
             organization=platform_org,
@@ -61,7 +61,7 @@ class GatewayExecutionContextTests(TestCase):
             organization=other_org,
             name="other-private-gateway",
             role=NodeRole.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         link = LensGatewayLink.objects.create(
             organization=other_org,
@@ -82,7 +82,7 @@ class GatewayExecutionContextTests(TestCase):
             organization=self.tenant,
             name="private-user-gateway",
             role=NodeRole.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         link = LensGatewayLink.objects.create(
             organization=self.tenant,

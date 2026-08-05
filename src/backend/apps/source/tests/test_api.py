@@ -55,8 +55,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="proxy-1",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.client.force_authenticate(user=self.user)
 
@@ -193,7 +192,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-local-connection",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         create = self.client.post(
             "/api/v1/source/resources/",
@@ -492,7 +491,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-host-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.21",
             os_name="darwin arm64",
             metadata={
@@ -565,8 +564,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="query-contract-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="198.51.100.42",
             metadata={"inventory": {"hostname": "contract-host"}},
         )
@@ -618,7 +616,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-step3-expand-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.25",
         )
         repository = Repository.objects.create(
@@ -746,14 +744,14 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.26",
         )
         other_agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-2",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.27",
         )
         task = Task.objects.create(
@@ -800,7 +798,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-history",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.28",
         )
         failed_task = Task.objects.create(
@@ -850,7 +848,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-restorable",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.29",
         )
         config = self._create_backup_config_for_agent(agent, name="runtime-restorable-config")
@@ -901,21 +899,21 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-runtime-partial",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.30",
         )
         failed_agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-failed-only",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.31",
         )
         empty_agent = Node.objects.create(
             organization=self.org,
             name="agent-runtime-empty",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.32",
         )
         partial_config = self._create_backup_config_for_agent(partial_agent, name="runtime-partial-config")
@@ -961,7 +959,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-mac-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             os_name="darwin arm64",
             metadata={"inventory": {"os": "darwin", "arch": "arm64"}},
         )
@@ -977,7 +975,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1022,7 +1020,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-file-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.43",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1065,7 +1063,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-type-fields-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.45",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1105,7 +1103,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-path-info",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.44",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1144,7 +1142,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-path-info-lite",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.46",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1181,7 +1179,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-root",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.42",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1219,7 +1217,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-root-files",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.45",
         )
         mock_run_task.return_value = SimpleNamespace(
@@ -1393,7 +1391,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-limit",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
@@ -1432,7 +1430,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-dir-cursor",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         mock_run_task.return_value = SimpleNamespace(
             timed_out=False,
@@ -1503,7 +1501,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-for-nas",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -1531,7 +1529,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-pipeline-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.31",
         )
         sync_agent_source_host(node=agent)
@@ -1602,7 +1600,7 @@ class SourceResourceApiTests(TestCase):
             organization=self.org,
             name="agent-pipeline-revert-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.32",
         )
         sync_agent_source_host(node=agent)
@@ -1671,7 +1669,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="agent-offline-1",
             role=Node.Role.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
         )
         self.client.force_authenticate(user=self.user)
 
@@ -1807,7 +1805,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="probe-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -1949,7 +1947,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="agent-offline-2",
             role=Node.Role.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
         )
 
         response = self.client.post(
@@ -2002,7 +2000,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="proxy-nas-delete",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2068,7 +2066,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="delete-nas-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,
@@ -2140,7 +2138,7 @@ class BackupSourceBulkDeleteTests(TestCase):
             organization=self.org,
             name="strict-unmount-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         resource = SourceResource.objects.create(
             organization=self.org,

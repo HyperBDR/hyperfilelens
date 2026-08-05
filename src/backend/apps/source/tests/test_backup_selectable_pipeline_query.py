@@ -23,8 +23,7 @@ class BackupSelectablePipelineQueryTests(TestCase):
             organization=self.org,
             name="Alpha Host",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="198.51.100.10",
             metadata={"inventory": {"hostname": "alpha-executor"}},
         )
@@ -32,8 +31,7 @@ class BackupSelectablePipelineQueryTests(TestCase):
             organization=self.org,
             name="NAS Proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="203.0.113.20",
         )
         self.nas = SourceResource.objects.create(
@@ -76,6 +74,22 @@ class BackupSelectablePipelineQueryTests(TestCase):
         ids, count = self.ids(search="198.51.100.10", search_field="source_ip", pipeline_step=3)
         self.assertEqual(ids, [f"agent:{self.agent.id}"])
         self.assertEqual(count, 1)
+
+    def test_materialized_rows_include_source_availability(self):
+        self.nas.availability = "offline"
+        self.nas.save(update_fields=["availability", "updated_at"])
+
+        results, count = list_backup_selectable_sources(
+            organization_id=self.org.id,
+            page=1,
+            page_size=20,
+            pipeline_step=3,
+        )
+
+        rows = {row["id"]: row for row in results}
+        self.assertEqual(count, 2)
+        self.assertEqual(rows[f"agent:{self.agent.id}"]["availability"], "online")
+        self.assertEqual(rows[f"nas:{self.nas.id}"]["availability"], "offline")
 
     def test_filters_are_combined_before_count_and_pagination(self):
         config = BackupConfig.objects.create(
@@ -223,8 +237,7 @@ class BackupSelectableShadowQueryTests(TestCase):
             organization=self.org,
             name="Shadow Agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         entry = ensure_pipeline_entry(
             organization_id=self.org.id,
@@ -259,8 +272,7 @@ class BackupSelectablePipelineScaleTests(TestCase):
                 organization=org,
                 name=f"Scale Agent {index:05d}",
                 role=Node.Role.AGENT,
-                status=Node.Status.ONLINE,
-                availability=Node.Availability.ONLINE,
+                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             )
             for index in range(10_000)
         ])

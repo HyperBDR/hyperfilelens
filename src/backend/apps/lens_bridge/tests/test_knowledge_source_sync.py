@@ -27,7 +27,7 @@ class KnowledgeSourceSyncLeaseTests(TransactionTestCase):
             organization=self.organization,
             name="sync-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=self.organization,
@@ -320,7 +320,7 @@ class ManagedRestorePipelineOrderTests(TestCase):
             organization=gateway_org,
             name="gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=gateway_org,

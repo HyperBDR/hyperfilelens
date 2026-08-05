@@ -36,8 +36,7 @@ class SourceConnectionProbeTests(TestCase):
             organization=self.org,
             name="source-connection-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.probe_token = uuid4()
         self.resource = SourceResource.objects.create(
@@ -144,8 +143,8 @@ class SourceConnectionProbeTests(TestCase):
 
     @mock.patch("apps.source.tasks.connection_probe.run_connection_test")
     def test_probe_skips_when_proxy_is_offline(self, run_test):
-        self.proxy.status = Node.Status.OFFLINE
-        self.proxy.save(update_fields=["status", "updated_at"])
+        self.proxy.availability = Node.Availability.OFFLINE
+        self.proxy.save(update_fields=["availability", "updated_at"])
 
         result = run_source_resource_capacity_probe(
             resource_id=self.resource.id,
@@ -339,7 +338,7 @@ class SourceConnectionProbeTests(TestCase):
             organization=self.org,
             name="source-connection-replacement-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
 
         result = bind_node(resource=self.resource, node_id=replacement.id)

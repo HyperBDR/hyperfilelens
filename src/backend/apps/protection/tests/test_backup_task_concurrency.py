@@ -30,7 +30,7 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             organization=self.org,
             name="backup-concurrency-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.71",
         )
         self.repository = Repository.objects.create(

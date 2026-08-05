@@ -1302,7 +1302,7 @@ def browse_gateway_directory(
     )
 
     gateway = require_gateway_node(org, gateway_id)
-    if gateway.status != Node.Status.ONLINE:
+    if gateway.availability != Node.Availability.ONLINE:
         raise ValidationError({"gateway": "Data gateway must be online to browse directories."})
 
     link = get_gateway_link(org, gateway.id)

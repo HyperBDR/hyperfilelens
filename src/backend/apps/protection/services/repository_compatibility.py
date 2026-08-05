@@ -82,7 +82,7 @@ def _validate_proxy_bound_repository(
     ).first()
     if repository_node is None:
         raise ValidationError({"repository_id": "Repository bound proxy node not found."})
-    if repository_node.status != Node.Status.ONLINE:
+    if repository_node.availability != Node.Availability.ONLINE:
         raise ValidationError({"repository_id": "Repository bound proxy node is offline."})
 
     host, _source = explicit_repository_server_host(

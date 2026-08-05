@@ -27,6 +27,7 @@ from apps.node.services.internal.task import (
     complete_task,
     create_agent_task,
     deliver_agent_task,
+    project_node_lifecycle_task,
 )
 from apps.task.models import Task, TaskResource
 
@@ -44,7 +45,7 @@ class NodeLifecycleTests(TestCase):
             organization=self.org,
             name="agent-lifecycle",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             version="1.0.0",
             metadata={"capabilities": ["detached_uninstall_v2"]},
         )
@@ -64,6 +65,31 @@ class NodeLifecycleTests(TestCase):
             is_primary=True,
         )
         return task
+
+    def test_lifecycle_failure_projects_operation_specific_node_status(self):
+        cases = (
+            ("agent.upgrade", Node.Status.UPGRADE_FAILED),
+            ("agent.uninstall", Node.Status.DEREGISTRATION_FAILED),
+        )
+        for kind, expected_status in cases:
+            with self.subTest(kind=kind):
+                task = NodeTask.objects.create(
+                    organization=self.org,
+                    node=self.node,
+                    kind=kind,
+                    status=NodeTask.Status.FAILED,
+                    watchdog_deadline_at=timezone.now(),
+                    correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+                    correlation_id=f"{kind}:{self.node.id}",
+                )
+
+                project_node_lifecycle_task(node_task=task)
+
+                self.node.refresh_from_db()
+                self.assertEqual(self.node.status, expected_status)
+                self.assertEqual(self.node.availability, Node.Availability.ONLINE)
+                self.node.status = Node.Status.ACTIVE
+                self.node.save(update_fields=["status", "updated_at"])
 
     def test_upgrade_is_blocked_by_active_source_unregister(self):
         self._create_active_source_unregister()
@@ -426,7 +452,7 @@ class NodeLifecycleTests(TestCase):
             organization=self.org,
             name="gateway-with-knowledge-source",
             role=NodeRole.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=self.org,

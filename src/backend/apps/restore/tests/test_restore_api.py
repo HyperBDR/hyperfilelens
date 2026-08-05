@@ -50,14 +50,14 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="restore-agent-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.51",
         )
         self.target = Node.objects.create(
             organization=self.org,
             name="restore-target-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.52",
         )
         self.repository = Repository.objects.create(
@@ -178,7 +178,7 @@ class RestoreApiTests(TestCase):
             organization=platform_org,
             name="platform-restore-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=platform_org,
@@ -250,7 +250,7 @@ class RestoreApiTests(TestCase):
             organization=platform_org,
             name="forbidden-platform-target",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         payload = self._manual_restore_payload()
         payload["target_ref_id"] = platform_gateway.id
@@ -272,7 +272,7 @@ class RestoreApiTests(TestCase):
             organization=platform_org,
             name="platform-path-boundary-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=platform_org,
@@ -308,7 +308,7 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="private-lens-gateway",
             role=Node.Role.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
             organization=self.org,
@@ -345,7 +345,7 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="restore-nas-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         target_nas = SourceResource.objects.create(
@@ -353,6 +353,7 @@ class RestoreApiTests(TestCase):
             name="restore-target-nas",
             resource_type=ResourceType.NAS,
             bound_node=proxy,
+            availability="online",
             config={"server": "10.0.0.20", "share": "restore"},
         )
         target_nas.set_credentials(
@@ -674,7 +675,7 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="restore-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         self.repository.repo_type = Repository.Type.NAS
@@ -722,7 +723,7 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="restore-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         self.repository.repo_type = Repository.Type.NAS
@@ -1732,7 +1733,7 @@ class RestoreApiTests(TestCase):
             organization=self.org,
             name="restore-agent-2",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.53",
         )
         other_config = BackupConfig.objects.create(
@@ -2048,8 +2049,8 @@ class RestoreApiTests(TestCase):
 
     @patch("apps.restore.services.snapshot_browser.run_agent_task_sync")
     def test_browse_restore_snapshot_directory_rejects_offline_target(self, mock_run_agent_task_sync):
-        self.target.status = Node.Status.OFFLINE
-        self.target.save(update_fields=["status"])
+        self.target.availability = Node.Availability.OFFLINE
+        self.target.save(update_fields=["availability"])
 
         response = self.client.get(
             f"/api/v1/restore/snapshot-directories/{self.snapshot_dir.id}/browse/"

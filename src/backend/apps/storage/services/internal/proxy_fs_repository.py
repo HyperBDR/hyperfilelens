@@ -49,7 +49,7 @@ def validate_proxy_for_proxy_fs(repository: Repository) -> Node:
     ).first()
     if node is None:
         raise ValidationError("Bound proxy node not found.")
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         raise ValidationError(f'Bound proxy node "{node.name}" is not online.')
     return node
 

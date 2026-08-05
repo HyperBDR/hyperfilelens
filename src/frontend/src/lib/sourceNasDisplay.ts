@@ -13,6 +13,8 @@ export type NasLikeResource = {
 
 export type SourceNasProxyStatus = 'online' | 'reconnecting' | 'offline'
 export type SourceNasRuntimeStatus =
+  | 'active'
+  | 'inactive'
   | 'removing'
   | 'remove_failed'
   | 'error'
@@ -31,6 +33,14 @@ const SOURCE_NAS_STATUS_PRESENTATIONS: Record<
   SourceNasRuntimeStatus,
   Omit<SourceNasStatusPresentation, 'status'>
 > = {
+  active: {
+    labelKey: 'nodeLifecycle.state.active',
+    tone: 'success',
+  },
+  inactive: {
+    labelKey: 'protection.sourceResources.nodeStatusOffline',
+    tone: 'warning',
+  },
   removing: {
     labelKey: 'protection.backupsPage.sourcePendingDeleting',
     tone: 'info',
@@ -84,7 +94,9 @@ export function sourceNasStatusPresentation(
   const mountStatus = normalizedStatus(row.mount_status)
   const resourceStatus = normalizedStatus(row.status)
   let status: SourceNasRuntimeStatus = proxyStatus
-  if (
+  if (resourceStatus === 'removing' || resourceStatus === 'remove_failed' || resourceStatus === 'error' || resourceStatus === 'probing' || resourceStatus === 'active' || resourceStatus === 'inactive') {
+    status = resourceStatus as SourceNasRuntimeStatus
+  } else if (
     connectionTestStatus === 'failed'
     || mountStatus === 'error'
     || resourceStatus === 'error'

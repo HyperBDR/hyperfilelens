@@ -22,7 +22,7 @@ class WatchdogProjectionGraceTests(TestCase):
             organization=self.org,
             name="projection-agent",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             last_seen_at=timezone.now(),
         )
 

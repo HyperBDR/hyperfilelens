@@ -44,7 +44,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             organization=self.org,
             name="validation-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.20",
         )
         self.s3_repository = Repository.objects.create(
@@ -247,7 +247,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             organization=self.org,
             name="shared-source-repository-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         source = SourceResource.objects.create(
@@ -255,6 +255,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             name="same-proxy-nas-source",
             resource_type=ResourceType.NAS,
             bound_node=proxy,
+            availability="online",
             config={
                 "protocol": "nfs",
                 "server": "10.0.0.50",
@@ -309,14 +310,14 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             organization=self.org,
             name="repository-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.40",
         )
         agent_two = Node.objects.create(
             organization=self.org,
             name="validation-agent-two",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.21",
         )
         repository = Repository.objects.create(
@@ -393,8 +394,8 @@ class BackupTargetValidationApiTests(TransactionTestCase):
         "apps.protection.services.backup_target_validation._execute_agent_task"
     )
     def test_offline_source_returns_row_failure_without_dispatch(self, execute):
-        self.agent.status = Node.Status.OFFLINE
-        self.agent.save(update_fields=["status"])
+        self.agent.availability = Node.Availability.OFFLINE
+        self.agent.save(update_fields=["availability"])
 
         result = validate_backup_targets(
             organization_id=self.org.id,
@@ -417,7 +418,7 @@ class BackupTargetValidationApiTests(TransactionTestCase):
             organization=other_org,
             name="other-validation-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         other_repository = Repository.objects.create(
             organization_id=other_org.id,

@@ -39,7 +39,6 @@ def on_agent_connected(*, node_id: int, session_id: str, client_ip: str | None =
     observed_at = timezone.now()
     updates: dict = {
         "last_seen_at": observed_at,
-        "status": Node.Status.ONLINE,
     }
     if client_ip:
         updates["connection_ip_address"] = client_ip
@@ -162,7 +161,6 @@ def apply_heartbeat_inventory_snapshot(*, node_id: int, inventory: dict | None) 
         return
     observed_at = timezone.now()
     updates["last_seen_at"] = observed_at
-    updates["status"] = Node.Status.ONLINE
     Node.objects.filter(pk=node_id).update(**updates)
     record_node_available(node_id=node_id, observed_at=observed_at)
 
@@ -189,7 +187,6 @@ def _process_heartbeat_followup(*, node_id: int, inventory: dict | None = None) 
     observed_at = timezone.now()
     updates: dict = {
         "last_seen_at": observed_at,
-        "status": Node.Status.ONLINE,
     }
     if full_inventory:
         updates.update(_merge_heartbeat_inventory_updates(node=node, inventory=inventory))

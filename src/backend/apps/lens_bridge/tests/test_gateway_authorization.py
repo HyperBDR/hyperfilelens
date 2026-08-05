@@ -32,7 +32,7 @@ class PrivateGatewayApiAuthorizationTests(TestCase):
             organization=self.org,
             name="Private gateway",
             role=NodeRole.GATEWAY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.link = LensGatewayLink.objects.create(
             organization=self.org,

@@ -47,7 +47,7 @@ class SnapshotDeleteTaskTests(TestCase):
             organization=self.org,
             name="snapshot-delete-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -272,8 +272,8 @@ class SnapshotDeleteTaskTests(TestCase):
     @patch("apps.protection.services.snapshot_delete.run_agent_task_sync")
     def test_offline_source_is_closed_as_retryable_business_failure(self, mock_run_agent_task_sync):
         task = create_snapshot_delete_task(source_snapshot=self.snapshot)
-        self.agent.status = Node.Status.OFFLINE
-        self.agent.save(update_fields=["status", "updated_at"])
+        self.agent.availability = Node.Availability.OFFLINE
+        self.agent.save(update_fields=["availability", "updated_at"])
 
         result = run_snapshot_delete_task(
             organization_id=self.org.id,

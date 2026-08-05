@@ -21,7 +21,7 @@ import type {
   NodeLifecycleKind,
   NodeOperationBatchPreview,
 } from '../types/nodeLifecycle'
-import { debouncedNodeStatus, mergeNodeListDuringLifecycleBatch } from './useNodeConnectionDisplay'
+import { mergeNodeListDuringLifecycleBatch } from './useNodeConnectionDisplay'
 
 const STORAGE_KEY = 'hfl-node-lifecycle-queue'
 
@@ -106,7 +106,7 @@ function lifecycleDone(
   if (!target || !versionReachedTarget(node, target)) {
     return false
   }
-  return node.status === 'online' && node.routable === true
+  return node.availability === 'online' && node.routable === true
 }
 
 function queueItemMeta(
@@ -729,7 +729,11 @@ export function useNodeLifecycleOps(options: {
           spinning: true,
         }
       }
-      const key = `nodeLifecycle.state.${lc.state}`
+      const key = lc.state === 'failed'
+        ? lc.kind === 'upgrade'
+          ? 'nodeLifecycle.state.upgrade_failed'
+          : 'nodeLifecycle.state.deregistration_failed'
+        : `nodeLifecycle.state.${lc.state}`
       const spinning = LIFECYCLE_SPINNING_STATES.includes(
         lc.state as (typeof LIFECYCLE_SPINNING_STATES)[number],
       )
@@ -751,42 +755,30 @@ export function useNodeLifecycleOps(options: {
       const spinning = LIFECYCLE_SPINNING_STATES.includes(
         state as (typeof LIFECYCLE_SPINNING_STATES)[number],
       )
+      const labelKey = state === 'failed'
+        ? activeKind.value === 'upgrade'
+          ? 'nodeLifecycle.state.upgrade_failed'
+          : 'nodeLifecycle.state.deregistration_failed'
+        : `nodeLifecycle.state.${state}`
       return {
-        labelKey: `nodeLifecycle.state.${state}`,
-        tagType: 'info',
+        labelKey,
+        tagType: state === 'failed' ? 'danger' : 'info',
         tagClass: state === 'queued' ? 'hfl-tag--neutral' : undefined,
         spinning,
       }
     }
 
-    if (node.status === 'online') {
-      return { labelKey: 'protection.sourceResources.nodeStatusOnline', tagType: 'success' }
+    // Old rows may be read before the data migration runs. The migration maps
+    // both legacy connection values to Active, so present the same semantics.
+    const status = node.status === 'online' || node.status === 'offline' ? 'active' : node.status
+    return {
+      labelKey: `nodeLifecycle.state.${status}`,
+      tagType: status === 'active'
+        ? 'success'
+        : status === 'failed' || status === 'upgrade_failed' || status === 'deregistration_failed'
+          ? 'danger'
+          : 'info',
     }
-    const displayStatus = debouncedNodeStatus(node)
-    if (displayStatus === 'reconnecting') {
-      const local = localLifecycleItem(running.value, queued.value, node.id)
-      if (local && activeKind.value) {
-        const state =
-          local.state && LIFECYCLE_SPINNING_STATES.includes(
-            local.state as (typeof LIFECYCLE_SPINNING_STATES)[number],
-          )
-            ? local.state
-            : activeKind.value === 'upgrade'
-              ? 'restarting'
-              : 'removing'
-        return {
-          labelKey: `nodeLifecycle.state.${state}`,
-          tagType: 'info',
-          spinning: true,
-        }
-      }
-      return {
-        labelKey: 'protection.sourceResources.nodeStatusReconnecting',
-        tagType: 'info',
-        spinning: true,
-      }
-    }
-    return { labelKey: 'protection.sourceResources.nodeStatusOffline', tagType: 'danger' }
   }
 
   function resolveVersionDisplay(node: ApiNode, versionLabel: string) {

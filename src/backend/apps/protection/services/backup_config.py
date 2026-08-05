@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_outcome
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import (
@@ -507,11 +508,11 @@ def _direct_nas_execution_node(
             organization_id=organization_id,
             role=NodeRole.AGENT,
             id=source_ref_id,
-            status=Node.Status.ONLINE,
+            availability=Node.Availability.ONLINE,
             is_deleted=False,
         ).first()
-        if node is None:
-            raise ValidationError({"source_ref_id": "Agent source is offline."})
+        if node is None or not node_is_available_for_work(node):
+            raise ValidationError({"source_ref_id": "Agent source is unavailable or busy."})
         return node
     if source_type == "nas":
         source = SourceResource.objects.filter(
@@ -523,8 +524,8 @@ def _direct_nas_execution_node(
         node = source.bound_node if source is not None else None
         if node is None or node.role != NodeRole.PROXY:
             raise ValidationError({"source_ref_id": "NAS source is not bound to a proxy node."})
-        if node.status != Node.Status.ONLINE:
-            raise ValidationError({"source_ref_id": "NAS bound proxy node is offline."})
+        if source.availability != "online" or not node_is_available_for_work(node):
+            raise ValidationError({"source_ref_id": "NAS source or bound proxy node is unavailable or busy."})
         return node
     raise ValidationError({"source_type": "Unsupported backup source type."})
 

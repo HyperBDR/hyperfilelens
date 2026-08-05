@@ -81,11 +81,19 @@ export function flowSourceNasAccessTitle(row: FlowSourceRow) {
 
 export function flowSourceReadyStatus(
   row: FlowSourceRow,
-  labels: Pick<FlowSourceDisplayLabels, 'online' | 'offline'>,
+  _labels: Pick<FlowSourceDisplayLabels, 'online' | 'offline'>,
 ): FlowReadyStatus {
+  const label = row.status
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
   return {
-    label: row.status === 'online' ? labels.online : labels.offline,
-    tag: row.status === 'online' ? 'success' : 'neutral',
+    label: row.status === 'active' ? 'Active' : label,
+    tag: row.status === 'active'
+      ? 'success'
+      : row.status === 'failed' || row.status === 'upgrade_failed' || row.status === 'deregistration_failed' || row.status === 'error'
+        ? 'danger'
+        : 'neutral',
   }
 }
 

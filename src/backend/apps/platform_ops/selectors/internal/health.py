@@ -147,8 +147,8 @@ def platform_node_stats() -> dict[str, int | str]:
     )
     return {
         "total": Node.objects.count(),
-        "online": Node.objects.filter(status=Node.Status.ONLINE).count(),
-        "offline": Node.objects.filter(status=Node.Status.OFFLINE).count(),
+        "online": Node.objects.filter(availability=Node.Availability.ONLINE).count(),
+        "offline": Node.objects.filter(availability=Node.Availability.OFFLINE).count(),
         "outdated": outdated,
         "latest_version": latest,
     }

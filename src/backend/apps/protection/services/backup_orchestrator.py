@@ -1794,7 +1794,7 @@ def _refresh_stale_directories_for_snapshot(
     except Exception:
         return
     total_dirs = max(int(source_snapshot.directory_count or 0), 1)
-    node_online = effective_agent_node_status(execution_target.node) == Node.Status.ONLINE
+    node_online = effective_agent_node_status(execution_target.node) == Node.Availability.ONLINE
     for stale_index, directory_row in enumerate(
         BackupSourceSnapshotDirectory.objects.filter(source_snapshot=source_snapshot), start=1
     ):
@@ -2077,7 +2077,7 @@ def advance_backup(
     compression_payload = runtime_policy["compression"]
 
     total_dirs = len(directories)
-    node_online = effective_agent_node_status(execution_target.node) == Node.Status.ONLINE
+    node_online = effective_agent_node_status(execution_target.node) == Node.Availability.ONLINE
     backup_protocol = _backup_protocol(task=task, node=execution_target.node)
     if backup_protocol == _BACKUP_PROTOCOL_PREPARED:
         policies_ready = _prepare_directory_policies(

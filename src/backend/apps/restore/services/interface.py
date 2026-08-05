@@ -16,6 +16,7 @@ from django.utils import timezone
 from common.errors import AppError
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
+from apps.node.services.internal.node_registry import node_is_available_for_work
 from apps.node.services.interface import cancel_agent_task, run_agent_task_async
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_log import log_agent_dispatch, log_agent_exception, task_log_context
@@ -1374,8 +1375,8 @@ def _target_execution_node(*, organization_id: int, target_type: str, target_ref
         ).first()
         if node is None:
             raise ValidationError({"target_ref_id": "Target agent not found."})
-        if node.status != Node.Status.ONLINE:
-            raise ValidationError({"target_ref_id": "Target agent is offline."})
+        if not node_is_available_for_work(node):
+            raise ValidationError({"target_ref_id": "Target agent is unavailable or busy."})
         return node
     resource = (
         SourceResource.objects.filter(
@@ -1391,8 +1392,8 @@ def _target_execution_node(*, organization_id: int, target_type: str, target_ref
         raise ValidationError({"target_ref_id": "Target NAS not found."})
     if resource.bound_node is None or resource.bound_node.role != NodeRole.PROXY:
         raise ValidationError({"target_ref_id": "Target NAS is not bound to a proxy node."})
-    if resource.bound_node.status != Node.Status.ONLINE:
-        raise ValidationError({"target_ref_id": "Target NAS proxy node is offline."})
+    if resource.availability != "online" or not node_is_available_for_work(resource.bound_node):
+        raise ValidationError({"target_ref_id": "Target NAS or proxy node is unavailable or busy."})
     return resource.bound_node
 
 
@@ -1439,8 +1440,8 @@ def _dispatch_restore_items(*, organization_id: int, record: RestoreRecord, task
     ).first()
     if node is None:
         raise ValidationError({"target_ref_id": "Restore execution node not found."})
-    if node.status != Node.Status.ONLINE:
-        raise ValidationError({"target_ref_id": "Restore execution node is offline."})
+    if not node_is_available_for_work(node):
+        raise ValidationError({"target_ref_id": "Restore execution node is unavailable or busy."})
     target_nas_payload: dict[str, Any] = {}
     if record.target_type == RestoreRecord.EndpointType.NAS:
         target_nas = (

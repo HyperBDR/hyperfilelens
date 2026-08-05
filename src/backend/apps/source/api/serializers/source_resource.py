@@ -1,8 +1,7 @@
 from rest_framework import serializers
 
-from apps.node.services.internal.node_registry import agent_connection_status
 from apps.source.models import SourceResource
-from apps.source.constants import ConnectionTestStatus, MountStatus, ResourceStatus
+from apps.source.constants import ResourceStatus
 from apps.source.services.internal.nas_display import connection_summary_for_resource
 from apps.source.services.internal.source_credentials import (
     scrub_source_secrets,
@@ -90,7 +89,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
         node = obj.bound_node
         if node is None:
             return None
-        return agent_connection_status(node)
+        return node.status
 
     def get_requires_mount(self, obj):
         return obj.requires_mount
@@ -113,38 +112,23 @@ class SourceResourceSerializer(serializers.ModelSerializer):
         return scrub_source_secrets(obj.config or {})
 
     def get_effective_status(self, obj):
-        if obj.status == ResourceStatus.REMOVING:
-            return "removing"
-        if obj.status == ResourceStatus.REMOVE_FAILED:
-            return "remove_failed"
-        if obj.status == ResourceStatus.ERROR:
-            return "error"
-        if obj.connection_test_status in ConnectionTestStatus.ACTIVE:
-            return "probing"
-        if obj.connection_test_status == ConnectionTestStatus.FAILED:
-            return "error"
-        if obj.mount_status == MountStatus.ERROR:
-            return "error"
-        if (
-            obj.mount_status == MountStatus.MOUNTED
-            or obj.connection_test_status == ConnectionTestStatus.SUCCESS
-        ):
-            return "online"
-        return "unverified"
+        # Status is the NAS lifecycle state. Connection reachability belongs to
+        # the separate ``availability`` field and must never be folded back here.
+        return str(obj.status or ResourceStatus.ACTIVE)
 
     def get_effective_status_message(self, obj):
         status = self.get_effective_status(obj)
         if status == "remove_failed":
-            return "Deregistration failed"
+            return "Deregistration Failed"
         if status == "error":
             return "NAS connection error"
         if status == "probing":
             return "Checking NAS connection"
-        if status == "online":
-            return "NAS online"
+        if status == "active":
+            return "NAS active"
         if status == "removing":
             return "Deregistering"
-        return "NAS connection not verified"
+        return "NAS inactive"
 
 
 class SourceResourceListSerializer(SourceResourceSerializer):

@@ -524,7 +524,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.8.10",
             metadata={"inventory": {"hostname": "source-host", "os": "linux"}},
         )
@@ -580,7 +580,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="nas-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.8.12",
         )
         source = SourceResource.objects.create(
@@ -675,7 +675,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent-a",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.8.11",
             metadata={"inventory": {"hostname": "source-a", "os": "linux"}},
         )
@@ -683,7 +683,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent-b",
             role=Node.Role.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
             ip_address="10.0.8.12",
             metadata={"inventory": {"hostname": "source-b", "os": "linux"}},
         )
@@ -691,7 +691,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="source-agent-c",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.8.13",
             metadata={"inventory": {"hostname": "source-c", "os": "linux"}},
         )
@@ -772,7 +772,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-node",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.99",
         )
 
@@ -829,7 +829,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-invalid-server-host",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         response = self.client.post(
             "/api/v1/storage/repositories/",
@@ -883,7 +883,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-fs-node",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.100",
         )
         initialize.side_effect = RepositoryAlreadyExistsError("repository already exists")
@@ -914,7 +914,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-fs-nested-conflict",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.101",
         )
         run_agent_task_sync.return_value = SimpleNamespace(
@@ -963,7 +963,7 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="proxy-fs-nested-failure",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.102",
         )
         run_agent_task_sync.return_value = SimpleNamespace(
@@ -1190,13 +1190,13 @@ class StorageRepositoryApiTests(TestCase):
             organization=self.org,
             name="repo-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         agent = Node.objects.create(
             organization=self.org,
             name="source-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         repo = Repository.objects.create(
             organization_id=self.org.id,

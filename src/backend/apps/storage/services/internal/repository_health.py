@@ -67,7 +67,7 @@ def probe_unbound_nas_repository_health(repository: Repository) -> str:
         return Repository.Health.UNVERIFIED
 
     for node in nodes:
-        if node.status != Node.Status.ONLINE:
+        if node.availability != Node.Availability.ONLINE:
             continue
         if _probe_unbound_nas_from_node(repository=repository, node=node):
             return Repository.Health.ONLINE

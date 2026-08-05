@@ -37,7 +37,7 @@ class ProxyBindingsTests(TestCase):
             organization=self.org,
             name="proxy-1",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.50",
         )
 

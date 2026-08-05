@@ -53,7 +53,7 @@ def test_availability_policy_fires_on_stale_node(db):
         organization=org,
         name="stale-node",
         role=NodeRole.PROXY,
-        status=Node.Status.OFFLINE,
+        status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
         last_seen_at=timezone.now() - timedelta(hours=2),
     )
     AlertPolicy.objects.create(

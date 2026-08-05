@@ -165,7 +165,7 @@ def _validate_proxy_node(node: Node | None, *, resource: SourceResource | None =
         return "No bound node configured. Please bind a proxy node first."
     if node.role != NodeRole.PROXY:
         return "NAS source must be bound to a proxy node."
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         return f'Bound node "{node.name}" is not online.'
     if resource is not None and resource.organization_id != node.organization_id:
         return "Bound node does not belong to this organization."

@@ -27,7 +27,7 @@ def releases_root(tmp_path, monkeypatch):
 
 
 def test_validate_agent_upgrade_rejects_offline(releases_root):
-    node = Node(role=Node.Role.AGENT, status=Node.Status.OFFLINE, version="1.0.0")
+    node = Node(role=Node.Role.AGENT, status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE, version="1.0.0")
     with pytest.raises(AgentUpgradeError, match="offline") as exc:
         validate_agent_upgrade(node=node)
     assert exc.value.code == "node_offline"
@@ -36,7 +36,7 @@ def test_validate_agent_upgrade_rejects_offline(releases_root):
 def test_validate_agent_upgrade_accepts_same_version(releases_root):
     node = Node(
         role=Node.Role.AGENT,
-        status=Node.Status.ONLINE,
+        status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         version="1.0.1",
         metadata={"inventory": {"os": "linux", "arch": "amd64"}},
     )
@@ -46,7 +46,7 @@ def test_validate_agent_upgrade_accepts_same_version(releases_root):
 def test_validate_agent_upgrade_rejects_downgrade(releases_root):
     node = Node(
         role=Node.Role.AGENT,
-        status=Node.Status.ONLINE,
+        status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         version="9.9.9",
         metadata={"inventory": {"os": "linux", "arch": "amd64"}},
     )
@@ -58,7 +58,7 @@ def test_validate_agent_upgrade_rejects_downgrade(releases_root):
 def test_validate_agent_upgrade_accepts_lower_current(releases_root):
     node = Node(
         role=Node.Role.PROXY,
-        status=Node.Status.ONLINE,
+        status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         version="1.0.0",
         metadata={"inventory": {"os": "linux", "arch": "amd64"}},
     )
@@ -73,7 +73,7 @@ def test_validate_agent_upgrade_accepts_main_build(releases_root, monkeypatch):
     monkeypatch.setenv("AGENT_VERSION", version)
     node = Node(
         role=Node.Role.AGENT,
-        status=Node.Status.ONLINE,
+        status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         version="main-7654321",
         metadata={"inventory": {"os": "linux", "arch": "amd64"}},
     )
@@ -84,7 +84,7 @@ def test_validate_agent_upgrade_accepts_main_build(releases_root, monkeypatch):
 def test_node_platform_arch_treats_darwin_as_macos_not_windows():
     node = Node(
         role=Node.Role.AGENT,
-        status=Node.Status.ONLINE,
+        status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         os_name="darwin arm64",
         metadata={"inventory": {"os": "darwin", "arch": "arm64"}},
     )

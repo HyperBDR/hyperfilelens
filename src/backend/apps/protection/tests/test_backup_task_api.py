@@ -61,7 +61,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="agent-backup-task-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.61",
         )
         self.repository = Repository.objects.create(
@@ -188,7 +188,7 @@ class ProtectionBackupTaskApiTests(TestCase):
     def _run_orchestrated_backup(self, *, task, snapshot):
         with patch(
             "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-            return_value=Node.Status.ONLINE,
+            return_value=Node.Availability.ONLINE,
         ):
             return run_backup_task(
                 organization_id=self.org.id,
@@ -416,7 +416,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-incompatible",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.63",
         )
         proxy_repo = Repository.objects.create(
@@ -477,7 +477,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-nas",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.64",
         )
         proxy_repo = Repository.objects.create(
@@ -876,7 +876,7 @@ class ProtectionBackupTaskApiTests(TestCase):
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
@@ -936,7 +936,7 @@ class ProtectionBackupTaskApiTests(TestCase):
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_reconcile_backup_tasks_advances_pending_backup_idempotently(
@@ -1049,7 +1049,7 @@ class ProtectionBackupTaskApiTests(TestCase):
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_agent_restart_retries_once_inside_same_logical_snapshot(
@@ -1094,7 +1094,7 @@ class ProtectionBackupTaskApiTests(TestCase):
 
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_prepared_snapshot_protocol_serializes_policy_then_dispatches_uploads_in_parallel(
@@ -1168,7 +1168,7 @@ class ProtectionBackupTaskApiTests(TestCase):
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_policy_prepare_retries_before_failing_directory(
@@ -1235,7 +1235,7 @@ class ProtectionBackupTaskApiTests(TestCase):
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_policy_prepare_failure_does_not_block_other_parallel_uploads(
@@ -1310,7 +1310,7 @@ class ProtectionBackupTaskApiTests(TestCase):
     @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
     @patch(
         "apps.protection.services.backup_orchestrator.effective_agent_node_status",
-        return_value=Node.Status.ONLINE,
+        return_value=Node.Availability.ONLINE,
     )
     @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
     def test_policy_not_found_repairs_after_parallel_siblings_finish(
@@ -1500,7 +1500,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-1",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.62",
         )
         repository = Repository.objects.create(
@@ -1535,7 +1535,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-inventory-host",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="192.168.65.1",
             metadata={"inventory": {"ip_addresses": ["10.0.0.65"]}},
         )
@@ -1572,7 +1572,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-nas-runtime",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="192.168.65.1",
         )
         repository = Repository.objects.create(
@@ -1740,7 +1740,7 @@ class ProtectionBackupTaskApiTests(TestCase):
             organization=self.org,
             name="proxy-backup-task-nas-probe-fail",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="192.168.65.1",
         )
         repository = Repository.objects.create(

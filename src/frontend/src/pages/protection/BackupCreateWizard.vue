@@ -1990,6 +1990,8 @@ function recoveryPlanConflictIssue(group: WizardSourceGroup) {
 function recoveryPlanIncompleteReason(group: WizardSourceGroup) {
   const plan = recoveryPlanForGroup(group)
   if (!plan.enabled || isRecoveryPlanComplete(group)) return ''
+  const conflictIssue = recoveryPlanConflictIssue(group)
+  if (conflictIssue) return conflictIssue
 
   for (const dirPlan of plan.dirPlans) {
     const dirMissing = recoveryDirPlanMissingFields(group, dirPlan)

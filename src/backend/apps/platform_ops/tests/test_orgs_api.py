@@ -63,7 +63,7 @@ class PlatformOpsOrgsApiTest(TestCase):
             organization=self.org,
             name="agent-1",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         Task.objects.create(
             organization_id=self.org.pk,

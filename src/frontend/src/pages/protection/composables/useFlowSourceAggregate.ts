@@ -18,7 +18,8 @@ export type FlowSourceRow = {
   hostname: string
   nodeName: string
   nodeIp: string
-  status: 'online' | 'offline'
+  status: 'active' | 'inactive' | 'error' | 'probing' | 'removing' | 'remove_failed' | 'removed' | 'upgrading' | 'restarting' | 'verifying' | 'verification_pending' | 'cleaning_up' | 'failed' | 'upgrade_failed' | 'deregistration_failed'
+  availability?: 'online' | 'offline'
   registeredAt: string
   type: 'host' | 'nas'
   protocol?: 'nfs' | 'smb'

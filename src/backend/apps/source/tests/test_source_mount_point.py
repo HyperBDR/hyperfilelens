@@ -151,14 +151,14 @@ class SourceMountPointAfterProxyChangeTests(TestCase):
             organization=self.org,
             name="proxy-a",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         self.proxy_b = Node.objects.create(
             organization=self.org,
             name="proxy-b",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.42",
         )
 
