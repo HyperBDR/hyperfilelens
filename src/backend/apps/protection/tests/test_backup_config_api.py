@@ -205,6 +205,30 @@ class ProtectionBackupConfigApiTests(TestCase):
         })
         return payload
 
+    @mock.patch(
+        "apps.protection.api.views.backup_config."
+        "refresh_backup_config_directory_estimates_task.delay"
+    )
+    @mock.patch(
+        "apps.protection.api.views.backup_config."
+        "sync_backup_config_repository_policy_task.delay"
+    )
+    def test_create_backup_config_queues_directory_size_precache(
+        self,
+        mock_policy_delay,
+        mock_estimate_delay,
+    ):
+        with self.captureOnCommitCallbacks(execute=True):
+            create = self.client.post(
+                "/api/v1/protection/backup-configs/",
+                self._payload(name="Precache estimates config"),
+                format="json",
+                **self._headers(),
+            )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        mock_policy_delay.assert_called_once_with(config_id=create.data["id"])
+        mock_estimate_delay.assert_called_once_with(config_id=create.data["id"])
+
     def test_create_backup_config_advances_source_pipeline_to_step3(self):
         source_key = f"agent:{self.agent.id}"
         step2 = self.client.post(

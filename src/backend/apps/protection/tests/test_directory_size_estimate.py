@@ -1,0 +1,408 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from django.test import TestCase
+
+from apps.iam.models import Organization
+from apps.node.models import Node
+from apps.protection.models import BackupConfig, BackupConfigDirectory
+from apps.protection.services.backup_config import (
+    _sync_backup_config_directories,
+    update_backup_config,
+)
+from apps.protection.services.directory_size_estimate import (
+    DirectorySizeEstimateError,
+    DirectorySizeEstimateResolveError,
+    _ESTIMATE_UNAVAILABLE,
+    backup_config_needs_directory_estimate_refresh,
+    refresh_backup_config_directory_estimates_by_id,
+    refresh_missing_backup_config_directory_estimates,
+)
+from apps.storage.repositories.models import Repository
+
+
+class DirectorySizeEstimateTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(
+            key="dir-size-org",
+            name="Directory Size Org",
+        )
+        self.agent = Node.objects.create(
+            organization=self.org,
+            name="dir-size-agent",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.0.81",
+        )
+        self.agent_b = Node.objects.create(
+            organization=self.org,
+            name="dir-size-agent-b",
+            role=Node.Role.AGENT,
+            status=Node.Status.ONLINE,
+            ip_address="10.0.0.82",
+        )
+        self.repository = Repository.objects.create(
+            organization_id=self.org.id,
+            name="dir-size-repo",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            s3_platform=Repository.S3Platform.CUSTOM,
+            s3_bucket="dir-size-bucket",
+            config={
+                "endpoint": "s3.example.internal:9000",
+                "region": "cn-test-1",
+                "prefix": "kopia/dir-size",
+                "access_key_id": "ak-test",
+                "secret_access_key": "sk-test",
+                "kopia_password": "repo-password",
+                "use_tls": False,
+            },
+        )
+        self.config = BackupConfig.objects.create(
+            organization_id=self.org.id,
+            name="Dir size config",
+            source_type="agent",
+            source_ref_id=self.agent.id,
+            repository_id=self.repository.id,
+            compression_level=BackupConfig.CompressionLevel.BALANCED,
+        )
+        self.directory = BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/home/ubuntu",
+            estimated_size_bytes=0,
+            sort_order=0,
+        )
+
+    @patch(
+        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
+        return_value=4096,
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_refresh_missing_persists_estimate(self, mock_resolve, mock_estimate):
+        mock_resolve.return_value = SimpleNamespace(
+            node=self.agent,
+            source_type="agent",
+            root_path="",
+            nas_payload=None,
+        )
+        total = refresh_missing_backup_config_directory_estimates(
+            organization_id=self.org.id,
+            config=self.config,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(total, 4096)
+        self.assertEqual(self.directory.estimated_size_bytes, 4096)
+        mock_estimate.assert_called_once()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
+        side_effect=DirectorySizeEstimateError("timed out", permanent=False),
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_refresh_timeout_stays_retryable(self, mock_resolve, _mock_estimate):
+        mock_resolve.return_value = SimpleNamespace(
+            node=self.agent,
+            source_type="agent",
+            root_path="",
+            nas_payload=None,
+        )
+        total = refresh_missing_backup_config_directory_estimates(
+            organization_id=self.org.id,
+            config=self.config,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(total, 0)
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+        self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
+
+    @patch(
+        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes",
+        side_effect=DirectorySizeEstimateError("returned zero", permanent=True),
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_refresh_permanent_failure_marks_unavailable(
+        self, mock_resolve, _mock_estimate
+    ):
+        mock_resolve.return_value = SimpleNamespace(
+            node=self.agent,
+            source_type="agent",
+            root_path="",
+            nas_payload=None,
+        )
+        total = refresh_missing_backup_config_directory_estimates(
+            organization_id=self.org.id,
+            config=self.config,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(total, 0)
+        self.assertEqual(self.directory.estimated_size_bytes, _ESTIMATE_UNAVAILABLE)
+        self.assertFalse(backup_config_needs_directory_estimate_refresh(self.config))
+
+    @patch(
+        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes"
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_refresh_skips_cached_estimates(self, mock_resolve, mock_estimate):
+        self.directory.estimated_size_bytes = 2048
+        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+        mock_resolve.return_value = SimpleNamespace(
+            node=self.agent,
+            source_type="agent",
+            root_path="",
+            nas_payload=None,
+        )
+        total = refresh_missing_backup_config_directory_estimates(
+            organization_id=self.org.id,
+            config=self.config,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+        self.assertEqual(total, 2048)
+        mock_estimate.assert_not_called()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate.estimate_directory_size_bytes"
+    )
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_refresh_skips_unavailable_marker(self, mock_resolve, mock_estimate):
+        self.directory.estimated_size_bytes = _ESTIMATE_UNAVAILABLE
+        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+        total = refresh_missing_backup_config_directory_estimates(
+            organization_id=self.org.id,
+            config=self.config,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+        self.assertEqual(total, 0)
+        mock_resolve.assert_not_called()
+        mock_estimate.assert_not_called()
+
+    def test_path_type_change_invalidates_cached_estimate(self):
+        self.directory.path_type = BackupConfigDirectory.PathType.DIRECTORY
+        self.directory.estimated_size_bytes = 4096
+        self.directory.save(
+            update_fields=["path_type", "estimated_size_bytes", "updated_at"]
+        )
+        _sync_backup_config_directories(
+            config=self.config,
+            directories_data=[
+                {
+                    "path": "/home/ubuntu",
+                    "path_type": BackupConfigDirectory.PathType.FILE,
+                }
+            ],
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(
+            self.directory.path_type,
+            BackupConfigDirectory.PathType.FILE,
+        )
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+
+    def test_unknown_path_type_omission_keeps_cached_estimate(self):
+        self.directory.path_type = BackupConfigDirectory.PathType.DIRECTORY
+        self.directory.estimated_size_bytes = 4096
+        self.directory.save(
+            update_fields=["path_type", "estimated_size_bytes", "updated_at"]
+        )
+        _sync_backup_config_directories(
+            config=self.config,
+            directories_data=[
+                {
+                    "path": "/home/ubuntu",
+                    "path_type": BackupConfigDirectory.PathType.UNKNOWN,
+                    "display_name": "Home",
+                    "estimated_size_bytes": 0,
+                }
+            ],
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(
+            self.directory.path_type,
+            BackupConfigDirectory.PathType.DIRECTORY,
+        )
+        self.assertEqual(self.directory.estimated_size_bytes, 4096)
+        self.assertEqual(self.directory.display_name, "Home")
+
+    def test_unchanged_path_keeps_cached_estimate(self):
+        self.directory.path_type = BackupConfigDirectory.PathType.DIRECTORY
+        self.directory.estimated_size_bytes = 4096
+        self.directory.save(
+            update_fields=["path_type", "estimated_size_bytes", "updated_at"]
+        )
+        _sync_backup_config_directories(
+            config=self.config,
+            directories_data=[
+                {
+                    "path": "/home/ubuntu",
+                    "path_type": BackupConfigDirectory.PathType.DIRECTORY,
+                    "display_name": "Home",
+                }
+            ],
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(self.directory.estimated_size_bytes, 4096)
+        self.assertEqual(self.directory.display_name, "Home")
+
+    def test_directory_sync_reopens_unavailable_estimate(self):
+        self.directory.path_type = BackupConfigDirectory.PathType.DIRECTORY
+        self.directory.estimated_size_bytes = _ESTIMATE_UNAVAILABLE
+        self.directory.save(
+            update_fields=["path_type", "estimated_size_bytes", "updated_at"]
+        )
+        _sync_backup_config_directories(
+            config=self.config,
+            directories_data=[
+                {
+                    "path": "/home/ubuntu",
+                    "path_type": BackupConfigDirectory.PathType.DIRECTORY,
+                }
+            ],
+        )
+        self.directory.refresh_from_db()
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+        self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
+
+    @patch("apps.protection.services.directory_size_estimate._resolve_execution_target")
+    def test_refresh_skips_resolve_when_estimates_cached(self, mock_resolve):
+        self.directory.estimated_size_bytes = 2048
+        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+        self.assertFalse(backup_config_needs_directory_estimate_refresh(self.config))
+        total = refresh_missing_backup_config_directory_estimates(
+            organization_id=self.org.id,
+            config=self.config,
+            source_type="agent",
+            source_ref_id=self.agent.id,
+        )
+        self.assertEqual(total, 2048)
+        mock_resolve.assert_not_called()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "refresh_missing_backup_config_directory_estimates",
+        return_value=1024,
+    )
+    def test_by_id_requeues_when_still_pending(self, mock_refresh):
+        BackupConfigDirectory.objects.create(
+            organization_id=self.org.id,
+            backup_config=self.config,
+            path="/data/other",
+            estimated_size_bytes=0,
+            sort_order=1,
+        )
+        self.directory.estimated_size_bytes = 1024
+        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+
+        result = refresh_backup_config_directory_estimates_by_id(
+            config_id=self.config.id,
+            attempt=1,
+        )
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(result["should_requeue"])
+        self.assertEqual(result["attempt"], 1)
+        mock_refresh.assert_called_once()
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "refresh_missing_backup_config_directory_estimates",
+        return_value=0,
+    )
+    def test_by_id_stops_requeue_at_max_attempts(self, _mock_refresh):
+        result = refresh_backup_config_directory_estimates_by_id(
+            config_id=self.config.id,
+            attempt=5,
+        )
+        self.assertEqual(result["status"], "exhausted")
+        self.assertFalse(result["should_requeue"])
+        # Retryable leftovers stay pending for a later directories/source save.
+        self.directory.refresh_from_db()
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+        self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "refresh_missing_backup_config_directory_estimates",
+        side_effect=DirectorySizeEstimateResolveError("source offline"),
+    )
+    def test_by_id_requeues_resolve_failures(self, _mock_refresh):
+        result = refresh_backup_config_directory_estimates_by_id(
+            config_id=self.config.id,
+            attempt=1,
+        )
+        self.assertEqual(result["status"], "resolve_failed")
+        self.assertTrue(result["should_requeue"])
+        self.directory.refresh_from_db()
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+
+    @patch(
+        "apps.protection.services.directory_size_estimate."
+        "refresh_missing_backup_config_directory_estimates",
+        side_effect=DirectorySizeEstimateResolveError("source offline"),
+    )
+    def test_by_id_freezes_pending_after_resolve_exhausted(self, _mock_refresh):
+        result = refresh_backup_config_directory_estimates_by_id(
+            config_id=self.config.id,
+            attempt=5,
+        )
+        self.assertEqual(result["status"], "resolve_exhausted")
+        self.assertFalse(result["should_requeue"])
+        self.directory.refresh_from_db()
+        self.assertEqual(self.directory.estimated_size_bytes, _ESTIMATE_UNAVAILABLE)
+
+    def test_source_change_invalidates_cached_estimates(self):
+        self.directory.estimated_size_bytes = 4096
+        self.directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+        update_backup_config(
+            config=self.config,
+            data={
+                "name": self.config.name,
+                "source_type": "agent",
+                "source_ref_id": self.agent_b.id,
+                "repository_id": self.repository.id,
+            },
+        )
+        self.directory.refresh_from_db()
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.source_ref_id, self.agent_b.id)
+        self.assertEqual(self.directory.estimated_size_bytes, 0)
+        self.assertTrue(backup_config_needs_directory_estimate_refresh(self.config))
+
+    @patch(
+        "apps.protection.tasks.directory_size_estimate."
+        "refresh_backup_config_directory_estimates_by_id"
+    )
+    def test_task_requeues_when_service_requests(self, mock_by_id):
+        from apps.protection.tasks.directory_size_estimate import (
+            refresh_backup_config_directory_estimates_task,
+        )
+
+        mock_by_id.return_value = {
+            "config_id": self.config.id,
+            "status": "partial",
+            "du_total": 0,
+            "attempt": 2,
+            "should_requeue": True,
+        }
+        with patch.object(
+            refresh_backup_config_directory_estimates_task,
+            "apply_async",
+        ) as mock_async:
+            result = refresh_backup_config_directory_estimates_task.run(
+                config_id=self.config.id,
+                attempt=2,
+            )
+        self.assertTrue(result["should_requeue"])
+        mock_async.assert_called_once_with(
+            kwargs={"config_id": self.config.id, "attempt": 3},
+            countdown=5,
+        )

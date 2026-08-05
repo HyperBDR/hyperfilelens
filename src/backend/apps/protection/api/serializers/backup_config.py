@@ -18,6 +18,11 @@ class BackupConfigDirectorySerializer(serializers.ModelSerializer):
             "sort_order",
         ]
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["estimated_size_bytes"] = max(0, int(data.get("estimated_size_bytes") or 0))
+        return data
+
 
 class BackupConfigListSerializer(serializers.ModelSerializer):
     directory_count = serializers.SerializerMethodField()

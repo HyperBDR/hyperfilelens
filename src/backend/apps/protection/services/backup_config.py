@@ -125,7 +125,7 @@ def create_backup_config(
                 path=d["path"],
                 path_type=d.get("path_type", BackupConfigDirectory.PathType.UNKNOWN),
                 display_name=d.get("display_name", ""),
-                estimated_size_bytes=d.get("estimated_size_bytes", 0),
+                estimated_size_bytes=max(0, int(d.get("estimated_size_bytes", 0) or 0)),
                 sort_order=idx,
             ))
         created_dirs = BackupConfigDirectory.objects.bulk_create(dirs)
@@ -1016,9 +1016,41 @@ def _sync_backup_config_directories(
                 backup_config=config,
                 path=path,
             )
-        directory.path_type = directory_data.get("path_type", BackupConfigDirectory.PathType.UNKNOWN)
+        previous_path_type = str(directory.path_type or "").strip().lower() if directory.pk else ""
+        incoming_path_type = str(
+            directory_data.get("path_type", BackupConfigDirectory.PathType.UNKNOWN)
+            or BackupConfigDirectory.PathType.UNKNOWN
+        ).strip().lower()
+        # Clients often omit path_type; validator then sends "unknown". Keep the
+        # stored concrete type so we do not falsely invalidate du caches.
+        if (
+            directory.pk is not None
+            and incoming_path_type in {"", "unknown"}
+            and previous_path_type in {"directory", "file"}
+        ):
+            directory.path_type = previous_path_type
+        else:
+            directory.path_type = incoming_path_type or BackupConfigDirectory.PathType.UNKNOWN
         directory.display_name = directory_data.get("display_name", "")
-        directory.estimated_size_bytes = directory_data.get("estimated_size_bytes", 0)
+        # Preserve cached du estimates when the client omits/zeros the field on
+        # unchanged paths. New paths and explicit directory<->file changes
+        # invalidate the cache so async pre-cache can refresh them.
+        incoming_estimate = directory_data.get("estimated_size_bytes", None)
+        next_path_type = str(directory.path_type or "").strip().lower()
+        if incoming_estimate is not None and int(incoming_estimate or 0) > 0:
+            directory.estimated_size_bytes = int(incoming_estimate)
+        elif directory.pk is None:
+            directory.estimated_size_bytes = max(0, int(incoming_estimate or 0))
+        elif (
+            previous_path_type in {"directory", "file"}
+            and next_path_type in {"directory", "file"}
+            and previous_path_type != next_path_type
+        ):
+            directory.estimated_size_bytes = 0
+        elif int(directory.estimated_size_bytes or 0) < 0:
+            # Unavailable marker from a failed precache: an explicit directories
+            # sync re-opens async retry (positive caches above stay intact).
+            directory.estimated_size_bytes = 0
         directory.sort_order = idx
         directory.save()
         created_or_updated.append(directory)
@@ -1158,6 +1190,16 @@ def update_backup_config(
                 config=config,
                 directories_data=directories_data,
             )
+        source_changed = (
+            str(payload["source_type"]) != str(previous_source_type)
+            or int(payload["source_ref_id"]) != int(previous_source_ref_id)
+        )
+        if source_changed:
+            from apps.protection.services.directory_size_estimate import (
+                invalidate_backup_config_directory_estimates,
+            )
+
+            invalidate_backup_config_directory_estimates(config=config)
         config.refresh_from_db()
     logger.info(
         "backup config update ok config_id=%s org_id=%s repository_id=%s",

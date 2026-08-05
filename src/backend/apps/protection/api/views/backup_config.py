@@ -24,6 +24,12 @@ from apps.protection.selectors.backup_config import (
     get_backup_config,
 )
 from apps.protection import services as protection_services
+from apps.protection.services.directory_size_estimate import (
+    backup_config_needs_directory_estimate_refresh,
+)
+from apps.protection.tasks.directory_size_estimate import (
+    refresh_backup_config_directory_estimates_task,
+)
 from apps.protection.tasks.repository_policy import sync_backup_config_repository_policy_task
 
 
@@ -31,6 +37,24 @@ def _validation_error(exc: DjangoValidationError) -> ValidationError:
     if hasattr(exc, "message_dict"):
         return ValidationError(exc.message_dict)
     return ValidationError({"detail": exc.messages})
+
+
+def _queue_directory_estimate_precache(config: BackupConfig) -> None:
+    if not backup_config_needs_directory_estimate_refresh(config):
+        return
+    transaction.on_commit(
+        lambda config_id=config.id: refresh_backup_config_directory_estimates_task.delay(
+            config_id=config_id
+        )
+    )
+
+
+def _update_touches_directory_estimate_inputs(data: dict) -> bool:
+    """True when update may require (re)caching directory du estimates."""
+    return any(
+        field in data
+        for field in ("directories", "source_type", "source_ref_id")
+    )
 
 
 class BackupConfigViewSet(viewsets.ModelViewSet):
@@ -84,8 +108,11 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
         transaction.on_commit(
-            lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(config_id=config_id)
+            lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(
+                config_id=config_id
+            )
         )
+        _queue_directory_estimate_precache(config)
         return Response(
             BackupConfigDetailSerializer(config).data,
             status=status.HTTP_201_CREATED,
@@ -108,8 +135,14 @@ class BackupConfigViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise _validation_error(exc) from exc
         transaction.on_commit(
-            lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(config_id=config_id)
+            lambda config_id=config.id: sync_backup_config_repository_policy_task.delay(
+                config_id=config_id
+            )
         )
+        # Name/remark-only edits must not re-hammer path.size for leftover pending
+        # estimates; create and directory/source changes still enqueue.
+        if _update_touches_directory_estimate_inputs(serializer.validated_data):
+            _queue_directory_estimate_precache(config)
         return Response(BackupConfigDetailSerializer(config).data)
 
     def partial_update(self, request, *args, **kwargs):
