@@ -7,6 +7,7 @@ from typing import Any
 
 from celery.exceptions import SoftTimeLimitExceeded
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from apps.node.services.interface import run_agent_task_sync
 from apps.protection.models import BackupConfig, BackupConfigDirectory, BackupSourceSnapshot
@@ -21,7 +22,7 @@ _PATH_SIZE_KIND = "path.size"
 _PATH_SIZE_TIMEOUT_SECONDS = 300
 _PRECACHE_PATH_TIMEOUT_SECONDS = 60
 _PRECACHE_MAX_ATTEMPTS = 5
-# Stored when path.size was attempted but failed/empty. Progress treats as 0;
+# Stored when path.size was attempted but failed. Progress treats as 0;
 # gating skips re-queue until the cache is invalidated back to 0.
 _ESTIMATE_UNAVAILABLE = -1
 
@@ -29,8 +30,8 @@ _ESTIMATE_UNAVAILABLE = -1
 class DirectorySizeEstimateError(ValidationError):
     """Raised when directory size cannot be estimated.
 
-    permanent=True means the path should not be retried until cache invalidation
-    (e.g. empty/zero result). Timeouts and transient agent errors stay retryable.
+    permanent=True means the path should not be retried until cache invalidation.
+    Timeouts and transient agent errors stay retryable.
     """
 
     def __init__(self, message, *, permanent: bool = False, code=None, params=None):
@@ -98,12 +99,17 @@ def estimate_directory_size_bytes(
         # Agent/host blips are retryable; leave estimate pending for requeue.
         raise DirectorySizeEstimateError(error, permanent=False)
     result = outcome.result
-    size_bytes = int(result.get("size_bytes") or 0)
-    if size_bytes <= 0:
-        raise DirectorySizeEstimateError(
-            f"Path size estimate returned zero for {path}",
-            permanent=True,
-        )
+    if not isinstance(result, dict) or "size_bytes" not in result:
+        raise DirectorySizeEstimateError("Agent returned an invalid path size response.")
+    raw_size_bytes = result["size_bytes"]
+    if isinstance(raw_size_bytes, bool):
+        raise DirectorySizeEstimateError("Agent returned an invalid path size response.")
+    try:
+        size_bytes = int(raw_size_bytes)
+    except (TypeError, ValueError):
+        raise DirectorySizeEstimateError("Agent returned an invalid path size response.") from None
+    if size_bytes < 0:
+        raise DirectorySizeEstimateError("Agent returned an invalid path size response.")
     return size_bytes
 
 
@@ -113,7 +119,7 @@ def _raw_estimate(directory: BackupConfigDirectory) -> int:
 
 def _directory_estimate_pending(directory: BackupConfigDirectory) -> bool:
     """True when estimate has never been successfully cached or marked unavailable."""
-    return _raw_estimate(directory) == 0
+    return _raw_estimate(directory) == 0 and directory.size_estimated_at is None
 
 
 def _du_total_from_directories(directories) -> int:
@@ -138,14 +144,20 @@ def backup_config_needs_directory_estimate_refresh(config: BackupConfig) -> bool
 def invalidate_backup_config_directory_estimates(*, config: BackupConfig) -> int:
     """Clear cached estimates so async precache will retry (e.g. source rebinding)."""
     return int(
-        config.directories.exclude(estimated_size_bytes=0).update(estimated_size_bytes=0)
+        config.directories.exclude(
+            estimated_size_bytes=0,
+            size_estimated_at__isnull=True,
+        ).update(estimated_size_bytes=0, size_estimated_at=None)
     )
 
 
 def _mark_pending_directory_estimates_unavailable(*, config: BackupConfig) -> int:
     """Stop retrying pending paths until an explicit cache invalidation."""
     return int(
-        config.directories.filter(estimated_size_bytes=0).update(
+        config.directories.filter(
+            estimated_size_bytes=0,
+            size_estimated_at__isnull=True,
+        ).update(
             estimated_size_bytes=_ESTIMATE_UNAVAILABLE
         )
     )
@@ -237,7 +249,10 @@ def refresh_missing_backup_config_directory_estimates(
                 )
                 continue
             directory.estimated_size_bytes = estimated
-            directory.save(update_fields=["estimated_size_bytes", "updated_at"])
+            directory.size_estimated_at = timezone.now()
+            directory.save(
+                update_fields=["estimated_size_bytes", "size_estimated_at", "updated_at"]
+            )
             current = estimated
             logger.info(
                 "directory_size_estimated config_id=%s directory_id=%s path=%s "

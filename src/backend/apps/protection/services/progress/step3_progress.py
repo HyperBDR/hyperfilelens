@@ -501,5 +501,8 @@ def missing_directory_estimates(config: BackupConfig) -> list[BackupConfigDirect
     return [
         directory
         for directory in config.directories.all()
-        if max(0, int(directory.estimated_size_bytes or 0)) <= 0
+        if (
+            max(0, int(directory.estimated_size_bytes or 0)) <= 0
+            and directory.size_estimated_at is None
+        )
     ]

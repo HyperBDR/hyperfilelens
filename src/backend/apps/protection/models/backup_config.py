@@ -99,6 +99,7 @@ class BackupConfigDirectory(models.Model):
     )
     display_name = models.CharField(max_length=300, blank=True, default="")
     estimated_size_bytes = models.BigIntegerField(default=0)
+    size_estimated_at = models.DateTimeField(blank=True, null=True)
     sort_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -462,9 +462,6 @@ func (e *Engine) runPathSize(ctx context.Context, p Payload) (string, map[string
 		}
 		return "failed", map[string]any{"path": path}, sizeErr.Error()
 	}
-	if sizeBytes <= 0 {
-		return "failed", map[string]any{"path": path, "size_bytes": 0}, "path size estimate returned zero"
-	}
 	return "success", map[string]any{
 		"path":       path,
 		"path_type":  pathType,
