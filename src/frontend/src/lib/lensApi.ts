@@ -1,5 +1,6 @@
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import { api, isAbortError } from './api'
+import type { DocumentConversion, SessionDataContext } from './conversionSummary'
 import { asList, unwrapApiPayload } from './parse'
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
@@ -209,6 +210,7 @@ export type LensKnowledgeSource = {
   status_detail: string
   sync_phase?: string
   sync_state_json?: Record<string, unknown>
+  document_conversion?: DocumentConversion | null
   last_restore_record_id?: number | null
   ingest_policy?: LensIngestPolicy
   ingest_summary?: string
@@ -318,6 +320,8 @@ export type LensSessionLink = {
   lifecycle_error?: string
   provision_phase?: string
   provision_detail?: string
+  document_conversion?: DocumentConversion | null
+  data_context?: SessionDataContext | null
   last_message_at: string | null
   last_assistant_message_at: string | null
   last_viewed_at: string | null

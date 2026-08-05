@@ -14,6 +14,14 @@ import {
   patchKnowledgeSource,
   type LensKnowledgeSource,
 } from '../../lib/lensApi'
+import {
+  conversionAllOk,
+  conversionCountsLabel,
+  conversionEmptyResult,
+  conversionPhase,
+  conversionProblemItems,
+  conversionWarningsForDisplay,
+} from '../../lib/conversionSummary'
 import { getBackupSourceSnapshot, type BackupSourceSnapshot } from '../../lib/protectionBackupConfigApi'
 import { defaultLensIngestPolicy, normalizeLensIngestPolicy } from '../../lib/knowledgeSourceIngestPolicy'
 import KnowledgeSourceRetrievalEnhancement from '../../components/insight/KnowledgeSourceRetrievalEnhancement.vue'
@@ -111,6 +119,22 @@ const syncPhaseLabel = computed(() => {
   const key = `insight.kb.syncPhase.${phase}`
   const translated = t(key)
   return translated === key ? phase : translated
+})
+
+const documentConversion = computed(() => activeRow.value?.document_conversion ?? null)
+const conversionSummaryLabel = computed(() => conversionCountsLabel(documentConversion.value))
+const conversionProblems = computed(() => conversionProblemItems(documentConversion.value).slice(0, 20))
+const conversionOk = computed(() => conversionAllOk(documentConversion.value))
+const conversionEmpty = computed(() => conversionEmptyResult(documentConversion.value))
+const conversionRunning = computed(() => conversionPhase(documentConversion.value) === 'running')
+const conversionFailed = computed(() => conversionPhase(documentConversion.value) === 'failed')
+const conversionWarnings = computed(() => conversionWarningsForDisplay(documentConversion.value, 8))
+const conversionSummaryDisplay = computed(() => {
+  if (!documentConversion.value) return t('insight.kb.retrieval.conversionResultsEmpty')
+  if (conversionSummaryLabel.value) return conversionSummaryLabel.value
+  if (conversionRunning.value) return t('insight.copilot.documentConversionRunning')
+  if (conversionEmpty.value) return t('insight.copilot.documentConversionEmpty')
+  return t('insight.kb.retrieval.conversionResultsEmpty')
 })
 
 function detailValueClass(text: string | number | null | undefined, mono = false) {
@@ -276,6 +300,54 @@ onUnmounted(() => {
                     <span class="hfl-detail-row__value" :class="detailValueClass(syncPhaseLabel)">
                       {{ syncPhaseLabel }}
                     </span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="hfl-detail-section ks-kb-detail-card">
+                <h4 class="ks-kb-detail-card__title">
+                  <span class="ks-kb-detail-card__indicator" />
+                  {{ t('insight.kb.retrieval.conversionResultsTitle') }}
+                </h4>
+                <div class="hfl-detail-grid">
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionSummary') }}</span>
+                    <span class="hfl-detail-row__value" :class="detailValueClass(conversionSummaryDisplay)">
+                      {{ conversionSummaryDisplay }}
+                    </span>
+                  </div>
+                  <div v-if="conversionOk" class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
+                    <span class="hfl-detail-row__value">{{ t('insight.kb.retrieval.conversionResultsOk') }}</span>
+                  </div>
+                  <div v-else-if="conversionEmpty" class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
+                    <span class="hfl-detail-row__value">{{ t('insight.copilot.documentConversionEmpty') }}</span>
+                  </div>
+                  <div v-else-if="documentConversion && conversionFailed" class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
+                    <span class="hfl-detail-row__value">{{ documentConversion.error || t('insight.copilot.documentConversionPartial') }}</span>
+                  </div>
+                  <div v-else-if="documentConversion && !conversionRunning && conversionSummaryLabel && !conversionOk && conversionProblems.length === 0" class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
+                    <span class="hfl-detail-row__value">{{ t('insight.copilot.documentConversionPartial') }}</span>
+                  </div>
+                  <div v-if="conversionProblems.length" class="hfl-detail-row ks-kb-detail-row--stack">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
+                    <ul class="ks-kb-conversion-list">
+                      <li v-for="(item, index) in conversionProblems" :key="`${item.name}-${index}`">
+                        <strong>{{ item.name }}</strong>
+                        <span>{{ item.reason_label }}</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div v-if="conversionWarnings.length" class="hfl-detail-row ks-kb-detail-row--stack">
+                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionWarnings') }}</span>
+                    <ul class="ks-kb-conversion-list">
+                      <li v-for="(warning, index) in conversionWarnings" :key="`${warning.code}-${index}`">
+                        <span>{{ warning.label || warning.code }}</span>
+                      </li>
+                    </ul>
                   </div>
                 </div>
               </section>
@@ -501,6 +573,31 @@ onUnmounted(() => {
   gap: 6px;
   width: 100%;
   min-width: 0;
+}
+
+.ks-kb-conversion-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ks-kb-conversion-list li {
+  display: grid;
+  gap: 2px;
+}
+
+.ks-kb-conversion-list strong {
+  overflow-wrap: anywhere;
+  color: rgb(15 23 42);
+  font-size: 12px;
+}
+
+.ks-kb-conversion-list span {
+  color: rgb(100 116 139);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .ks-kb-detail-scope-list__item {

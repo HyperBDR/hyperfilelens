@@ -5,7 +5,12 @@ from apps.lens_bridge.models import (
     LensKnowledgeSource,
     LensSessionLink,
 )
-from apps.lens_bridge.services import gateway_readiness, ingest_policy, provisioning
+from apps.lens_bridge.services import (
+    conversion_display,
+    gateway_readiness,
+    ingest_policy,
+    provisioning,
+)
 from apps.protection.models import BackupConfig, BackupSourceSnapshot
 from apps.protection.services.source_identity import resolve_source_display_name
 
@@ -15,6 +20,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
     ingest_policy = serializers.SerializerMethodField()
     ingest_summary = serializers.SerializerMethodField()
     sync_phase = serializers.SerializerMethodField()
+    document_conversion = serializers.SerializerMethodField()
 
     class Meta:
         model = LensKnowledgeSource
@@ -39,6 +45,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
             "lifecycle_status",
             "sync_phase",
             "sync_state_json",
+            "document_conversion",
             "last_restore_record_id",
             "ingest_policy",
             "ingest_summary",
@@ -59,6 +66,7 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
             "lifecycle_status",
             "sync_phase",
             "sync_state_json",
+            "document_conversion",
             "last_restore_record_id",
             "ingest_policy",
             "ingest_summary",
@@ -83,6 +91,11 @@ class LensKnowledgeSourceSerializer(serializers.ModelSerializer):
     def get_sync_phase(self, obj: LensKnowledgeSource) -> str:
         sync_state = obj.sync_state_json if isinstance(obj.sync_state_json, dict) else {}
         return str(sync_state.get("phase") or "")
+
+    def get_document_conversion(self, obj: LensKnowledgeSource) -> dict | None:
+        return conversion_display.document_conversion_view(
+            conversion_display.conversion_state_from_knowledge_source(obj)
+        )
 
 
 class LensKnowledgeSourceScopeSerializer(serializers.Serializer):
@@ -438,6 +451,8 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
     gateway_name = serializers.SerializerMethodField()
     gateway_scope = serializers.SerializerMethodField()
     has_unread = serializers.SerializerMethodField()
+    document_conversion = serializers.SerializerMethodField()
+    data_context = serializers.SerializerMethodField()
 
     class Meta:
         model = LensSessionLink
@@ -466,6 +481,8 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
             "lifecycle_status",
             "provision_phase",
             "provision_detail",
+            "document_conversion",
+            "data_context",
             "lifecycle_error",
             "last_message_at",
             "last_assistant_message_at",
@@ -547,6 +564,24 @@ class LensSessionLinkSerializer(serializers.ModelSerializer):
         if obj.last_assistant_message_at is None:
             return False
         return obj.last_viewed_at is None or obj.last_assistant_message_at > obj.last_viewed_at
+
+    def get_document_conversion(self, obj: LensSessionLink) -> dict | None:
+        ks = obj.knowledge_source
+        if ks is None:
+            return None
+        return conversion_display.document_conversion_view(
+            conversion_display.conversion_state_from_knowledge_source(ks)
+        )
+
+    def get_data_context(self, obj: LensSessionLink) -> dict:
+        return conversion_display.data_context_for_session(
+            backup_config_id=obj.backup_config_id,
+            backup_source_snapshot_id=obj.backup_source_snapshot_id,
+            snapshot_created_at=self.get_snapshot_created_at(obj),
+            gateway_scope=self.get_gateway_scope(obj),
+            gateway_name=self.get_gateway_name(obj),
+            gateway_selection_mode=obj.gateway_selection_mode,
+        )
 
 
 class LensSessionCreateSerializer(serializers.Serializer):
