@@ -22,7 +22,7 @@ from apps.node.api.views.enrollment_helpers import (
     resolve_artifact_download_authorization,
     token_usable_for_artifact_download,
 )
-from apps.node.models import Node, NodeInstallationSession, NodeToken
+from apps.node.models import Node, NodeCredential, NodeInstallationSession, NodeToken
 from apps.node.services.internal.enrollment_auth import (
     INSTALLATION_SESSION_IDLE_SECONDS,
 )
@@ -218,6 +218,25 @@ def _release_authorization_is_valid(
     return True
 
 
+def _release_credential_is_valid(
+    *,
+    org: Organization,
+    role: str,
+    credential_id: int,
+    node_id: int,
+) -> bool:
+    """Validate a signed NodeCredential download without embedding the secret."""
+    if credential_id <= 0 or node_id <= 0:
+        return False
+    return NodeCredential.objects.filter(
+        pk=credential_id,
+        organization=org,
+        role=role,
+        node_id=node_id,
+        is_active=True,
+    ).exists()
+
+
 def _redis_client():
     if redis is None:
         return None
@@ -348,20 +367,23 @@ class AgentReleaseView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         ttl = int(os.getenv("AGENT_RELEASE_URL_TTL_SECONDS", "600"))
-        signed = _make_release_token(
-            {
-                "p": artifact.artifact_path,
-                "org": org.key,
-                "role": role,
-                "token_id": authorization.token.id,
-                "session_id": (
-                    authorization.session.id
-                    if authorization.session is not None
-                    else None
-                ),
-            },
-            ttl_seconds=ttl,
-        )
+        signed_payload: dict = {
+            "p": artifact.artifact_path,
+            "org": org.key,
+            "role": role,
+        }
+        if authorization.credential is not None:
+            signed_payload["credential_id"] = authorization.credential.id
+            signed_payload["node_id"] = authorization.credential.node_id
+        else:
+            assert authorization.token is not None
+            signed_payload["token_id"] = authorization.token.id
+            signed_payload["session_id"] = (
+                authorization.session.id
+                if authorization.session is not None
+                else None
+            )
+        signed = _make_release_token(signed_payload, ttl_seconds=ttl)
 
         download_url = _build_download_url(request, artifact, signed)
         try:
@@ -443,11 +465,23 @@ class AgentReleasesAuthView(APIView):
             token_id = int(payload.get("token_id") or 0)
             raw_session_id = payload.get("session_id")
             session_id = int(raw_session_id) if raw_session_id is not None else None
+            credential_id = int(payload.get("credential_id") or 0)
+            node_id = int(payload.get("node_id") or 0)
         except (TypeError, ValueError):
             token_id = 0
             session_id = None
+            credential_id = 0
+            node_id = 0
 
-        if token_id > 0:
+        if credential_id > 0:
+            authorization_valid = _release_credential_is_valid(
+                org=org,
+                role=role,
+                credential_id=credential_id,
+                node_id=node_id,
+            )
+            slot_id = f"credential:{credential_id}"
+        elif token_id > 0:
             authorization_valid = _release_authorization_is_valid(
                 org=org,
                 role=role,

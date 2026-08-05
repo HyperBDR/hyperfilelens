@@ -28,6 +28,19 @@ class EnrollmentAuthorization:
     session: NodeInstallationSession | None = None
 
 
+@dataclass(frozen=True)
+class ArtifactDownloadAuthorization:
+    """Authorization for signed agent release downloads.
+
+    Enrollment tokens/sessions cover install-time pulls. Registered nodes use
+    their long-lived NodeCredential for remote upgrades.
+    """
+
+    token: NodeToken | None = None
+    session: NodeInstallationSession | None = None
+    credential: NodeCredential | None = None
+
+
 def _token_matches(row: NodeToken, secret: str) -> bool:
     return bool(secret) and secrets.compare_digest(row.token, secret)
 
@@ -229,6 +242,35 @@ def validate_node_credential(node: Node, secret: str, *, touch: bool = True) -> 
             updated_at=now,
         )
     return True
+
+
+def active_node_credential(
+    *,
+    org: Organization,
+    secret: str,
+    role: str,
+    touch: bool = True,
+) -> NodeCredential | None:
+    """Resolve an active long-lived credential by org, role, and secret."""
+    if not secret:
+        return None
+    rows = NodeCredential.objects.filter(
+        organization=org,
+        role=role,
+        is_active=True,
+        secret_prefix=secret[:12],
+    )
+    for row in rows.iterator():
+        if not row.matches(secret):
+            continue
+        if touch:
+            now = timezone.now()
+            NodeCredential.objects.filter(pk=row.pk).update(
+                last_used_at=now,
+                updated_at=now,
+            )
+        return row
+    return None
 
 
 def legacy_enrollment_token_for_node(
