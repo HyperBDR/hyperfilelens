@@ -519,6 +519,28 @@ class StorageRepositoryApiTests(TestCase):
         self.assertTrue(Credential.objects.get(id=repo.credential_id).get_secret_payload()["kopia_password"])
         enqueue_usage.assert_called_once()
 
+    def test_create_smb_nas_rejects_read_only_mount_option(self):
+        response = self.client.post(
+            "/api/v1/storage/repositories/",
+            {
+                "name": "read-only-smb",
+                "repo_type": "nas",
+                "nas_protocol": "smb",
+                "config": {
+                    "server_address": "10.0.0.15",
+                    "share_path": "/backup",
+                    "mount_options": "ro,iocharset=utf8",
+                    "smb_username": "backup-user",
+                    "smb_password": "backup-password",
+                },
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("config.mount_options", response.data)
+
     def test_associated_sources_lists_direct_nas_agent_health(self):
         agent = Node.objects.create(
             organization=self.org,

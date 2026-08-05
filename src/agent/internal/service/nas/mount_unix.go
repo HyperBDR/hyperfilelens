@@ -87,28 +87,14 @@ func mountSMB(ctx context.Context, spec Spec) error {
 	}
 	res, runErr := process.Run(ctx, "mount", args, nil, "")
 	logMountCommand("smb", source, spec.MountPoint, optsStr, res.ExitCode, res.Stderr, runErr)
-	if runErr != nil && shouldRetrySMBWithoutDefaultCharset(spec, optsStr, res, runErr) {
-		primaryMsg := mountRunErrorMessage(res, runErr)
-		cleanup()
-		cleanup = func() {}
-		slog.Info("nas", "event", "mount_retry_without_default_iocharset", "protocol", "smb", "source", source, "mount_point", spec.MountPoint)
-		retryArgs, retryCleanup, retryErr := formatSMBMountArgsWithoutDefaultCharset(spec)
-		if retryErr != nil {
-			return retryErr
-		}
-		defer retryCleanup()
-		retryOptsStr := ""
-		if len(retryArgs) >= 2 && retryArgs[len(retryArgs)-2] == "-o" {
-			retryOptsStr = retryArgs[len(retryArgs)-1]
-		}
-		retryRes, retryRunErr := process.Run(ctx, "mount", retryArgs, nil, "")
-		logMountCommand("smb", source, spec.MountPoint, retryOptsStr, retryRes.ExitCode, retryRes.Stderr, retryRunErr)
-		if retryRunErr == nil {
-			return nil
-		}
-		return fmt.Errorf("mount SMB share: default iocharset=utf8 failed (%s); retry without default iocharset failed (%s)", primaryMsg, mountRunErrorMessage(retryRes, retryRunErr))
-	}
 	if runErr != nil {
+		if charset, unavailable := unavailableSMBCharset(optsStr, res, runErr); unavailable {
+			return &SMBCharsetUnavailableError{
+				Charset: charset,
+				Kernel:  runningKernelRelease(),
+				Cause:   mountRunErrorMessage(res, runErr),
+			}
+		}
 		if isBusyMountError(res, runErr) {
 			if isMounted(spec.MountPoint) {
 				slog.Info("nas", "event", "mount_busy_already_mounted", "protocol", "smb", "source", source, "mount_point", spec.MountPoint)
@@ -133,27 +119,29 @@ func isBusyMountError(res process.Result, err error) bool {
 		strings.Contains(output, "is busy")
 }
 
-func shouldRetrySMBWithoutDefaultCharset(spec Spec, opts string, res process.Result, err error) bool {
-	if mountOptionsContainKey(spec.Options, "iocharset") {
-		return false
+func unavailableSMBCharset(opts string, res process.Result, err error) (string, bool) {
+	charset := mountOptionValue(opts, "iocharset")
+	if charset == "" {
+		return "", false
 	}
-	if !mountOptionsContainKeyValue(opts, "iocharset", "utf8") {
-		return false
-	}
-	return smbMountDefaultCharsetUnavailable(res, err)
-}
-
-func smbMountDefaultCharsetUnavailable(res process.Result, err error) bool {
 	output := strings.ToLower(strings.Join([]string{
 		res.Stdout,
 		res.Stderr,
 		fmt.Sprint(err),
 	}, "\n"))
-	return strings.Contains(output, "mount error(79)") ||
+	return charset, strings.Contains(output, "mount error(79)") ||
 		strings.Contains(output, "mount error(95)") ||
 		strings.Contains(output, "needed shared library") ||
 		strings.Contains(output, "unable to load nls charset") ||
-		(strings.Contains(output, "iocharset") && strings.Contains(output, "utf8") && strings.Contains(output, "not found"))
+		(strings.Contains(output, "iocharset") && strings.Contains(output, strings.ToLower(charset)) && strings.Contains(output, "not found"))
+}
+
+func runningKernelRelease() string {
+	value, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(value))
 }
 
 func mountRunErrorMessage(res process.Result, err error) string {

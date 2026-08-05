@@ -160,6 +160,13 @@ def _task_error_message(outcome) -> str:
     return f"Agent task failed (status: {status})."
 
 
+def task_error_code(outcome) -> str:
+    result = getattr(outcome, "result", None)
+    if not isinstance(result, dict):
+        return ""
+    return str(result.get("error_code") or "").strip()
+
+
 def _validate_proxy_node(node: Node | None, *, resource: SourceResource | None = None) -> str | None:
     if node is None:
         return "No bound node configured. Please bind a proxy node first."

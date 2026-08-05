@@ -566,7 +566,7 @@ export async function testSourceDraft(payload: Record<string, unknown>) {
 }
 
 export async function mountSource(id: number) {
-  return unwrapApiPayload<{ success: boolean; message?: string; mount_point?: string }>(
+  return unwrapApiPayload<{ success: boolean; message?: string; error_code?: string; mount_point?: string }>(
     await api<unknown>(`${base}/${id}/mount/`, { method: 'POST', headers: orgHeaders() }),
   )
 }

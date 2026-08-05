@@ -58,6 +58,7 @@ import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRou
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { hasNasSourceNameConflict, resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
+import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { listNodes, listNodesPaged, updateNode, fetchLatestAgentVersion, type EnrollmentOs } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
 import type { ApiNode } from '../../types/node'
@@ -1599,7 +1600,7 @@ const nasSmbDomain = ref('')
 /* NFS */
 const nasNfsHost = ref('')
 const nasNfsExport = ref('')
-const nasNfsOptions = ref('')
+const nasNfsOptions = ref(defaultNasMountOptions('smb'))
 
 const nasBusy = ref(false)
 
@@ -1686,7 +1687,7 @@ function openNasAdd() {
   nasSmbDomain.value = ''
   nasNfsHost.value = ''
   nasNfsExport.value = ''
-  nasNfsOptions.value = ''
+  nasNfsOptions.value = defaultNasMountOptions('smb')
   void loadProxyNodes()
   void loadExistingNasNamesForAdd()
   void nextTick(() => nasAddShellRef.value?.focus())
@@ -1789,7 +1790,7 @@ watch(nasBindNodeId, () => {
   clearNasBindNodeError()
 })
 
-watch(nasProtocol, () => {
+watch(nasProtocol, (protocol) => {
   nasSmbServer.value = ''
   nasSmbShare.value = ''
   nasSmbUsername.value = ''
@@ -1797,7 +1798,7 @@ watch(nasProtocol, () => {
   nasSmbDomain.value = ''
   nasNfsHost.value = ''
   nasNfsExport.value = ''
-  nasNfsOptions.value = ''
+  nasNfsOptions.value = defaultNasMountOptions(protocol)
   nasDirTouched.value = false
   nasNameTouched.value = false
 })
