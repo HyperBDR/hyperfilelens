@@ -19,6 +19,7 @@ from apps.source.constants import (
 from apps.source.models import SourceResource
 from apps.source.services.internal.nas_agent import (
     _task_error_message,
+    task_error_code,
     _validate_proxy_node,
     apply_mount_failure,
     apply_mount_success,
@@ -115,6 +116,8 @@ def run_connection_test(
             "message": message,
             "details": {"storage_type": rtype, "protocol": payload.get("protocol")},
         }
+        if error_code := task_error_code(outcome):
+            failure["error_code"] = error_code
         if confirmed_agent_failure(outcome):
             return result_with_availability_observation(failure, "offline")
         return failure
@@ -253,7 +256,10 @@ def mount_resource(resource: SourceResource) -> dict:
             message,
             availability_confirmed=confirmed_agent_failure(outcome),
         )
-        return {"success": False, "message": message}
+        result = {"success": False, "message": message}
+        if error_code := task_error_code(outcome):
+            result["error_code"] = error_code
+        return result
 
     result = outcome.result if isinstance(outcome.result, dict) else {}
     apply_mount_success(resource, result)

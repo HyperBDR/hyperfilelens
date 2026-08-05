@@ -167,6 +167,14 @@ func (e *Engine) runNasMount(ctx context.Context, p Payload) (string, map[string
 	info, err := nas.NewService().Mount(ctx, spec)
 	if err != nil {
 		logNasTask(ctx, "mount_failed", "", spec, "err", err.Error())
+		var charsetErr *nas.SMBCharsetUnavailableError
+		if errors.As(err, &charsetErr) {
+			return "failed", map[string]any{
+				"error_code": "SMB_CHARSET_UNAVAILABLE",
+				"charset":    charsetErr.Charset,
+				"kernel":     charsetErr.Kernel,
+			}, err.Error()
+		}
 		return "failed", nil, err.Error()
 	}
 	logNasTask(ctx, "mount_ok", "", spec, "total_bytes", info.TotalBytes)

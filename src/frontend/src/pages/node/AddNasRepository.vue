@@ -14,6 +14,7 @@ import {
 } from '../../lib/storageRepositoryApi'
 import { listAllNodes } from '../../lib/nodeApi'
 import { SMB_MOUNT_OPTION_EXAMPLES } from '../../lib/nasMountTroubleshooting'
+import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
 import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
@@ -47,7 +48,7 @@ const protocol = ref<NasProtocol>('smb')
 /* SMB auth */
 const smbHost = ref('')
 const smbShare = ref('')
-const mountOptions = ref('')
+const mountOptions = ref(defaultNasMountOptions('smb'))
 const smbUsername = ref('')
 const smbPassword = ref('')
 const smbDomain = ref('')
@@ -63,6 +64,12 @@ const enableQuotaAlert = ref(false)
 const quotaAlertThreshold = ref<number | undefined>(undefined)
 const proxyNodeId = ref<number | undefined>(undefined)
 const repositoryServerHost = ref('')
+
+watch(protocol, (nextProtocol, previousProtocol) => {
+  if (previousProtocol && mountOptions.value === defaultNasMountOptions(previousProtocol)) {
+    mountOptions.value = defaultNasMountOptions(nextProtocol)
+  }
+})
 
 const protocolLabel = computed(() =>
   protocol.value === 'smb' ? t('repositoriesPage.protocolSmb') : t('repositoriesPage.protocolNfs'),

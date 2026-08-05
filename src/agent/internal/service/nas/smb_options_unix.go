@@ -19,10 +19,6 @@ func smbMountOptions(spec Spec) (opts []string, cleanup func(), err error) {
 	return smbMountOptionsForMount(spec, true)
 }
 
-func smbMountOptionsWithoutDefaultCharset(spec Spec) (opts []string, cleanup func(), err error) {
-	return smbMountOptionsForMount(spec, false)
-}
-
 func smbMountOptionsForMount(spec Spec, includeDefaultCharset bool) (opts []string, cleanup func(), err error) {
 	cleanup = func() {}
 	opts = []string{"rw"}
@@ -80,10 +76,10 @@ func mergeMountOptions(base []string, extra string) []string {
 		if option == "" {
 			continue
 		}
-		key := optionKey(option)
+		key := mountOptionMergeKey(option)
 		filtered := make([]string, 0, len(opts))
 		for _, existing := range opts {
-			if optionKey(existing) == key {
+			if mountOptionMergeKey(existing) == key {
 				continue
 			}
 			filtered = append(filtered, existing)
@@ -100,6 +96,14 @@ func optionKey(option string) string {
 		key = option[:idx]
 	}
 	return strings.TrimSpace(key)
+}
+
+func mountOptionMergeKey(option string) string {
+	key := strings.ToLower(optionKey(option))
+	if key == "rw" || key == "ro" {
+		return "access-mode"
+	}
+	return key
 }
 
 func mountOptionsContainKey(options string, key string) bool {
@@ -134,13 +138,22 @@ func mountOptionsContainKeyValue(options string, key string, value string) bool 
 	return false
 }
 
-func formatSMBMountArgs(spec Spec) (args []string, cleanup func(), err error) {
-	opts, cleanup, err := smbMountOptions(spec)
-	return formatSMBMountArgsWithOptions(spec, opts, cleanup, err)
+func mountOptionValue(options string, key string) string {
+	key = strings.TrimSpace(strings.ToLower(key))
+	for _, item := range strings.Split(options, ",") {
+		option := strings.TrimSpace(item)
+		if strings.ToLower(optionKey(option)) != key {
+			continue
+		}
+		if index := strings.Index(option, "="); index >= 0 {
+			return strings.TrimSpace(option[index+1:])
+		}
+	}
+	return ""
 }
 
-func formatSMBMountArgsWithoutDefaultCharset(spec Spec) (args []string, cleanup func(), err error) {
-	opts, cleanup, err := smbMountOptionsWithoutDefaultCharset(spec)
+func formatSMBMountArgs(spec Spec) (args []string, cleanup func(), err error) {
+	opts, cleanup, err := smbMountOptions(spec)
 	return formatSMBMountArgsWithOptions(spec, opts, cleanup, err)
 }
 

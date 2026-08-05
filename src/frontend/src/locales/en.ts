@@ -65,6 +65,7 @@ export const en = {
       agentExplorerListFailed: 'Failed to browse directory. Confirm the node is online and try again.',
       agentPathValidateFailed: 'Path validation failed. Check the path and try again.',
       agentNasMountFailed: 'NAS mount operation failed. Check connection settings.',
+      smbCharsetUnavailable: 'SMB UTF-8 filename support is unavailable on the Proxy Host. Install the matching kernel extra-modules package, then remount the share.',
       agentTaskFailed: 'Agent task failed. Please try again.',
       backupQuotaExceeded: 'Backup quota exceeded. Upgrade your subscription and try again.',
       backupAlreadyRunning: 'A backup is already running for this source.',

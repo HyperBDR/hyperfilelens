@@ -89,6 +89,7 @@ import {
   type BackupSourceDirectoryEntry,
 } from '../../lib/sourceApi'
 import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
+import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import {
   selectBackupSourceDirectoryTreeEntries,
@@ -2176,7 +2177,7 @@ function resetNasForm() {
   nasSmbDomain.value = ''
   nasNfsHost.value = ''
   nasNfsExport.value = ''
-  nasNfsOptions.value = ''
+  nasNfsOptions.value = defaultNasMountOptions('smb')
 }
 
 function onAddBackupSource() {
@@ -2241,7 +2242,7 @@ const nasSmbDomain = ref('')
 /* NFS */
 const nasNfsHost = ref('')
 const nasNfsExport = ref('')
-const nasNfsOptions = ref('')
+const nasNfsOptions = ref(defaultNasMountOptions('smb'))
 
 const generatedNasDir = computed(() =>
   buildGeneratedNasMountDir({
@@ -2367,7 +2368,7 @@ watch(nasBindNodeId, () => {
   clearNasBindNodeError()
 })
 
-watch(nasProtocol, () => {
+watch(nasProtocol, (protocol) => {
   nasSmbServer.value = ''
   nasSmbShare.value = ''
   nasSmbUsername.value = ''
@@ -2375,7 +2376,7 @@ watch(nasProtocol, () => {
   nasSmbDomain.value = ''
   nasNfsHost.value = ''
   nasNfsExport.value = ''
-  nasNfsOptions.value = ''
+  nasNfsOptions.value = defaultNasMountOptions(protocol)
   nasDirTouched.value = false
   nasNameTouched.value = false
 })

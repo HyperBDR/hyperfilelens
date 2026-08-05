@@ -58,26 +58,18 @@ func TestSMBMountOptionsUserOverridesIOCharset(t *testing.T) {
 	}
 }
 
-func TestSMBMountOptionsWithoutDefaultCharset(t *testing.T) {
-	spec := Spec{
-		Username: "backupuser",
-		Password: "secret",
-		Options:  "vers=3.0,uid=1000",
-	}
-	opts, cleanup, err := smbMountOptionsWithoutDefaultCharset(spec)
+func TestSMBMountOptionsUserOverridesRW(t *testing.T) {
+	opts, cleanup, err := smbMountOptions(Spec{Options: "ro"})
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	joined := strings.Join(opts, ",")
-	if strings.Contains(joined, "iocharset=") {
-		t.Fatalf("expected no default iocharset, got %q", joined)
+	if mountOptionsContainKey(joined, "rw") {
+		t.Fatalf("expected ro to replace rw, got %q", joined)
 	}
-	if !strings.Contains(joined, "username=backupuser") || !strings.Contains(joined, "password=secret") {
-		t.Fatalf("missing auth options in %q", joined)
-	}
-	if !strings.Contains(joined, "vers=3.0") || !strings.Contains(joined, "uid=1000") {
-		t.Fatalf("missing user mount options in %q", joined)
+	if !mountOptionsContainKey(joined, "ro") {
+		t.Fatalf("missing ro in %q", joined)
 	}
 }
 
@@ -102,35 +94,53 @@ func TestMountOptionsContainKeyValue(t *testing.T) {
 	}
 }
 
-func TestShouldRetrySMBWithoutDefaultCharset(t *testing.T) {
-	spec := Spec{}
-	res := process.Result{Stderr: "mount error(79): Can not access a needed shared library"}
-	if !shouldRetrySMBWithoutDefaultCharset(spec, "rw,iocharset=utf8,vers=3.0", res, errExitForTest{}) {
-		t.Fatal("expected retry for default iocharset error 79")
+func TestUnavailableSMBCharset(t *testing.T) {
+	charset, unavailable := unavailableSMBCharset(
+		"rw,iocharset=utf8,vers=3.1.1",
+		process.Result{Stderr: "CIFS mount error: iocharset utf8 not found"},
+		errExitForTest{},
+	)
+	if !unavailable || charset != "utf8" {
+		t.Fatalf("unavailableSMBCharset() = (%q, %v), want (utf8, true)", charset, unavailable)
 	}
 }
 
-func TestShouldRetrySMBWithoutDefaultCharsetForOperationNotSupported(t *testing.T) {
-	spec := Spec{}
-	res := process.Result{Stderr: "mount error(95): Operation not supported"}
-	if !shouldRetrySMBWithoutDefaultCharset(spec, "rw,iocharset=utf8", res, errExitForTest{}) {
-		t.Fatal("expected retry for default iocharset error 95")
+func TestUnavailableSMBCharsetSupportsCIFSError79(t *testing.T) {
+	charset, unavailable := unavailableSMBCharset(
+		"rw,iocharset=utf8,vers=3.1.1",
+		process.Result{Stderr: "mount error(79): Can not access a needed shared library"},
+		errExitForTest{},
+	)
+	if !unavailable || charset != "utf8" {
+		t.Fatalf("unavailableSMBCharset() = (%q, %v), want (utf8, true)", charset, unavailable)
 	}
 }
 
-func TestShouldRetrySMBWithoutDefaultCharsetRespectsUserIOCharset(t *testing.T) {
-	spec := Spec{Options: "iocharset=utf8,vers=3.0"}
-	res := process.Result{Stderr: "mount error(79): Can not access a needed shared library"}
-	if shouldRetrySMBWithoutDefaultCharset(spec, "rw,iocharset=utf8,vers=3.0", res, errExitForTest{}) {
-		t.Fatal("did not expect retry when user explicitly configured iocharset")
+func TestUnavailableSMBCharsetSupportsExplicitOverride(t *testing.T) {
+	charset, unavailable := unavailableSMBCharset(
+		"rw,iocharset=cp936",
+		process.Result{Stderr: "unable to load NLS charset cp936"},
+		errExitForTest{},
+	)
+	if !unavailable || charset != "cp936" {
+		t.Fatalf("unavailableSMBCharset() = (%q, %v), want (cp936, true)", charset, unavailable)
 	}
 }
 
-func TestShouldRetrySMBWithoutDefaultCharsetIgnoresUnrelatedErrors(t *testing.T) {
-	spec := Spec{}
-	res := process.Result{Stderr: "mount error(13): Permission denied"}
-	if shouldRetrySMBWithoutDefaultCharset(spec, "rw,iocharset=utf8,vers=3.0", res, errExitForTest{}) {
-		t.Fatal("did not expect retry for unrelated mount error")
+func TestUnavailableSMBCharsetIgnoresUnrelatedErrors(t *testing.T) {
+	_, unavailable := unavailableSMBCharset(
+		"rw,iocharset=utf8",
+		process.Result{Stderr: "mount error(13): Permission denied"},
+		errExitForTest{},
+	)
+	if unavailable {
+		t.Fatal("did not expect unrelated mount error to be classified as charset unavailable")
+	}
+}
+
+func TestMountOptionValue(t *testing.T) {
+	if got := mountOptionValue("rw,iocharset=cp936,vers=3.0", "iocharset"); got != "cp936" {
+		t.Fatalf("mountOptionValue() = %q, want cp936", got)
 	}
 }
 

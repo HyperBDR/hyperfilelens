@@ -68,6 +68,13 @@ def normalize_nas_share_path(value: object) -> str:
     return path.rstrip("/") or "/"
 
 
+def mount_options_include_read_only(value: object) -> bool:
+    return any(
+        option.strip().lower() == "ro"
+        for option in str(value or "").split(",")
+    )
+
+
 def normalize_s3_object_prefix(value: object) -> str:
     """Trim, strip leading slashes, collapse repeats, and append a trailing "/".
 
@@ -445,6 +452,14 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
             )
 
         if nas_protocol == Repository.NasProtocol.SMB:
+            if mount_options_include_read_only(config.get("mount_options")):
+                raise serializers.ValidationError(
+                    {
+                        "config.mount_options": (
+                            "SMB backup repositories cannot use the read-only (ro) mount option."
+                        )
+                    }
+                )
             if str(credential_payload.get("smb_username") or "").strip():
                 config["smb_username"] = str(credential_payload.get("smb_username") or "").strip()
             if str(credential_payload.get("smb_domain") or "").strip():
