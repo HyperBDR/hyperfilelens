@@ -13,6 +13,7 @@ SHELL_FILES = [
     ROOT / "deploy/installer/install.sh",
     ROOT / "deploy/installer/sourcelens/install.sh",
     ROOT / "src/agent/packaging/install/install.sh",
+    ROOT / "src/agent/scripts/package.sh",
 ]
 PYTHON_FILES = [
     ROOT / "deploy/installer/apply-runtime-config.py",

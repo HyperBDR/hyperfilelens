@@ -225,6 +225,8 @@ package_archives() {
 		GATEWAY_LIFECYCLE_SCRIPT_VALUE="${GATEWAY_LIFECYCLE_SCRIPT}" \
 		DO_STANDARD_VALUE="${DO_STANDARD}" \
 		UBUNTU_RELEASES_VALUE="${UBUNTU_RELEASES}" python3 - <<'PY'
+from __future__ import annotations
+
 import hashlib
 import json
 import os
