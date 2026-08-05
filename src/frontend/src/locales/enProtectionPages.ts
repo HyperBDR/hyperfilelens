@@ -591,6 +591,7 @@ export const enProtectionPages = {
     msgBatchRecoveryPlanDisabled: 'Disabled restore plans for {n} source(s).',
     msgTargetCreated: 'Target added.',
     msgSaveEditDemo: 'Saved.',
+    msgEditConfigUnavailable: 'No editable backup configuration is available. Refresh the page and try again.',
     msgManualStarted: 'Backup task started.',
     msgManualDone: 'Backup finished: {name}',
     msgSelectBackupsToDelete: 'Select backups to delete first.',
