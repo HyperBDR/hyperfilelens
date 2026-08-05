@@ -72,11 +72,7 @@ class BackupTaskConcurrencyTests(TransactionTestCase):
             step=3,
         )
 
-    @patch(
-        "apps.protection.services.directory_size_estimate."
-        "ensure_backup_config_directory_estimates"
-    )
-    def test_simultaneous_starts_create_one_active_backup(self, _estimate_sizes):
+    def test_simultaneous_starts_create_one_active_backup(self):
         barrier = threading.Barrier(2)
         outcomes: queue.Queue[dict] = queue.Queue()
         errors: queue.Queue[BaseException] = queue.Queue()

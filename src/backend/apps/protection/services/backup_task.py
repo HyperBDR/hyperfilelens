@@ -621,16 +621,8 @@ def start_backup_tasks(
                         source_ref_id=source.source_ref_id,
                         repository_id=repository.id,
                     )
-                from apps.protection.services.directory_size_estimate import (
-                    ensure_backup_config_directory_estimates,
-                )
-
-                ensure_backup_config_directory_estimates(
-                    organization_id=organization_id,
-                    config=config,
-                    source_type=source.source_type,
-                    source_ref_id=source.source_ref_id,
-                )
+                # Directory size (du) is pre-cached asynchronously on config save.
+                # Progress degrades when estimates are still missing. Never block Backup Now.
             except ValidationError as exc:
                 skipped_count += 1
                 results.append(

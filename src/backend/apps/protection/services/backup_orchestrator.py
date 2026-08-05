@@ -1977,6 +1977,10 @@ def advance_backup(
             "status": Task.Status.FAILED,
         }
 
+    # Directory size estimates are pre-cached asynchronously on backup-config save.
+    # Do not sync path.size here: it contends with Celery soft limits and can load
+    # the source host at backup start. Progress degrades when du_total is still 0.
+
     try:
         repository_payload = _repository_payload_for_backup(
             task=task,

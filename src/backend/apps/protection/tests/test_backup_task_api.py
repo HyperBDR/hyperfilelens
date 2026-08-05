@@ -293,6 +293,29 @@ class ProtectionBackupTaskApiTests(TestCase):
         self.assertEqual(source_resource.resource_id, self.agent.id)
         mock_queue.assert_called_once()
 
+    @patch("apps.protection.services.directory_size_estimate.run_agent_task_sync")
+    @patch("apps.protection.services.backup_task._queue_backup_execution")
+    def test_start_backup_task_does_not_sync_directory_size_estimate(
+        self,
+        mock_queue,
+        mock_path_size,
+    ):
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/v1/protection/backup-tasks/",
+                {
+                    "source_ids": [f"agent:{self.agent.id}"],
+                    "trigger_type": "manual",
+                },
+                format="json",
+                **self._headers(),
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(response.data["created_count"], 1)
+        mock_queue.assert_called_once()
+        mock_path_size.assert_not_called()
+
     @patch("apps.protection.services.backup_task._queue_backup_execution")
     def test_start_backup_task_api_accepts_backup_config_ids_without_source_ids(self, mock_queue):
         with self.captureOnCommitCallbacks(execute=True):

@@ -61,6 +61,25 @@ class Step3ProgressTests(SimpleTestCase):
         self.assertEqual(transfer["bytes_total"], 2_000_000)
         self.assertTrue(transfer["bytes_total_estimated"])
 
+    def test_backup_without_du_total_degrades_progress(self):
+        transfer = enrich_step3_backup_transfer(
+            transfer={"phase": "estimating", "upload_speed_bps": 0},
+            previous={},
+            aggregate={
+                "uploaded_bytes": 0,
+                "uploaded_count": 0,
+                "hashed_count": 0,
+                "estimated_bytes": 0,
+            },
+            du_total=0,
+        )
+        self.assertFalse(transfer["switch_latched"])
+        self.assertFalse(transfer["bytes_total_known"])
+        self.assertFalse(transfer["bytes_total_estimated"])
+        self.assertNotIn("bytes_total", transfer)
+        self.assertIsNone(transfer.get("step3_display_percent"))
+        self.assertIsNone(transfer.get("eta_seconds"))
+
     def test_should_latch_requires_uploaded_and_stable_estimate(self):
         now = timezone.now()
         history = [{"at": (now - timedelta(seconds=index)).isoformat(), "estimated_bytes": 1_050_000} for index in range(12)]
