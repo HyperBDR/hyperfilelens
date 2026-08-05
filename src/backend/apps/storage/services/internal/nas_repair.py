@@ -334,12 +334,19 @@ def repair_nas_repository(
         raise DRFValidationError(
             {"detail": "Repair is only supported for NAS repositories."}
         )
+    if repository.status == Repository.Status.CREATING:
+        raise DRFValidationError(
+            {"detail": "Repository create or remount is still in progress."}
+        )
 
     organization_id = repository.organization_id
     currently_bound = bool(
         repository.bind_node_type == Repository.BindNodeType.PROXY and repository.bind_node_id
     )
     initial_bind_node_id = repository.bind_node_id
+    initial_proxy_mount_path = str(
+        (repository.config or {}).get("proxy_mount_path") or ""
+    ).strip()
     bind_node_provided = bind_node_id is not _UNSET
     if bind_node_provided:
         new_bind_node_id = bind_node_id
@@ -454,5 +461,6 @@ def repair_nas_repository(
         remount_previous_node_id=(
             int(initial_bind_node_id) if initial_bind_node_id else None
         ),
+        remount_previous_mount_path=initial_proxy_mount_path or None,
     )
     return repository

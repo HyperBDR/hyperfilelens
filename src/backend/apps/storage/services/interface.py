@@ -317,6 +317,10 @@ def update_repository(
     bind_node_id: int | None = None,
     credential_payload: dict | None = None,
 ) -> Repository:
+    if repository.status == Repository.Status.CREATING:
+        raise DRFValidationError(
+            {"detail": "Repository create or remount is still in progress."}
+        )
     with transaction.atomic():
         if name is not None:
             repository.name = name
