@@ -41,4 +41,23 @@ describe('backup wizard pending source storage', () => {
 
     expect(readWizardPendingSourceOps().get('agent:9')?.kind).toBe('delete_failed')
   })
+
+  it('persists structured failure details across refresh', () => {
+    markWizardPendingBySourceIds(['agent:9'], {
+      kind: 'delete_failed',
+      taskUuid: 'task-uuid-9',
+      errorMessage: 'Agent uninstall callback failed',
+      failureDetails: {
+        title: 'Source deregistration failed',
+        summary: 'Deregistration failed for agent-9.',
+        reasons: ['Agent uninstall callback failed'],
+        resolutions: ['Retry Strict Cleanup'],
+        rawDetail: { task_uuid: 'task-uuid-9' },
+      },
+    })
+
+    const op = readWizardPendingSourceOps().get('agent:9')
+    expect(op?.failureDetails?.rawDetail).toEqual({ task_uuid: 'task-uuid-9' })
+    expect(op?.failureDetails?.reasons).toEqual(['Agent uninstall callback failed'])
+  })
 })

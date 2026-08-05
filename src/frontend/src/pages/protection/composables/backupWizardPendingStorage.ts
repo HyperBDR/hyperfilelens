@@ -1,3 +1,4 @@
+import type { ErrorDetailsPayload } from '../../../lib/errors/details'
 import type { FlowSourceRow } from './useFlowSourceAggregate'
 
 export type SourcePendingKind = 'deleting' | 'reverting' | 'removing' | 'delete_failed'
@@ -10,6 +11,8 @@ export type SourcePendingOp = {
   taskUuid?: string
   startedAt?: number
   errorMessage?: string
+  /** Structured unregister failure for refresh-safe View details / retry summary. */
+  failureDetails?: ErrorDetailsPayload
 }
 
 export const WIZARD_PENDING_STORAGE_KEY = 'hfl-backup-wizard-source-pending'

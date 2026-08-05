@@ -62,4 +62,23 @@ describe('notify error presentation', () => {
     })
     expect(toastState.items[0]?.title).toBeUndefined()
   })
+
+  it('accepts a prebuilt details payload without requiring error', () => {
+    notifyError({
+      title: 'Source deregistration failed',
+      message: 'Deregistration failed for linux-32.',
+      showDetails: true,
+      details: {
+        title: 'Source deregistration failed',
+        summary: 'Deregistration failed for linux-32.',
+        reasons: ['Repository cleanup failed'],
+        resolutions: ['Retry Strict Cleanup'],
+        rawDetail: { task_uuid: 'task-1' },
+      },
+    })
+
+    expect(toastState.items).toHaveLength(1)
+    expect(toastState.items[0]?.details?.reasons).toEqual(['Repository cleanup failed'])
+    expect(toastState.items[0]?.details?.rawDetail).toEqual({ task_uuid: 'task-1' })
+  })
 })

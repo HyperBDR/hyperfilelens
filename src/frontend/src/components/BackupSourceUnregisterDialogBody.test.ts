@@ -74,6 +74,28 @@ describe('BackupSourceUnregisterDialogBody', () => {
     wrapper.unmount()
   })
 
+  it('shows the previous failure summary when retrying deregistration', async () => {
+    const wrapper = mountBody({
+      previousFailureTitle: 'Previous deregistration failures (2)',
+      previousFailureSummary: 'Deregistration failed for 2 sources.',
+      previousFailureClickable: true,
+    })
+    expect(wrapper.text()).toContain('Previous deregistration failures (2)')
+    expect(wrapper.text()).toContain('Deregistration failed for 2 sources.')
+    await wrapper.get('button').trigger('click')
+    expect(wrapper.emitted('view-previous-failure')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('falls back to the default previous-failure title when none is provided', () => {
+    const wrapper = mountBody({
+      previousFailureSummary: 'Agent uninstall callback failed',
+    })
+    expect(wrapper.text()).toContain('Previous deregistration failure')
+    expect(wrapper.text()).toContain('Agent uninstall callback failed')
+    wrapper.unmount()
+  })
+
   it('shows a retry action when prerequisite verification fails', async () => {
     const wrapper = mountBody({ preflightError: true })
     expect(wrapper.find('[data-test="preflight-alert"]').exists()).toBe(true)

@@ -145,6 +145,17 @@ import {
   sourceUnregisterTaskBindings,
   sourceUnregisterTaskOutcome,
 } from '../../lib/sourceUnregisterMonitor'
+import type { ErrorDetailsPayload } from '../../lib/errors/details'
+import {
+  notifyUnregisterCleanupWarning,
+  notifyUnregisterCleanupWarningBatch,
+  notifyUnregisterFailureBatch,
+  openUnregisterFailureDetails,
+  previousUnregisterFailureDetails,
+  unregisterFailureSummaryLine,
+  unregisterFailureToErrorDetails,
+  warningsForUnregisterSource,
+} from '../../lib/unregisterFailureDetails'
 import {
   createRestoreRecord,
   browseRestoreSnapshotDirectory,
@@ -4454,6 +4465,7 @@ type FlowSourceDisplayStatus = {
   label: string
   tag: 'success' | 'warning' | 'danger' | 'info' | 'neutral'
   spinning?: boolean
+  clickable?: boolean
 }
 
 type BackupSourceDeleteDisplayRow = {
@@ -4477,6 +4489,7 @@ function resolveFlowSourceDisplayStatus(row: FlowSourceRow): FlowSourceDisplaySt
       label: pendingLabel,
       tag: op?.kind === 'delete_failed' ? 'danger' : 'warning',
       spinning: sourcePendingOps.rowPendingSpinning(row.id),
+      clickable: op?.kind === 'delete_failed',
     }
   }
 
@@ -4533,12 +4546,26 @@ function onBackupSourcesDeleteStarted(payload: { sourceIds: string[] }) {
   )
 }
 
-function onBackupSourcesDeleteFailed(payload: { sourceIds: string[] }) {
-  sourcePendingOps.mark(
-    payload.sourceIds,
-    { kind: 'delete_failed' },
-    flowRowsForSourceIds(payload.sourceIds),
-  )
+function onBackupSourcesDeleteFailed(payload: {
+  sourceIds: string[]
+  failureDetails?: ErrorDetailsPayload
+  failuresBySource?: Record<string, ErrorDetailsPayload>
+  errorMessage?: string
+}) {
+  payload.sourceIds.forEach((sourceId) => {
+    const details = payload.failuresBySource?.[sourceId] || payload.failureDetails
+    sourcePendingOps.mark(
+      [sourceId],
+      {
+        kind: 'delete_failed',
+        errorMessage: unregisterFailureSummaryLine(details)
+          || payload.errorMessage
+          || t('protection.backupsPage.msgDeleteSourceFailed'),
+        failureDetails: details,
+      },
+      flowRowsForSourceIds([sourceId]),
+    )
+  })
   // Keep dialog props while the unregister modal stays open for inline retry.
   if (!backupSourceDeleteDialogOpen.value && !backupSourceStep3DeleteDialogOpen.value) {
     backupSourceDeleteIds.value = []
@@ -4547,11 +4574,36 @@ function onBackupSourcesDeleteFailed(payload: { sourceIds: string[] }) {
   }
 }
 
+function openSourcePendingFailureDetails(sourceId: string) {
+  const op = sourcePendingOps.getOp(sourceId)
+  if (op?.kind !== 'delete_failed') return
+  if (op.failureDetails) {
+    openUnregisterFailureDetails(op.failureDetails)
+    return
+  }
+  const row = flowRowsForSourceIds([sourceId])[0]
+  openUnregisterFailureDetails(unregisterFailureToErrorDetails({
+    t,
+    sourceId,
+    sourceName: row?.name || sourceId,
+    fallbackMessage: op.errorMessage || t('protection.backupsPage.msgDeleteSourceFailed'),
+  }))
+}
+
 const backupSourceDeleteDialogOpen = ref(false)
 const backupSourceStep3DeleteDialogOpen = ref(false)
 const backupSourceDeleteIds = ref<string[]>([])
 const backupSourceDeleteRows = ref<BackupSourceDeleteDisplayRow[]>([])
 const backupSourceDeleteShowSnapshots = ref(false)
+const backupSourceDeletePreviousFailure = computed(() =>
+  previousUnregisterFailureDetails(
+    t,
+    backupSourceDeleteIds.value.flatMap((sourceId) => {
+      const op = sourcePendingOps.getOp(sourceId)
+      return op?.kind === 'delete_failed' && op.failureDetails ? [op.failureDetails] : []
+    }),
+  ),
+)
 const UNREGISTER_TASK_POLL_MS = 2000
 const UNREGISTER_TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000
 const unregisterTaskPollTimers = new Set<number>()
@@ -4595,8 +4647,30 @@ function monitorPendingUnregister(
         scheduleUnregisterTaskPoll(() => { void poll() })
         return
       }
-      sourcePendingOps.mark(sourceIds, { kind: 'delete_failed' }, flowRowsForSourceIds(sourceIds))
-      ElMessage.error({ message: t('protection.backupsPage.msgDeleteSourceFailed'), grouping: true })
+      const timeoutNotices = sourceIds.map((sourceId) => {
+        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
+        const details = unregisterFailureToErrorDetails({
+          t,
+          sourceId,
+          sourceName,
+          fallbackMessage: t('protection.backupsPage.msgDeleteSourceFailed'),
+        })
+        sourcePendingOps.mark(
+          [sourceId],
+          {
+            kind: 'delete_failed',
+            errorMessage: unregisterFailureSummaryLine(details),
+            failureDetails: details,
+          },
+          flowRowsForSourceIds([sourceId]),
+        )
+        return { sourceId, sourceName, details }
+      })
+      notifyUnregisterFailureBatch({
+        t,
+        items: timeoutNotices,
+        dedupeKey: `unregister-timeout-batch:${sourceIds.join(',')}`,
+      })
       return
     }
 
@@ -4617,28 +4691,65 @@ function monitorPendingUnregister(
     const pendingRemovals = outcomes.flatMap((outcome) => outcome.pendingRemovals)
     const pendingRemovalIds = new Set(pendingRemovals.map((item) => item.source_id))
     const completedSourceIds = sourceIds.filter((id) => !failedSourceIds.includes(id))
+    const cleanupNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
+    completedSourceIds
+      .filter((id) => !pendingRemovalIds.has(id))
+      .forEach((sourceId) => {
+        const index = pairs.findIndex((pair) => pair.sourceId === sourceId)
+        const outcome = outcomes[index]
+        if (!outcome?.partialSuccess) return
+        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
+        cleanupNotices.push({
+          sourceId,
+          sourceName,
+          details: unregisterFailureToErrorDetails({
+            t,
+            sourceId,
+            sourceName,
+            task: tasks[index],
+            outcome,
+            partialSuccess: true,
+          }),
+        })
+      })
     sourcePendingOps.clear(completedSourceIds.filter((id) => !pendingRemovalIds.has(id)))
     sourcePendingOps.transitionToRemoving(pendingRemovals)
+    const failureNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
     if (failedSourceIds.length) {
       failedSourceIds.forEach((sourceId) => {
         const index = pairs.findIndex((pair) => pair.sourceId === sourceId)
+        const outcome = outcomes[index]
+        const task = tasks[index]
+        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
+        const details = unregisterFailureToErrorDetails({
+          t,
+          sourceId,
+          sourceName,
+          task,
+          outcome,
+        })
         sourcePendingOps.mark(
           [sourceId],
-          { kind: 'delete_failed', errorMessage: outcomes[index]?.errorMessage },
+          {
+            kind: 'delete_failed',
+            errorMessage: unregisterFailureSummaryLine(details),
+            failureDetails: details,
+          },
           flowRowsForSourceIds([sourceId]),
         )
-      })
-      const detail = outcomes.find((outcome) => !outcome.success)?.errorMessage
-      ElMessage.error({
-        message: detail || t('protection.backupsPage.msgDeleteSourceFailed'),
-        grouping: true,
-      })
-    } else if (outcomes.some((outcome) => outcome.partialSuccess)) {
-      ElMessage.warning({
-        message: t('protection.backupsPage.msgDeleteSourcePartialSuccess'),
-        grouping: true,
+        failureNotices.push({ sourceId, sourceName, details })
       })
     }
+    notifyUnregisterFailureBatch({
+      t,
+      items: failureNotices,
+      dedupeKey: `unregister-failure-batch:${failureNotices.map((item) => item.sourceId).join(',')}`,
+    })
+    notifyUnregisterCleanupWarningBatch({
+      t,
+      items: cleanupNotices,
+      dedupeKey: `unregister-cleanup-warning-batch:${cleanupNotices.map((item) => item.sourceId).join(',')}`,
+    })
     try {
       await Promise.all([
         loadBackupSelectable({ silent: true }),
@@ -4880,18 +4991,44 @@ async function onBackupSourcesDeleted(payload: {
       const monitoredSourceIds = bindings.map((binding) => binding.sourceId)
       const monitoredTaskUuids = bindings.map((binding) => binding.taskUuid)
       const bySourceId = new Map(bindings.map((binding) => [binding.sourceId, binding]))
+      const unboundNotices: Array<{ sourceId: string; sourceName: string; details: ErrorDetailsPayload }> = []
       sourceIds.forEach((sourceId) => {
         const binding = bySourceId.get(sourceId)
+        if (binding) {
+          sourcePendingOps.mark(
+            [sourceId],
+            {
+              kind: 'deleting',
+              taskId: binding.taskId,
+              taskUuid: binding.taskUuid,
+              startedAt: Date.now(),
+            },
+            flowRowsForSourceIds([sourceId]),
+          )
+          return
+        }
+        const sourceName = flowRowsForSourceIds([sourceId])[0]?.name || sourceId
+        const details = unregisterFailureToErrorDetails({
+          t,
+          sourceId,
+          sourceName,
+          fallbackMessage: t('protection.backupsPage.msgDeleteSourceFailed'),
+        })
         sourcePendingOps.mark(
           [sourceId],
           {
-            kind: binding ? 'deleting' : 'delete_failed',
-            taskId: binding?.taskId,
-            taskUuid: binding?.taskUuid,
-            startedAt: Date.now(),
+            kind: 'delete_failed',
+            errorMessage: unregisterFailureSummaryLine(details),
+            failureDetails: details,
           },
           flowRowsForSourceIds([sourceId]),
         )
+        unboundNotices.push({ sourceId, sourceName, details })
+      })
+      notifyUnregisterFailureBatch({
+        t,
+        items: unboundNotices,
+        dedupeKey: `unregister-unbound-batch:${unboundNotices.map((item) => item.sourceId).join(',')}`,
       })
       monitorPendingUnregister(monitoredSourceIds, monitoredTaskUuids)
       ElMessage.info({ message: t('protection.backupsPage.msgDeleteSourcePending'), grouping: true })
@@ -4947,7 +5084,34 @@ async function onBackupSourcesDeleted(payload: {
     } else {
       sourcePendingOps.clear(Array.from(idSet))
       if (payload.result === 'partial_success') {
-        ElMessage.warning({ message: t('protection.backupsPage.msgDeleteSourcePartialSuccess'), grouping: true })
+        const sourceIds = Array.from(idSet)
+        const items = sourceIds.map((sourceId) => {
+          const sourceName = deletedRows.find((row) => row.id === sourceId)?.name || sourceId
+          return {
+            sourceId,
+            sourceName,
+            details: unregisterFailureToErrorDetails({
+              t,
+              sourceId,
+              sourceName,
+              partialSuccess: true,
+              warnings: warningsForUnregisterSource(payload.warnings, sourceId),
+            }),
+          }
+        })
+        if (!items.length) {
+          notifyUnregisterCleanupWarning({
+            t,
+            warnings: payload.warnings,
+            dedupeKey: 'unregister-sync-cleanup-warning:bulk',
+          })
+        } else {
+          notifyUnregisterCleanupWarningBatch({
+            t,
+            items,
+            dedupeKey: `unregister-sync-cleanup-warning:${sourceIds.join(',')}`,
+          })
+        }
       } else {
         ElMessage.success({ message: t('protection.backupsPage.msgDeleteSourceSuccess'), grouping: true })
       }
@@ -9199,6 +9363,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             <FlowSourceReadyStatusCell
               v-bind="resolveFlowSourceDisplayStatus(row)"
               neutral-as-danger
+              @click="openSourcePendingFailureDetails(row.id)"
             />
           </template>
         </el-table-column>
@@ -9365,6 +9530,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             <FlowSourceReadyStatusCell
               v-bind="resolveFlowSourceDisplayStatus(row)"
               neutral-as-danger
+              @click="openSourcePendingFailureDetails(row.id)"
             />
           </template>
         </el-table-column>
@@ -9523,6 +9689,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               v-else
               v-bind="resolveFlowSourceDisplayStatus(row)"
               neutral-as-danger
+              @click="openSourcePendingFailureDetails(row.id)"
             />
           </template>
         </el-table-column>
@@ -12077,6 +12244,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       :source-ids="backupSourceDeleteIds"
       :sources="backupSourceDeleteRows"
       :show-snapshots="backupSourceDeleteShowSnapshots"
+      :previous-failure-details="backupSourceDeletePreviousFailure"
       @started="onBackupSourcesDeleteStarted"
       @failed="onBackupSourcesDeleteFailed"
       @deleted="onBackupSourcesDeleted"
@@ -12086,6 +12254,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
       v-model="backupSourceStep3DeleteDialogOpen"
       :source-ids="backupSourceDeleteIds"
       :sources="backupSourceDeleteRows"
+      :previous-failure-details="backupSourceDeletePreviousFailure"
       @started="onBackupSourcesDeleteStarted"
       @failed="onBackupSourcesDeleteFailed"
       @deleted="onBackupSourcesDeleted"

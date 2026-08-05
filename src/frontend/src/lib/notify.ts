@@ -1,4 +1,4 @@
-import type { ErrorDetailsOverrides } from './errors/details'
+import type { ErrorDetailsOverrides, ErrorDetailsPayload } from './errors/details'
 import { errorDetailsCopyText, openErrorDetails, toErrorDetails } from './errors/details'
 import { pushToast, type ToastOptions, type ToastType } from './toast/store'
 
@@ -6,6 +6,8 @@ export type NotifyOptions = Omit<ToastOptions, 'type' | 'message' | 'details'> &
   message: string
   error?: unknown
   errorDetails?: ErrorDetailsOverrides
+  /** Prebuilt details payload (e.g. unregisterFailureToErrorDetails). */
+  details?: ErrorDetailsPayload
   showDetails?: boolean
   detailsPresentation?: 'toast' | 'dialog'
 }
@@ -16,13 +18,16 @@ export type NotifyHandler = { close: () => void }
 function notify(type: ToastType, input: NotifyInput = ''): NotifyHandler {
   const options: NotifyOptions = typeof input === 'string' ? { message: input } : input
   const toastTitle = options.title?.trim() === options.message.trim() ? undefined : options.title
-  const details = options.showDetails && options.error !== undefined
-    ? toErrorDetails(options.error, {
-        title: options.title,
-        summary: options.message,
-        ...options.errorDetails,
-      })
-    : undefined
+  const details = !options.showDetails
+    ? undefined
+    : options.details
+      || (options.error !== undefined
+        ? toErrorDetails(options.error, {
+            title: options.title,
+            summary: options.message,
+            ...options.errorDetails,
+          })
+        : undefined)
 
   if (details && options.detailsPresentation === 'dialog') {
     openErrorDetails(details)

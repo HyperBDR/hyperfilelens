@@ -25,12 +25,18 @@ const props = withDefaults(defineProps<{
   preflightLoading?: boolean
   preflightError?: boolean
   loading?: boolean
+  previousFailureTitle?: string
+  previousFailureSummary?: string
+  previousFailureClickable?: boolean
 }>(), {
   showSnapshots: true,
   isStep3: false,
   preflightLoading: false,
   preflightError: false,
   loading: false,
+  previousFailureTitle: '',
+  previousFailureSummary: '',
+  previousFailureClickable: false,
 })
 
 const force = defineModel<boolean>('force', { default: false })
@@ -39,6 +45,7 @@ const confirmText = defineModel<string>('confirmText', { default: '' })
 const emit = defineEmits<{
   (e: 'confirm'): void
   (e: 'retry-preflight'): void
+  (e: 'view-previous-failure'): void
 }>()
 
 const { t } = useI18n()
@@ -119,6 +126,30 @@ function reasonLabel(reason: Parameters<typeof unregisterReasonLabel>[0]) {
     </div>
 
     <div class="hfl-flow-action-dialog__extras">
+      <ElAlert
+        v-if="previousFailureSummary"
+        class="hfl-flow-action-dialog__previous-failure"
+        type="error"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          {{ previousFailureTitle || t('protection.backupsPage.unregisterPreviousFailureTitle') }}
+        </template>
+        <div class="hfl-flow-action-dialog__previous-failure-content">
+          <span>{{ previousFailureSummary }}</span>
+          <ElButton
+            v-if="previousFailureClickable"
+            type="primary"
+            link
+            :disabled="loading"
+            @click="emit('view-previous-failure')"
+          >
+            {{ t('protection.backupsPage.unregisterPreviousFailureViewDetails') }}
+          </ElButton>
+        </div>
+      </ElAlert>
+
       <section class="hfl-flow-action-dialog__section">
         <h3 class="hfl-flow-action-dialog__section-title hfl-flow-action-dialog__section-title--plain">
           {{ t('protection.backupsPage.deleteSourceListTitle') }}
