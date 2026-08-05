@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { MessageSquare, TriangleAlert } from 'lucide-vue-next'
 import { formatBytes } from '../../../lib/kopiaProgress'
 import { formatLocalDateTime } from '../../../lib/dateTime'
 import { copilotGatewayKind } from '../../../lib/copilotGatewayTerminology'
+import {
+  conversionAllOk,
+  conversionCountsLabel,
+  conversionEmptyResult,
+  conversionPhase,
+  conversionProblemItems,
+  conversionWarningsForDisplay,
+} from '../../../lib/conversionSummary'
 import type { LensSessionLink } from '../../../lib/lensApi'
 
 const props = defineProps<{
@@ -12,6 +21,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
 const detailsOpen = ref(false)
 const activeRunStatuses = new Set(['queued', 'running', 'streaming'])
 
@@ -56,13 +66,36 @@ const gatewayType = computed(() => gatewayKind.value === 'private'
 const compactGatewayType = computed(() => gatewayKind.value === 'private'
   ? t('insight.copilot.gatewayTypePrivate')
   : t('insight.copilot.gatewayTypePublic'))
-const gatewaySummary = computed(() => props.session.gateway_name
-  ? t('insight.copilot.gatewaySummaryWithName', {
-      type: gatewayType.value,
-      name: props.session.gateway_name,
-    })
-  : gatewayType.value)
 
+const dataContext = computed(() => props.session.data_context ?? null)
+const originLabel = computed(() => dataContext.value?.origin_label || t('insight.copilot.dataOriginProtected'))
+const processingLabel = computed(() => {
+  const location = dataContext.value?.processing_location_label || gatewayType.value
+  const name = dataContext.value?.gateway_name || props.session.gateway_name
+  return name ? `${location} · ${name}` : location
+})
+const conversion = computed(() => props.session.document_conversion ?? null)
+const conversionLabel = computed(() => conversionCountsLabel(conversion.value))
+const problemItems = computed(() => conversionProblemItems(conversion.value).slice(0, 12))
+const conversionOk = computed(() => conversionAllOk(conversion.value))
+const conversionEmpty = computed(() => conversionEmptyResult(conversion.value))
+const conversionFailed = computed(() => conversionPhase(conversion.value) === 'failed')
+const conversionRunning = computed(() => conversionPhase(conversion.value) === 'running')
+const conversionWarnings = computed(() => conversionWarningsForDisplay(conversion.value, 8))
+
+function openRestore() {
+  const path = dataContext.value?.restore_path
+  if (!path) return
+  detailsOpen.value = false
+  void router.push(path)
+}
+
+function openBackupDetail() {
+  const path = dataContext.value?.backup_detail_path
+  if (!path) return
+  detailsOpen.value = false
+  void router.push(path)
+}
 </script>
 
 <template>
@@ -75,10 +108,11 @@ const gatewaySummary = computed(() => props.session.gateway_name
       </div>
     </div>
 
-    <div class="copilot-context-bar__summary" :title="`${sourceName} · ${firstPath} · ${gatewaySummary} · Created ${createdShort}`">
+    <div class="copilot-context-bar__summary" :title="`${originLabel} · ${sourceName} · ${firstPath} · ${processingLabel} · Created ${createdShort}`">
+      <span class="copilot-context-bar__origin">{{ originLabel }}</span><em>·</em>
       <span class="copilot-context-bar__source">{{ sourceName }}</span><em>·</em>
       <button type="button" class="copilot-context-bar__path" @click="detailsOpen = true">{{ firstPath }}<b v-if="additionalPathCount"> +{{ additionalPathCount }}</b></button><em>·</em>
-      <span class="copilot-context-bar__gateway">{{ gatewaySummary }}</span><em>·</em>
+      <span class="copilot-context-bar__gateway">{{ processingLabel }}</span><em>·</em>
       <span class="copilot-context-bar__created">Created {{ createdShort }}</span>
     </div>
     <div
@@ -92,22 +126,48 @@ const gatewaySummary = computed(() => props.session.gateway_name
     </div>
   </header>
 
-  <ElDialog v-model="detailsOpen" title="Chat Details" width="560px" append-to-body>
+  <ElDialog v-model="detailsOpen" :title="t('insight.copilot.chatDetailsTitle')" width="560px" append-to-body>
     <div class="copilot-details">
       <section>
-        <h3>Data Source</h3>
-        <dl><dt>Backup Source</dt><dd>{{ sourceName }}</dd></dl>
-        <dl><dt>Snapshot</dt><dd>{{ session.snapshot_created_at ? formatLocalDateTime(session.snapshot_created_at) : '—' }}</dd></dl>
-        <dl><dt>Snapshot Size</dt><dd>{{ session.snapshot_size_bytes != null ? formatBytes(session.snapshot_size_bytes) : '—' }}</dd></dl>
+        <h3>{{ t('insight.copilot.detailsDataSource') }}</h3>
+        <dl><dt>{{ t('insight.copilot.dataOriginLabel') }}</dt><dd>{{ originLabel }}</dd></dl>
+        <dl><dt>{{ t('insight.kb.fieldBackupSource') }}</dt><dd>{{ sourceName }}</dd></dl>
+        <dl><dt>{{ t('insight.kb.fieldSnapshot') }}</dt><dd>{{ session.snapshot_created_at ? formatLocalDateTime(session.snapshot_created_at) : '—' }}</dd></dl>
+        <dl><dt>{{ t('insight.copilot.snapshotSizeLabel') }}</dt><dd>{{ session.snapshot_size_bytes != null ? formatBytes(session.snapshot_size_bytes) : '—' }}</dd></dl>
+        <div v-if="dataContext?.restore_path || dataContext?.backup_detail_path" class="copilot-details__actions">
+          <ElButton v-if="dataContext?.restore_path" size="small" @click="openRestore">{{ t('insight.copilot.openSnapshotRestore') }}</ElButton>
+          <ElButton v-if="dataContext?.backup_detail_path" size="small" @click="openBackupDetail">{{ t('insight.copilot.openBackupDetail') }}</ElButton>
+        </div>
       </section>
       <section>
-        <h3>Files and Folders</h3>
+        <h3>{{ t('insight.copilot.detailsFilesFolders') }}</h3>
         <ol><li v-for="(scope, index) in scopes" :key="`${scope.backup_snapshot_directory_id}-${index}`">{{ scope.source_path }}</li></ol>
       </section>
       <section>
-        <h3>Data Privacy</h3>
+        <h3>{{ t('insight.copilot.detailsProcessingLocation') }}</h3>
         <dl><dt>{{ t('insight.copilot.gatewayTypeLabel') }}</dt><dd>{{ compactGatewayType }}</dd></dl>
         <dl><dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt><dd>{{ session.gateway_name || '—' }}</dd></dl>
+        <p class="copilot-details__note">{{ t('insight.copilot.processingLocationNote') }}</p>
+      </section>
+      <section v-if="conversion">
+        <h3>{{ t('insight.copilot.documentConversionTitle') }}</h3>
+        <dl v-if="conversionLabel"><dt>{{ t('insight.copilot.documentConversionSummary') }}</dt><dd>{{ conversionLabel }}</dd></dl>
+        <p v-if="conversion?.error" class="copilot-details__note">{{ conversion.error }}</p>
+        <ul v-if="problemItems.length" class="copilot-details__problems">
+          <li v-for="(item, index) in problemItems" :key="`${item.name}-${index}`">
+            <strong>{{ item.name }}</strong>
+            <span>{{ item.reason_label }}</span>
+          </li>
+        </ul>
+        <ul v-if="conversionWarnings.length" class="copilot-details__problems">
+          <li v-for="(warning, index) in conversionWarnings" :key="`${warning.code}-${index}`">
+            <span>{{ warning.label || warning.code }}</span>
+          </li>
+        </ul>
+        <p v-if="!problemItems.length && conversionOk" class="copilot-details__note">{{ t('insight.copilot.documentConversionOk') }}</p>
+        <p v-else-if="!problemItems.length && conversionEmpty" class="copilot-details__note">{{ t('insight.copilot.documentConversionEmpty') }}</p>
+        <p v-else-if="!problemItems.length && conversionRunning" class="copilot-details__note">{{ t('insight.copilot.documentConversionRunning') }}</p>
+        <p v-else-if="!problemItems.length && (conversionFailed || (conversionLabel && !conversionOk))" class="copilot-details__note">{{ t('insight.copilot.documentConversionPartial') }}</p>
       </section>
     </div>
   </ElDialog>
@@ -129,8 +189,8 @@ const gatewaySummary = computed(() => props.session.gateway_name
 .copilot-context-bar__summary { display: flex; min-width: 0; align-items: center; gap: 6px; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 18px; white-space: nowrap; }
 .copilot-context-bar__summary > span { overflow: hidden; text-overflow: ellipsis; }
 .copilot-context-bar__summary em { flex-shrink: 0; color: var(--color-text-disabled); font-style: normal; }
-.copilot-context-bar__source { max-width: 18%; flex: 0 1 auto; color: var(--color-text-secondary); }
-.copilot-context-bar__path { min-width: 60px; max-width: 42%; flex: 0 1 auto; overflow: hidden; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.copilot-context-bar__origin,.copilot-context-bar__source { max-width: 16%; flex: 0 1 auto; color: var(--color-text-secondary); }
+.copilot-context-bar__path { min-width: 60px; max-width: 36%; flex: 0 1 auto; overflow: hidden; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .copilot-context-bar__path:hover { color: var(--color-primary); }
 .copilot-context-bar__path b { font-weight: 600; }
 .copilot-context-bar__gateway,.copilot-context-bar__created { flex: 0 0 auto; }
@@ -144,6 +204,12 @@ const gatewaySummary = computed(() => props.session.gateway_name
 .copilot-details dd { overflow-wrap: anywhere; margin: 0; color: var(--color-text-title); font-size: 13px; font-weight: 500; }
 .copilot-details ol { display: grid; gap: 8px; margin: 0; padding-left: 30px; }
 .copilot-details li { padding-left: 4px; overflow-wrap: anywhere; color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 12px; }
+.copilot-details__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.copilot-details__note { margin: 8px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; }
+.copilot-details__problems { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.copilot-details__problems li { display: grid; gap: 2px; }
+.copilot-details__problems strong { overflow-wrap: anywhere; color: var(--color-text-title); font-size: 12px; }
+.copilot-details__problems span { color: var(--color-text-tertiary); font-size: 11px; }
 @keyframes copilot-status-pulse { 50% { opacity: .58; } }
-@media (max-width: 760px) { .copilot-context-bar__source { max-width: 24%; }.copilot-context-bar__gateway { max-width: 24%; }.copilot-context-bar__created { display: none; } }
+@media (max-width: 760px) { .copilot-context-bar__origin,.copilot-context-bar__source { max-width: 22%; }.copilot-context-bar__gateway { max-width: 24%; }.copilot-context-bar__created { display: none; } }
 </style>

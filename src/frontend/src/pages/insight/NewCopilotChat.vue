@@ -376,6 +376,8 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
                 <p v-if="!effectiveSnapshotId" class="fullscreen-form-field__hint new-chat-scope-hint">Select a snapshot to browse its files and folders.</p>
                 <p v-else-if="snapshotDirectories.length === 0" class="fullscreen-form-field__hint new-chat-scope-hint new-chat-hint--warn">No files or folders are available in this snapshot.</p>
                 <p v-else class="fullscreen-form-field__hint new-chat-scope-hint">Select one or more files or folders for this chat.</p>
+                <p class="fullscreen-form-field__hint new-chat-scope-hint">{{ t('insight.copilot.documentFormatHint') }}</p>
+                <p class="fullscreen-form-field__hint new-chat-scope-hint">{{ t('insight.copilot.dataOriginHint') }}</p>
               </div>
             </section></div>
 
@@ -457,6 +459,7 @@ onBeforeUnmount(() => backupScopeResizeObserver?.disconnect())
               <section class="add-form-preview-section">
                 <h3 class="add-form-preview-section__title">Data Source</h3>
                 <div class="add-form-preview-row"><span class="add-form-preview-row__label">Backup Source</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedBackupSource }">{{ selectedBackupSource?.label || '—' }}</span></div>
+                <div class="add-form-preview-row"><span class="add-form-preview-row__label">{{ t('insight.copilot.dataOriginLabel') }}</span><span class="add-form-preview-row__value">{{ t('insight.copilot.dataOriginProtected') }}</span></div>
                 <div class="add-form-preview-row"><span class="add-form-preview-row__label">Snapshot</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !selectedSnapshot }">{{ selectedSnapshot ? snapshotOptionLabel(selectedSnapshot) : '—' }}</span></div>
                 <div class="add-form-preview-row"><span class="add-form-preview-row__label">Files and Folders</span><span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !sourceScopes.length }">{{ selectedScopeSummary }}</span></div>
               </section>
