@@ -857,6 +857,12 @@ function recoveryPlanConflictTone(plan: BackupConfigRecoveryPlan) {
 
 function recoveryPlanConflictSummary(plan: BackupConfigRecoveryPlan) {
   return plan.conflict_mode === 'overwrite'
+    ? t('protection.backupsPage.createRecoveryConflictOverwrite')
+    : t('protection.backupsPage.createRecoveryConflictSkip')
+}
+
+function recoveryPlanConflictFullLabel(plan: BackupConfigRecoveryPlan) {
+  return plan.conflict_mode === 'overwrite'
     ? t('protection.backupsPage.createRecoveryConflictOverwriteFull')
     : t('protection.backupsPage.createRecoveryConflictSkipFull')
 }
@@ -2791,7 +2797,7 @@ function onClosed() {
                                     />
                                     <ShieldCheck v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
                                     <span class="create-recovery-plan-cell__policy-text">
-                                      {{ recoveryPlanConflictSummary(currentSourceRecoveryPlanMappings[0].plan) }}
+                                      {{ recoveryPlanConflictFullLabel(currentSourceRecoveryPlanMappings[0].plan) }}
                                     </span>
                                   </div>
                                   <div
@@ -4759,6 +4765,36 @@ function onClosed() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-cell__policy {
+  overflow: visible;
+  white-space: normal;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-cell__policy-text,
+.create-recovery-plan-cell--review .create-recovery-plan-mapping__text {
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-mapping {
+  align-items: start;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-mapping__endpoint {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-mapping__text {
+  display: block;
+  max-width: none;
 }
 
 .create-recovery-plan-cell__mappings {
