@@ -22,7 +22,6 @@ import logging
 from typing import Any
 
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from rest_framework.exceptions import ValidationError as DRFValidationError
 
 from apps.node.models import Node

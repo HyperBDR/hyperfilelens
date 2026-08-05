@@ -27,7 +27,6 @@ from apps.storage.services.internal.repository_create import (
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
     REPOSITORY_ALREADY_EXISTS_MESSAGE,
-    RepositoryAlreadyExistsError,
 )
 from apps.storage.services.internal.repository_health import (
     probe_unbound_nas_repository_health,
