@@ -33,8 +33,13 @@ from apps.protection.services import (
     file_filter_summary,
 )
 from apps.restore.models import RestorePlan, RestoreRecord
-from apps.node.services.internal.node_registry import agent_connection_status
-from apps.source.constants import PipelineStep, PipelineTaskStatus, ResourceType, SelectableSourceKind
+from apps.source.constants import (
+    Availability,
+    PipelineStep,
+    PipelineTaskStatus,
+    ResourceType,
+    SelectableSourceKind,
+)
 from apps.source.metrics import (
     BACKUP_SELECTABLE_QUERY_DURATION,
     BACKUP_SELECTABLE_QUERY_REQUESTS,
@@ -133,7 +138,6 @@ def _inventory_int(inv: dict[str, Any], *keys: str) -> int | None:
 def _agent_item(node: Node) -> dict[str, Any]:
     inv = _merged_inventory(node)
     hostname = str(inv.get("hostname") or node.name or "").strip()
-    status = agent_connection_status(node)
     item: dict[str, Any] = {
         "id": f"agent:{node.id}",
         "kind": "agent",
@@ -143,7 +147,8 @@ def _agent_item(node: Node) -> dict[str, Any]:
         "hostname": hostname,
         "node_name": hostname or node.name,
         "node_ip": str(node.ip_address or "").strip(),
-        "status": status if status in ("online", "reconnecting") else "offline",
+        "status": str(node.status or Node.Status.ACTIVE),
+        "availability": str(node.availability or Node.Availability.OFFLINE),
         "platform": _agent_platform(node),
         "registered_at": node.created_at.isoformat() if node.created_at else None,
     }
@@ -162,11 +167,6 @@ def _agent_item(node: Node) -> dict[str, Any]:
 def _nas_item(resource: SourceResource) -> dict[str, Any]:
     cfg = resource.config if isinstance(resource.config, dict) else {}
     node = resource.bound_node
-    if node is not None:
-        node_status = agent_connection_status(node)
-        status = node_status if node_status in ("online", "reconnecting") else "offline"
-    else:
-        status = "online" if resource.status == "active" else "offline"
     return {
         "id": f"nas:{resource.id}",
         "kind": "nas",
@@ -176,7 +176,8 @@ def _nas_item(resource: SourceResource) -> dict[str, Any]:
         "hostname": str(cfg.get("server") or "").strip(),
         "node_name": (node.name if node else "") or str(cfg.get("server") or "").strip(),
         "node_ip": str(node.ip_address or "").strip() if node else "",
-        "status": status,
+        "status": str(resource.status or Availability.OFFLINE),
+        "availability": str(resource.availability or Availability.OFFLINE),
         "protocol": _nas_protocol(cfg),
         "connection_uri": nas_mount_source_uri(resource_type=resource.resource_type, config=cfg),
         "bound_node_id": node.id if node else None,
@@ -982,9 +983,7 @@ def _pipeline_queryset(
     if source_status:
         queryset = queryset.filter(source_status=source_status)
     elif status:
-        # The legacy `status=online` contract represented reachability. The
-        # Pipeline's availability projection is the compatible indexed field.
-        queryset = queryset.filter(source_availability=status)
+        queryset = queryset.filter(source_status=status)
     if availability:
         queryset = queryset.filter(source_availability=availability)
 

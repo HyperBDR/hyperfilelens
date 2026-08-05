@@ -10,8 +10,16 @@ class Node(OrganizationScopedModel):
     """Registered Agent endpoint (agent, proxy, or gateway)."""
 
     class Status(models.TextChoices):
-        ONLINE = "online", "Online"
-        OFFLINE = "offline", "Offline"
+        ACTIVE = "active", "Active"
+        UPGRADING = "upgrading", "Upgrading"
+        RESTARTING = "restarting", "Restarting"
+        VERIFYING = "verifying", "Verifying"
+        VERIFICATION_PENDING = "verification_pending", "Verification pending"
+        REMOVING = "removing", "Removing"
+        CLEANING_UP = "cleaning_up", "Cleaning up"
+        FAILED = "failed", "Failed"
+        UPGRADE_FAILED = "upgrade_failed", "Upgrade Failed"
+        DEREGISTRATION_FAILED = "deregistration_failed", "Deregistration Failed"
 
     class Availability(models.TextChoices):
         ONLINE = "online", "Online"
@@ -49,9 +57,9 @@ class Node(OrganizationScopedModel):
         help_text="Bounded current Agent network-interface snapshot.",
     )
     status = models.CharField(
-        max_length=20,
+        max_length=32,
         choices=Status.choices,
-        default=Status.OFFLINE,
+        default=Status.ACTIVE,
         db_index=True,
     )
     availability = models.CharField(

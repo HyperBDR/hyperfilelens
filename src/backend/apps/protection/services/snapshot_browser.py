@@ -199,7 +199,11 @@ def _run_snapshot_agent_task(
             _agent_result_error(outcome, "snapshot browser task failed")[:500],
         )
     else:
-        logger.info("snapshot browser agent ok %s task_id=%s", ctx, outcome.task.id)
+        logger.info(
+            "snapshot browser agent ok %s task_id=%s",
+            ctx,
+            getattr(outcome.task, "id", "-"),
+        )
     return outcome
 
 

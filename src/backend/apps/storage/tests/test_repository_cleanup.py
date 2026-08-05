@@ -270,7 +270,7 @@ class RepositoryCleanupTests(TestCase):
                 organization=self.org,
                 name=f"agent-{index}",
                 role=Node.Role.AGENT,
-                status=Node.Status.ONLINE,
+                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
                 metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
             )
             nodes.append(node)
@@ -384,7 +384,7 @@ class RepositoryCleanupTests(TestCase):
             organization=self.org,
             name="historical-owner",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
         )
         shard = RepositoryUsageShard.objects.create(
@@ -432,7 +432,7 @@ class RepositoryCleanupTests(TestCase):
             organization=self.org,
             name="force-historical-owner",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             metadata={"inventory": {"capabilities": ["repository_cleanup_v1"]}},
         )
         RepositoryUsageShard.objects.create(

@@ -22,10 +22,13 @@ function declaredTableWidth(text: string): number {
 
 describe('Production Sites availability presentation', () => {
   const list = source('pages/protection/BackupSources.vue')
+  const proxyList = source('pages/node/Nodes.vue')
   const hostStart = list.indexOf(':data="pagedHostAgents"')
   const nasStart = list.indexOf(':data="nasRows"')
+  const proxyStart = proxyList.indexOf('v-table-column-resize="isProxyNodesPage')
   const hostTable = list.slice(hostStart, list.indexOf('</el-table>', hostStart))
   const nasTable = list.slice(nasStart, list.indexOf('</el-table>', nasStart))
+  const proxyTable = proxyList.slice(proxyStart, proxyList.indexOf('<template v-else>', proxyStart))
 
   it('keeps host lifecycle status separate and places availability before version', () => {
     expect(ordered(hostTable, [
@@ -39,10 +42,28 @@ describe('Production Sites availability presentation', () => {
     ])).toBe(true)
   })
 
-  it('places NAS availability immediately before registration', () => {
+  it('places NAS lifecycle status immediately after name and keeps availability before registration', () => {
     expect(ordered(nasTable, [
+      'colName',
       'colStatus',
+      'colProtocol',
       'colAvailability',
+      'colRegistered',
+    ])).toBe(true)
+  })
+
+  it('does not repeat proxy availability in the NAS status column', () => {
+    expect(nasTable).not.toContain('proxyStatus')
+  })
+
+  it('places Proxy Hosts status after name and availability before version', () => {
+    expect(ordered(proxyTable, [
+      'colName',
+      'colStatus',
+      'colHostIp',
+      'colCapacity',
+      'colAvailability',
+      'colVersion',
       'colRegistered',
     ])).toBe(true)
   })

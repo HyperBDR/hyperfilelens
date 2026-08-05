@@ -53,7 +53,7 @@ def run_connection_test(
 
     if node is None:
         return {"success": False, "message": "No bound node configured. Please bind a node first."}
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         return {
             "success": False,
             "message": f'Bound node "{node.name}" is not online.',

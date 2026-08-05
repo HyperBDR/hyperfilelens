@@ -17,9 +17,25 @@ from apps.node.services.internal.task import fail_active_tasks_for_node
 
 logger = logging.getLogger(__name__)
 
-CONNECTION_ONLINE = Node.Status.ONLINE
+CONNECTION_ONLINE = Node.Availability.ONLINE
 CONNECTION_RECONNECTING = "reconnecting"
-CONNECTION_OFFLINE = Node.Status.OFFLINE
+CONNECTION_OFFLINE = Node.Availability.OFFLINE
+NODE_OPERATION_BLOCKING_STATUSES = frozenset({
+    Node.Status.UPGRADING,
+    Node.Status.RESTARTING,
+    Node.Status.VERIFYING,
+    Node.Status.VERIFICATION_PENDING,
+    Node.Status.REMOVING,
+    Node.Status.CLEANING_UP,
+})
+
+
+def node_is_available_for_work(node: Node) -> bool:
+    """A reachable node can execute work unless a lifecycle operation owns it."""
+    return (
+        node.availability == Node.Availability.ONLINE
+        and node.status not in NODE_OPERATION_BLOCKING_STATUSES
+    )
 
 
 def _agent_lease_grace_seconds() -> int:
@@ -34,41 +50,27 @@ def _last_seen_within_grace(node: Node) -> bool:
 
 
 def effective_agent_node_status(node: Node) -> str:
-    """
-    Agent / Proxy nodes are online only when DB status is online and Redis has a live WSS session.
-    """
+    """Return the effective availability of a node, including WSS lease health."""
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY):
-        return node.status
-    if node.status != Node.Status.ONLINE:
-        return Node.Status.OFFLINE
+        return node.availability
+    if node.availability != Node.Availability.ONLINE:
+        return Node.Availability.OFFLINE
     if _agent_routable(agent_id=node.id):
-        return Node.Status.ONLINE
+        return Node.Availability.ONLINE
     if _last_seen_within_grace(node):
-        return Node.Status.ONLINE
-    return Node.Status.OFFLINE
+        return Node.Availability.ONLINE
+    return Node.Availability.OFFLINE
 
 
 def agent_connection_status(node: Node) -> str:
-    """
-    Display-oriented connectivity state.
-
-    ``online`` means the agent still holds a live WSS lease (``agent_loc``) or is
-    fully routable. ``reconnecting`` means the lease was cleared but ``last_seen_at``
-    is still within grace (expected during agent restarts). Shared ``node_alive:*``
-    keys are *not* used here — a flicker on one WS worker must not mark unrelated
-    agents as reconnecting while their own ``agent_loc`` is still refreshed.
-    """
+    """Internal task-reconciliation connection state; never expose it via APIs."""
     if node.role not in (NodeRole.AGENT, NodeRole.PROXY):
-        return node.status
-    if node.status != Node.Status.ONLINE:
+        return str(node.availability or CONNECTION_OFFLINE)
+    if node.availability != Node.Availability.ONLINE:
         return CONNECTION_OFFLINE
-    if agent_ws_routable(agent_id=node.id):
+    if agent_ws_routable(agent_id=node.id) or _agent_loc_key_exists(agent_id=node.id):
         return CONNECTION_ONLINE
-    if _agent_loc_key_exists(agent_id=node.id):
-        return CONNECTION_ONLINE
-    if _last_seen_within_grace(node):
-        return CONNECTION_RECONNECTING
-    return CONNECTION_OFFLINE
+    return CONNECTION_RECONNECTING if _last_seen_within_grace(node) else CONNECTION_OFFLINE
 
 
 def _within_reconnect_grace(node: Node) -> bool:
@@ -246,7 +248,7 @@ def reconcile_node_availability(*, limit: int = 200) -> dict[str, int | bool | s
 
 def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
     """
-    Mark ``online`` nodes without fresh Redis routing as ``offline``.
+    Mark available nodes without fresh Redis routing as unavailable.
 
     Fails in-flight ``NodeTask`` rows on affected nodes (ghost-task cleanup).
     """
@@ -255,7 +257,7 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
     task_failure_held = not redis_store.offline_task_finalization_ready()
 
     node_ids = list(
-        Node.objects.filter(status=Node.Status.ONLINE)
+        Node.objects.filter(availability=Node.Availability.ONLINE)
         .order_by("last_seen_at", "id")
         .values_list("pk", flat=True)[: max(1, int(limit))]
     )
@@ -264,7 +266,7 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
         with transaction.atomic():
             node = (
                 Node.objects.select_for_update()
-                .filter(pk=node_id, status=Node.Status.ONLINE)
+                .filter(pk=node_id, availability=Node.Availability.ONLINE)
                 .first()
             )
             if node is None:
@@ -274,8 +276,9 @@ def reconcile_stale_online_nodes(*, limit: int = 200) -> dict[str, int]:
             if _last_seen_within_grace(node):
                 continue
 
-            node.status = Node.Status.OFFLINE
-            node.save(update_fields=["status", "updated_at"])
+            node.availability = Node.Availability.OFFLINE
+            node.availability_updated_at = timezone.now()
+            node.save(update_fields=["availability", "availability_updated_at", "updated_at"])
             nodes_marked_offline += 1
             try:
                 from apps.source.services.internal.agent_host_sync import sync_agent_source_host

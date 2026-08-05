@@ -84,7 +84,7 @@ class AgentNodeOnlineStatusTests(TestCase):
             organization=self.org,
             name="agent-1",
             role=NodeRole.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
         )
         self.redis = _FakeRedis()
         self._redis_patcher = self._patch_redis(self.redis)
@@ -117,12 +117,12 @@ class AgentNodeOnlineStatusTests(TestCase):
         on_agent_connected(node_id=self.node.id, session_id="session-a")
 
         self.node.refresh_from_db()
-        self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertIsNotNone(self.node.availability_updated_at)
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.ONLINE,
+            Node.Availability.ONLINE,
         )
 
     def test_ws_connect_updates_connection_ip_without_overwriting_host_ip(self):
@@ -155,13 +155,13 @@ class AgentNodeOnlineStatusTests(TestCase):
         on_agent_disconnected(node_id=self.node.id, session_id="session-a")
 
         self.node.refresh_from_db()
-        self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertEqual(agent_connection_status(self.node), CONNECTION_RECONNECTING)
         self.assertIsNone(redis_store.get_agent_location(agent_id=self.node.id))
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.ONLINE,
+            Node.Availability.ONLINE,
         )
 
     def test_ws_disconnect_effective_offline_after_grace(self):
@@ -177,7 +177,7 @@ class AgentNodeOnlineStatusTests(TestCase):
 
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.OFFLINE,
+            Node.Availability.OFFLINE,
         )
 
     def test_ws_disconnect_does_not_fail_active_task(self):
@@ -227,36 +227,36 @@ class AgentNodeOnlineStatusTests(TestCase):
         on_agent_disconnected(node_id=self.node.id, session_id="session-a")
 
         self.node.refresh_from_db()
-        self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.ONLINE,
+            Node.Availability.ONLINE,
         )
         raw = self.redis.get(redis_store.agent_loc_key(self.node.id))
         assert raw is not None
         self.assertEqual(json.loads(raw)["session"], "session-b")
 
     def test_effective_status_offline_without_ws_route(self):
-        self.node.status = Node.Status.ONLINE
+        self.node.availability = Node.Availability.ONLINE
         self.node.last_seen_at = timezone.now() - timezone.timedelta(
             seconds=node_conf.AGENT_LOC_TTL_SECONDS + 5,
         )
-        self.node.save(update_fields=["status", "last_seen_at", "updated_at"])
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
 
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.OFFLINE,
+            Node.Availability.OFFLINE,
         )
-        self.assertEqual(agent_connection_status(self.node), Node.Status.OFFLINE)
+        self.assertEqual(agent_connection_status(self.node), Node.Availability.OFFLINE)
 
     def test_effective_status_grace_without_ws_route(self):
-        self.node.status = Node.Status.ONLINE
+        self.node.availability = Node.Availability.ONLINE
         self.node.last_seen_at = timezone.now()
-        self.node.save(update_fields=["status", "last_seen_at", "updated_at"])
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
 
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.ONLINE,
+            Node.Availability.ONLINE,
         )
 
     def test_reconcile_marks_stale_online_offline(self):
@@ -271,7 +271,7 @@ class AgentNodeOnlineStatusTests(TestCase):
         summary = reconcile_stale_online_nodes(limit=10)
 
         self.node.refresh_from_db()
-        self.assertEqual(self.node.status, Node.Status.OFFLINE)
+        self.assertEqual(self.node.availability, Node.Availability.OFFLINE)
         self.assertEqual(summary["nodes_marked_offline"], 1)
 
     def test_reconcile_skips_recent_last_seen(self):
@@ -282,7 +282,7 @@ class AgentNodeOnlineStatusTests(TestCase):
         summary = reconcile_stale_online_nodes(limit=10)
 
         self.node.refresh_from_db()
-        self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         self.assertEqual(summary["nodes_marked_offline"], 0)
 
     def test_availability_reconcile_marks_stale_node_offline(self):
@@ -409,13 +409,13 @@ class AgentNodeOnlineStatusTests(TestCase):
 
         self.assertEqual(redis_store.get_agent_location(agent_id=self.node.id), ws_id)
 
-        self.node.status = Node.Status.ONLINE
-        self.node.save(update_fields=["status", "updated_at"])
+        self.node.availability = Node.Availability.ONLINE
+        self.node.save(update_fields=["availability", "updated_at"])
         self.assertEqual(
             effective_agent_node_status(self.node),
-            Node.Status.ONLINE,
+            Node.Availability.ONLINE,
         )
-        self.assertEqual(agent_connection_status(self.node), Node.Status.ONLINE)
+        self.assertEqual(agent_connection_status(self.node), Node.Availability.ONLINE)
 
     def test_connection_status_online_when_agent_loc_present_without_ws_alive(self):
         """Other agents must not show reconnecting when only shared ws_alive flickers."""
@@ -425,12 +425,12 @@ class AgentNodeOnlineStatusTests(TestCase):
             session_id="session-z",
             ws_instance_id=ws_id,
         )
-        self.node.status = Node.Status.ONLINE
+        self.node.availability = Node.Availability.ONLINE
         self.node.last_seen_at = timezone.now()
-        self.node.save(update_fields=["status", "last_seen_at", "updated_at"])
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
 
         self.assertFalse(redis_store.get_redis().exists(redis_store.ws_alive_key(ws_id)))
-        self.assertEqual(agent_connection_status(self.node), Node.Status.ONLINE)
+        self.assertEqual(agent_connection_status(self.node), Node.Availability.ONLINE)
 
     def test_session_payload_round_trip(self):
         ws_id = node_conf.WS_INSTANCE_ID
@@ -457,7 +457,7 @@ class AgentNodeOnlineStatusTests(TestCase):
             organization=self.org,
             name="agent-2",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         redis_store.set_agent_location(
             agent_id=other_node.id,
@@ -489,9 +489,9 @@ class AgentNodeOnlineStatusTests(TestCase):
 
     def test_ensure_agent_location_on_heartbeat_recreates_expired_lease(self):
         ws_id = node_conf.WS_INSTANCE_ID
-        self.node.status = Node.Status.ONLINE
+        self.node.availability = Node.Availability.ONLINE
         self.node.last_seen_at = timezone.now()
-        self.node.save(update_fields=["status", "last_seen_at", "updated_at"])
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
         redis_store.set_agent_location(
             agent_id=self.node.id,
             session_id="session-old",
@@ -509,4 +509,4 @@ class AgentNodeOnlineStatusTests(TestCase):
         raw = self.redis.get(redis_store.agent_loc_key(self.node.id))
         payload = json.loads(raw)
         self.assertEqual(payload["session"], "session-live")
-        self.assertEqual(agent_connection_status(self.node), Node.Status.ONLINE)
+        self.assertEqual(agent_connection_status(self.node), Node.Availability.ONLINE)

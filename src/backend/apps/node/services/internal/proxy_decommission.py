@@ -91,7 +91,7 @@ def force_cleanup_proxy_bindings(
             details=preflight["blocking"],
         )
 
-    if proxy.status != Node.Status.ONLINE:
+    if proxy.availability != Node.Availability.ONLINE:
         raise ProxyDecommissionBlocked(
             message="Proxy must be online to force-delete with NAS cleanup.",
             code="proxy_offline",

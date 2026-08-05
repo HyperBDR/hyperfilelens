@@ -33,7 +33,7 @@ class NodeMonitorApiTests(TestCase):
             organization=self.org,
             name="agent-01",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             metadata={"inventory": {"hostname": "agent-host", "os": "linux", "arch": "amd64"}},
         )
 

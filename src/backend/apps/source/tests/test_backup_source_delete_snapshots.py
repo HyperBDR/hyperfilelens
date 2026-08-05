@@ -70,7 +70,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             organization=self.org,
             name="proxy-delete-snap",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.resource = SourceResource.objects.create(
             organization_id=self.org.id,
@@ -83,6 +83,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
                 "path": custom_mount("nfs-delete-snap"),
             },
             bound_node=self.proxy,
+            availability="online",
             mount_status="mounted",
             mount_point=custom_mount("nfs-delete-snap"),
         )
@@ -371,7 +372,7 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             organization=self.org,
             name="agent-delete-snap",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.config.source_type = "agent"
         self.config.source_ref_id = agent.id

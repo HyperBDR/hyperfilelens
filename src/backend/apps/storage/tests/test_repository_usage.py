@@ -203,14 +203,14 @@ class RepositoryUsageTests(TestCase):
             organization=org,
             name="agent-a",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.1.1",
         )
         agent_b = Node.objects.create(
             organization=org,
             name="agent-b",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.1.2",
         )
         repo = Repository.objects.create(
@@ -262,7 +262,7 @@ class RepositoryUsageTests(TestCase):
             organization=org,
             name="agent-a",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.2.1",
         )
         repo = Repository.objects.create(
@@ -308,7 +308,7 @@ class RepositoryUsageTests(TestCase):
             organization=org,
             name="agent-a",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.3.1",
         )
         repo = Repository.objects.create(

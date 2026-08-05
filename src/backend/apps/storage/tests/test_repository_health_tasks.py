@@ -308,7 +308,7 @@ class UnboundNASRepositoryHealthTests(TestCase):
             organization=self.organization,
             name=name,
             role=role,
-            status=Node.Status.ONLINE if online else Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE if online else Node.Availability.OFFLINE,
             ip_address="10.0.1.1",
         )
 
@@ -484,7 +484,7 @@ class RepositoryHealthProbeTests(TestCase):
             organization=self.organization,
             name="proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         repository = Repository.objects.create(
             organization_id=self.organization.id,

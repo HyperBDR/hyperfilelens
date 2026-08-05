@@ -58,7 +58,7 @@ def validate_agent_upgrade(*, node: Node) -> str:
             code="role_not_upgradeable",
         )
 
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         raise AgentUpgradeError("node is offline", code="node_offline")
 
     platform, arch = node_platform_arch(node)

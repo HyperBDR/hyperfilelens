@@ -124,7 +124,7 @@ def _validate_proxy_node(*, organization_id: int, node_id: int) -> Node:
         raise DRFValidationError(
             {"bind_node_id": "Bound proxy node not found in this organization."}
         )
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         raise DRFValidationError(
             {"bind_node_id": 'Proxy node "%s" is not online.' % node.name}
         )

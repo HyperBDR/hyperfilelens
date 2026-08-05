@@ -29,7 +29,7 @@ class AgentUninstallTests(TestCase):
             organization=self.org,
             name="agent-uninstall",
             role=NodeRole.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
             metadata={"capabilities": ["detached_uninstall_v2"]},
         )
         self.resource = SourceResource.objects.create(
@@ -62,7 +62,7 @@ class AgentUninstallTests(TestCase):
             organization=self.org,
             name="gateway-uninstall",
             role=NodeRole.GATEWAY,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
         )
         summary = remove_agent_node(
             org=self.org,

@@ -47,7 +47,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             organization=self.org,
             name="agent-backup-config-1",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.41",
         )
         self.repository = Repository.objects.create(
@@ -145,7 +145,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             organization=self.org,
             name=name,
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.42",
         )
 
@@ -192,6 +192,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             name=name,
             resource_type=ResourceType.NAS,
             bound_node=proxy,
+            availability="online",
             config={"protocol": "smb", "server": server, "share": share},
         )
 
@@ -509,7 +510,7 @@ class ProtectionBackupConfigApiTests(TestCase):
             organization=self.org,
             name="agent-backup-config-2",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.43",
         )
         first = self.client.post(
@@ -762,8 +763,8 @@ class ProtectionBackupConfigApiTests(TestCase):
     def test_create_backup_config_rejects_cross_proxy_repository_when_proxy_offline(self):
         source_proxy = self._proxy(name="source-proxy-repo-offline")
         repository_proxy = self._proxy(name="repository-proxy-offline")
-        repository_proxy.status = Node.Status.OFFLINE
-        repository_proxy.save(update_fields=["status", "updated_at"])
+        repository_proxy.availability = Node.Availability.OFFLINE
+        repository_proxy.save(update_fields=["availability", "updated_at"])
         source = self._nas_source(proxy=source_proxy, name="nas-source-repo-offline")
         repository = self._proxy_bound_nas_repository(proxy=repository_proxy, name="repo-offline")
         repository.config = {**repository.config, "proxy_repository_server_host": "repo.example.internal"}

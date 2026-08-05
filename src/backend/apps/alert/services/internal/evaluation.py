@@ -201,7 +201,7 @@ def _evaluate_availability_policy(policy: AlertPolicy) -> None:
         last_seen = node.last_seen_at
         stale = last_seen is None or (now - last_seen).total_seconds() > timeout_seconds
         stub = _ResourceStub(str(node.id), node.name)
-        if stale or node.status != Node.Status.ONLINE:
+        if stale or node.availability != Node.Availability.ONLINE:
             fire_alert(
                 policy,
                 resource=stub,

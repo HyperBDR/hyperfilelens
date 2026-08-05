@@ -818,10 +818,10 @@ const TABLE_HEADER_STYLE: Record<string, string> = {
 
 const FLOW_PICK_TABLE_COL_MIN = {
   source: 168,
-  connection: 260,
-  cpu: 88,
-  memory: 100,
-  diskCount: 96,
+  connection: 118,
+  cpu: 79,
+  memory: 90,
+  diskCount: 87,
 } as const
 
 const FLOW_START_BACKUP_TABLE_COL_MIN = {
@@ -1019,7 +1019,8 @@ function mapBackupSelectableToFlowRow(item: BackupSelectableSource): FlowSourceR
     hostname: item.hostname || item.name,
     nodeName: item.node_name || item.name,
     nodeIp: item.node_ip || '',
-    status: item.status === 'online' ? 'online' : 'offline',
+    status: item.status,
+    availability: item.availability === 'online' ? 'online' : 'offline',
     registeredAt: item.registered_at || '',
     type: item.type,
     protocol: item.protocol === 'smb' ? 'smb' : item.protocol === 'nfs' ? 'nfs' : undefined,
@@ -1516,7 +1517,7 @@ function flowRowFromSourceId(id: string): FlowSourceRow | null {
 function offlineFlowSourcesFromIds(ids: string[]) {
   return ids
     .map((id) => flowRowFromSourceId(id))
-    .filter((row): row is FlowSourceRow => row != null && row.status !== 'online')
+    .filter((row): row is FlowSourceRow => row != null && !flowSourceCanOperate(row))
 }
 
 const step1Selection = ref<string[]>([])
@@ -1771,6 +1772,25 @@ function syncStep2TableSelection() {
 
 function flowSourceRegisteredAt(value?: string) {
   return formatLocalDateTime(value, '—')
+}
+
+function flowSourceAvailabilityLabel(value?: FlowSourceRow['availability']) {
+  return value === 'online'
+    ? t('protection.sourceResources.nodeStatusOnline')
+    : t('protection.sourceResources.nodeStatusOffline')
+}
+
+function flowSourceAvailabilityTagType(value?: FlowSourceRow['availability']): 'success' | 'danger' {
+  return value === 'online' ? 'success' : 'danger'
+}
+
+const FLOW_SOURCE_BLOCKING_STATUSES = new Set([
+  'upgrading', 'restarting', 'verifying', 'verification_pending',
+  'removing', 'cleaning_up', 'probing',
+])
+
+function flowSourceCanOperate(row: FlowSourceRow) {
+  return row.availability === 'online' && !FLOW_SOURCE_BLOCKING_STATUSES.has(row.status)
 }
 
 function onSourceSelectionChange(rows: Array<{ id: string }>) {
@@ -4211,7 +4231,7 @@ async function submitDisplayNameEdit() {
 const step3SourceActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
-  return step3SourceSelection.value.some((row) => row.status === 'online')
+  return step3SourceSelection.value.some((row) => flowSourceCanOperate(row))
 })
 const step3LifecycleActionsEnabled = computed(() => {
   if (!step3SourceSelection.value.length) return false
@@ -4475,7 +4495,8 @@ function flowRowToApiNode(row: FlowSourceRow): ApiNode | null {
     name: row.name,
     role: 'agent',
     status: row.status,
-    routable: row.status === 'online',
+    availability: row.availability,
+    routable: row.availability === 'online',
     version: '',
     is_deleted: false,
     ip_address: row.nodeIp || null,
@@ -6446,7 +6467,7 @@ function recoveryOriginalSourceById(id: string) {
 function recoveryOriginalSourceRows(): FlowSourceRow[] {
   const rows = new Map<string, FlowSourceRow>()
   for (const row of backupSelectableById.value.values()) {
-    if (row.status !== 'online') continue
+    if (!flowSourceCanOperate(row)) continue
     if (row.pipeline_step && row.pipeline_step !== 3) continue
     rows.set(row.id, row)
   }
@@ -6470,7 +6491,7 @@ function recoverySourceTargetOption(source: FlowSourceRow, sourceHostId: string)
 
 function recoveryOriginalTargetOptions(sourceHostId: string): RecoveryTargetNodeOption[] {
   const source = backupSelectableById.value.get(sourceHostId) ?? recoveryOriginalSourceById(sourceHostId)
-  if (!source || source.status !== 'online') return []
+  if (!source || !flowSourceCanOperate(source)) return []
   return [recoverySourceTargetOption(source, sourceHostId)]
 }
 
@@ -9320,36 +9341,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.sourceResources.colCpu')"
-          :min-width="FLOW_PICK_TABLE_COL_MIN.cpu"
-        >
-          <template #default="{ row }">
-            <span>{{
-              flowSourceCpuCores(row) != null
-                ? t('protection.sourceResources.cpuCoresValue', { n: flowSourceCpuCores(row) })
-                : '—'
-            }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          :label="t('protection.sourceResources.colMemory')"
-          :min-width="FLOW_PICK_TABLE_COL_MIN.memory"
-        >
-          <template #default="{ row }">
-            <span>{{ flowSourceMemoryText(row) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          :label="t('protection.sourceResources.colDiskCount')"
-          :min-width="FLOW_PICK_TABLE_COL_MIN.diskCount"
-        >
-          <template #default="{ row }">
-            <span>{{ flowSourceDiskCountText(row) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
           :label="t('protection.backupsPage.colStatus')"
-          width="108"
+          width="168"
           align="center"
           header-align="center"
         >
@@ -9386,6 +9379,48 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               neutral-as-danger
               @click="openSourcePendingFailureDetails(row.id)"
             />
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colCpu')"
+          :min-width="FLOW_PICK_TABLE_COL_MIN.cpu"
+        >
+          <template #default="{ row }">
+            <span>{{
+              flowSourceCpuCores(row) != null
+                ? t('protection.sourceResources.cpuCoresValue', { n: flowSourceCpuCores(row) })
+                : '—'
+            }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colMemory')"
+          :min-width="FLOW_PICK_TABLE_COL_MIN.memory"
+        >
+          <template #default="{ row }">
+            <span>{{ flowSourceMemoryText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colDiskCount')"
+          :min-width="FLOW_PICK_TABLE_COL_MIN.diskCount"
+        >
+          <template #default="{ row }">
+            <span>{{ flowSourceDiskCountText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colAvailability')"
+          width="110"
+          align="center"
+          header-align="center"
+        >
+          <template #default="{ row }">
+            <div class="hfl-table-no-tooltip">
+              <ElTag :type="flowSourceAvailabilityTagType(row.availability)" size="small">
+                {{ flowSourceAvailabilityLabel(row.availability) }}
+              </ElTag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column :label="t('protection.backupsPage.colRegistered')" width="154">
@@ -9487,36 +9522,8 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           </template>
         </el-table-column>
         <el-table-column
-          :label="t('protection.sourceResources.colCpu')"
-          :min-width="FLOW_PICK_TABLE_COL_MIN.cpu"
-        >
-          <template #default="{ row }">
-            <span>{{
-              flowSourceCpuCores(row) != null
-                ? t('protection.sourceResources.cpuCoresValue', { n: flowSourceCpuCores(row) })
-                : '—'
-            }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          :label="t('protection.sourceResources.colMemory')"
-          :min-width="FLOW_PICK_TABLE_COL_MIN.memory"
-        >
-          <template #default="{ row }">
-            <span>{{ flowSourceMemoryText(row) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          :label="t('protection.sourceResources.colDiskCount')"
-          :min-width="FLOW_PICK_TABLE_COL_MIN.diskCount"
-        >
-          <template #default="{ row }">
-            <span>{{ flowSourceDiskCountText(row) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
           :label="t('protection.backupsPage.colStatus')"
-          width="108"
+          width="168"
           align="center"
           header-align="center"
         >
@@ -9553,6 +9560,48 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               neutral-as-danger
               @click="openSourcePendingFailureDetails(row.id)"
             />
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colCpu')"
+          :min-width="FLOW_PICK_TABLE_COL_MIN.cpu"
+        >
+          <template #default="{ row }">
+            <span>{{
+              flowSourceCpuCores(row) != null
+                ? t('protection.sourceResources.cpuCoresValue', { n: flowSourceCpuCores(row) })
+                : '—'
+            }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colMemory')"
+          :min-width="FLOW_PICK_TABLE_COL_MIN.memory"
+        >
+          <template #default="{ row }">
+            <span>{{ flowSourceMemoryText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colDiskCount')"
+          :min-width="FLOW_PICK_TABLE_COL_MIN.diskCount"
+        >
+          <template #default="{ row }">
+            <span>{{ flowSourceDiskCountText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colAvailability')"
+          width="110"
+          align="center"
+          header-align="center"
+        >
+          <template #default="{ row }">
+            <div class="hfl-table-no-tooltip">
+              <ElTag :type="flowSourceAvailabilityTagType(row.availability)" size="small">
+                {{ flowSourceAvailabilityLabel(row.availability) }}
+              </ElTag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column :label="t('protection.backupsPage.colRegistered')" width="154">
@@ -9658,7 +9707,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         </el-table-column>
         <el-table-column
           :label="t('protection.backupsPage.colStatus')"
-          width="108"
+          width="168"
           align="center"
           header-align="center"
         >
@@ -9808,6 +9857,20 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 :fallback="latestRestoreRecordForSource(row.id)?.task_summary"
               />
             </button>
+          </template>
+        </el-table-column>
+        <el-table-column
+          :label="t('protection.sourceResources.colAvailability')"
+          width="110"
+          align="center"
+          header-align="center"
+        >
+          <template #default="{ row }">
+            <div class="hfl-table-no-tooltip">
+              <ElTag :type="flowSourceAvailabilityTagType(row.availability)" size="small">
+                {{ flowSourceAvailabilityLabel(row.availability) }}
+              </ElTag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column

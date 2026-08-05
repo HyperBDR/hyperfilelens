@@ -7,7 +7,6 @@ from typing import Any
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_release import latest_published_agent_version
-from apps.node.services.internal.node_registry import effective_agent_node_status
 from apps.node.services.internal.node_naming import is_auto_assigned_node_name
 from apps.source.constants import ResourceStatus, ResourceType, SelectableSourceKind
 from apps.source.models import SourceResource
@@ -67,11 +66,8 @@ def sync_agent_source_host(*, node: Node) -> SourceResource | None:
         "kopia_version": str(inv.get("kopia_version") or ""),
     }
 
-    status = (
-        ResourceStatus.ACTIVE
-        if effective_agent_node_status(node) == Node.Status.ONLINE
-        else ResourceStatus.INACTIVE
-    )
+    # The source lifecycle is independent from the Agent connection state.
+    status = ResourceStatus.ACTIVE
 
     qs = SourceResource.objects.filter(
         organization_id=node.organization_id,

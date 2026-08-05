@@ -176,7 +176,7 @@ def agent_path_usage_bytes(
     node = Node.objects.filter(
         id=node_id,
         organization_id=organization_id,
-        status=Node.Status.ONLINE,
+        availability=Node.Availability.ONLINE,
     ).first()
     if node is None:
         logger.info("path.usage skipped node offline node_id=%s path=%s", node_id, clean_path)
@@ -613,7 +613,7 @@ def _sync_direct_nas_agent_usage_shards(repository: Repository) -> tuple[int | N
                 last_error="Agent source not found.",
             )
             continue
-        if node.status != Node.Status.ONLINE:
+        if node.availability != Node.Availability.ONLINE:
             _upsert_direct_nas_agent_shard(
                 repository=repository,
                 node_id=node_id,

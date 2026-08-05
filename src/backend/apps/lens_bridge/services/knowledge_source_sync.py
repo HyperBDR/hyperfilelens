@@ -336,7 +336,7 @@ def request_knowledge_source_sync(
             }
         )
 
-    if ks.gateway.status != Node.Status.ONLINE:
+    if ks.gateway.availability != Node.Availability.ONLINE:
         raise ValidationError({"gateway": "Data gateway must be online to sync."})
 
     from apps.node.services.internal.node_lifecycle import _active_lifecycle_task

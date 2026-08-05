@@ -18,7 +18,7 @@ class NodeTaskCancelGraceTests(TestCase):
             organization=self.org,
             name="cancel-grace-agent",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
 
     def create_task(self, *, status=NodeTask.Status.RUNNING) -> NodeTask:

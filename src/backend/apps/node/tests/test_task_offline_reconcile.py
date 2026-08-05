@@ -32,7 +32,7 @@ class TaskExecutionStateTests(TestCase):
             organization=self.org,
             name="agent-offline",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             last_seen_at=timezone.now() - timedelta(seconds=300),
         )
         self.task = Task.objects.create(
@@ -55,9 +55,9 @@ class TaskExecutionStateTests(TestCase):
         self.assertTrue(is_node_offline_stale(self.node))
 
     def test_reconnecting_state_within_grace(self):
-        self.node.status = Node.Status.ONLINE
+        self.node.availability = Node.Availability.ONLINE
         self.node.last_seen_at = timezone.now() - timedelta(seconds=30)
-        self.node.save(update_fields=["status", "last_seen_at", "updated_at"])
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
         self.assertEqual(task_execution_state(node=self.node, task=self.task), "reconnecting")
         self.assertTrue(product_task_blocks_cleanup(task=self.task))
 
@@ -66,11 +66,11 @@ class TaskExecutionStateTests(TestCase):
         return_value=True,
     )
     def test_offline_pending_blocks_cleanup(self, _mock_ready):
-        self.node.status = Node.Status.OFFLINE
+        self.node.availability = Node.Availability.OFFLINE
         self.node.last_seen_at = timezone.now() - timedelta(
             seconds=node_conf.NODE_RECONNECT_GRACE_SECONDS + 10
         )
-        self.node.save(update_fields=["status", "last_seen_at", "updated_at"])
+        self.node.save(update_fields=["availability", "last_seen_at", "updated_at"])
         self.assertEqual(task_execution_state(node=self.node, task=self.task), "offline_pending")
         self.assertTrue(product_task_blocks_cleanup(task=self.task))
 

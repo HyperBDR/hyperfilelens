@@ -291,7 +291,7 @@ def _node_route_state(*, task: NodeTask) -> _RouteState:
     if _node_ws_routable(node_id=node.id):
         return _RouteState.ONLINE
     if (
-        node.status == Node.Status.ONLINE
+        node.availability == Node.Availability.ONLINE
         and _last_seen_within_task_route_grace(node)
         and _task_within_route_grace(task)
     ):
@@ -334,13 +334,35 @@ def _sync_task_info(task: NodeTask) -> None:
 
 
 def project_node_lifecycle_task(*, node_task: NodeTask) -> None:
-    """Safely project direct node removal without affecting the Agent task."""
+    """Project lifecycle task progress into the persisted Node state machine."""
     payload = node_task.payload if isinstance(node_task.payload, dict) else {}
-    if (
-        node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE
-        or node_task.kind != "agent.uninstall"
-        or payload.get("source_unregister_task_id")
-    ):
+    if node_task.correlation_type != node_conf.LIFECYCLE_CORRELATION_TYPE:
+        return
+    if node_task.kind == "agent.upgrade":
+        status = (
+            Node.Status.UPGRADING
+            if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}
+            else Node.Status.ACTIVE
+            if node_task.status == NodeTask.Status.SUCCESS
+            else Node.Status.UPGRADE_FAILED
+        )
+        updated = Node.objects.filter(pk=node_task.node_id).exclude(status=status).update(status=status)
+        if updated:
+            _sync_agent_source_pipeline_status(node_id=node_task.node_id)
+        return
+    if node_task.kind != "agent.uninstall":
+        return
+    status = (
+        Node.Status.REMOVING
+        if node_task.status in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}
+        else Node.Status.CLEANING_UP
+        if node_task.status == NodeTask.Status.SUCCESS
+        else Node.Status.DEREGISTRATION_FAILED
+    )
+    updated = Node.objects.filter(pk=node_task.node_id).exclude(status=status).update(status=status)
+    if updated:
+        _sync_agent_source_pipeline_status(node_id=node_task.node_id)
+    if payload.get("source_unregister_task_id"):
         return
     try:
         from apps.node.services.internal.node_lifecycle_task import (
@@ -352,6 +374,27 @@ def project_node_lifecycle_task(*, node_task: NodeTask) -> None:
         logger.exception(
             "failed to project node lifecycle task node_task_id=%s",
             node_task.pk,
+        )
+
+
+def _sync_agent_source_pipeline_status(*, node_id: int) -> None:
+    """Refresh the Backup Wizard read model after a Node lifecycle transition."""
+    node = Node.objects.filter(pk=node_id, role=NodeRole.AGENT, is_deleted=False).first()
+    if node is None:
+        return
+    try:
+        from apps.source.services.internal.source_pipeline import sync_pipeline_projection
+
+        sync_pipeline_projection(
+            organization_id=node.organization_id,
+            source_kind="agent",
+            ref_id=node.id,
+        )
+    except Exception:
+        logger.warning(
+            "agent source pipeline status projection failed node_id=%s",
+            node_id,
+            exc_info=True,
         )
 
 

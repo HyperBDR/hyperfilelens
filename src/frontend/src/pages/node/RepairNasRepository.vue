@@ -65,7 +65,7 @@ const initialProxyNodeId = ref<number | null>(null)
 const busyWithBackups = ref(false)
 
 const availableProxyNodes = computed(() =>
-  proxyNodes.value.filter((node) => node.role === 'proxy' && node.status === 'online'),
+  proxyNodes.value.filter((node) => node.role === 'proxy' && node.availability === 'online'),
 )
 const isCurrentlyBound = computed(() => initialProxyNodeId.value != null)
 const hasAssociatedSources = computed(() => associatedSourcesCount.value > 0)

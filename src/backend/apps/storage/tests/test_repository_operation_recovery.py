@@ -47,7 +47,7 @@ class RepositoryOperationRecoveryTests(TestCase):
             organization=self.org,
             name="recovery-proxy",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.50",
             metadata={
                 "inventory": {

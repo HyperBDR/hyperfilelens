@@ -18,7 +18,7 @@ class CompleteTaskIdempotencyTests(TestCase):
             organization=self.org,
             name="complete-task-node",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         self.task = NodeTask.objects.create(
             organization=self.org,

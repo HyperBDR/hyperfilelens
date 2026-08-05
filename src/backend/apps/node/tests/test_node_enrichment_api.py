@@ -31,7 +31,7 @@ class NodeEnrichmentReadOnlyTests(TestCase):
             organization=self.org,
             name="agent-enrich",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             version="1.0.0",
         )
 
@@ -65,7 +65,7 @@ class NodeLifecycleWatchApiTests(TestCase):
             organization=self.org,
             name="agent-watch",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             version="1.0.0",
             last_seen_at=timezone.now(),
         )

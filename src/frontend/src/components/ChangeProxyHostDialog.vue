@@ -52,13 +52,13 @@ function normalizeNodeId(value: unknown): number | undefined {
 }
 
 function proxyNodeStatusLabel(node: ApiNode) {
-  return node.status === 'online'
+  return node.availability === 'online'
     ? t('protection.sourceResources.nodeStatusOnline')
     : t('protection.sourceResources.nodeStatusOffline')
 }
 
 function proxyNodeStatusTagType(node: ApiNode): 'success' | 'danger' | 'warning' | 'info' {
-  if (node.status === 'online') return 'success'
+  if (node.availability === 'online') return 'success'
   if (node.status === 'offline') return 'danger'
   return 'info'
 }

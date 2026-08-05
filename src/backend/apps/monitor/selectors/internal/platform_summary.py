@@ -18,7 +18,7 @@ def offline_node_count() -> int:
     try:
         from apps.node.models import Node
 
-        return Node.objects.filter(status=Node.Status.OFFLINE).count()
+        return Node.objects.filter(availability=Node.Availability.OFFLINE).count()
     except Exception:
         return 0
 

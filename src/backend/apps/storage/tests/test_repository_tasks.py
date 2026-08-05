@@ -75,7 +75,7 @@ class RepositoryTaskTests(TestCase):
             organization=self.org,
             name="storage-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         repository = Repository.objects.create(
             organization_id=self.org.id,
@@ -110,7 +110,7 @@ class RepositoryTaskTests(TestCase):
                 organization=self.org,
                 name=name,
                 role=Node.Role.AGENT,
-                status=Node.Status.ONLINE,
+                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             )
             for name in ("Finance-Server", "HR-Server")
         ]
@@ -154,7 +154,7 @@ class RepositoryTaskTests(TestCase):
                 organization=self.org,
                 name="Finance-Server",
                 role=Node.Role.AGENT,
-                status=Node.Status.ONLINE,
+                status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             )
             for _ in range(2)
         ]
@@ -195,7 +195,7 @@ class RepositoryTaskTests(TestCase):
             organization=self.org,
             name="Archived-Server",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         for node_id in (node.id, 999999):
             RepositoryUsageShard.objects.create(

@@ -212,7 +212,7 @@ def _bound_proxy(*, repository: Repository, message_prefix: str) -> Node:
     ).first()
     if node is None:
         raise ValidationError({"repository_id": f"{message_prefix} bound proxy node not found."})
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         raise ValidationError({"repository_id": f'{message_prefix} bound proxy node "{node.name}" is offline.'})
     return node
 

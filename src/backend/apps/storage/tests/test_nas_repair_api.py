@@ -56,21 +56,21 @@ class NasRepairApiTests(TestCase):
             organization=self.org,
             name="proxy-a",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.31",
         )
         self.proxy_b = Node.objects.create(
             organization=self.org,
             name="proxy-b",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.32",
         )
         self.proxy_offline = Node.objects.create(
             organization=self.org,
             name="proxy-c",
             role=NodeRole.PROXY,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
             ip_address="10.0.0.33",
         )
 

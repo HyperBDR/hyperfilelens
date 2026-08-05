@@ -55,16 +55,16 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const bindSectionRef = ref<HTMLElement | null>(null)
 
-const onlineProxyNodes = computed(() => props.proxyNodes.filter((n) => n.status === 'online'))
+const onlineProxyNodes = computed(() => props.proxyNodes.filter((n) => n.availability === 'online'))
 
 function proxyNodeStatusLabel(node: ApiNode) {
-  return node.status === 'online'
+  return node.availability === 'online'
     ? t('protection.sourceResources.nodeStatusOnline')
     : t('protection.sourceResources.nodeStatusOffline')
 }
 
 function proxyNodeStatusTagType(node: ApiNode): 'success' | 'danger' | 'warning' | 'info' {
-  if (node.status === 'online') return 'success'
+  if (node.availability === 'online') return 'success'
   if (node.status === 'offline') return 'danger'
   return 'info'
 }

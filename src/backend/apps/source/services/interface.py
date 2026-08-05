@@ -245,7 +245,7 @@ def update_source_resource(
             if node is None:
                 raise ValueError("Bound node not found.")
             validate_bound_node_role(resource_type=resource.resource_type, node=node)
-            if node.status != Node.Status.ONLINE:
+            if node.availability != Node.Availability.ONLINE:
                 raise ValueError(f'Node "{node.name}" is not online.')
             resource.bound_node = node
             bound_node_changed = old_bound_node_id != node.id
@@ -403,7 +403,7 @@ def bind_node(*, resource: SourceResource, node_id: int) -> dict:
         validate_bound_node_role(resource_type=resource.resource_type, node=node)
     except ValueError as exc:
         return {"success": False, "message": str(exc)}
-    if node.status != Node.Status.ONLINE:
+    if node.availability != Node.Availability.ONLINE:
         return {"success": False, "message": f'Node "{node.name}" is not online.'}
     old_bound_node_id = resource.bound_node_id
     resource.bound_node = node

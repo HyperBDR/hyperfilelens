@@ -22,7 +22,7 @@ class SourceRemoteTransactionBoundaryTests(TransactionTestCase):
             organization=self.org,
             name="source-remote-proxy",
             role=Node.Role.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
 
     @mock.patch(

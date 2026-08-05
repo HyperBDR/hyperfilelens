@@ -25,7 +25,7 @@ class NodeOperationsApiTests(APITestCase):
             organization=self.org,
             name="agent-ops",
             role=NodeRole.AGENT,
-            status=Node.Status.OFFLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
             version="1.0.0",
         )
 

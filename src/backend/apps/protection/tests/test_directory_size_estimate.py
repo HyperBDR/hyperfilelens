@@ -36,14 +36,14 @@ class DirectorySizeEstimateTests(TestCase):
             organization=self.org,
             name="dir-size-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.81",
         )
         self.agent_b = Node.objects.create(
             organization=self.org,
             name="dir-size-agent-b",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             ip_address="10.0.0.82",
         )
         self.repository = Repository.objects.create(

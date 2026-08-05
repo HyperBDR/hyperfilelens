@@ -28,7 +28,7 @@ class AgentTaskSyncWaitTests(TestCase):
             organization=self.org,
             name="agent-task-sync",
             role=NodeRole.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             last_seen_at=timezone.now(),
         )
         self.task = NodeTask.objects.create(
@@ -178,7 +178,7 @@ class AgentTaskSyncWaitTests(TestCase):
         self.assertEqual(task.status, NodeTask.Status.FAILED)
         self.assertEqual(task.last_error, "agent websocket is not routable")
         self.node.refresh_from_db()
-        self.assertEqual(self.node.status, Node.Status.ONLINE)
+        self.assertEqual(self.node.availability, Node.Availability.ONLINE)
         mock_clear_agent_location.assert_called_once_with(agent_id=self.node.id)
         mock_push_task_stream.assert_called_once()
 
@@ -200,8 +200,8 @@ class AgentTaskSyncWaitTests(TestCase):
             def set(self, *args, **kwargs):
                 return True
 
-        self.node.status = Node.Status.OFFLINE
-        self.node.save(update_fields=["status"])
+        self.node.availability = Node.Availability.OFFLINE
+        self.node.save(update_fields=["availability"])
         self.task.status = NodeTask.Status.PENDING
         self.task.save(update_fields=["status"])
         self.task.refresh_from_db()

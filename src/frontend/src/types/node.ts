@@ -1,7 +1,17 @@
 import type { NodeLifecycleInfo, NodeWorkloadInfo } from './nodeLifecycle'
 
 export type NodeRole = 'agent' | 'proxy' | 'gateway'
-export type NodeStatus = 'online' | 'reconnecting' | 'offline'
+export type NodeStatus =
+  | 'active'
+  | 'upgrading'
+  | 'restarting'
+  | 'verifying'
+  | 'verification_pending'
+  | 'removing'
+  | 'cleaning_up'
+  | 'failed'
+  | 'upgrade_failed'
+  | 'deregistration_failed'
 export type Availability = 'online' | 'offline'
 
 export type ApiNode = {

@@ -16,7 +16,7 @@ class NodeWorkloadTests(TestCase):
             organization=self.org,
             name="proxy-1",
             role=NodeRole.PROXY,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             version="1.0.0",
         )
 

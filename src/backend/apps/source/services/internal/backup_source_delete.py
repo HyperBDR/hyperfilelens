@@ -590,7 +590,7 @@ def _assert_strict_delete_blockers(
             )
     if ctx.nas_resource is not None:
         proxy = ctx.nas_resource.bound_node
-        if proxy is None or proxy.status != Node.Status.ONLINE:
+        if proxy is None or proxy.availability != Node.Availability.ONLINE:
             reasons.append(
                 DeleteReason(
                     code="proxy_offline",
@@ -2912,7 +2912,7 @@ def preflight_delete_backup_sources(
                     ).as_dict()
                 )
             proxy = resource.bound_node
-            if proxy is None or proxy.status != Node.Status.ONLINE:
+            if proxy is None or proxy.availability != Node.Availability.ONLINE:
                 risks.append(
                     DeleteReason(
                         code="proxy_offline",

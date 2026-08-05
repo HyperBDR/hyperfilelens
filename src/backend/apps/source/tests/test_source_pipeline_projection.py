@@ -5,7 +5,9 @@ from django.core.management.base import CommandError
 from django.test import TestCase
 
 from apps.iam.models import Organization
-from apps.node.models import Node
+from apps.node import conf as node_conf
+from apps.node.models import Node, NodeTask
+from apps.node.services.internal.task import complete_task as complete_node_task
 from apps.source.constants import PipelineStep, ResourceType, SelectableSourceKind
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
 from apps.source.services.internal.source_pipeline import (
@@ -24,8 +26,7 @@ class SourcePipelineProjectionTests(TestCase):
             organization=self.org,
             name="agent-display",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             connection_ip_address="198.51.100.10",
             metadata={"inventory": {"hostname": "agent-reported"}},
         )
@@ -39,9 +40,39 @@ class SourcePipelineProjectionTests(TestCase):
         self.assertEqual(entry.source_name, "agent-display")
         self.assertEqual(entry.source_hostname, "agent-reported")
         self.assertEqual(entry.source_ip, "198.51.100.10")
-        self.assertEqual(entry.source_status, Node.Status.ONLINE)
+        self.assertEqual(entry.source_status, Node.Status.ACTIVE)
         self.assertEqual(entry.source_availability, Node.Availability.ONLINE)
         self.assertEqual(entry.created_at, self.agent.created_at)
+
+    def test_upgrade_failure_refreshes_agent_pipeline_status_without_changing_availability(self):
+        entry = ensure_pipeline_entry(
+            organization_id=self.org.id,
+            source_kind=SelectableSourceKind.AGENT,
+            ref_id=self.agent.id,
+        )
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.agent,
+            kind="agent.upgrade",
+            status=NodeTask.Status.PENDING,
+            watchdog_deadline_at=self.agent.created_at,
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.agent.id}",
+        )
+
+        complete_node_task(
+            task_id=task.id,
+            node_id=self.agent.id,
+            status=NodeTask.Status.FAILED,
+            error="upgrade package verification failed",
+        )
+
+        self.agent.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(self.agent.status, Node.Status.UPGRADE_FAILED)
+        self.assertEqual(self.agent.availability, Node.Availability.ONLINE)
+        self.assertEqual(entry.source_status, Node.Status.UPGRADE_FAILED)
+        self.assertEqual(entry.source_availability, Node.Availability.ONLINE)
 
     def test_nas_without_proxy_projects_empty_identity_and_offline(self):
         source = SourceResource.objects.create(
@@ -147,8 +178,7 @@ class SourcePipelineProjectionTests(TestCase):
             name="proxy-before",
             role=Node.Role.PROXY,
             ip_address="198.51.100.20",
-            status=Node.Status.ONLINE,
-            availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
         )
         nas = SourceResource.objects.create(
             organization=self.org,

@@ -518,7 +518,7 @@ class BrowseGatewayDirectoryTests(SimpleTestCase):
     ):
         from apps.lens_bridge.services.provisioning import browse_gateway_directory
 
-        gateway = MagicMock(id=7, status="online")
+        gateway = MagicMock(id=7, status="active", availability="online")
         require_gateway.return_value = gateway
         link = MagicMock()
         link.resolved_workspace_root.return_value = "/workspace/org-1/data"

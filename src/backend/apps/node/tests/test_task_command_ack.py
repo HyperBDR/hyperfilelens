@@ -24,7 +24,7 @@ class TaskCommandAckTests(TestCase):
             organization=self.org,
             name="ack-agent",
             role=Node.Role.AGENT,
-            status=Node.Status.ONLINE,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             last_seen_at=timezone.now(),
             metadata={"inventory": {"capabilities": ["task_command_ack_v1"]}},
         )

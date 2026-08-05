@@ -159,7 +159,7 @@ class RepositorySerializer(serializers.ModelSerializer):
         ).first()
         if node is None:
             return {"enabled": True, "ready": False, "host": None, "reason": "proxy_missing"}
-        if node.status != Node.Status.ONLINE:
+        if node.availability != Node.Availability.ONLINE:
             return {"enabled": True, "ready": False, "host": None, "reason": "proxy_offline"}
         host, _source = explicit_repository_server_host(repository=obj, node=node)
         if not host:
