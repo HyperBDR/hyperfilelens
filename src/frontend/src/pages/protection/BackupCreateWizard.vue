@@ -4013,9 +4013,14 @@ function addPickedSourceFor(sourceId: string) {
 
 function editBackupConfigIdForSource(sourceId: string) {
   const ids = [...new Set(
-    wizardSourceGroups.value
-      .filter((group) => group.sourceId === sourceId && group.backupConfigId)
-      .map((group) => group.backupConfigId as number),
+    [
+      ...editConfigs.value
+        .filter((config) => sourceIdFromConfig(config) === sourceId)
+        .map((config) => Number(config.id)),
+      ...wizardSourceGroups.value
+        .filter((group) => group.sourceId === sourceId && group.backupConfigId)
+        .map((group) => Number(group.backupConfigId)),
+    ].filter((id) => Number.isFinite(id) && id > 0),
   )]
   return ids.length === 1 ? ids[0] : undefined
 }
@@ -5434,10 +5439,11 @@ async function runCreateBackup() {
 function editableGroupPayloads() {
   const backups = buildCreateBackupPayload().backups
   const groupByKey = new Map(wizardSourceGroups.value.map((group) => [group.key, group]))
-  const configById = new Map(editConfigs.value.map((config) => [config.id, config]))
+  const configById = new Map(editConfigs.value.map((config) => [Number(config.id), config]))
   return backups.flatMap((backup) => {
     const group = groupByKey.get(backup.key)
-    const config = backup.backupConfigId ? configById.get(backup.backupConfigId) : undefined
+    const configId = Number(backup.backupConfigId)
+    const config = Number.isFinite(configId) && configId > 0 ? configById.get(configId) : undefined
     return group && config ? [{ backup, group, config }] : []
   })
 }
@@ -5534,10 +5540,16 @@ async function syncEditRecoveryPlans(config: BackupConfigDetail, backup: ReturnT
 }
 
 async function runEditBackupConfig() {
-  const section = editSection.value
+  const section = activeEditSection.value
   const editables = editableGroupPayloads()
-  if (!section || !editables.length) return
-  if (!validateCreateStep(createStep.value)) return
+  if (!editables.length) {
+    createPhase.value = 'form'
+    ElMessage.error({ message: t('protection.backupsPage.msgEditConfigUnavailable'), grouping: true })
+    return
+  }
+  const step = editStepForSection(section)
+  if (createStep.value !== step) createStep.value = step
+  if (!validateCreateStep(step)) return
   createPhase.value = 'waiting'
   try {
     for (const { backup, group, config } of editables) {

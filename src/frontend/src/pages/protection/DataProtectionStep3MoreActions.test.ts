@@ -78,8 +78,30 @@ describe('backup wizard step 3 More Actions refresh', () => {
     const editHandlerEnd = wizard.indexOf('function submitCreateWizard', editHandlerStart)
     const editHandler = wizard.slice(editHandlerStart, editHandlerEnd)
 
+    expect(editHandler).toContain('const section = activeEditSection.value')
+    expect(editHandler).toContain("t('protection.backupsPage.msgEditConfigUnavailable')")
+    expect(editHandler).toContain('const step = editStepForSection(section)')
+    expect(editHandler).toContain('if (createStep.value !== step) createStep.value = step')
+    expect(editHandler).toContain('if (!validateCreateStep(step)) return')
     expect(editHandler).toContain('apiErrorMessage(err, editorFailureText.value)')
     expect(protectionLocale).toContain("editFailed: 'Failed to save backup configuration'")
+    expect(protectionLocale).toContain("msgEditConfigUnavailable: 'No editable backup configuration is available. Refresh the page and try again.'")
+  })
+
+  it('keeps new edit-mode paths attached to the original backup config', () => {
+    const editConfigIdStart = wizard.indexOf('function editBackupConfigIdForSource')
+    const editConfigIdEnd = wizard.indexOf('function wizardDirEntryKey', editConfigIdStart)
+    const editConfigIdSource = wizard.slice(editConfigIdStart, editConfigIdEnd)
+    const editablesStart = wizard.indexOf('function editableGroupPayloads')
+    const editablesEnd = wizard.indexOf('function directoryPayloadFromGroup', editablesStart)
+    const editablesSource = wizard.slice(editablesStart, editablesEnd)
+
+    expect(editConfigIdSource).toContain('...editConfigs.value')
+    expect(editConfigIdSource).toContain('sourceIdFromConfig(config) === sourceId')
+    expect(editConfigIdSource).toContain('Number(config.id)')
+    expect(editConfigIdSource).toContain('...wizardSourceGroups.value')
+    expect(editablesSource).toContain('new Map(editConfigs.value.map((config) => [Number(config.id), config]))')
+    expect(editablesSource).toContain('const configId = Number(backup.backupConfigId)')
   })
 
   it('does not show a success notification after manually refreshing the step 3 list', () => {
