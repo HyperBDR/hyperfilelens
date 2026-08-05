@@ -5,9 +5,9 @@ import { ElButton, ElDialog } from 'element-plus'
 import BackupSourceUnregisterDialogBody from './BackupSourceUnregisterDialogBody.vue'
 import {
   mergeUnregisterSubmitRisks,
-  unregisterReasonLabel,
   type BackupSourceUnregisterDisplayRow,
 } from '../lib/backupSourceUnregisterDialog'
+import type { ErrorDetailsPayload } from '../lib/errors/details'
 import {
   bulkDeleteBackupSources,
   parseBackupSourceDeleteError,
@@ -16,18 +16,32 @@ import {
   type BackupSourceDeleteReason,
   type BackupSourceDeleteResult,
 } from '../lib/sourceApi'
+import {
+  notifyUnregisterFailureBatch,
+  openUnregisterFailureDetails,
+  previousUnregisterFailureDetails,
+  unregisterFailureBannerText,
+  unregisterFailureToErrorDetails,
+  unregisterSyncFailuresBySource,
+} from '../lib/unregisterFailureDetails'
 import './backupSourceFlowActionDialog.css'
 
 const props = defineProps<{
   modelValue: boolean
   sourceIds: string[]
   sources?: BackupSourceUnregisterDisplayRow[]
+  previousFailureDetails?: ErrorDetailsPayload | null
 }>()
 
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
   (e: 'started', payload: { sourceIds: string[] }): void
-  (e: 'failed', payload: { sourceIds: string[] }): void
+  (e: 'failed', payload: {
+    sourceIds: string[]
+    failureDetails?: ErrorDetailsPayload
+    failuresBySource?: Record<string, ErrorDetailsPayload>
+    errorMessage?: string
+  }): void
   (e: 'deleted', payload: {
     result: string
     warnings: Array<Record<string, unknown>>
@@ -48,6 +62,7 @@ const preflightLoading = ref(false)
 const preflight = ref<BackupSourceDeletePreflight | null>(null)
 const preflightError = ref(false)
 const submitErrorReasons = ref<BackupSourceDeleteReason[]>([])
+const lastFailureDetails = ref<ErrorDetailsPayload | null>(null)
 const confirmText = ref('')
 const frozenSourceIds = ref<string[]>([])
 const frozenSources = ref<BackupSourceUnregisterDisplayRow[]>([])
@@ -68,6 +83,19 @@ const title = computed(() =>
 )
 
 const displayRisks = computed(() => mergeUnregisterSubmitRisks(preflight.value, submitErrorReasons.value))
+
+const activePreviousFailure = computed(() =>
+  lastFailureDetails.value || props.previousFailureDetails || null,
+)
+
+const previousFailureTitle = computed(() =>
+  activePreviousFailure.value?.title
+  || t('protection.backupsPage.unregisterPreviousFailureTitle'),
+)
+
+const previousFailureSummary = computed(() =>
+  unregisterFailureBannerText(activePreviousFailure.value),
+)
 
 const deleteDisabled = computed(() => {
   if (loading.value || preflightLoading.value) return true
@@ -111,6 +139,16 @@ function resetDialogState() {
   preflightError.value = false
   preflightLoading.value = false
   submitErrorReasons.value = []
+  lastFailureDetails.value = null
+}
+
+function sourceLabel(sourceId: string) {
+  return dialogSources.value.find((row) => row.id === sourceId)?.name || sourceId
+}
+
+function viewPreviousFailure() {
+  if (!activePreviousFailure.value) return
+  openUnregisterFailureDetails(activePreviousFailure.value)
 }
 
 watch(
@@ -148,6 +186,7 @@ async function confirmDelete() {
   try {
     const result = await bulkDeleteBackupSources(sourceIds, forceDelete, confirmation)
     submitErrorReasons.value = []
+    lastFailureDetails.value = null
     visible.value = false
     emit('deleted', {
       result: result.result,
@@ -163,16 +202,37 @@ async function confirmDelete() {
   } catch (err: unknown) {
     const parsed = parseBackupSourceDeleteError(err)
     submitErrorReasons.value = parsed.reasons
-    emit('failed', { sourceIds })
-    const lines = parsed.reasons.length
-      ? parsed.reasons.map((reason) => unregisterReasonLabel(reason, t)).join('\n')
-      : parsed.message || t('protection.backupsPage.msgDeleteSourceFailed')
-    const { ElMessage } = await import('element-plus')
-    ElMessage.error({
-      message: lines,
-      duration: 8000,
-      showClose: true,
-      grouping: true,
+    const failuresBySourceMap = unregisterSyncFailuresBySource({
+      t,
+      sourceIds,
+      sourceName: sourceLabel,
+      apiError: err,
+    })
+    const failuresBySource = Object.fromEntries(failuresBySourceMap)
+    const primaryId = sourceIds[0]
+    const details = previousUnregisterFailureDetails(
+      t,
+      sourceIds.flatMap((sourceId) => {
+        const item = failuresBySource[sourceId]
+        return item ? [item] : []
+      }),
+    ) || (primaryId ? failuresBySource[primaryId] : undefined)
+      || unregisterFailureToErrorDetails({ t, apiError: err })
+    lastFailureDetails.value = details
+    emit('failed', {
+      sourceIds,
+      failureDetails: details,
+      failuresBySource,
+      errorMessage: unregisterFailureBannerText(details),
+    })
+    notifyUnregisterFailureBatch({
+      t,
+      items: sourceIds.map((sourceId) => ({
+        sourceId,
+        sourceName: sourceLabel(sourceId),
+        details: failuresBySource[sourceId],
+      })),
+      dedupeKey: `unregister-api-failure:${sourceIds.join(',')}`,
     })
     void loadPreflight()
   } finally {
@@ -203,7 +263,11 @@ async function confirmDelete() {
       :preflight-loading="preflightLoading"
       :preflight-error="preflightError"
       :loading="loading"
+      :previous-failure-title="previousFailureTitle"
+      :previous-failure-summary="previousFailureSummary"
+      :previous-failure-clickable="Boolean(activePreviousFailure)"
       @retry-preflight="loadPreflight"
+      @view-previous-failure="viewPreviousFailure"
       @confirm="confirmDelete"
     />
 

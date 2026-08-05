@@ -52,6 +52,7 @@ describe('sourceUnregisterTaskOutcome', () => {
       success: true,
       partialSuccess: true,
       cleanupComplete: false,
+      retainedResources: ['agent_installation'],
     })
 
     expect(sourceUnregisterTaskOutcome({
@@ -64,6 +65,36 @@ describe('sourceUnregisterTaskOutcome', () => {
       success: true,
       partialSuccess: false,
       cleanupComplete: true,
+    })
+  })
+
+  it('exposes structured failure fields for the details adapter', () => {
+    expect(sourceUnregisterTaskOutcome({
+      status: 'failed',
+      task_uuid: 'task-abc',
+      error_code: 'AGENT.UNINSTALL_FAILED',
+      error_message: 'Agent uninstall callback failed',
+      current_step: 'uninstall_agent',
+      result_payload: {
+        failed_step: 'uninstall_agent',
+        hint: 'Bring the Agent online and retry.',
+        reasons: [{ code: 'agent_offline', detail: 'Agent is offline' }],
+        cleanup_failures: [{ code: 'cleanup_failed', detail: 'Repo purge failed' }],
+      },
+      recent_events: [{
+        level: 'error',
+        message: 'callback timeout',
+        metadata: { hint: 'Check Agent connectivity' },
+      }],
+    } as never)).toMatchObject({
+      terminal: true,
+      success: false,
+      errorCode: 'AGENT.UNINSTALL_FAILED',
+      taskUuid: 'task-abc',
+      failedStep: 'uninstall_agent',
+      hint: 'Bring the Agent online and retry.',
+      reasons: expect.arrayContaining(['Agent is offline', 'Check Agent connectivity']),
+      cleanupFailures: [expect.objectContaining({ detail: 'Repo purge failed' })],
     })
   })
 })

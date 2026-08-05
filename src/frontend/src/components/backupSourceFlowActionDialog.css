@@ -418,6 +418,21 @@
   color: var(--el-text-color-regular, var(--color-text-primary, #595959));
 }
 
+.hfl-flow-action-dialog__previous-failure {
+  margin-bottom: 12px;
+}
+
+.hfl-flow-action-dialog__previous-failure-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.hfl-flow-action-dialog__previous-failure-content .el-button {
+  padding: 0;
+}
+
 .hfl-flow-action-dialog__preflight-error-content {
   display: flex;
   align-items: center;
