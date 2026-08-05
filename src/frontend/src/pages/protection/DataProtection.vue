@@ -2704,6 +2704,28 @@ function onBackupConfigEditPickSelected(config: BackupConfig | BackupConfigDetai
   openBackupConfigEdit([config], backupConfigEditPickSection.value)
 }
 
+async function openConfigureRestorePlanFromMissingRow(row: { backupId: string }) {
+  const configId = realConfigIdFromBackupId(row.backupId)
+  if (!configId) {
+    ElMessage.warning({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })
+    return
+  }
+  let config: BackupConfig | BackupConfigDetail | undefined = backupConfigDetailById.value.get(configId)
+  if (!config) {
+    try {
+      config = await getBackupConfig(configId)
+      backupConfigDetailById.value.set(config.id, config)
+    } catch (e) {
+      showApiError(e)
+      return
+    }
+  }
+  await closeRecoveryWizard()
+  if (recOpen.value) return
+  await nextTick()
+  openBackupConfigEdit([config], 'recovery')
+}
+
 function taskPayload(task: TaskRow): Record<string, unknown> {
   return task.request_payload && typeof task.request_payload === 'object'
     ? task.request_payload as Record<string, unknown>
@@ -10918,6 +10940,13 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       <div class="recovery-plan-missing-cell__desc">
                         {{ t('protection.backupsPage.recoveryPlanMissingDesc') }}
                       </div>
+                      <button
+                        type="button"
+                        class="recovery-plan-missing-cell__action"
+                        @click="openConfigureRestorePlanFromMissingRow(row)"
+                      >
+                        {{ t('protection.backupsPage.flowActionConfigureRecoveryPlan') }}
+                      </button>
                     </div>
                   </template>
                 </el-table-column>
@@ -13304,6 +13333,31 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
+}
+
+.recovery-plan-missing-cell__action {
+  align-self: flex-start;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.recovery-plan-missing-cell__action:hover,
+.recovery-plan-missing-cell__action:focus-visible {
+  color: color-mix(in srgb, var(--color-primary) 78%, #0f172a);
+}
+
+.recovery-plan-missing-cell__action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .recovery-manual-inline-layout {
