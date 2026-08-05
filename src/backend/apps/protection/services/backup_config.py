@@ -1010,6 +1010,7 @@ def _sync_backup_config_directories(
     for idx, directory_data in enumerate(directories_data):
         path = directory_data["path"]
         directory = existing_by_path.get(path)
+        is_new = directory is None
         if directory is None:
             directory = BackupConfigDirectory(
                 organization_id=config.organization_id,
@@ -1033,24 +1034,41 @@ def _sync_backup_config_directories(
             directory.path_type = incoming_path_type or BackupConfigDirectory.PathType.UNKNOWN
         directory.display_name = directory_data.get("display_name", "")
         # Preserve cached du estimates when the client omits/zeros the field on
-        # unchanged paths. New paths and explicit directory<->file changes
-        # invalidate the cache so async pre-cache can refresh them.
+        # unchanged paths. New paths, explicit directory<->file changes, and
+        # verified positive->zero changes invalidate the cache so async
+        # pre-cache can refresh them. Verified zero estimates are tracked by
+        # size_estimated_at and remain valid across unchanged saves.
         incoming_estimate = directory_data.get("estimated_size_bytes", None)
         next_path_type = str(directory.path_type or "").strip().lower()
-        if incoming_estimate is not None and int(incoming_estimate or 0) > 0:
-            directory.estimated_size_bytes = int(incoming_estimate)
-        elif directory.pk is None:
-            directory.estimated_size_bytes = max(0, int(incoming_estimate or 0))
-        elif (
+        previous_estimate = int(directory.estimated_size_bytes or 0)
+        path_type_changed = (
             previous_path_type in {"directory", "file"}
             and next_path_type in {"directory", "file"}
             and previous_path_type != next_path_type
-        ):
+        )
+        if incoming_estimate is not None and int(incoming_estimate or 0) > 0:
+            directory.estimated_size_bytes = int(incoming_estimate)
+            if is_new or path_type_changed or previous_estimate != int(incoming_estimate):
+                directory.size_estimated_at = None
+        elif directory.pk is None:
+            directory.estimated_size_bytes = max(0, int(incoming_estimate or 0))
+            directory.size_estimated_at = None
+        elif path_type_changed:
             directory.estimated_size_bytes = 0
+            directory.size_estimated_at = None
         elif int(directory.estimated_size_bytes or 0) < 0:
             # Unavailable marker from a failed precache: an explicit directories
             # sync re-opens async retry (positive caches above stay intact).
             directory.estimated_size_bytes = 0
+            directory.size_estimated_at = None
+        elif (
+            incoming_estimate is not None
+            and int(incoming_estimate or 0) <= 0
+            and previous_estimate > 0
+            and directory.size_estimated_at is not None
+        ):
+            directory.estimated_size_bytes = 0
+            directory.size_estimated_at = None
         directory.sort_order = idx
         directory.save()
         created_or_updated.append(directory)
