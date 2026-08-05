@@ -1915,9 +1915,13 @@ function recoveryPlanConflictLabel(conflictMode: CreateRecoveryPlanConfig['confl
     : t('protection.backupsPage.createRecoveryConflictSkipFull')
 }
 
+/** Compact list chip label — full sentence stays on confirm, dropdowns, and tooltips. */
 function recoveryPlanConflictSummary(group: WizardSourceGroup) {
   const plan = recoveryPlanForGroup(group)
-  return recoveryPlanConflictLabel(plan.conflictMode)
+  if (!plan.conflictMode) return t('protection.backupsPage.fileConflictPolicyRequiredShort')
+  return plan.conflictMode === 'overwrite'
+    ? t('protection.backupsPage.createRecoveryConflictOverwrite')
+    : t('protection.backupsPage.createRecoveryConflictSkip')
 }
 
 function recoveryDirPlanMissingFields(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
@@ -6072,7 +6076,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   @click.stop="openCreateSourceDetail(row)"
                 >
                   <div class="backup-source-cell__body">
-                    <span class="create-backup-source-name">{{ row.name }}</span>
+                    <span class="create-backup-source-name" :title="row.name">{{ row.name }}</span>
                     <span class="create-backup-source-meta-row">
                       <el-tag
                         size="small"
@@ -6461,7 +6465,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   <template #default="{ row: group }">
                     <div class="backup-source-cell">
                       <div class="backup-source-cell__body">
-                        <span class="create-backup-source-name">{{ group.sourceName }}</span>
+                        <span class="create-backup-source-name" :title="group.sourceName">{{ group.sourceName }}</span>
                         <span class="create-backup-source-meta-row">
                           <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
                             {{ backupSourceTypeLabel(group.sourceType) }}
@@ -7118,7 +7122,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                 <template #default="{ row: group }">
                   <div class="backup-source-cell">
                     <div class="backup-source-cell__body">
-                      <span class="create-backup-source-name">{{ group.sourceName }}</span>
+                      <span class="create-backup-source-name" :title="group.sourceName">{{ group.sourceName }}</span>
                       <span class="create-backup-source-meta-row">
                         <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
                           {{ backupSourceTypeLabel(group.sourceType) }}
@@ -7771,7 +7775,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                     @click.stop="requestToggleCreateRecoveryPlanRow(group)"
                   >
                     <div class="backup-source-cell__body">
-                      <span class="create-backup-source-name">{{ group.sourceName }}</span>
+                      <span class="create-backup-source-name" :title="group.sourceName">{{ group.sourceName }}</span>
                       <span class="create-backup-source-meta-row">
                         <el-tag size="small" effect="plain" class="create-backup-source-type-tag">
                           {{ backupSourceTypeLabel(group.sourceType) }}
@@ -7845,7 +7849,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                     popper-class="create-recovery-plan-tooltip"
                   >
                     <template #reference>
-                      <div class="create-recovery-plan-cell" :class="`create-recovery-plan-cell--${recoveryPlanStatusTone(group)}`">
+                      <div
+                        class="create-recovery-plan-cell create-recovery-plan-cell--wrap"
+                        :class="`create-recovery-plan-cell--${recoveryPlanStatusTone(group)}`"
+                      >
                         <div class="create-recovery-plan-cell__status">
                           <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
                           <span class="create-recovery-plan-cell__status-label">
@@ -7943,7 +7950,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                           />
                           <Info v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
                           <span class="create-recovery-plan-cell__policy-text">
-                            {{ recoveryPlanConflictSummary(group) }}
+                            {{ recoveryPlanConflictLabel(group.plan.conflictMode) }}
                           </span>
                         </div>
                         <div v-if="recoveryPlanIncompleteReason(group)" class="create-recovery-plan-tooltip__issue">
@@ -8314,7 +8321,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                             />
                             <Info v-else :size="14" class="create-recovery-plan-cell__policy-icon" />
                             <span class="create-recovery-plan-cell__policy-text">
-                              {{ recoveryPlanConflictSummary(row.recoveryGroup) }}
+                              {{ recoveryPlanConflictLabel(row.recoveryGroup.plan.conflictMode) }}
                             </span>
                           </div>
                           <div v-if="recoveryPlanIncompleteReason(row.recoveryGroup)" class="create-recovery-plan-cell__issue">
@@ -9456,6 +9463,21 @@ function preserveShallowestPathOrder(paths: string[]) {
   overflow: visible;
 }
 
+/* Long wrap rows: keep Backup Source / Dirs / Restore Plan tops aligned. */
+.create-source-config-table :deep(.el-table__body td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column)) {
+  vertical-align: top !important;
+}
+
+.create-source-config-table .create-source-cell-trigger {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.create-source-config-table .create-recovery-plan-action {
+  align-items: flex-start;
+  padding-top: 0;
+}
+
 .create-source-config-table :deep(.create-source-config-expand-column) {
   text-align: center;
 }
@@ -9600,7 +9622,7 @@ function preserveShallowestPathOrder(paths: string[]) {
 .create-source-dir-preview__item {
   display: flex;
   min-width: 0;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   color: var(--el-text-color-regular);
   font-size: 13px;
@@ -9642,9 +9664,11 @@ function preserveShallowestPathOrder(paths: string[]) {
 
 .create-source-dir-preview__path {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .create-source-dir-preview__more {
@@ -9685,13 +9709,15 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: block;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   color: rgb(15 23 42);
   font-size: 13px;
   font-weight: 650;
   line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-overflow: initial;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .create-backup-source-type-tag {
@@ -11125,10 +11151,15 @@ function preserveShallowestPathOrder(paths: string[]) {
   overflow-wrap: anywhere;
 }
 
-.create-recovery-plan-cell--review {
-  gap: 8px;
+.create-recovery-plan-cell--wrap .create-recovery-plan-cell__policy,
+.create-recovery-plan-cell--review .create-recovery-plan-cell__policy {
+  overflow: visible;
+  white-space: normal;
 }
 
+.create-recovery-plan-cell--wrap .create-recovery-plan-cell__policy-text,
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__text,
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__pending,
 .create-recovery-plan-cell--review .create-recovery-plan-cell__policy-text,
 .create-recovery-plan-cell--review .create-recovery-plan-mapping__text,
 .create-recovery-plan-cell--review .create-recovery-plan-mapping__pending {
@@ -11136,7 +11167,71 @@ function preserveShallowestPathOrder(paths: string[]) {
   text-overflow: initial;
   white-space: normal;
   word-break: break-word;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+
+/* List: source → on first row; restore path uses full width below with hanging indent. */
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping {
+  display: grid;
+  grid-template-columns: max-content auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: start;
+  column-gap: 6px;
+  row-gap: 4px;
+}
+
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping > .create-recovery-plan-mapping__endpoint:not(.create-recovery-plan-mapping__endpoint--target) {
+  grid-column: 1;
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__arrow {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  padding-left: 0;
+  line-height: 1;
+}
+
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__endpoint--target {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.create-recovery-plan-cell--wrap .create-recovery-plan-mapping__text {
+  display: block;
+  min-width: 0;
+  max-width: none;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-mapping {
+  align-items: start;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-mapping__endpoint {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.create-recovery-plan-cell--review .create-recovery-plan-mapping__text {
+  display: block;
+  min-width: 0;
+  max-width: none;
+}
+
+.create-recovery-plan-cell--review {
+  gap: 8px;
 }
 
 .create-recovery-plan-cell--review .create-recovery-plan-mapping {
