@@ -9543,12 +9543,12 @@ function preserveShallowestPathOrder(paths: string[]) {
 }
 
 .create-source-config-detail__selected {
-  max-height: 360px;
+  max-height: 480px;
   overflow: auto;
 }
 
 .create-source-config-detail__tree {
-  max-height: 360px;
+  max-height: 480px;
   overflow: hidden;
 }
 
@@ -13450,7 +13450,6 @@ function preserveShallowestPathOrder(paths: string[]) {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 20px;
 }
 
 .create-backup-fullscreen .create-backup-layout--steps {
