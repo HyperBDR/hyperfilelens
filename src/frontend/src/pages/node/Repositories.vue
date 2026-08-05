@@ -2106,6 +2106,10 @@ onMounted(() => {
   const pendingCreateTask = String(route.query.pending_create_task || '').trim()
   if (pendingCreateId > 0 && pendingCreateTask) {
     trackRepositoryCreatePending(pendingCreateId, pendingCreateTask, t('repositoriesPage.statusCreating'))
+    const nextQuery = { ...route.query }
+    delete nextQuery.pending_create_id
+    delete nextQuery.pending_create_task
+    void router.replace({ path: route.path, query: nextQuery })
   }
   void load()
   scheduleRepositoryCleanupPoll(0)
