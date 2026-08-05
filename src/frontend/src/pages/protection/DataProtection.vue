@@ -32,7 +32,6 @@ import {
   MoreHorizontal,
   FolderOpen,
   TextCursorInput,
-  AlertTriangle,
   X,
   ShieldAlert,
   ShieldCheck,
@@ -10930,23 +10929,29 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </div>
                       </template>
                     </HflPopover>
-                    <div v-else class="recovery-plan-missing-cell">
-                      <div class="recovery-plan-missing-cell__head">
-                        <AlertTriangle :size="15" class="recovery-plan-missing-cell__icon" />
-                        <span class="recovery-plan-missing-cell__title">
+                    <div
+                      v-else
+                      class="create-recovery-plan-cell create-recovery-plan-cell--review create-recovery-plan-cell--pending recovery-plan-missing-cell"
+                    >
+                      <div class="create-recovery-plan-cell__status">
+                        <span class="create-recovery-plan-cell__dot" aria-hidden="true" />
+                        <span class="create-recovery-plan-cell__status-label">
                           {{ t('protection.backupsPage.recoveryPlanMissingTitle') }}
                         </span>
                       </div>
-                      <div class="recovery-plan-missing-cell__desc">
+                      <div class="create-recovery-plan-cell__meta">
                         {{ t('protection.backupsPage.recoveryPlanMissingDesc') }}
                       </div>
-                      <button
-                        type="button"
-                        class="recovery-plan-missing-cell__action"
+                      <ElButton
+                        text
+                        type="primary"
+                        size="small"
+                        class="hfl-btn-with-icon recovery-plan-missing-cell__action"
                         @click="openConfigureRestorePlanFromMissingRow(row)"
                       >
-                        {{ t('protection.backupsPage.flowActionConfigureRecoveryPlan') }}
-                      </button>
+                        <Route :size="14" class="shrink-0" />
+                        <span>{{ t('protection.backupsPage.flowActionConfigureRecoveryPlan') }}</span>
+                      </ElButton>
                     </div>
                   </template>
                 </el-table-column>
@@ -13294,70 +13299,16 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
 }
 
 .recovery-plan-missing-cell {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid rgba(245, 158, 11, 0.34);
-  border-radius: 8px;
-  background: rgba(255, 251, 235, 0.72);
-  color: rgb(120 53 15);
-}
-
-.recovery-plan-missing-cell__head {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-}
-
-.recovery-plan-missing-cell__icon {
-  flex: 0 0 auto;
-  color: rgb(217 119 6);
-}
-
-.recovery-plan-missing-cell__title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.recovery-plan-missing-cell__desc {
-  color: rgb(146 64 14);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.45;
 }
 
 .recovery-plan-missing-cell__action {
-  align-self: flex-start;
-  margin: 2px 0 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-primary);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.recovery-plan-missing-cell__action:hover,
-.recovery-plan-missing-cell__action:focus-visible {
-  color: color-mix(in srgb, var(--color-primary) 78%, #0f172a);
-}
-
-.recovery-plan-missing-cell__action:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
-  outline-offset: 2px;
+  margin-left: -7px;
+  height: auto;
+  min-height: 24px;
+  padding: 0 7px;
+  font-weight: 650;
 }
 
 .recovery-manual-inline-layout {
@@ -13594,6 +13545,12 @@ html[data-theme='dark'] .setup-dr-opening-skeleton__footer {
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recovery-plan-missing-cell .create-recovery-plan-cell__meta {
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
 }
 
 .create-recovery-plan-cell__policy {

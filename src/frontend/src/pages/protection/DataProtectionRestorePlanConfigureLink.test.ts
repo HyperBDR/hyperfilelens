@@ -15,18 +15,24 @@ function sourceBetween(startMarker: string, endMarker: string) {
 }
 
 describe('create restore task missing-plan configure link', () => {
-  it('exposes Configure Restore Plan inside the missing-plan warning cell', () => {
+  it('renders missing plans with the shared recovery-plan cell style and configure action', () => {
     const missingCell = sourceBetween(
-      'class="recovery-plan-missing-cell"',
+      'create-recovery-plan-cell--pending recovery-plan-missing-cell',
       ':label="t(\'protection.backupsPage.descSnapshot\')"',
     )
 
+    expect(missingCell).toContain('create-recovery-plan-cell__status')
+    expect(missingCell).toContain('create-recovery-plan-cell__dot')
+    expect(missingCell).toContain('create-recovery-plan-cell__meta')
     expect(missingCell).toContain('recoveryPlanMissingTitle')
     expect(missingCell).toContain('recoveryPlanMissingDesc')
     expect(missingCell).toContain('recovery-plan-missing-cell__action')
     expect(missingCell).toContain('@click="openConfigureRestorePlanFromMissingRow(row)"')
     expect(missingCell).toContain('flowActionConfigureRecoveryPlan')
+    expect(missingCell).toContain('<Route')
+    expect(missingCell).not.toContain('AlertTriangle')
     expect(protectionLocale).toContain("flowActionConfigureRecoveryPlan: 'Configure Restore Plan'")
+    expect(page).toContain('.recovery-plan-missing-cell .create-recovery-plan-cell__meta')
   })
 
   it('closes the restore chooser then opens the existing restore-plan editor', () => {
