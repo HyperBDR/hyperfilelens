@@ -245,3 +245,133 @@ class EnrollmentTokenReuseTests(TestCase):
         self.token_row.save(update_fields=["is_active"])
         denied = AgentReleasesAuthView.as_view()(auth_request)
         self.assertEqual(denied.status_code, 401)
+
+    def test_registered_node_credential_can_issue_and_auth_release_download(self):
+        """Remote upgrade uses durable NodeCredential, not enrollment token."""
+        from apps.node.api.views.enrollment_helpers import (
+            token_usable_for_artifact_download,
+            token_usable_for_bootstrap,
+        )
+        from apps.node.models import NodeCredential
+
+        node = Node.objects.create(
+            organization=self.org,
+            role=NodeRole.AGENT,
+            name="registered-host",
+            installation_id="registered-host",
+        )
+        credential_secret = "hfln_registered-node-credential"
+        credential = NodeCredential(
+            organization=self.org,
+            node=node,
+            role=NodeRole.AGENT,
+            installation_id="registered-host",
+        )
+        credential.set_secret(credential_secret)
+        credential.save()
+
+        self.assertTrue(
+            token_usable_for_artifact_download(
+                org=self.org,
+                token=credential_secret,
+                role=NodeRole.AGENT,
+            )
+        )
+        self.assertFalse(
+            token_usable_for_bootstrap(
+                org=self.org,
+                token=credential_secret,
+                role=NodeRole.AGENT,
+            )
+        )
+
+        request = self.factory.get(
+            "/api/v1/node/enrollment/agent/release",
+            {
+                "org": self.org.key,
+                "role": NodeRole.AGENT,
+                "token": credential_secret,
+                "platform": "linux",
+                "arch": "amd64",
+                "api_base": "https://console.example",
+            },
+        )
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact = AgentArtifact(
+                platform="linux",
+                arch="amd64",
+                version="1.0.0",
+                filename="agent.tar.gz",
+            )
+            artifact_path = root / artifact.version / artifact.filename
+            artifact_path.parent.mkdir(parents=True)
+            artifact_path.write_bytes(b"agent bundle")
+            with (
+                mock.patch(
+                    "apps.node.api.views.artifact_release._get_agent_artifact",
+                    return_value=artifact,
+                ),
+                mock.patch(
+                    "apps.node.api.views.artifact_release.agent_releases_root",
+                    return_value=root,
+                ),
+            ):
+                response = AgentReleaseView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        signed = parse_qs(urlparse(response.data["download_url"]).query)["t"][0]
+        payload = _load_release_token(signed, max_age=600)
+        self.assertIsNotNone(payload)
+        self.assertNotIn("enroll", payload)
+        self.assertNotIn("token_id", payload)
+        self.assertEqual(payload["credential_id"], credential.id)
+        self.assertEqual(payload["node_id"], node.id)
+
+        auth_request = self.factory.get(
+            "/api/v1/node/enrollment/agent/releases-auth",
+            {"t": signed},
+            HTTP_X_ORIGINAL_URI=payload["p"],
+        )
+        authorized = AgentReleasesAuthView.as_view()(auth_request)
+        self.assertEqual(authorized.status_code, 204)
+
+        credential.is_active = False
+        credential.save(update_fields=["is_active"])
+        denied = AgentReleasesAuthView.as_view()(auth_request)
+        self.assertEqual(denied.status_code, 401)
+
+    def test_wrong_role_node_credential_rejected_for_release(self):
+        from apps.node.models import NodeCredential
+
+        node = Node.objects.create(
+            organization=self.org,
+            role=NodeRole.AGENT,
+            name="wrong-role-host",
+            installation_id="wrong-role-host",
+        )
+        credential_secret = "hfln_wrong-role-credential"
+        credential = NodeCredential(
+            organization=self.org,
+            node=node,
+            role=NodeRole.AGENT,
+            installation_id="wrong-role-host",
+        )
+        credential.set_secret(credential_secret)
+        credential.save()
+
+        request = self.factory.get(
+            "/api/v1/node/enrollment/agent/release",
+            {
+                "org": self.org.key,
+                "role": NodeRole.GATEWAY,
+                "token": credential_secret,
+                "platform": "linux",
+                "arch": "amd64",
+            },
+        )
+        response = AgentReleaseView.as_view()(request)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.data["error"], "invalid enrollment token")
+
