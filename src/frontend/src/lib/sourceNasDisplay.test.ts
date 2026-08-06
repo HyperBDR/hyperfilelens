@@ -9,7 +9,9 @@ import {
   nasProxyMountPoint,
   nasServerAddress,
   nasShareOrExport,
+  SOURCE_PASSWORD_MASK,
   sourceNasStatusPresentation,
+  sourcePasswordDisplay,
 } from './sourceNasDisplay'
 
 describe('nasMountSourceUri', () => {
@@ -188,5 +190,31 @@ describe('sourceNasStatusPresentation', () => {
       labelKey: 'protection.sourceResources.nodeStatusReconnecting',
       tone: 'info',
     })
+  })
+})
+
+describe('sourcePasswordDisplay', () => {
+  it('masks when API returns has_password without the secret (#354)', () => {
+    expect(
+      sourcePasswordDisplay({
+        username: 'backup',
+        has_password: true,
+        has_secret_key: false,
+      }),
+    ).toBe(SOURCE_PASSWORD_MASK)
+  })
+
+  it('shows empty when no password is stored', () => {
+    expect(
+      sourcePasswordDisplay({
+        username: 'backup',
+        has_password: false,
+        has_secret_key: false,
+      }),
+    ).toBe('—')
+  })
+
+  it('still masks if a plaintext password is present (legacy)', () => {
+    expect(sourcePasswordDisplay({ password: 'secret' })).toBe(SOURCE_PASSWORD_MASK)
   })
 })

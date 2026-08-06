@@ -1320,6 +1320,9 @@ if grep -F -- '--network host' "${smoke_runner}" >/dev/null; then
 fi
 grep -F 'image: hyperfilelens-postgres:17' "${ROOT}/deploy/docker-compose.yml" >/dev/null
 grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/default.conf" >/dev/null
+# Website pool (:8082) must keep / → /en/ relative; absolute redirects leak the
+# unpublished internal listen port through the public :11442 gateway.
+grep -F 'absolute_redirect off;' "${ROOT}/deploy/nginx/web.conf" >/dev/null
 grep -F 'map $server_port $hfl_site {' \
 	"${ROOT}/deploy/nginx/snippets/hfl-log-format.conf" >/dev/null
 grep -E '^[[:space:]]*11442[[:space:]]+website;' \

@@ -12,6 +12,7 @@ import {
   nasProxyMountPoint,
   sourceNasStatusPresentation,
   sourceExternalId,
+  sourcePasswordDisplay,
 } from '../../../lib/sourceNasDisplay'
 import { formatAppTime } from '../../../lib/dateTime'
 import {
@@ -298,7 +299,7 @@ const hasDetailChanges = computed(() => {
 })
 
 function passwordDisplay() {
-  return cred('password') ? '••••••••' : DETAIL_EMPTY
+  return sourcePasswordDisplay(row.value?.credentials, DETAIL_EMPTY)
 }
 
 async function saveDetailChanges() {
