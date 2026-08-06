@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
+const createWizard = readFileSync(resolve(process.cwd(), 'src/pages/protection/BackupCreateWizard.vue'), 'utf8')
 
 function tableForStep(step: number) {
   const startMarker = `<div v-if="flowMainStep === ${step}"`
@@ -66,5 +67,13 @@ describe('Backup Wizard availability columns', () => {
   it('maps the API availability field into each wizard row', () => {
     expect(page).toContain("availability: item.availability === 'online' ? 'online' : 'offline'")
     expect(page).toContain('flowSourceAvailabilityLabel(row.availability)')
+  })
+
+  it('uses availability rather than lifecycle status for Backup Setup connectivity checks', () => {
+    expect(createWizard).toContain("availability: item.availability === 'online' ? 'online' : 'offline'")
+    expect(createWizard).toContain(".filter((row): row is NonNullable<ReturnType<typeof sourceRecord>> => row != null && row.availability !== 'online')")
+    expect(createWizard).toContain("const availability = sourceRecord(sourceId)?.availability")
+    expect(createWizard).toContain("page: 1, page_size: 500, availability: 'online'")
+    expect(createWizard).not.toContain("item.status === 'online' || item.status === 'reconnecting' ? item.status : 'offline'")
   })
 })

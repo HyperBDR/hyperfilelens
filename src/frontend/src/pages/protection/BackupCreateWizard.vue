@@ -274,7 +274,9 @@ type RealSourceRow = {
   hostname: string
   nodeName: string
   nodeIp: string
-  status: 'online' | 'reconnecting' | 'offline'
+  /** Lifecycle state; connectivity is represented by availability. */
+  status: string
+  availability: 'online' | 'offline'
   protocol?: 'nfs' | 'smb'
   boundNodeId?: number | null
   registeredAt?: string | null
@@ -354,7 +356,8 @@ function mapSelectableSource(item: BackupSelectableSource): RealSourceRow {
     hostname: item.hostname || item.name,
     nodeName: item.node_name || item.name,
     nodeIp: item.node_ip || '',
-    status: item.status === 'online' || item.status === 'reconnecting' ? item.status : 'offline',
+    status: item.status,
+    availability: item.availability === 'online' ? 'online' : 'offline',
     protocol: item.protocol === 'smb' ? 'smb' : item.protocol === 'nfs' ? 'nfs' : undefined,
     boundNodeId: item.bound_node_id ?? null,
     registeredAt: item.registered_at,
@@ -1512,7 +1515,7 @@ const wizardSourceGroups = computed<WizardSourceGroup[]>(() => {
 
 const createRecoveryTargetOptions = computed(() =>
   Array.from(realSourceById.value.values())
-    .filter((source) => source.status === 'online')
+    .filter((source) => source.availability === 'online')
 )
 
 const createRecoveryPlanGroups = computed(() =>
@@ -1827,7 +1830,7 @@ function createRecoveryTargetOptionFromSource(source: RealSourceRow, group: Wiza
 }
 
 function createRecoverySourceTargetAvailable(group: WizardSourceGroup) {
-  return realSourceById.value.get(group.sourceId)?.status === 'online'
+  return realSourceById.value.get(group.sourceId)?.availability === 'online'
 }
 
 function createRecoverySourceTargetActionValue(group: WizardSourceGroup) {
@@ -1851,7 +1854,7 @@ function createRecoveryTargetOptionsForGroup(group: WizardSourceGroup): CreateRe
     options.push(createRecoveryTargetOptionFromSource(source, group))
   }
   const source = realSourceById.value.get(group.sourceId)
-  if (source?.status === 'online' && !seen.has(source.id)) {
+  if (source?.availability === 'online' && !seen.has(source.id)) {
     options.push({
       ...createRecoveryTargetOptionFromSource(source, group),
       isSource: true,
@@ -2962,10 +2965,10 @@ async function loadWizardSources(ids: string[]) {
 }
 
 async function loadOnlineRecoveryTargets() {
-  const list = await listBackupSelectableSources({ page: 1, page_size: 500, status: 'online' })
+  const list = await listBackupSelectableSources({ page: 1, page_size: 500, availability: 'online' })
   const next = new Map(realSourceById.value)
   for (const row of list.results.map(mapSelectableSource)) {
-    if (row.status === 'online') next.set(row.id, row)
+    if (row.availability === 'online') next.set(row.id, row)
   }
   realSourceById.value = next
 }
@@ -3282,7 +3285,7 @@ function openCreate() {
   }
   const offlineRows = sourceIds
     .map((id) => sourceRecord(id))
-    .filter((row): row is NonNullable<ReturnType<typeof sourceRecord>> => row != null && row.status === 'offline')
+    .filter((row): row is NonNullable<ReturnType<typeof sourceRecord>> => row != null && row.availability !== 'online')
   if (offlineRows.length > 0) {
     ElMessage.warning({ message: formatOfflineBackupPlanMessage(offlineRows, t), grouping: true })
     closeCreate()
@@ -3706,17 +3709,13 @@ function sourceEndpointInfo(sourceId: string): { primary: string; secondary: str
 }
 
 function sourceStatusLabel(sourceId: string) {
-  const status = sourceRecord(sourceId)?.status
-  if (status === 'offline') return t('protection.backupsPage.sourceStatusOffline')
-  if (status === 'reconnecting') return t('protection.backupsPage.sourceStatusReconnecting')
+  const availability = sourceRecord(sourceId)?.availability
+  if (availability !== 'online') return t('protection.backupsPage.sourceStatusOffline')
   return t('protection.backupsPage.sourceStatusOnline')
 }
 
 function sourceStatusTagType(sourceId: string) {
-  const status = sourceRecord(sourceId)?.status
-  if (status === 'offline') return 'danger'
-  if (status === 'reconnecting') return 'info'
-  return 'success'
+  return sourceRecord(sourceId)?.availability === 'online' ? 'success' : 'danger'
 }
 
 function sourceDirPreviewEntries(entries: BackupDirEntry[]): BackupDirEntry[] {
