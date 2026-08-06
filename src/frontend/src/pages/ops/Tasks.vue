@@ -44,7 +44,7 @@ import {
 import {
   canCancelRepositoryTask,
 } from '../../lib/repositoryTaskCancellation'
-import { resolveTaskBackupSourceResource } from '../../lib/taskBackupSourceResource'
+import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../lib/taskStepExpansion'
 import {
@@ -596,6 +596,15 @@ async function loadTaskOwner(task: TaskRow, signal?: AbortSignal) {
     taskOwner.value = t('ops.task.emptyMark')
     return
   }
+  // For source_unregister tasks, resolve the owner from immutable task payload
+  // data first, since the live resource has already been removed.
+  if (task.task_type === 'source_unregister' && resource.resource_type === 'backup_source') {
+    const fromPayload = resolveTaskBackupSourceResourceFromPayload(resource, task)
+    if (activeTask.value?.task_uuid === task.task_uuid) {
+      taskOwner.value = fromPayload?.backupSource || t('ops.task.emptyMark')
+    }
+    return
+  }
   try {
     const detail = await fetchResourceDetail(resource, signal)
     if (activeTask.value?.task_uuid === task.task_uuid) {
@@ -622,6 +631,14 @@ async function loadResourceType(type: string) {
   try {
     const results = await Promise.allSettled(resources.map(async (resource) => {
       try {
+        // For source_unregister tasks with backup_source resources,
+        // resolve from immutable task payload data first to avoid 404s.
+        if (activeTask.value?.task_type === 'source_unregister' && resource.resource_type === 'backup_source') {
+          const fromPayload = resolveTaskBackupSourceResourceFromPayload(resource, activeTask.value)
+          if (fromPayload) {
+            return normalizeResourceDetail(resource.resource_type, resource.resource_id, {}, fromPayload)
+          }
+        }
         const raw = await fetchResourceDetail(resource, signal)
         const source = resource.resource_type === 'backup_source'
           ? await resolveTaskBackupSourceResource(resource, resourceSubtype(resource), signal)

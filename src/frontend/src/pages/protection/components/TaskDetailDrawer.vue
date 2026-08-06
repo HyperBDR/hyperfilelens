@@ -40,8 +40,9 @@ import {
 import {
   canCancelRepositoryTask,
 } from '../../../lib/repositoryTaskCancellation'
+import { taskResourceSnapshot } from '../../../lib/taskOutcomeDisplay'
 import { lifecycleStatusTagAttrs } from '../../../lib/statusTag'
-import { resolveTaskBackupSourceResource } from '../../../lib/taskBackupSourceResource'
+import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
 import TaskStatusTag from '../../../components/TaskStatusTag.vue'
@@ -267,12 +268,27 @@ async function loadTaskOwner(task: TaskRow) {
     taskOwner.value = t('ops.task.emptyMark')
     return
   }
+  // For source_unregister tasks, resolve the owner from immutable task payload
+  // data first, since the live resource has already been removed.
+  if (task.task_type === 'source_unregister' && resource.resource_type === 'backup_source') {
+    const fromPayload = resolveTaskBackupSourceResourceFromPayload(resource, task)
+    if (fromPayload && activeTask.value?.task_uuid === task.task_uuid) {
+      taskOwner.value = fromPayload.backupSource || t('ops.task.emptyMark')
+      return
+    }
+  }
   try {
     const detail = await fetchResourceDetail(resource, task)
     const name = objectValue(detail as Record<string, unknown>, ['name', 'display_name', 'hostname', 'snapshot_uid'])
     if (activeTask.value?.task_uuid === task.task_uuid) taskOwner.value = name || t('ops.task.emptyMark')
   } catch {
-    if (activeTask.value?.task_uuid === task.task_uuid) taskOwner.value = t('ops.task.emptyMark')
+    // Fallback: try to resolve from task payload snapshot
+    const snapshot = taskResourceSnapshot(task, resource)
+    if (activeTask.value?.task_uuid === task.task_uuid) {
+      taskOwner.value = snapshot
+        ? objectValue(snapshot, ['name', 'display_name', 'hostname'])
+        : t('ops.task.emptyMark')
+    }
   }
 }
 

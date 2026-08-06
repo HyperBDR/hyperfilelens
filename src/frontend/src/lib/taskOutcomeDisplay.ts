@@ -142,6 +142,31 @@ export function taskResourceSnapshot(task: TaskRow | null | undefined, resource:
         config: source.config,
       }
     }
+    // Fallback: source_orphan_display_name (available on source_unregister tasks)
+    const orphanName = typeof request.source_orphan_display_name === 'string'
+      ? request.source_orphan_display_name.trim()
+      : ''
+    if (orphanName) {
+      return {
+        id: resource.resource_id,
+        name: orphanName,
+        resource_type: resource.resource_subtype || 'agent',
+        created_at: '',
+      }
+    }
+    // Fallback: result_payload.sources[].source_name
+    const sources = Array.isArray(result.sources) ? result.sources : []
+    const matchedSource = sources.find(
+      (s: unknown) => s && typeof s === 'object' && (s as JsonRecord).source_name,
+    ) as JsonRecord | undefined
+    if (matchedSource?.source_name) {
+      return {
+        id: resource.resource_id,
+        name: String(matchedSource.source_name),
+        resource_type: resource.resource_subtype || 'agent',
+        created_at: '',
+      }
+    }
   }
   if (resource.resource_type === 'repository' || resource.resource_type === 'target_repository') {
     const repository = record(record(request.cleanup_plan).repository)
