@@ -2119,7 +2119,7 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="126" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="155" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <FlowSourceReadyStatusCell
@@ -2237,7 +2237,7 @@ onUnmounted(() => {
                   </button>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="135" align="center" header-align="center">
+              <el-table-column :label="t('protection.sourceResources.colStatus')" min-width="165" align="center" header-align="center">
                 <template #default="{ row }">
                   <div class="hfl-table-no-tooltip">
                     <FlowSourceReadyStatusCell

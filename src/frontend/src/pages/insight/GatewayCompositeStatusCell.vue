@@ -59,9 +59,6 @@ const label = computed(() => {
   animation: dg-composite-status-spin 0.8s linear infinite;
 }
 
-.dg-composite-status__label {
-  line-height: 1.2;
-}
 
 @keyframes dg-composite-status-spin {
   to {
