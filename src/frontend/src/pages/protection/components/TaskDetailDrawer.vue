@@ -12,6 +12,7 @@ import {
   Copy,
   Globe,
   Link2,
+  LoaderCircle,
   RefreshCw,
   RotateCcw,
   X,
@@ -806,7 +807,7 @@ watch(
             <div class="hfl-task-drawer__step-anchor" :class="timelineIconClass(step.status)">
               <Check v-if="step.status === 'success'" :size="15" />
               <X v-else-if="step.status === 'failed' || step.status === 'timeout'" :size="15" />
-              <Clock3 v-else-if="step.status === 'running'" :size="15" />
+              <LoaderCircle v-else-if="step.status === 'running'" :size="15" />
               <Circle v-else :size="9" />
             </div>
             <article class="hfl-task-drawer__step-card">
@@ -1613,6 +1614,18 @@ watch(
   border-color: var(--color-info);
   background-color: var(--color-info);
   color: #fff;
+}
+
+.hfl-task-drawer__timeline-icon--running > svg {
+  animation: hfl-task-step-spin 0.8s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@keyframes hfl-task-step-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .hfl-task-drawer__timeline-icon--muted {
