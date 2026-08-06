@@ -110,9 +110,10 @@ import { getTask, listTaskEvents, listTasks } from '../../../lib/taskApi'
 import type { RestoreEndpointType, RestoreRecord, RestoreRecordItem } from '../../../lib/restoreApi'
 import { listRestoreRecords, fetchRestoreRecordRuntime } from '../../../lib/restoreApi'
 import { formatLocalDateTime } from '../../../lib/dateTime'
-import { resolveTaskBackupSourceResource } from '../../../lib/taskBackupSourceResource'
+import { resolveTaskBackupSourceResource, resolveTaskBackupSourceResourceFromPayload } from '../../../lib/taskBackupSourceResource'
 import { parseTaskStepStatusEvent, taskEventMessageKey, taskEventObjectText } from '../../../lib/taskEventDisplay'
 import { hasExpandableTaskStep, hasExpandedTaskStep } from '../../../lib/taskStepExpansion'
+import { taskResourceSnapshot } from '../../../lib/taskOutcomeDisplay'
 import {
   useFlowSourceAggregate,
   type DemoFlowTask,
@@ -1152,14 +1153,45 @@ async function loadResourceType(type: string) {
   resourceLoading.value = true
   delete resourceErrors[type]
   try {
-    const rows = await Promise.all(resources.map(async (resource) => {
-      const raw = await fetchResourceDetail(resource, signal)
-      const source = resource.resource_type === 'backup_source'
-        ? await resolveTaskBackupSourceResource(resource, taskResourceSubtype(resource), signal)
-        : undefined
-      return normalizeResourceDetail(resource.resource_type, resource.resource_id, raw, source)
+    const results = await Promise.allSettled(resources.map(async (resource) => {
+      try {
+        // For source_unregister tasks with backup_source resources,
+        // resolve from immutable task payload data first to avoid 404s.
+        if (activeTask.value?.task_type === 'source_unregister' && resource.resource_type === 'backup_source') {
+          const fromPayload = resolveTaskBackupSourceResourceFromPayload(resource, activeTask.value)
+          if (fromPayload) {
+            return normalizeResourceDetail(resource.resource_type, resource.resource_id, {}, fromPayload)
+          }
+        }
+        const raw = await fetchResourceDetail(resource, signal)
+        const source = resource.resource_type === 'backup_source'
+          ? await resolveTaskBackupSourceResource(resource, taskResourceSubtype(resource), signal)
+          : undefined
+        return normalizeResourceDetail(resource.resource_type, resource.resource_id, raw, source)
+      } catch (error) {
+        // Fallback: try to resolve from task payload snapshot
+        if (activeTask.value) {
+          const snapshot = taskResourceSnapshot(activeTask.value, resource)
+          if (snapshot) {
+            return normalizeResourceDetail(resource.resource_type, resource.resource_id, snapshot)
+          }
+        }
+        throw error
+      }
     }))
+    const rows = results.map((result, index) => {
+      if (result.status === 'fulfilled') return result.value
+      const resource = resources[index]
+      return normalizeResourceDetail(resource.resource_type, resource.resource_id, resource)
+    })
     resourceDetails[type] = rows
+    const failedCount = results.filter((r) => r.status === 'rejected').length
+    if (failedCount > 0) {
+      const firstError = results.find((r) => r.status === 'rejected')
+      if (firstError && firstError.status === 'rejected') {
+        resourceErrors[type] = `${failedCount} resource(s) failed to load: ${apiErrorMessage(firstError.reason)}`
+      }
+    }
   } catch (err) {
     if (requests.isAbortError(err)) return
     resourceErrors[type] = apiErrorMessage(err)

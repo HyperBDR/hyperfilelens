@@ -1,6 +1,6 @@
 import { getNode } from './nodeApi'
 import { getSourceResource } from './sourceApi'
-import type { TaskResourceRow } from './taskApi'
+import type { TaskResourceRow, TaskRow } from './taskApi'
 import type { FlowSourceRow } from '../pages/protection/composables/useFlowSourceAggregate'
 
 export type TaskBackupSourceResourceDisplay = {
@@ -14,6 +14,122 @@ export type TaskBackupSourceResourceDisplay = {
 }
 
 const EMPTY = '—'
+
+function payloadRecord(task: TaskRow): Record<string, unknown> {
+  return task.request_payload && typeof task.request_payload === 'object'
+    ? task.request_payload as Record<string, unknown>
+    : {}
+}
+
+function resultRecord(task: TaskRow): Record<string, unknown> {
+  return task.result_payload && typeof task.result_payload === 'object'
+    ? task.result_payload as Record<string, unknown>
+    : {}
+}
+
+/**
+ * Resolve backup source display info purely from task payload data,
+ * without any live API calls. Returns null when no historical data is available.
+ */
+export function resolveTaskBackupSourceResourceFromPayload(
+  resource: TaskResourceRow,
+  task: TaskRow,
+): TaskBackupSourceResourceDisplay | null {
+  const request = payloadRecord(task)
+  const result = resultRecord(task)
+
+  // 1. request_payload.cleanup_plan.source
+  const cleanupPlan = request.cleanup_plan && typeof request.cleanup_plan === 'object'
+    ? request.cleanup_plan as Record<string, unknown>
+    : null
+  const cleanupSource = cleanupPlan?.source && typeof cleanupPlan.source === 'object'
+    ? cleanupPlan.source as Record<string, unknown>
+    : null
+  if (cleanupSource?.name) {
+    const sourceName = String(cleanupSource.name)
+    const sourceKind = String(cleanupSource.kind || resource.resource_subtype || '')
+    const flowSource: FlowSourceRow = {
+      id: `${sourceKind === 'agent' ? 'agent' : 'nas'}:${resource.resource_id}`,
+      refId: resource.resource_id,
+      name: sourceName,
+      hostname: sourceName,
+      nodeName: sourceName,
+      nodeIp: '',
+      status: 'offline',
+      registeredAt: String(cleanupSource.registered_at || ''),
+      type: sourceKind === 'agent' ? 'host' : 'nas',
+    }
+    return {
+      backupSource: sourceName,
+      endpointName: sourceName,
+      endpointIp: '',
+      registeredAt: String(cleanupSource.registered_at || ''),
+      status: 'unregistered',
+      statusValue: 'unregistered',
+      flowSource,
+    }
+  }
+
+  // 2. request_payload.source_orphan_display_name
+  const orphanName = typeof request.source_orphan_display_name === 'string'
+    ? request.source_orphan_display_name.trim()
+    : ''
+  if (orphanName) {
+    const sourceKind = resource.resource_subtype || 'agent'
+    const flowSource: FlowSourceRow = {
+      id: `${sourceKind === 'agent' ? 'agent' : 'nas'}:${resource.resource_id}`,
+      refId: resource.resource_id,
+      name: orphanName,
+      hostname: orphanName,
+      nodeName: orphanName,
+      nodeIp: '',
+      status: 'offline',
+      registeredAt: '',
+      type: sourceKind === 'agent' ? 'host' : 'nas',
+    }
+    return {
+      backupSource: orphanName,
+      endpointName: orphanName,
+      endpointIp: '',
+      registeredAt: '',
+      status: 'unregistered',
+      statusValue: 'unregistered',
+      flowSource,
+    }
+  }
+
+  // 3. result_payload.sources[].source_name
+  const sources = Array.isArray(result.sources) ? result.sources : []
+  const matchedSource = sources.find(
+    (s: unknown) => s && typeof s === 'object' && (s as Record<string, unknown>).source_name,
+  ) as Record<string, unknown> | undefined
+  if (matchedSource?.source_name) {
+    const sourceName = String(matchedSource.source_name)
+    const sourceKind = resource.resource_subtype || 'agent'
+    const flowSource: FlowSourceRow = {
+      id: `${sourceKind === 'agent' ? 'agent' : 'nas'}:${resource.resource_id}`,
+      refId: resource.resource_id,
+      name: sourceName,
+      hostname: sourceName,
+      nodeName: sourceName,
+      nodeIp: '',
+      status: 'offline',
+      registeredAt: '',
+      type: sourceKind === 'agent' ? 'host' : 'nas',
+    }
+    return {
+      backupSource: sourceName,
+      endpointName: sourceName,
+      endpointIp: '',
+      registeredAt: '',
+      status: 'unregistered',
+      statusValue: 'unregistered',
+      flowSource,
+    }
+  }
+
+  return null
+}
 
 export async function resolveTaskBackupSourceResource(
   resource: TaskResourceRow,
