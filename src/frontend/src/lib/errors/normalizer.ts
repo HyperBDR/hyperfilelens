@@ -101,7 +101,7 @@ export function normalizeThrownError(err: unknown): AppErrorShape {
     return networkUnavailableError()
   }
 
-  if (err instanceof TypeError || (err instanceof Error && isBrowserNetworkMessage(err.message))) {
+  if ((err instanceof TypeError && isBrowserNetworkMessage(err.message)) || (err instanceof Error && isBrowserNetworkMessage(err.message))) {
     return networkUnavailableError()
   }
 
