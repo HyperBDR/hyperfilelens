@@ -221,29 +221,42 @@
 }
 
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.flow-source-status-cell),
-.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) {
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status),
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.dg-composite-status) {
   overflow: visible;
   text-overflow: clip;
 }
 
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.flow-source-status-cell) > *,
-.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) > * {
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) > *,
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.dg-composite-status) > * {
   min-width: auto;
   max-width: none;
 }
 
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.flow-source-status-cell) .el-tag,
-.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) .el-tag {
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) .el-tag,
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.dg-composite-status) .el-tag {
   max-width: none;
 }
 
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.flow-source-status-cell) .el-tag__content,
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) .el-tag__content,
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.dg-composite-status) .el-tag__content {
+  display: inline-flex;
+  overflow: hidden;
+  line-height: normal;
+  max-width: 100%;
+}
+
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.flow-source-status-cell) .el-tag__content > span,
-.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) .el-tag__content > span {
-  overflow: visible;
-  text-overflow: clip;
-  max-width: none;
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.node-lifecycle-status) .el-tag__content > span,
+.hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell:has(.dg-composite-status) .el-tag__content > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .hfl-list-table td.el-table__cell:not(.el-table-column--selection):not(.el-table__expand-column) > .cell > span:not(.el-tag):not(.hfl-table-type-label):not(.repo-protocol-pill):not(.repo-s3-platform-pill):not(.hfl-ops-user-chip):not(.hfl-ops-result-chip):not(.hfl-ops-response-chip):not(.source-os-cell):not(.backup-source-cell):not(.dp-source-task-type-pill):not(.dp-source-task-trigger-pill):not(.flow-binding-empty):not(.recovery-confirm-policy-cell):not(.platform-account-page__cell-meta) {

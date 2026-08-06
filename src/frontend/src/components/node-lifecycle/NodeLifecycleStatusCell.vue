@@ -53,9 +53,6 @@ const label = computed(() => {
   animation: node-lifecycle-spin 0.8s linear infinite;
 }
 
-.node-lifecycle-status__label {
-  line-height: 1.2;
-}
 
 @keyframes node-lifecycle-spin {
   to {

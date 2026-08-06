@@ -83,10 +83,6 @@ function onActivate(event: MouseEvent) {
   animation: flow-source-status-spin 0.8s linear infinite;
 }
 
-.flow-source-status-tag__label {
-  line-height: 1.2;
-}
-
 @keyframes flow-source-status-spin {
   to {
     transform: rotate(360deg);
