@@ -945,6 +945,8 @@ def _pipeline_queryset(
     running_task: str | None,
     backup_running: bool | None,
     restore_running: bool | None,
+    backup_task_status: str | None = None,
+    restore_task_status: str | None = None,
     backup_policy_id: int | None,
     file_filter_rule_id: int | None,
     repository_id: int | None,
@@ -987,16 +989,29 @@ def _pipeline_queryset(
     if availability:
         queryset = queryset.filter(source_availability=availability)
 
-    backup_is_running = backup_running is True or running_task == "backup"
-    restore_is_running = restore_running is True or running_task == "restore"
-    if backup_is_running:
-        queryset = queryset.filter(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
-    elif backup_running is False:
-        queryset = queryset.exclude(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
-    if restore_is_running:
-        queryset = queryset.filter(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
-    elif restore_running is False:
-        queryset = queryset.exclude(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+    def filter_task_status(queryset: QuerySet, *, field: str, value: str) -> QuerySet:
+        if value == "running":
+            return queryset.filter(**{f"{field}__in": _ACTIVE_PIPELINE_TASK_STATUSES})
+        if value == "failed":
+            return queryset.filter(**{f"{field}__in": ("failed", "timeout", "cancelled")})
+        return queryset.filter(**{field: value})
+
+    if backup_task_status:
+        queryset = filter_task_status(queryset, field="last_backup_status", value=backup_task_status)
+    else:
+        backup_is_running = backup_running is True or running_task == "backup"
+        if backup_is_running:
+            queryset = queryset.filter(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+        elif backup_running is False:
+            queryset = queryset.exclude(last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+    if restore_task_status:
+        queryset = filter_task_status(queryset, field="last_restore_status", value=restore_task_status)
+    else:
+        restore_is_running = restore_running is True or running_task == "restore"
+        if restore_is_running:
+            queryset = queryset.filter(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
+        elif restore_running is False:
+            queryset = queryset.exclude(last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES)
 
     if any(value is not None for value in (backup_policy_id, file_filter_rule_id, repository_id)):
         configs = BackupConfig.objects.filter(
@@ -1084,6 +1099,8 @@ def _pipeline_filter_is_requested(filters: dict[str, Any], *, search: str | None
             "running_task",
             "backup_running",
             "restore_running",
+            "backup_task_status",
+            "restore_task_status",
             "backup_policy_id",
             "file_filter_rule_id",
             "repository_id",
@@ -1185,6 +1202,8 @@ def list_backup_selectable_sources(
     running_task: str | None = None,
     backup_running: bool | None = None,
     restore_running: bool | None = None,
+    backup_task_status: str | None = None,
+    restore_task_status: str | None = None,
     backup_policy_id: int | None = None,
     file_filter_rule_id: int | None = None,
     repository_id: int | None = None,
@@ -1207,6 +1226,8 @@ def list_backup_selectable_sources(
         "running_task": running_task,
         "backup_running": backup_running,
         "restore_running": restore_running,
+        "backup_task_status": backup_task_status,
+        "restore_task_status": restore_task_status,
         "backup_policy_id": backup_policy_id,
         "file_filter_rule_id": file_filter_rule_id,
         "repository_id": repository_id,

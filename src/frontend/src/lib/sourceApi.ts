@@ -148,7 +148,7 @@ export type BackupSelectableSource = {
 
 export type BackupPipelineStep = 1 | 2 | 3
 export type BackupSelectableSearchField = 'source_name' | 'source_hostname' | 'source_ip'
-export type BackupSelectableRunningTask = 'backup' | 'restore'
+export type BackupSelectableTaskStatus = 'success' | 'failed' | 'running' | 'none'
 export type BackupSelectableAvailability = 'online' | 'offline'
 export type BackupSelectableQueryParams = {
   page?: number
@@ -162,7 +162,9 @@ export type BackupSelectableQueryParams = {
   source_status?: BackupSelectableSource['status']
   availability?: BackupSelectableAvailability
   type?: 'host' | 'nas'
-  running_task?: BackupSelectableRunningTask
+  backup_task_status?: BackupSelectableTaskStatus
+  restore_task_status?: BackupSelectableTaskStatus
+  running_task?: 'backup' | 'restore'
   backup_running?: boolean
   restore_running?: boolean
   backup_policy_id?: number

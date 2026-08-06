@@ -119,6 +119,56 @@ class BackupSelectablePipelineQueryTests(TestCase):
         self.assertEqual(ids, [f"agent:{self.agent.id}"])
         self.assertEqual(count, 1)
 
+    def test_filters_backup_task_status_categories(self):
+        entry = SourceBackupPipelineEntry.objects.get(source_kind="agent", ref_id=self.agent.id)
+        SourceBackupPipelineEntry.objects.exclude(pk=entry.pk).update(last_backup_status="none")
+        cases = {
+            "success": "success",
+            "failed": "failed",
+            "running": "running",
+            "none": "none",
+        }
+        for status_filter, stored_status in cases.items():
+            entry.last_backup_status = stored_status
+            entry.save(update_fields=["last_backup_status", "updated_at"])
+            ids, count = self.ids(pipeline_step=3, backup_task_status=status_filter)
+            expected = [f"nas:{self.nas.id}", f"agent:{self.agent.id}"] if status_filter == "none" else [f"agent:{self.agent.id}"]
+            self.assertEqual(ids, expected)
+            self.assertEqual(count, len(expected))
+
+    def test_running_and_failed_task_statuses_include_normalized_terminal_states(self):
+        entry = SourceBackupPipelineEntry.objects.get(source_kind="agent", ref_id=self.agent.id)
+        for stored_status in ("queued", "running", "stopping"):
+            entry.last_backup_status = stored_status
+            entry.save(update_fields=["last_backup_status", "updated_at"])
+            ids, count = self.ids(pipeline_step=3, backup_task_status="running")
+            self.assertEqual(ids, [f"agent:{self.agent.id}"])
+            self.assertEqual(count, 1)
+        for stored_status in ("failed", "timeout", "cancelled"):
+            entry.last_backup_status = stored_status
+            entry.save(update_fields=["last_backup_status", "updated_at"])
+            ids, count = self.ids(pipeline_step=3, backup_task_status="failed")
+            self.assertEqual(ids, [f"agent:{self.agent.id}"])
+            self.assertEqual(count, 1)
+
+    def test_backup_and_restore_task_status_filters_use_and_semantics(self):
+        agent_entry = SourceBackupPipelineEntry.objects.get(source_kind="agent", ref_id=self.agent.id)
+        nas_entry = SourceBackupPipelineEntry.objects.get(source_kind="nas", ref_id=self.nas.id)
+        agent_entry.last_backup_status = "success"
+        agent_entry.last_restore_status = "failed"
+        agent_entry.save(update_fields=["last_backup_status", "last_restore_status", "updated_at"])
+        nas_entry.last_backup_status = "success"
+        nas_entry.last_restore_status = "success"
+        nas_entry.save(update_fields=["last_backup_status", "last_restore_status", "updated_at"])
+
+        ids, count = self.ids(
+            pipeline_step=3,
+            backup_task_status="success",
+            restore_task_status="failed",
+        )
+        self.assertEqual(ids, [f"agent:{self.agent.id}"])
+        self.assertEqual(count, 1)
+
     def test_backup_config_exists_is_tenant_scoped(self):
         BackupConfig.objects.create(
             organization_id=self.other_org.id,

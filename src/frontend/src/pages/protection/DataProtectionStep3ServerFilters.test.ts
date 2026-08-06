@@ -22,9 +22,11 @@ describe('Backup Wizard Step 3 server filters', () => {
     expect(load).toContain('source_name: step3AdvancedSourceName.value.trim() || undefined')
     expect(load).toContain('source_hostname: step3AdvancedHostname.value.trim() || undefined')
     expect(load).toContain('source_ip: step3AdvancedIp.value.trim() || undefined')
+    expect(load).toContain('type: step3SourceType.value || undefined')
     expect(load).toContain('source_status: step3SourceStatus.value || undefined')
     expect(load).toContain('availability: step3Availability.value || undefined')
-    expect(load).toContain('running_task: step3RunningTask.value || undefined')
+    expect(load).toContain('backup_task_status: step3BackupTaskStatus.value || undefined')
+    expect(load).toContain('restore_task_status: step3RestoreTaskStatus.value || undefined')
     expect(load).toContain('backup_policy_id: step3BackupPolicyId.value || undefined')
     expect(load).toContain('file_filter_rule_id: step3FileFilterRuleId.value || undefined')
     expect(load).toContain('repository_id: step3RepositoryId.value || undefined')
@@ -51,10 +53,114 @@ describe('Backup Wizard Step 3 server filters', () => {
     expect(watcher).toContain('void refreshFlowStepData(2)')
   })
 
+  it('keeps Advanced Filters as drafts until Apply commits them', () => {
+    const drawer = sourceBetween('<div class="flow-filter-drawer__body scrollbar">', '<template #footer>')
+    const handlers = sourceBetween('function syncStep3AdvancedFilterDrafts', 'const filteredBackupSelectableRows')
+
+    expect(drawer).toContain('v-model="draftStep3AdvancedSourceName"')
+    expect(drawer).toContain('v-model="draftStep3SourceStatus"')
+    expect(drawer).toContain('v-model="draftStep3Availability"')
+    expect(handlers).toContain('function openAdvancedFilters()')
+    expect(handlers).toContain('function resetStep3AdvancedFilterDrafts()')
+    expect(handlers).toContain('function cancelAdvancedFilters()')
+    expect(handlers).toContain('function applyAdvancedFilters()')
+    expect(handlers).toContain('step3SourceStatus.value = draftStep3SourceStatus.value')
+    expect(handlers).toContain('step3RepositoryId.value = draftStep3RepositoryId.value')
+  })
+
+  it('uses aligned Reset and Cancel buttons with compact label-control rows', () => {
+    const footer = sourceBetween('<div class="flow-filter-drawer__footer">', '</template>\n    </el-drawer>')
+
+    expect(footer).toContain('<ElButton @click="resetStep3AdvancedFilterDrafts">')
+    expect(footer).toContain('<ElButton @click="cancelAdvancedFilters">')
+    expect(footer).not.toContain('text class="flow-filter-drawer__reset-btn"')
+    expect(page).toContain('grid-template-columns: minmax(108px, 30%) minmax(0, 1fr)')
+    expect(page).toContain('.flow-filter-form :deep(.el-form-item__label)')
+  })
+
+  it('clears the search input when changing search type and skips empty-query requests', () => {
+    const handler = sourceBetween('function onStep3SearchFieldChange', 'function flowStep3FiltersMatch')
+
+    expect(handler).toContain("const hasSearchCondition = taskSearchQuery.value.trim() !== '' || debouncedTaskSearchQuery.value.trim() !== ''")
+    expect(handler).toContain('clearTimeout(taskSearchDebounceTimer)')
+    expect(handler).toContain('taskSearchQuery.value = \'\'')
+    expect(handler).toContain('flowStep2Pager.page = 1')
+    expect(handler).toContain('if (!hasSearchCondition) return')
+    expect(handler).toContain("debouncedTaskSearchQuery.value = ''")
+    expect(handler).toContain('void refreshFlowStepData(2)')
+    expect(handler).toContain('void refreshFlowStepData(1)')
+    expect(handler).toContain('void loadBackupSelectable()')
+  })
+
+  it('shares the field search and Availability controls with Steps 1 and 2', () => {
+    const toolbar = sourceBetween(
+      '<div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">',
+      '<div class="hfl-list-toolbar__utility">',
+    )
+    expect(toolbar).toContain('class="hfl-list-search hfl-list-search-group"')
+    expect(toolbar).toContain('v-model="step3SearchField"')
+    expect(toolbar).toContain('v-if="flowMainStep !== 2"')
+    expect(toolbar).toContain('v-model="step3Availability"')
+  })
+
+  it('limits the first two advanced filter drawer steps to Source Conditions', () => {
+    const drawer = sourceBetween('<div class="flow-filter-drawer__body scrollbar">', '<template #footer>')
+    expect(drawer).toContain('flowFilterSectionSource')
+    expect(drawer).toContain('<template v-if="flowMainStep === 2">')
+    expect(drawer).toContain('flowFilterSectionBackup')
+    expect(drawer).toContain('flowFilterSectionTarget')
+    expect(drawer).toContain('step3BackupTask')
+    expect(drawer).toContain('step3RestoreTask')
+  })
+
   it('uses the Tasks-style field prefix and explains NAS Proxy semantics', () => {
     expect(page).toContain('v-model="step3SearchField"')
     expect(page).toContain('#prepend')
     expect(page).toContain("t('protection.backupsPage.step3NasProxyHelp')")
     expect(locale).toContain('For NAS sources, Hostname and IP identify the bound execution Proxy')
+  })
+
+  it('removes the Step 3 status quick-filter from the toolbar', () => {
+    const toolbar = sourceBetween(
+      '<div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">',
+      '<div class="hfl-list-toolbar__utility">',
+    )
+
+    expect(toolbar).not.toContain('v-model="step3SourceStatus"')
+    expect(toolbar).toContain('v-model="step3Availability"')
+    expect(toolbar).toContain('v-model="step3BackupTaskStatus"')
+    expect(toolbar).toContain('v-model="step3RestoreTaskStatus"')
+    expect(toolbar.indexOf('v-model="step3BackupTaskStatus"')).toBeLessThan(toolbar.indexOf('v-model="step3Availability"'))
+    expect(toolbar.indexOf('v-model="step3RestoreTaskStatus"')).toBeLessThan(toolbar.indexOf('v-model="step3Availability"'))
+    expect(page).not.toContain('step3RunningTask')
+})
+
+  it('keeps Source Status limited to persistent source lifecycle states', () => {
+    const sourceStatusOptions = sourceBetween('const step3SourceStatusOptions', 'const step3AvailabilityOptions')
+    const availabilityOptions = sourceBetween('const step3AvailabilityOptions', 'const step3BackupTaskStatusOptions')
+
+    expect(sourceStatusOptions).toContain("value: 'active'")
+    expect(sourceStatusOptions).toContain("value: 'inactive'")
+    expect(sourceStatusOptions).toContain("value: 'error'")
+    expect(sourceStatusOptions).toContain("value: 'removing'")
+    expect(sourceStatusOptions).toContain("value: 'remove_failed'")
+    expect(sourceStatusOptions).not.toContain("value: 'online'")
+    expect(sourceStatusOptions).not.toContain("value: 'offline'")
+    expect(sourceStatusOptions).not.toContain("value: 'reconnecting'")
+    expect(availabilityOptions).toContain("value: 'online'")
+    expect(availabilityOptions).toContain("value: 'offline'")
+  })
+
+  it('adds host/NAS type filtering and row-level draft clear actions', () => {
+    const drawer = sourceBetween('<div class="flow-filter-drawer__body scrollbar">', '<template #footer>')
+
+    expect(drawer).toContain('v-model="draftStep3SourceType"')
+    expect(page).toContain("value: 'host' as const")
+    expect(page).toContain("value: 'nas' as const")
+    expect(drawer).toContain('class="flow-filter-nas-proxy-alert"')
+    expect(drawer).toContain("@click=\"clearStep3AdvancedFilterDraft('sourceStatus')\"")
+    expect(drawer).toContain('<BrushCleaning :size="15" />')
+    expect(page).toContain('.flow-filter-control :deep(.el-input__wrapper)')
+    expect(page).toContain('background: rgb(248 250 252)')
   })
 })
