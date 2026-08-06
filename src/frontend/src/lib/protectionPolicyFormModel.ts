@@ -1143,7 +1143,7 @@ export function policyFormToWritePayload(policyForm: BackupPolicyForm): BackupPo
   const scheduleBase = {
     enabled: policyForm.sectionScheduleEnabled,
     timezone: policyForm.scheduleTimezone.trim() || 'UTC',
-    starts_at: policyForm.scheduleStartsAt.trim() || null,
+    starts_at: (policyForm.scheduleStartsAt || '').trim() || null,
   }
   let schedule: BackupPolicySchedule
   if (policyForm.freqMode === 'advanced') {
