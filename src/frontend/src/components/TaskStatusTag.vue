@@ -41,6 +41,7 @@ const label = computed(() => {
 
 .hfl-task-status-tag :deep(.el-tag__content) {
   min-width: 0;
+  line-height: 16px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
