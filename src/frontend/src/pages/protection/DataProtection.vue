@@ -1441,6 +1441,9 @@ async function loadStep3Selectable(options: { signal?: AbortSignal } = {}) {
 async function refreshStep3State(signal?: AbortSignal) {
   if (flowMainStep.value === 2) {
     await loadStep3Selectable({ signal })
+    // Step 3 task links navigate through restore records, which are not part
+    // of the selectable-source runtime expansion.
+    await refreshBackupConfigs(signal)
     return
   }
   await Promise.all([
@@ -1515,6 +1518,9 @@ async function refreshFlowStepData(
     }
 
     await loadStep3Selectable({ signal })
+    // Step 3 task links navigate through restore records, which are not part
+    // of the selectable-source runtime expansion.
+    await refreshBackupConfigs(signal)
   } catch (e) {
     if (!pageRequests.isAbortError(e)) {
       showApiError(e)
@@ -4046,21 +4052,11 @@ function openRestoreTaskDetail(row: DemoFlowTask) {
 async function refreshTaskLists() {
   if (flowMainStep.value === 2 && step3ActionRefreshInFlight) return
   flowRefreshing.value = true
-  const step = flowMainStep.value
-  const scope = flowStepScope(2)
-  const signal = step === 2 ? pageRequests.nextSignal(scope) : null
   try {
-    if (step === 2) {
-      setFlowStepDataLoading(2, true)
-      await loadStep3Selectable({ signal: signal ?? undefined })
-    } else {
-      await refreshFlowStepData()
-    }
+    await refreshFlowStepData()
   } catch (err) {
     showApiError(err)
   } finally {
-    if (signal) pageRequests.releaseSignal(scope, signal)
-    if (step === 2) setFlowStepDataLoading(2, false)
     flowRefreshing.value = false
   }
 }

@@ -82,4 +82,30 @@ describe('Production Sites availability presentation', () => {
     expect(detail).toContain('fieldAvailabilityUpdatedAt')
     expect(detail).toContain('availability_updated_at')
   })
+
+  it('uses bound node availability for NAS proxy connectivity', () => {
+    for (const relativePath of [
+      'composables/useNasSourceListDisplay.ts',
+      'pages/protection/BackupSources.vue',
+      'pages/protection/components/NasSourceDetailDrawer.vue',
+    ]) {
+      expect(source(relativePath)).toContain('bound_node_availability')
+    }
+  })
+
+  it('keeps node lifecycle status and connectivity polling separate', () => {
+    const basicPanel = source('components/NodeBasicInfoPanel.vue')
+    expect(basicPanel).toContain('`nodeLifecycle.state.${status}`')
+    expect(basicPanel).toContain('props.node.availability')
+
+    for (const relativePath of [
+      'components/HostSourceDetailDrawer.vue',
+      'components/ProxyNodeDetailDrawer.vue',
+      'pages/insight/InsightGatewayDetailDrawer.vue',
+    ]) {
+      const detail = source(relativePath)
+      expect(detail).toContain('node.value?.availability')
+      expect(detail).toContain("availability === 'online'")
+    }
+  })
 })

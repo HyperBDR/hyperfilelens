@@ -76,4 +76,11 @@ describe('Backup Wizard availability columns', () => {
     expect(createWizard).toContain("page: 1, page_size: 500, availability: 'online'")
     expect(createWizard).not.toContain("item.status === 'online' || item.status === 'reconnecting' ? item.status : 'offline'")
   })
+
+  it('labels the Create Backup Configuration availability column accurately', () => {
+    expect(createWizard).toContain("labelSourceAvailability")
+    expect(createWizard).toContain('sourceAvailabilityLabel(row.id)')
+    expect(createWizard).toContain('sourceAvailabilityTagType(row.id)')
+    expect(createWizard).not.toContain('sourceStatusLabel(row.id)')
+  })
 })

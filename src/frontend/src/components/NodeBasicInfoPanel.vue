@@ -117,9 +117,6 @@ const uptimeLabel = computed(() => {
 
 function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
   if (props.resolveDisplayStatus) return props.resolveDisplayStatus(node)
-  if (node.status === 'active') {
-    return { labelKey: 'protection.sourceResources.nodeStatusOnline', tagType: 'success' }
-  }
   if (node.status === 'reconnecting') {
     return {
       labelKey: 'protection.sourceResources.nodeStatusReconnecting',
@@ -127,7 +124,16 @@ function resolveNodeDisplayStatus(node: ApiNode): NodeDisplayStatus {
       spinning: true,
     }
   }
-  return { labelKey: 'protection.sourceResources.nodeStatusOffline', tagType: 'danger' }
+  // Status is the lifecycle state. Connectivity is rendered separately from availability.
+  const status = node.status === 'online' || node.status === 'offline' ? 'active' : node.status
+  return {
+    labelKey: `nodeLifecycle.state.${status}`,
+    tagType: status === 'active'
+      ? 'success'
+      : status === 'failed' || status === 'upgrade_failed' || status === 'deregistration_failed'
+        ? 'danger'
+        : 'info',
+  }
 }
 
 async function copyText(value: string) {

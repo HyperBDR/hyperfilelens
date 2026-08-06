@@ -226,7 +226,7 @@ export async function startNodeOperationsBatch(params: {
 
 export type NodeLifecycleWatchEntry = Pick<
   ApiNode,
-  'id' | 'status' | 'routable' | 'version' | 'lifecycle'
+  'id' | 'status' | 'availability' | 'routable' | 'version' | 'lifecycle'
 > & {
   is_deleted?: boolean
 }

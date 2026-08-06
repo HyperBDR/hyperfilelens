@@ -24,6 +24,7 @@ import type {
 import { mergeNodeListDuringLifecycleBatch } from './useNodeConnectionDisplay'
 
 const STORAGE_KEY = 'hfl-node-lifecycle-queue'
+const PERSISTED_QUEUE_MAX_AGE_MS = 30 * 60 * 1000
 
 type PersistedQueue = {
   batchId: string
@@ -31,6 +32,7 @@ type PersistedQueue = {
   role: NodeRole
   scope?: NodeLifecycleScope
   maxConcurrent: number
+  savedAt: number
   queued: LifecycleQueueItem[]
   running: LifecycleQueueItem[]
 }
@@ -43,8 +45,24 @@ function loadPersisted(): PersistedQueue | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    return JSON.parse(raw) as PersistedQueue
+    const parsed = JSON.parse(raw) as Partial<PersistedQueue>
+    if (
+      typeof parsed.batchId !== 'string' ||
+      (parsed.kind !== 'upgrade' && parsed.kind !== 'remove') ||
+      typeof parsed.role !== 'string' ||
+      !Array.isArray(parsed.running) ||
+      !Array.isArray(parsed.queued)
+    ) {
+      sessionStorage.removeItem(STORAGE_KEY)
+      return null
+    }
+    return {
+      ...parsed,
+      // Pre-expiry snapshots are safe to read but must be server-validated before reuse.
+      savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+    } as PersistedQueue
   } catch {
+    sessionStorage.removeItem(STORAGE_KEY)
     return null
   }
 }
@@ -54,7 +72,7 @@ function savePersisted(snapshot: PersistedQueue | null) {
     sessionStorage.removeItem(STORAGE_KEY)
     return
   }
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...snapshot, savedAt: Date.now() }))
 }
 
 const LIFECYCLE_FAILED_CONFIRM_POLLS = 2
@@ -148,6 +166,7 @@ export function useNodeLifecycleOps(options: {
   const upgradeConfirmPreview = ref<NodeOperationBatchPreview | null>(null)
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let pollInFlight = false
+  let restoreExpiryAt: number | null = null
   let upgradeConfirmResolver: ((confirmed: boolean) => void) | null = null
   let upgradeConfirmSettled = false
 
@@ -246,6 +265,7 @@ export function useNodeLifecycleOps(options: {
       role: pollRole.value || resolveRole(),
       scope: resolveScope(),
       maxConcurrent: maxConcurrent.value,
+      savedAt: Date.now(),
       running: running.value,
       queued: queued.value,
     })
@@ -298,6 +318,12 @@ export function useNodeLifecycleOps(options: {
   }
 
   async function pollOnce() {
+    if (restoreExpiryAt != null && Date.now() > restoreExpiryAt) {
+      stopPolling()
+      finishBatch()
+      await options.onRefresh?.()
+      return
+    }
     if (!hasActiveOps.value) {
       stopPolling()
       return
@@ -327,6 +353,7 @@ export function useNodeLifecycleOps(options: {
           name: item?.name || String(row.id),
           role: item?.role || role,
           status: row.status,
+          availability: row.availability,
           routable: row.routable,
           version: row.version,
           is_deleted: row.is_deleted ?? false,
@@ -334,6 +361,7 @@ export function useNodeLifecycleOps(options: {
           lifecycle: row.lifecycle,
         }
       })
+      restoreExpiryAt = null
       await syncNodesFromServer(nodes)
       options.onLifecyclePatch?.(nodes)
       await drainQueue()
@@ -406,6 +434,7 @@ export function useNodeLifecycleOps(options: {
     }
     batchId.value = null
     activeKind.value = null
+    restoreExpiryAt = null
     savePersisted(null)
   }
 
@@ -654,8 +683,15 @@ export function useNodeLifecycleOps(options: {
   function restorePersisted() {
     const saved = loadPersisted()
     if (!saved) return
-    if (saved.role !== resolveRole()) return
-    if ((saved.scope || 'tenant') !== resolveScope()) return
+    if (saved.role !== resolveRole() || (saved.scope || 'tenant') !== resolveScope()) {
+      savePersisted(null)
+      return
+    }
+    if (Date.now() - saved.savedAt > PERSISTED_QUEUE_MAX_AGE_MS) {
+      savePersisted(null)
+      return
+    }
+    restoreExpiryAt = saved.savedAt + PERSISTED_QUEUE_MAX_AGE_MS
     batchId.value = saved.batchId
     activeKind.value = saved.kind
     pollRole.value = saved.role
@@ -680,6 +716,7 @@ export function useNodeLifecycleOps(options: {
             name: item?.name || String(row.id),
             role: item?.role || saved.role,
             status: row.status,
+            availability: row.availability,
             routable: row.routable,
             version: row.version,
             is_deleted: row.is_deleted ?? false,
@@ -698,7 +735,8 @@ export function useNodeLifecycleOps(options: {
         }
         startPolling()
       } catch {
-        // Keep persisted queue; next refresh can retry.
+        // Keep an unexpired queue and retry lifecycle-watch before showing a stale local state.
+        startPolling()
       }
     })()
   }

@@ -17,6 +17,8 @@ class NodeLifecycleWatchRequestSerializer(serializers.Serializer):
 
 class NodeLifecycleWatchEntrySerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    availability = serializers.CharField(read_only=True)
     routable = serializers.SerializerMethodField()
     version = serializers.CharField(read_only=True)
     is_deleted = serializers.BooleanField(read_only=True)

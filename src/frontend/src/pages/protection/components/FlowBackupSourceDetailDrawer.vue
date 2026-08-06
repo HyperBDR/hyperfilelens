@@ -343,7 +343,8 @@ function mapBackupSelectableSource(item: BackupSelectableSource): FlowSourceRow 
     hostname: item.hostname || item.name,
     nodeName: item.node_name || item.name,
     nodeIp: item.node_ip || '',
-    status: item.status === 'online' ? 'online' : 'offline',
+    status: item.status,
+    availability: item.availability,
     registeredAt: item.registered_at || '',
     type: item.type,
     protocol: item.protocol,
@@ -798,6 +799,24 @@ function flowSourceStatusTag(status?: 'online' | 'offline') {
 function flowSourceStatusTagType(status?: 'online' | 'offline') {
   const tag = flowSourceStatusTag(status)
   return tag === 'neutral' ? undefined : tag
+}
+
+function flowSourceLifecycleStatusLabel(status: FlowSourceRow['status']) {
+  const labelKey = {
+    inactive: 'protection.sourceResources.status.inactive',
+    error: 'protection.sourceResources.status.error',
+    probing: 'protection.sourceResources.capacitySyncing',
+    removing: 'protection.backupsPage.sourcePendingDeleting',
+    remove_failed: 'protection.backupsPage.sourcePendingDeleteFailed',
+  }[status] || `nodeLifecycle.state.${status}`
+  return t(labelKey)
+}
+
+function flowSourceLifecycleStatusTag(status: FlowSourceRow['status']) {
+  if (status === 'active') return 'success'
+  if (status === 'inactive') return 'warning'
+  if (status === 'error' || status === 'remove_failed' || status === 'failed' || status === 'upgrade_failed' || status === 'deregistration_failed') return 'danger'
+  return 'info'
 }
 
 function flowSourceRegisteredAt(value?: string) {
@@ -2449,10 +2468,9 @@ function onClosed() {
           </span>
           <el-tag
             size="small"
-            :type="flowSourceStatusTagType(source.status)"
-            :class="{ 'hfl-tag--neutral': flowSourceStatusTag(source.status) === 'neutral' }"
+            :type="flowSourceStatusTagType(source.availability)"
           >
-            {{ flowSourceStatusLabel(source.status) }}
+            {{ flowSourceStatusLabel(source.availability) }}
           </el-tag>
         </div>
         <p class="m-0 mt-1 truncate text-sm text-slate-500">
@@ -2491,17 +2509,21 @@ function onClosed() {
                       </span>
                       <el-tag
                         size="small"
-                        :type="flowSourceStatusTagType(overviewSource.status)"
-                        :class="{ 'hfl-tag--neutral': flowSourceStatusTag(overviewSource.status) === 'neutral' }"
+                        :type="flowSourceStatusTagType(overviewSource.availability)"
+                        :class="{ 'hfl-tag--neutral': flowSourceStatusTag(overviewSource.availability) === 'neutral' }"
                         effect="light"
                       >
-                        {{ flowSourceStatusLabel(overviewSource.status) }}
+                        {{ flowSourceStatusLabel(overviewSource.availability) }}
                       </el-tag>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailRegistered') }}</span>
-                    <span class="hfl-detail-row__value">{{ flowSourceRegisteredAt(overviewSource.registeredAt) }}</span>
+                    <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailSourceStatus') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <el-tag size="small" :type="flowSourceLifecycleStatusTag(overviewSource.status)" effect="light">
+                        {{ flowSourceLifecycleStatusLabel(overviewSource.status) }}
+                      </el-tag>
+                    </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ flowSourceSecondaryInfo(overviewSource).nameLabel }}</span>
@@ -2512,6 +2534,10 @@ function onClosed() {
                     <span class="hfl-detail-row__value hfl-detail-row__value--mono">
                       {{ flowSourceSecondaryInfo(overviewSource).ip }}
                     </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowSourceDetailRegistered') }}</span>
+                    <span class="hfl-detail-row__value">{{ flowSourceRegisteredAt(overviewSource.registeredAt) }}</span>
                   </div>
                 </div>
               </section>

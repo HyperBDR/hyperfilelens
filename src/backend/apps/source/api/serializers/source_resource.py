@@ -20,6 +20,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     bound_node_name = serializers.CharField(source="bound_node.name", read_only=True, allow_null=True)
     bound_node_status = serializers.SerializerMethodField()
+    bound_node_availability = serializers.SerializerMethodField()
     requires_mount = serializers.SerializerMethodField()
     usage_percentage = serializers.SerializerMethodField()
     connection_summary = serializers.SerializerMethodField()
@@ -42,6 +43,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
             "bound_node",
             "bound_node_name",
             "bound_node_status",
+            "bound_node_availability",
             "mount_status",
             "mount_status_display",
             "mount_point",
@@ -90,6 +92,12 @@ class SourceResourceSerializer(serializers.ModelSerializer):
         if node is None:
             return None
         return node.status
+
+    def get_bound_node_availability(self, obj):
+        node = obj.bound_node
+        if node is None:
+            return None
+        return node.availability
 
     def get_requires_mount(self, obj):
         return obj.requires_mount
@@ -143,6 +151,7 @@ class SourceResourceListSerializer(SourceResourceSerializer):
             "bound_node",
             "bound_node_name",
             "bound_node_status",
+            "bound_node_availability",
             "mount_status",
             "mount_point",
             "status",

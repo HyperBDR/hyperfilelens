@@ -96,4 +96,6 @@ class NodeLifecycleWatchApiTests(TestCase):
         self.assertEqual(len(body["nodes"]), 1)
         row = body["nodes"][0]
         self.assertEqual(row["id"], self.node.id)
+        self.assertEqual(row["status"], Node.Status.ACTIVE)
+        self.assertEqual(row["availability"], Node.Availability.ONLINE)
         self.assertEqual(row["lifecycle"]["task_id"], str(task.id))

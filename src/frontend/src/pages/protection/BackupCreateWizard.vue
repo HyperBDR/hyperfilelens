@@ -3708,13 +3708,13 @@ function sourceEndpointInfo(sourceId: string): { primary: string; secondary: str
   }
 }
 
-function sourceStatusLabel(sourceId: string) {
+function sourceAvailabilityLabel(sourceId: string) {
   const availability = sourceRecord(sourceId)?.availability
   if (availability !== 'online') return t('protection.backupsPage.sourceStatusOffline')
   return t('protection.backupsPage.sourceStatusOnline')
 }
 
-function sourceStatusTagType(sourceId: string) {
+function sourceAvailabilityTagType(sourceId: string) {
   return sourceRecord(sourceId)?.availability === 'online' ? 'success' : 'danger'
 }
 
@@ -6094,10 +6094,10 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </button>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.backupsPage.labelSourceStatus')" min-width="90">
+            <el-table-column :label="t('protection.backupsPage.labelSourceAvailability')" min-width="90">
               <template #default="{ row }">
-                <el-tag size="small" :type="sourceStatusTagType(row.id)" effect="plain">
-                  {{ sourceStatusLabel(row.id) }}
+                <el-tag size="small" :type="sourceAvailabilityTagType(row.id)" effect="plain">
+                  {{ sourceAvailabilityLabel(row.id) }}
                 </el-tag>
               </template>
             </el-table-column>

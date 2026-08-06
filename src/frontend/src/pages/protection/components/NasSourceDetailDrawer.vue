@@ -162,7 +162,7 @@ const capacityParts = computed(() => {
 })
 
 const proxyConnectionStatus = computed((): 'online' | 'reconnecting' | 'offline' => {
-  const explicit = (row.value?.bound_node_status || '').trim().toLowerCase()
+  const explicit = (row.value?.bound_node_availability || '').trim().toLowerCase()
   if (explicit === 'online' || explicit === 'reconnecting' || explicit === 'offline') return explicit
   const status = proxyNode.value ? debouncedNodeStatus(proxyNode.value) : undefined
   if (status === 'online' || status === 'reconnecting') return status
