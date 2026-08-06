@@ -65,7 +65,7 @@ export function useNasSourceListDisplay(proxyNodes: Ref<ApiNode[]>) {
   }
 
   function sourceNodeOnlineStatus(row: SourceResource): 'online' | 'reconnecting' | 'offline' {
-    const explicit = (row.bound_node_status || '').trim().toLowerCase()
+    const explicit = (row.bound_node_availability || '').trim().toLowerCase()
     if (explicit === 'online' || explicit === 'reconnecting' || explicit === 'offline') {
       return explicit
     }

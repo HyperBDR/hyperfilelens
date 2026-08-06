@@ -122,6 +122,8 @@ class SourceResourceApiTests(TestCase):
         row = listing.data["results"][0]
         self.assertEqual(row["availability"], "offline")
         self.assertIsNotNone(row["availability_updated_at"])
+        self.assertEqual(row["bound_node_status"], Node.Status.ACTIVE)
+        self.assertEqual(row["bound_node_availability"], Node.Availability.ONLINE)
 
     def test_list_search_matches_nas_fields(self):
         SourceResource.objects.create(

@@ -47,6 +47,27 @@ describe('FlowBackupSourceDetailDrawer task columns', () => {
   })
 })
 
+describe('FlowBackupSourceDetailDrawer source status', () => {
+  it('uses availability for title and Backup Source tags, and lifecycle status for Source Status', () => {
+    const sourceInfo = sourceBetween(
+      "<h4 class=\"hfl-detail-section__title\">{{ t('protection.backupsPage.flowSourceDetailSectionMeta') }}</h4>",
+      '<section class="hfl-detail-section dp-flow-config-section">',
+    )
+
+    expect(drawer).toContain('availability: item.availability')
+    expect(drawer).toContain('status: item.status')
+    expect(sourceInfo).toContain("flowSourceDetailSourceStatus")
+    expect(sourceInfo).toContain('flowSourceStatusLabel(overviewSource.availability)')
+    expect(sourceInfo).toContain('flowSourceLifecycleStatusLabel(overviewSource.status)')
+    expect(drawer).toContain('flowSourceStatusLabel(source.availability)')
+    expect(drawer).not.toContain('flowSourceStatusLabel(source.status)')
+    expect(sourceInfo).toContain('flowSourceStatusLabel(overviewSource.availability)')
+    expect(sourceInfo.indexOf('flowSourceDetailSourceStatus')).toBeLessThan(sourceInfo.indexOf('flowSourceSecondaryInfo(overviewSource).nameLabel'))
+    expect(sourceInfo.indexOf('flowSourceSecondaryInfo(overviewSource).ipLabel')).toBeLessThan(sourceInfo.indexOf('flowSourceDetailRegistered'))
+    expect(enProtectionPages.backupsPage.flowSourceDetailSourceStatus).toBe('Source Status')
+  })
+})
+
 describe('FlowBackupSourceDetailDrawer snapshot expansion state', () => {
   it('distinguishes viewing a snapshot from browsing a directory', () => {
     const snapshotTab = sourceBetween(

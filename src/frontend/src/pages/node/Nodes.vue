@@ -138,6 +138,7 @@ const lifecycleOps = useNodeLifecycleOps({
       return {
         ...row,
         status: next.status,
+        availability: next.availability ?? row.availability,
         routable: next.routable,
         version: next.version,
         lifecycle: next.lifecycle,

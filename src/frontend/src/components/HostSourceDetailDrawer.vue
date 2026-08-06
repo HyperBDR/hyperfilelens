@@ -152,9 +152,9 @@ function startPolling() {
 }
 
 watch(
-  () => [open.value, node.value?.status, drawerTab.value] as const,
-  ([isOpen, status, tab]) => {
-    if (isOpen && status === 'online' && tab === 'performance') {
+  () => [open.value, node.value?.availability, drawerTab.value] as const,
+  ([isOpen, availability, tab]) => {
+    if (isOpen && availability === 'online' && tab === 'performance') {
       startPolling()
     } else {
       stopPolling()

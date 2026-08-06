@@ -453,6 +453,7 @@ const lifecycleOps = useNodeLifecycleOps({
       return {
         ...row,
         status: next.status,
+        availability: next.availability ?? row.availability,
         routable: next.routable,
         version: next.version,
         lifecycle: next.lifecycle,
@@ -790,7 +791,7 @@ function sourceNodeIp(row: SourceResource) {
 }
 
 function sourceNodeOnlineStatus(row: SourceResource): 'online' | 'reconnecting' | 'offline' {
-  const explicit = (row.bound_node_status || '').trim().toLowerCase()
+  const explicit = (row.bound_node_availability || '').trim().toLowerCase()
   if (explicit === 'online' || explicit === 'reconnecting' || explicit === 'offline') {
     return explicit
   }

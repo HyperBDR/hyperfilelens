@@ -110,6 +110,18 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(refresh).not.toContain('ElMessage.success')
   })
 
+  it('loads restore records whenever Step 3 loads its source rows', () => {
+    const refresh = sourceBetween('async function refreshFlowStepData', 'function flowRowFromSourceId')
+    const loadStep3Index = refresh.indexOf('await loadStep3Selectable({ signal })')
+    const configsIndex = refresh.indexOf('await refreshBackupConfigs(signal)')
+    const toolbarRefresh = functionSource('refreshTaskLists', 'syncStep3TableSelection')
+
+    expect(loadStep3Index).toBeGreaterThan(-1)
+    expect(configsIndex).toBeGreaterThan(loadStep3Index)
+    expect(toolbarRefresh).toContain('await refreshFlowStepData()')
+    expect(toolbarRefresh).not.toContain('loadStep3Selectable({ signal: signal ?? undefined })')
+  })
+
   it('reloads the full step 3 list state after backup configuration edits complete', () => {
     const editStart = wizard.indexOf('async function runEditBackupConfig')
     const editEnd = wizard.indexOf('function submitCreateWizard', editStart)

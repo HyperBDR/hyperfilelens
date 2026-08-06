@@ -63,7 +63,9 @@ export type SourceResource = {
   credentials?: Record<string, unknown>
   bound_node?: number | null
   bound_node_name?: string | null
+  /** Bound node lifecycle state; use bound_node_availability for connectivity. */
   bound_node_status?: string | null
+  bound_node_availability?: 'online' | 'offline' | null
   mount_status?: string
   mount_point?: string
   status?: string

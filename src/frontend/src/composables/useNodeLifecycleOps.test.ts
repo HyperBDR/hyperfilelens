@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
-import { previewNodeOperationsBatch, startNodeOperationsBatch } from '../lib/nodeApi'
+import { fetchLifecycleWatch, previewNodeOperationsBatch, startNodeOperationsBatch } from '../lib/nodeApi'
 import type { ApiNode } from '../types/node'
 import { useNodeLifecycleOps } from './useNodeLifecycleOps'
 
@@ -11,6 +11,7 @@ vi.mock('../lib/nodeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/nodeApi')>()
   return {
     ...actual,
+    fetchLifecycleWatch: vi.fn(),
     previewNodeOperationsBatch: vi.fn(),
     startNodeOperationsBatch: vi.fn(),
   }
@@ -162,6 +163,103 @@ describe('useNodeLifecycleOps batch start', () => {
       expect(lifecycle.completed.value).toEqual([
         expect.objectContaining({ nodeId: startedNode.id }),
       ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('useNodeLifecycleOps persisted queue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+  })
+
+  function mountLifecycle() {
+    let lifecycle!: ReturnType<typeof useNodeLifecycleOps>
+    const wrapper = mount(defineComponent({
+      setup() {
+        lifecycle = useNodeLifecycleOps({
+          role: 'agent',
+          t: ((key: string) => key) as never,
+        })
+        return () => h('div')
+      },
+    }))
+    return { lifecycle, wrapper }
+  }
+
+  it('clears a restored restarting upgrade when the server reports completion', async () => {
+    window.sessionStorage.setItem('hfl-node-lifecycle-queue', JSON.stringify({
+      batchId: 'batch-1',
+      kind: 'upgrade',
+      role: 'agent',
+      scope: 'tenant',
+      maxConcurrent: 5,
+      savedAt: Date.now(),
+      running: [{
+        nodeId: 1,
+        name: 'hfl-agent3--1',
+        kind: 'upgrade',
+        state: 'restarting',
+        targetVersion: '1.0.1',
+        taskId: 'task-1',
+      }],
+      queued: [],
+    }))
+    vi.mocked(fetchLifecycleWatch).mockResolvedValue([{
+      id: 1,
+      status: 'active',
+      availability: 'online',
+      routable: true,
+      version: '1.0.1',
+      lifecycle: null,
+    }])
+    const { lifecycle, wrapper } = mountLifecycle()
+
+    try {
+      lifecycle.restorePersisted()
+      await Promise.resolve()
+      await nextTick()
+
+      expect(lifecycle.running.value).toEqual([])
+      expect(lifecycle.activeKind.value).toBeNull()
+      expect(window.sessionStorage.getItem('hfl-node-lifecycle-queue')).toBeNull()
+      expect(lifecycle.resolveDisplayStatus({
+        id: 1,
+        organization: 1,
+        name: 'hfl-agent3--1',
+        role: 'agent',
+        status: 'active',
+        availability: 'online',
+        routable: true,
+        version: '1.0.1',
+        lifecycle: null,
+      }).labelKey).toBe('nodeLifecycle.state.active')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('drops an expired persisted queue before polling the server', () => {
+    window.sessionStorage.setItem('hfl-node-lifecycle-queue', JSON.stringify({
+      batchId: 'batch-1',
+      kind: 'upgrade',
+      role: 'agent',
+      scope: 'tenant',
+      maxConcurrent: 5,
+      savedAt: Date.now() - 30 * 60 * 1000 - 1,
+      running: [],
+      queued: [{ nodeId: 1, name: 'queued-agent', kind: 'upgrade', state: 'queued' }],
+    }))
+    const { lifecycle, wrapper } = mountLifecycle()
+
+    try {
+      lifecycle.restorePersisted()
+
+      expect(lifecycle.queued.value).toEqual([])
+      expect(fetchLifecycleWatch).not.toHaveBeenCalled()
+      expect(window.sessionStorage.getItem('hfl-node-lifecycle-queue')).toBeNull()
     } finally {
       wrapper.unmount()
     }
