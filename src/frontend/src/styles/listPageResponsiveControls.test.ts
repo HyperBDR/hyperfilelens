@@ -13,6 +13,7 @@ const dataProtectionPage = readFileSync(resolve(process.cwd(), 'src/pages/protec
 describe('responsive list toolbar controls', () => {
   it('keeps nested search field selects at their configured width', () => {
     expect(styles).toContain('.hfl-list-search-group .el-input-group__prepend .el-select')
+    expect(styles).toMatch(/\.hfl-list-search-group \.el-input-group__prepend \.el-select\s*{[^}]*width:\s*140px;/s)
     expect(styles).not.toMatch(/\.hfl-list-toolbar \.el-select\s*,/)
     expect(styles).toContain('.hfl-list-toolbar > .el-select,')
     expect(styles).toContain('.hfl-list-toolbar__right > .el-select,')

@@ -115,6 +115,8 @@ class BackupSelectableListView(APIView):
         running_task = _optional_choice(request.query_params, "running_task", {"backup", "restore"})
         backup_running = _optional_query_bool(request.query_params, "backup_running")
         restore_running = _optional_query_bool(request.query_params, "restore_running")
+        backup_task_status = _optional_choice(request.query_params, "backup_task_status", {"success", "failed", "running", "none"})
+        restore_task_status = _optional_choice(request.query_params, "restore_task_status", {"success", "failed", "running", "none"})
         backup_policy_id = _optional_positive_int(request.query_params, "backup_policy_id")
         file_filter_rule_id = _optional_positive_int(request.query_params, "file_filter_rule_id")
         repository_id = _optional_positive_int(request.query_params, "repository_id")
@@ -159,6 +161,8 @@ class BackupSelectableListView(APIView):
             running_task=running_task,
             backup_running=backup_running,
             restore_running=restore_running,
+            backup_task_status=backup_task_status,
+            restore_task_status=restore_task_status,
             backup_policy_id=backup_policy_id,
             file_filter_rule_id=file_filter_rule_id,
             repository_id=repository_id,
