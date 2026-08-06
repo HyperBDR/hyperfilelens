@@ -213,6 +213,24 @@ export function nasProxyMountPoint(row: NasLikeResource): string {
   return mountPoint || '—'
 }
 
+/** Mask shown when a NAS source has a stored password (API never returns the secret). */
+export const SOURCE_PASSWORD_MASK = '••••••••'
+
+export function sourceHasPassword(credentials?: Record<string, unknown> | null): boolean {
+  if (!credentials || typeof credentials !== 'object') return false
+  // Public credential hint from source_credential_hint(); password itself is never serialized.
+  if (credentials.has_password === true) return true
+  const password = credentials.password
+  return typeof password === 'string' && Boolean(password.trim())
+}
+
+export function sourcePasswordDisplay(
+  credentials?: Record<string, unknown> | null,
+  emptyLabel = '—',
+): string {
+  return sourceHasPassword(credentials) ? SOURCE_PASSWORD_MASK : emptyLabel
+}
+
 export function sourceExternalId(row: { id: number; resource_type?: string }): string {
   const type = (row.resource_type || 'nas').toLowerCase()
   const prefix = type === 'local' ? 'AGT' : 'NAS'
