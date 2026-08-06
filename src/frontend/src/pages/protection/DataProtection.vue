@@ -177,6 +177,10 @@ import BackupSourceStep3DeleteDialog from '../../components/BackupSourceStep3Del
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import ProtectionStopConfirmDialog from '../../components/ProtectionStopConfirmDialog.vue'
 import { BACKUP_SOURCE_RESET_CONFIRMATION } from '../../lib/backupSourceResetDialog'
+import {
+  selectFinishedResetSourceIds,
+  selectTerminalFailedResetSourceIds,
+} from './resetPipelineRefresh'
 import HostAddForm from './components/HostAddForm.vue'
 import NasAddForm from './components/NasAddForm.vue'
 import type {
@@ -443,7 +447,7 @@ function parseEndpointUiId(id: string): { type: 'agent' | 'nas' | 'proxy'; refId
   return { type, refId }
 }
 
-async function refreshBackupConfigs(signal?: AbortSignal) {
+async function refreshBackupConfigs(signal?: AbortSignal): Promise<boolean> {
   try {
     const result = await listBackupConfigs({ page: 1, page_size: 200 }, { signal })
     backupConfigRows.value = result.results
@@ -496,6 +500,7 @@ async function refreshBackupConfigs(signal?: AbortSignal) {
     restoreRecordRows.value = restoreRecords.results
     syncRealBackupConfigsToDemoStore(details, snapshots.results)
     syncRestoreRecordsToFlowTasks(restoreRecords.results, restoreTasks.results)
+    return true
   } catch (e) {
     if (pageRequests.isAbortError(e)) throw e
     ElMessage.error({
@@ -512,6 +517,7 @@ async function refreshBackupConfigs(signal?: AbortSignal) {
     resetTaskRows.value = []
     restoreTaskRows.value = []
     restoreRecordRows.value = []
+    return false
   }
 }
 
@@ -1457,6 +1463,10 @@ function syncWizardCountsFromPipeline() {
   step3SelectableCount.value = pipelineStep3Count.value
 }
 
+function syncStep2WizardCountFromPipeline() {
+  step2SelectableCount.value = pipelineStep2Count.value
+}
+
 async function ensureSelectableCatalog(ids: string[], signal?: AbortSignal) {
   const missing = ids.filter((id) => isBackupSelectableId(id) && !backupSelectableById.value.has(id))
   if (!missing.length) return
@@ -1496,6 +1506,10 @@ async function refreshFlowStepData(
   if (showLoading) setFlowStepDataLoading(step, true)
   try {
     if (step === 1) {
+      // Refresh pipeline ids so stale step-3 caches cannot hide step=2 rows.
+      // Keep loadStep2Selectable's filtered count for the table pager / search.
+      await refreshPipelineStep2PlusIds(signal)
+      if (!pageRequests.isCurrentSignal(scope, signal)) return
       await loadStep2Selectable({ signal })
       return
     }
@@ -1548,9 +1562,13 @@ function sourceHasBackupConfig(sourceId: string) {
   return step3PipelineSourceIds.value.includes(sourceId) || backupConfigSourceIds.value.has(sourceId)
 }
 
-const step2PendingSourceList = computed(() =>
-  step2SourceList.value.filter((row) => !sourceHasBackupConfig(row.id)),
-)
+const step2PendingSourceList = computed(() => {
+  // On the Backup Configuration step the table is backed by step=2 API rows.
+  // Do not hide those rows via stale step-3 pipeline / backup-config caches
+  // (Reset Backup Config moves the source to step 2 before the caches catch up).
+  if (flowMainStep.value === 1) return step2SourceList.value
+  return step2SourceList.value.filter((row) => !sourceHasBackupConfig(row.id))
+})
 
 const step3ConfiguredSourceIds = computed(() =>
   normalizeSourceIdList([
@@ -3929,14 +3947,33 @@ async function refreshStep3SourceList() {
   if (flowMainStep.value !== 2 || step3RefreshInFlight || step3ActionRefreshInFlight) return
   const scope = flowStepScope(2)
   const signal = pageRequests.nextSignal(scope)
-  const hasResetRows = step3SourceList.value.some((row) => Boolean(sourceResetState(row.id)))
+  const resetTrackedIds = collectResetTrackedIds()
   step3RefreshInFlight = true
   try {
     await refreshStep3RuntimeRows(signal)
-    if (hasResetRows) {
-      await refreshBackupConfigs(signal)
-      await loadStep3Selectable({ signal })
-    }
+    if (!resetTrackedIds.length) return
+    const configsLoaded = await refreshBackupConfigs(signal)
+    if (!pageRequests.isCurrentSignal(scope, signal)) return
+    // Soft-failure clears config/task rows; do not treat empty reset state as success.
+    if (!configsLoaded) return
+    await loadStep3Selectable({ signal })
+    if (!pageRequests.isCurrentSignal(scope, signal)) return
+    const finishedIds = selectFinishedResetSourceIds(
+      resetTrackedIds,
+      (id) => sourceResetState(id),
+    )
+    const failedIds = selectTerminalFailedResetSourceIds(
+      resetTrackedIds,
+      (id) => sourceResetState(id),
+    )
+    // Drop terminal failures immediately; keep finished ids tracked until the
+    // pipeline refresh succeeds so an abort/failure can retry next poll.
+    untrackResetPipelineSources(failedIds)
+    if (!finishedIds.length) return
+    await refreshPipelineStep2PlusIds(signal)
+    if (!pageRequests.isCurrentSignal(scope, signal)) return
+    syncStep2WizardCountFromPipeline()
+    untrackResetPipelineSources(finishedIds)
   } catch {
     // Auto-refresh is best-effort; keep the last known runtime state and retry
     // on the next interval without creating an unhandled promise rejection.
@@ -4891,9 +4928,33 @@ const resetBackupFromStep3Submitting = ref(false)
 const resetBackupConfigDialogOpen = ref(false)
 const resetBackupConfigConfirmText = ref('')
 const pendingResetSources = ref<FlowSourceRow[]>([])
+/** Reset source ids queued this session — survives step3 pagination so completion can refresh pipeline. */
+const pendingResetPipelineSourceIds = ref<string[]>([])
 const resetSnapshotCountBySourceId = ref(new Map<string, number>())
 const resetSnapshotCountLoading = ref(false)
 let resetSnapshotCountRequestSeq = 0
+
+function trackResetPipelineSources(ids: string[]) {
+  pendingResetPipelineSourceIds.value = normalizeSourceIdList([
+    ...pendingResetPipelineSourceIds.value,
+    ...ids,
+  ])
+}
+
+function untrackResetPipelineSources(ids: string[]) {
+  if (!ids.length) return
+  const done = new Set(ids)
+  pendingResetPipelineSourceIds.value = pendingResetPipelineSourceIds.value.filter((id) => !done.has(id))
+}
+
+function collectResetTrackedIds() {
+  return normalizeSourceIdList([
+    ...pendingResetPipelineSourceIds.value,
+    ...step3SourceList.value
+      .filter((row) => Boolean(sourceResetState(row.id)))
+      .map((row) => row.id),
+  ])
+}
 
 const resetBackupConfigDisplayRows = computed(() =>
   pendingResetSources.value.map((row) =>
@@ -4976,6 +5037,7 @@ async function confirmResetBackupConfiguration() {
   try {
     const sourceIdList = sources.map((source) => source.id).filter(isBackupSelectableId)
     const result = await resetBackupConfigs(sourceIdList, BACKUP_SOURCE_RESET_CONFIRMATION)
+    trackResetPipelineSources(sourceIdList)
 
     if (activeFlowSource.value && sourceIds.has(activeFlowSource.value.id)) {
       flowSourceDetailOpen.value = false
