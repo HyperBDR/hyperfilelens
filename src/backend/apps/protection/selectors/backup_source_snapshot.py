@@ -34,7 +34,11 @@ def backup_source_snapshots_queryset(
     queryset = BackupSourceSnapshot.objects.filter(organization_id=organization_id)
     if not include_deleted:
         queryset = queryset.filter(deleted_at__isnull=True).exclude(
-            status=BackupSourceSnapshot.Status.DELETED
+            status__in=[
+                BackupSourceSnapshot.Status.DELETING,
+                BackupSourceSnapshot.Status.DELETE_FAILED,
+                BackupSourceSnapshot.Status.DELETED,
+            ]
         )
     return queryset.prefetch_related("directories")
 
