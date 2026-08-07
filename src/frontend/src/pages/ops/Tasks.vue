@@ -1729,7 +1729,7 @@ watch(
 .hfl-task-drawer__header-meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-top: 6px;
   min-width: 0;
@@ -1825,7 +1825,7 @@ watch(
 
 .hfl-task-drawer__uuid {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 4px;
   min-width: 0;
   max-width: 100%;

@@ -1109,7 +1109,7 @@ watch(
 }
 
 .hfl-task-drawer__header-meta {
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 6px;
@@ -1800,7 +1800,7 @@ watch(
 }
 
 .hfl-task-drawer--target-repositories .hfl-task-drawer__uuid {
-  align-items: baseline;
+  align-items: center;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }
 

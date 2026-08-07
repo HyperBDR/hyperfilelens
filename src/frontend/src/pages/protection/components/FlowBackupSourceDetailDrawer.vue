@@ -31,6 +31,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
+import { pushToast } from '../../../lib/toast/store'
 import type { ElTable, ElTree } from 'element-plus'
 import HflPopover from '../../../components/HflPopover.vue'
 import HflPagination from '../../../components/HflPagination.vue'
@@ -1353,11 +1354,23 @@ function toggleAllTaskStepsExpanded() {
 }
 
 async function copyText(value: string) {
+  if (!value) return
   try {
     await copyTextToClipboard(value)
-    ElMessage.success({ message: t('protection.backupsPage.flowSourceDetailCopied'), grouping: true })
-  } catch {
-    ElMessage.error({ message: t('protection.backupsPage.flowSourceDetailCopyFailed'), grouping: true })
+    pushToast({
+      type: 'success',
+      message: t('protection.backupsPage.flowSourceDetailCopied'),
+      dedupeKey: 'copy:FlowSourceDetail',
+      duration: 2000,
+    })
+  } catch (err) {
+    console.error('Copy to clipboard failed:', err)
+    pushToast({
+      type: 'error',
+      message: t('protection.backupsPage.flowSourceDetailCopyFailed'),
+      dedupeKey: 'copy:FlowSourceDetail',
+      duration: 3000,
+    })
   }
 }
 
@@ -3818,7 +3831,7 @@ function onClosed() {
             <span>{{ t('protection.backupsPage.flowSourceDetailTaskOwner') }}: {{ source?.name || taskTypeLabel(activeTask.task_type) }}</span>
             <span class="dp-task-detail__header-divider" />
             <span class="dp-task-detail__uuid">
-              {{ activeTask.task_uuid }}
+              <span class="dp-task-detail__uuid-text">{{ activeTask.task_uuid }}</span>
               <ElButton
                 class="dp-task-detail__copy-button"
                 text
@@ -5458,12 +5471,13 @@ function onClosed() {
 .dp-task-detail__header-meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-top: 6px;
   min-width: 0;
   color: rgb(100 116 139);
   font-size: 12px;
+  line-height: 20px;
 }
 
 .dp-task-detail__header-divider {
@@ -5475,14 +5489,18 @@ function onClosed() {
 
 .dp-task-detail__uuid {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 4px;
   max-width: 100%;
   color: rgb(71 85 105);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.dp-task-detail__uuid-text {
+  line-height: 21px;
 }
 
 .dp-task-detail__copy-button {
