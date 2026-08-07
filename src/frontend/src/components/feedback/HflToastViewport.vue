@@ -16,7 +16,7 @@ import { toastState } from '../../lib/toast/store'
   position: fixed;
   top: 68px;
   right: 16px;
-  z-index: 3000;
+  z-index: 4000;
   display: flex;
   flex-direction: column;
   gap: 12px;
