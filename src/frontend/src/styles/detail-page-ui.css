@@ -701,7 +701,9 @@
 .detail-page-row__value,
 .repo-detail-row__value {
   color: var(--el-text-color-primary);
+  justify-content: flex-start;
   overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .hfl-detail-row__value--editable,
@@ -726,11 +728,20 @@
 }
 
 .hfl-empty-mark {
+  align-self: flex-start;
   color: rgb(100 116 139);
   font-family: inherit;
   font-size: 13px;
   font-weight: 400;
   line-height: 1.45;
+  text-align: left;
+}
+
+/* Empty values stay left-aligned even in centered or numeric table columns. */
+.el-table .hfl-empty-mark {
+  display: block;
+  width: 100%;
+  text-align: left;
 }
 
 .hfl-detail-row__value--with-icon,

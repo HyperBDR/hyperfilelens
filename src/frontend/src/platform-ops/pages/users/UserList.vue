@@ -372,7 +372,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
                   :org-key="row.organization.key"
                   :label="row.organization.name"
                 />
-                <span v-else>—</span>
+                <span v-else class="hfl-empty-mark">—</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('platformOps.users.accountType')" width="136">
@@ -387,7 +387,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               <template #default="{ row }">{{ displayTime(row.last_login, t('platformOps.users.never')) }}</template>
             </el-table-column>
             <el-table-column :label="t('platformOps.users.colJoined')" width="156">
-              <template #default="{ row }">{{ displayTime(row.date_joined) }}</template>
+              <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.date_joined }">{{ displayTime(row.date_joined) }}</span></template>
             </el-table-column>
             <el-table-column width="64" fixed="right" align="center">
               <template #default="{ row }">

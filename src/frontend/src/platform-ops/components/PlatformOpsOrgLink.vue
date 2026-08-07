@@ -15,7 +15,7 @@ defineProps<{
   >
     {{ label || orgKey || orgId }}
   </router-link>
-  <span v-else>{{ label || orgKey || '—' }}</span>
+  <span v-else :class="{ 'hfl-empty-mark': !label && !orgKey }">{{ label || orgKey || '—' }}</span>
 </template>
 
 <style scoped>

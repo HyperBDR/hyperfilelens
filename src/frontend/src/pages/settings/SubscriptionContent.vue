@@ -309,19 +309,19 @@ onMounted(loadAll)
           </template>
 
           <el-table-column :label="t('settings.subscription.historyLicenseKey')" min-width="220">
-            <template #default="{ row }">{{ row.license_key || '—' }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.license_key }">{{ row.license_key || '—' }}</span></template>
           </el-table-column>
           <el-table-column :label="t('settings.subscription.historyChangeType')" min-width="180">
             <template #default="{ row }">{{ historyChangeLabel(row) }}</template>
           </el-table-column>
           <el-table-column :label="t('settings.subscription.historyActivatedAt')" width="170">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ formatDateTime(row.activated_at || row.archived_at) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.activated_at || row.archived_at) }">{{ formatDateTime(row.activated_at || row.archived_at) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('settings.subscription.historyValidUntil')" width="140">
             <template #default="{ row }">
-              {{ row.is_perpetual ? t('settings.subscription.unlimited') : formatDateOnly(row.expires_at) }}
+              <span :class="{ 'hfl-empty-mark': !row.is_perpetual && !row.expires_at }">{{ row.is_perpetual ? t('settings.subscription.unlimited') : formatDateOnly(row.expires_at) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('settings.subscription.historyStatus')" width="100">

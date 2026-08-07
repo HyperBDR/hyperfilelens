@@ -3,8 +3,20 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(resolve(process.cwd(), 'src/styles/detail-page-ui.css'), 'utf8')
+const capacityCell = readFileSync(resolve(process.cwd(), 'src/components/HflCapacityCell.vue'), 'utf8')
+const repositoryPage = readFileSync(resolve(process.cwd(), 'src/pages/node/Repositories.vue'), 'utf8')
 
 describe('responsive detail rows', () => {
+  it('left-aligns detail values and empty markers', () => {
+    expect(styles).toContain('justify-content: flex-start')
+    expect(styles).toContain('text-align: left')
+    expect(styles).toContain('.hfl-empty-mark {')
+    expect(styles).toContain('align-self: flex-start')
+    expect(capacityCell).toContain('<span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>')
+    expect(repositoryPage).toContain("'hfl-detail-row__value--stacked':")
+    expect(repositoryPage).toContain('hasRepositoryUsageData(detailRow),')
+  })
+
   it('uses the same label width for regular and full rows in single-column layouts', () => {
     const mobileStyles = styles.slice(styles.indexOf('@media (max-width: 860px)'))
 

@@ -300,7 +300,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
         </div>
         <div class="hfl-detail-row hfl-detail-row--full">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCapacity') }}</span>
-          <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__value--stacked': capacityParts.total > 0 }">
             <HflCapacityCell
               v-if="useUnifiedCapacity"
               :used-bytes="capacityParts.used"
@@ -352,15 +352,15 @@ function detailValueClass(text: string, monoWhenPresent = false) {
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
-          <span class="hfl-detail-row__value">{{ formatNodeDate(node.availability_updated_at) }}</span>
+          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.availability_updated_at }">{{ formatNodeDate(node.availability_updated_at) }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegistered') }}</span>
-          <span class="hfl-detail-row__value">{{ formatNodeDate(node.created_at) }}</span>
+          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.created_at }">{{ formatNodeDate(node.created_at) }}</span>
         </div>
         <div class="hfl-detail-row">
           <span class="hfl-detail-row__label">{{ t('nodesPage.proxyDetailLastSeen') }}</span>
-          <span class="hfl-detail-row__value">{{ formatNodeDate(node.last_seen_at) }}</span>
+          <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !node.last_seen_at }">{{ formatNodeDate(node.last_seen_at) }}</span>
         </div>
       </div>
     </section>

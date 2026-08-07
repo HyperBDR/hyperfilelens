@@ -243,7 +243,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
                   :user-id="row.owner_user_id"
                   :display-name="row.owner_display_name || row.owner_email || '—'"
                 />
-                <span v-else>{{ row.owner_email || '—' }}</span>
+                <span v-else :class="{ 'hfl-empty-mark': !row.owner_email }">{{ row.owner_email || '—' }}</span>
                 <span v-if="row.owner_email && row.owner_display_name !== row.owner_email" class="platform-account-page__cell-meta">
                   {{ row.owner_email }}
                 </span>
@@ -271,7 +271,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               </template>
             </el-table-column>
             <el-table-column :label="t('platformOps.orgs.colCreated')" width="164">
-              <template #default="{ row }">{{ formatLocalDateTime(row.created_at, '—') }}</template>
+              <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatLocalDateTime(row.created_at, '—') }}</span></template>
             </el-table-column>
             <el-table-column width="64" fixed="right" align="center">
               <template #default="{ row }">

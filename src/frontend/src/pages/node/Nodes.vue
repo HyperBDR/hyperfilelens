@@ -314,7 +314,7 @@ function needsUpgrade(row: ApiNode): boolean {
 }
 
 function upgradeTargetVersion(row: ApiNode) {
-  return needsUpgrade(row) ? latestVersion.value ?? '--' : '--'
+  return needsUpgrade(row) ? latestVersion.value ?? '—' : '—'
 }
 
 function statusTagType(status: NodeStatus): 'success' | 'info' | 'danger' {
@@ -758,17 +758,17 @@ async function submitRename() {
             </el-table-column>
             <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="76">
               <template #default="{ row }">
-                <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+                <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="90">
               <template #default="{ row }">
-                <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+                <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="78">
               <template #default="{ row }">
-                <span>{{ nodeDiskCount(row) ?? '—' }}</span>
+                <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
@@ -794,14 +794,14 @@ async function submitRename() {
               <template #default="{ row }">
                 <NodeVersionCell
                   :node="row"
-                  :version-label="row.version || '--'"
+                  :version-label="row.version || '—'"
                   :resolve-version-display="lifecycleOps.resolveVersionDisplay"
                 />
               </template>
             </el-table-column>
             <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ formatNodeDate(row.created_at) }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
               </template>
             </el-table-column>
           </template>
@@ -812,7 +812,7 @@ async function submitRename() {
             </template>
           </el-table-column>
           <el-table-column :label="t('nodesPage.colOs')" min-width="168">
-            <template #default="{ row }">{{ row.os_name || '--' }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.os_name }">{{ row.os_name || '—' }}</span></template>
           </el-table-column>
           <el-table-column :label="t('nodesPage.colRole')" min-width="108">
             <template #default="{ row }">
@@ -843,11 +843,11 @@ async function submitRename() {
               <NodeVersionCell
                 v-if="usesRealNodeList"
                 :node="row"
-                :version-label="row.version || '--'"
+                :version-label="row.version || '—'"
                 :resolve-version-display="lifecycleOps.resolveVersionDisplay"
               />
               <div v-else class="nodes-version-cell" :class="{ 'nodes-version-cell--stacked': needsUpgrade(row) && latestVersion }">
-                <span class="nodes-version-cell__value">{{ row.version || '--' }}</span>
+                <span class="nodes-version-cell__value" :class="{ 'hfl-empty-mark': !row.version }">{{ row.version || '—' }}</span>
                 <ElTooltip
                   v-if="needsUpgrade(row) && latestVersion"
                   :content="t('nodesPage.latestVersionTip', { version: upgradeTargetVersion(row) })"

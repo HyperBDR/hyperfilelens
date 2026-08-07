@@ -37,7 +37,7 @@ function fmtBytes(n?: number | null) {
 }
 
 function formatDate(value?: string | null) {
-  return formatLocalDateTime(value, '--')
+  return formatLocalDateTime(value, '—')
 }
 
 const rows = ref<SourceSnapshot[]>([])
@@ -105,7 +105,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="finished_at" :label="t('protection.snapshotsPage.colFinished')" min-width="180">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatDate(row.finished_at || row.created_at) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.finished_at || row.created_at) }">{{ formatDate(row.finished_at || row.created_at) }}</span>
           </template>
         </el-table-column>
         <template #empty>

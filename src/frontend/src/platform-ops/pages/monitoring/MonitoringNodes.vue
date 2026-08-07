@@ -100,7 +100,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
       <div class="platform-monitoring-page__lead">
         <p class="platform-monitoring-page__subtitle">
           {{ t('platformOps.monitoring.nodesSubtitle') }}
-        </p><span class="platform-monitoring-page__updated">{{ t('platformOps.monitoring.latestAgent', { version: stats.latest_version || '—' }) }}</span>
+        </p><span class="platform-monitoring-page__updated" :class="{ 'hfl-empty-mark': !stats.latest_version }">{{ t('platformOps.monitoring.latestAgent', { version: stats.latest_version || '—' }) }}</span>
       </div>
       <div class="hfl-ops-stats-grid hfl-ops-stats-grid--4">
         <OpsStatCard
@@ -242,7 +242,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
                   @click="openDrawer(row)"
                 >
                   {{ row.hostname }}
-                </button><span class="platform-monitoring-page__cell-meta">{{ row.os_name || '—' }}{{ row.ip_address ? ` · ${row.ip_address}` : '' }}</span>
+                </button><span class="platform-monitoring-page__cell-meta" :class="{ 'hfl-empty-mark': !row.os_name && !row.ip_address }">{{ row.os_name || '—' }}{{ row.ip_address ? ` · ${row.ip_address}` : '' }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -274,7 +274,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               width="150"
             >
               <template #default="{ row }">
-                <span>{{ row.agent_version || '—' }}</span><span
+                <span :class="{ 'hfl-empty-mark': !row.agent_version }">{{ row.agent_version || '—' }}</span><span
                   v-if="isOutdated(row)"
                   class="platform-monitoring-page__cell-meta"
                 >{{ t('platformOps.monitoring.outdated') }}</span>
@@ -285,7 +285,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               width="170"
             >
               <template #default="{ row }">
-                {{ displayTime(row.last_seen_at || row.updated_at) }}
+                <span :class="{ 'hfl-empty-mark': !(row.last_seen_at || row.updated_at) }">{{ displayTime(row.last_seen_at || row.updated_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -323,23 +323,23 @@ watch(() => [pagination.page, pagination.pageSize], load)
               <span>{{ t('platformOps.monitoring.account') }}</span><strong>{{ selected.organization_key }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.lastSeen') }}</span><strong>{{ displayTime(selected.last_seen_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.lastSeen') }}</span><strong :class="{ 'hfl-empty-mark': !selected.last_seen_at }">{{ displayTime(selected.last_seen_at) }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.ipAddress') }}</span><strong>{{ selected.ip_address || '—' }}</strong>
+              <span>{{ t('platformOps.monitoring.ipAddress') }}</span><strong :class="{ 'hfl-empty-mark': !selected.ip_address }">{{ selected.ip_address || '—' }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.platform') }}</span><strong>{{ selected.os_name || '—' }}</strong>
+              <span>{{ t('platformOps.monitoring.platform') }}</span><strong :class="{ 'hfl-empty-mark': !selected.os_name }">{{ selected.os_name || '—' }}</strong>
             </div>
           </div>
         </section>
         <section class="platform-monitoring-drawer__section">
           <h3>{{ t('platformOps.monitoring.agentDetails') }}</h3><div class="platform-monitoring-drawer__grid">
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.currentVersion') }}</span><strong>{{ selected.agent_version || '—' }}</strong>
+              <span>{{ t('platformOps.monitoring.currentVersion') }}</span><strong :class="{ 'hfl-empty-mark': !selected.agent_version }">{{ selected.agent_version || '—' }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.latestVersion') }}</span><strong>{{ stats.latest_version || '—' }}</strong>
+              <span>{{ t('platformOps.monitoring.latestVersion') }}</span><strong :class="{ 'hfl-empty-mark': !stats.latest_version }">{{ stats.latest_version || '—' }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
               <span>Architecture</span><strong>{{ metadataValue('arch') }}</strong>

@@ -698,16 +698,16 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colCpu')" min-width="88">
             <template #default="{ row }">
-              <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+              <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colMemory')" min-width="100">
             <template #default="{ row }">
-              <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+              <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colDiskCount')" min-width="96">
-            <template #default="{ row }">{{ nodeDiskCount(row) ?? '—' }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span></template>
           </el-table-column>
           <el-table-column v-if="!isPlatformEngine" :label="t('protection.sourceResources.colCapacity')" min-width="200">
             <template #default="{ row }">
@@ -750,14 +750,14 @@ onUnmounted(() => {
             <template #default="{ row }">
               <NodeVersionCell
                 :node="row"
-                :version-label="row.version || '--'"
+                :version-label="row.version || '—'"
                 :resolve-version-display="lifecycleOps.resolveVersionDisplay"
               />
             </template>
           </el-table-column>
           <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ formatNodeDate(row.created_at) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -779,7 +779,7 @@ onUnmounted(() => {
               >
                 {{ t('insight.dataGateway.defaultSet') }}
               </ElButton>
-              <span v-else-if="!canManageGateway(row)">—</span>
+              <span v-else-if="!canManageGateway(row)" class="hfl-empty-mark">—</span>
             </template>
           </el-table-column>
           <template #empty>

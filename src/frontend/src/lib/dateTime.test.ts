@@ -41,8 +41,8 @@ describe('dateTime', () => {
   })
 
   it('returns fallback for empty values', () => {
-    expect(formatAppDateTime(null, '--')).toBe('--')
-    expect(formatAppDate(undefined, '--')).toBe('--')
+    expect(formatAppDateTime(null, '—')).toBe('—')
+    expect(formatAppDate(undefined, '—')).toBe('—')
   })
 
   it('respects custom timezone for profile-style display', () => {

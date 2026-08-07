@@ -137,12 +137,12 @@ onMounted(load)
         </el-alert>
 
         <div v-if="managedByDeployment" class="platform-settings__readonly-summary hfl-detail-grid">
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.backend') }}</span><strong class="hfl-detail-row__value">{{ form.backend || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.host') }}</span><strong class="hfl-detail-row__value">{{ form.host || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.port') }}</span><strong class="hfl-detail-row__value">{{ form.port || '—' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.hostUser') }}</span><strong class="hfl-detail-row__value">{{ form.host_user || '—' }}</strong></div>
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.backend') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.backend }">{{ form.backend || '—' }}</strong></div>
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.host') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.host }">{{ form.host || '—' }}</strong></div>
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.port') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.port }">{{ form.port || '—' }}</strong></div>
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.hostUser') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.host_user }">{{ form.host_user || '—' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.password') }}</span><strong class="hfl-detail-row__value">{{ meta?.password_configured ? 'Configured' : 'Not configured' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.fromEmail') }}</span><strong class="hfl-detail-row__value">{{ form.from_email || '—' }}</strong></div>
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.fromEmail') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.from_email }">{{ form.from_email || '—' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">Transport security</span><strong class="hfl-detail-row__value">{{ form.use_ssl ? 'SSL' : form.use_tls ? 'TLS' : 'None' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">Configuration source</span><strong class="hfl-detail-row__value">Deployment environment</strong></div>
         </div>

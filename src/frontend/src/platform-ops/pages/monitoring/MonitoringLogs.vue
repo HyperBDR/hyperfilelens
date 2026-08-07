@@ -66,7 +66,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
         </div></template>
       <template #toolbar-utility><el-button class="hfl-refresh-button" title="Refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></el-button></template>
         <template #table="{ tableMaxHeight }"><el-table v-loading="loading" :data="rows" stripe flexible row-key="id" class="hfl-list-table platform-log-table" :max-height="tableMaxHeight">
-          <el-table-column label="Time" width="185"><template #default="{ row }">{{ row.timestamp ? formatLocalDateTime(row.timestamp, row.timestamp) : '—' }}</template></el-table-column>
+          <el-table-column label="Time" width="185"><template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.timestamp }">{{ row.timestamp ? formatLocalDateTime(row.timestamp, row.timestamp) : '—' }}</span></template></el-table-column>
           <el-table-column label="Level" width="115"><template #default="{ row }"><PlatformOpsStatusPill :status="row.level" /></template></el-table-column>
           <el-table-column prop="service" label="Service" width="160" />
           <el-table-column label="Message" min-width="420"><template #default="{ row }"><button type="button" class="platform-monitoring-page__title-button platform-log-table__message" @click="openDrawer(row)">{{ row.message }}</button></template></el-table-column>
@@ -75,6 +75,6 @@ watch(() => [pagination.page, pagination.pageSize], load)
         <template #footer><PlatformOpsPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></template>
       </HflTablePanel>
     </div>
-    <el-drawer v-model="drawerOpen" :size="drawerSize" destroy-on-close><template #header><div class="platform-monitoring-drawer__header"><h2>Log Event</h2><p>{{ selected?.service }} · {{ selected?.level }}</p></div></template><template v-if="selected"><section class="platform-monitoring-drawer__section"><h3>Event Details</h3><div class="platform-monitoring-drawer__grid"><div class="platform-monitoring-drawer__field"><span>Time</span><strong>{{ selected.timestamp || '—' }}</strong></div><div class="platform-monitoring-drawer__field"><span>Service</span><strong>{{ selected.service }}</strong></div></div></section><section class="platform-monitoring-drawer__section"><h3>Message</h3><pre class="platform-monitoring-drawer__message">{{ selected.message }}</pre></section></template></el-drawer>
+    <el-drawer v-model="drawerOpen" :size="drawerSize" destroy-on-close><template #header><div class="platform-monitoring-drawer__header"><h2>Log Event</h2><p>{{ selected?.service }} · {{ selected?.level }}</p></div></template><template v-if="selected"><section class="platform-monitoring-drawer__section"><h3>Event Details</h3><div class="platform-monitoring-drawer__grid"><div class="platform-monitoring-drawer__field"><span>Time</span><strong :class="{ 'hfl-empty-mark': !selected.timestamp }">{{ selected.timestamp || '—' }}</strong></div><div class="platform-monitoring-drawer__field"><span>Service</span><strong>{{ selected.service }}</strong></div></div></section><section class="platform-monitoring-drawer__section"><h3>Message</h3><pre class="platform-monitoring-drawer__message">{{ selected.message }}</pre></section></template></el-drawer>
   </ModulePage>
 </template>

@@ -97,12 +97,12 @@ watch(() => [pagination.page, pagination.pageSize], load)
         </template>
         <template #table="{ tableMaxHeight }">
           <el-table v-loading="loading" :data="rows" stripe flexible row-key="id" class="hfl-list-table" :max-height="tableMaxHeight">
-            <el-table-column label="Policy" min-width="250"><template #default="{ row }"><button type="button" class="platform-monitoring-page__title-button" @click="openDrawer(row)">{{ row.name }}</button><span class="platform-monitoring-page__cell-meta">{{ row.description || row.type || '—' }}</span></template></el-table-column>
+            <el-table-column label="Policy" min-width="250"><template #default="{ row }"><button type="button" class="platform-monitoring-page__title-button" @click="openDrawer(row)">{{ row.name }}</button><span class="platform-monitoring-page__cell-meta" :class="{ 'hfl-empty-mark': !row.description && !row.type }">{{ row.description || row.type || '—' }}</span></template></el-table-column>
             <el-table-column label="Status" width="110"><template #default="{ row }"><PlatformOpsStatusPill :status="row.enabled ? 'Enabled' : 'Disabled'" /></template></el-table-column>
             <el-table-column label="Severity" width="115"><template #default="{ row }"><PlatformOpsStatusPill :status="row.severity" /></template></el-table-column>
             <el-table-column prop="type" label="Type" min-width="150" />
             <el-table-column label="Account" min-width="150"><template #default="{ row }"><PlatformOpsOrgLink :org-id="row.organization" :org-key="row.organization_key" /></template></el-table-column>
-            <el-table-column label="Updated" width="170"><template #default="{ row }">{{ formatLocalDateTime(row.updated_at, '—') }}</template></el-table-column>
+            <el-table-column label="Updated" width="170"><template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.updated_at }">{{ formatLocalDateTime(row.updated_at, '—') }}</span></template></el-table-column>
             <template #empty><el-empty description="No alert policies found" :image-size="72" /></template>
           </el-table>
         </template>
@@ -126,7 +126,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           <div class="platform-monitoring-drawer__field"><span>Status</span><strong>{{ selected.enabled ? 'Enabled' : 'Disabled' }}</strong></div>
           <div class="platform-monitoring-drawer__field"><span>Severity</span><strong>{{ selected.severity }}</strong></div>
           <div class="platform-monitoring-drawer__field"><span>Type</span><strong>{{ selected.type }}</strong></div>
-          <div class="platform-monitoring-drawer__field"><span>Updated</span><strong>{{ formatLocalDateTime(selected.updated_at, '—') }}</strong></div>
+          <div class="platform-monitoring-drawer__field"><span>Updated</span><strong :class="{ 'hfl-empty-mark': !selected.updated_at }">{{ formatLocalDateTime(selected.updated_at, '—') }}</strong></div>
         </div></section>
         <section class="platform-monitoring-drawer__section"><h3>Description</h3><p class="platform-monitoring-drawer__message">{{ selected.description || 'No description.' }}</p></section>
         <section class="platform-monitoring-drawer__section"><h3>Threshold</h3><pre class="platform-monitoring-drawer__message">{{ JSON.stringify(selected.threshold, null, 2) }}</pre></section>

@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn label="Time" width="150">
-            <template #default="{ row }"><span class="usage-table__time">{{ formatShortDateTime(row.time) }}</span></template>
+            <template #default="{ row }"><span class="usage-table__time" :class="{ 'hfl-empty-mark': !row.time }">{{ formatShortDateTime(row.time) }}</span></template>
           </ElTableColumn>
           <ElTableColumn label="Chat" min-width="180" prop="chat_title" />
           <ElTableColumn label="Backup Source" min-width="220">

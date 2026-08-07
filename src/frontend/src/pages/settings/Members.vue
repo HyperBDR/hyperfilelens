@@ -140,7 +140,7 @@ watch(pageSize, () => {
         </el-table-column>
         <el-table-column :label="t('settings.member.colCreated')" width="170">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatCreatedAt(row.created_at) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatCreatedAt(row.created_at) }}</span>
           </template>
         </el-table-column>
         <template #empty>

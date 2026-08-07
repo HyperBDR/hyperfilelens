@@ -76,7 +76,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           <el-table-column prop="channel_type" label="Type" width="140" />
           <el-table-column label="Account" min-width="170"><template #default="{ row }"><PlatformOpsOrgLink :org-id="row.organization_id" :org-key="row.organization_key" /></template></el-table-column>
           <el-table-column prop="delivery_count" label="Deliveries" width="120" />
-          <el-table-column label="Updated" width="170"><template #default="{ row }">{{ formatLocalDateTime(row.updated_at, '—') }}</template></el-table-column>
+          <el-table-column label="Updated" width="170"><template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.updated_at }">{{ formatLocalDateTime(row.updated_at, '—') }}</span></template></el-table-column>
           <template #empty><el-empty description="No notification channels found" :image-size="72" /></template>
         </el-table></template>
         <template #footer><PlatformOpsPagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :total="pagination.count" /></template>
@@ -98,7 +98,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
           <div class="platform-monitoring-drawer__field"><span>Status</span><strong>{{ selected.is_active ? 'Active' : 'Inactive' }}</strong></div>
           <div class="platform-monitoring-drawer__field"><span>Type</span><strong>{{ selected.channel_type }}</strong></div>
           <div class="platform-monitoring-drawer__field"><span>Deliveries</span><strong>{{ selected.delivery_count }}</strong></div>
-          <div class="platform-monitoring-drawer__field"><span>Updated</span><strong>{{ formatLocalDateTime(selected.updated_at, '—') }}</strong></div>
+          <div class="platform-monitoring-drawer__field"><span>Updated</span><strong :class="{ 'hfl-empty-mark': !selected.updated_at }">{{ formatLocalDateTime(selected.updated_at, '—') }}</strong></div>
         </div></section>
         <section class="platform-monitoring-drawer__section"><h3>Sensitive Configuration</h3><p class="platform-monitoring-drawer__message">Credentials, webhook URLs, recipient addresses, and tokens are masked in Admin Console. Open the customer account in Support Mode to review the tenant-owned configuration.</p></section>
       </template>

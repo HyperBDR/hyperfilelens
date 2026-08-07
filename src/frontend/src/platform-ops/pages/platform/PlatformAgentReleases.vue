@@ -191,7 +191,7 @@ watch([currentPage, pageSize], load)
           </el-table-column>
           <el-table-column prop="name" :label="t('platformOps.platform.colArtifact')" min-width="220" />
           <el-table-column :label="t('platformOps.platform.colSize')" min-width="120">
-            <template #default="{ row }">{{ formatBytes(row.size_bytes) }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.size_bytes }">{{ formatBytes(row.size_bytes) }}</span></template>
           </el-table-column>
           <el-table-column label="Actions" width="250" fixed="right" align="right">
             <template #default="{ row }">

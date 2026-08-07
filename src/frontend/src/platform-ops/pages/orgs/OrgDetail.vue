@@ -325,11 +325,11 @@ watch(orgId, () => { void load() }, { immediate: true })
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.colCreated') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatLocalDateTime(org.created_at, '—') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !org.created_at }">{{ formatLocalDateTime(org.created_at, '—') }}</span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.updatedAt') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatLocalDateTime(org.updated_at, '—') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !org.updated_at }">{{ formatLocalDateTime(org.updated_at, '—') }}</span>
           </div>
         </div>
         <div class="platform-ops-detail__footer">
@@ -347,8 +347,8 @@ watch(orgId, () => { void load() }, { immediate: true })
                 :user-id="org.owner_user_id"
                 :display-name="org.owner_display_name || org.owner_email || '—'"
               />
-              <strong v-else>{{ org.owner_display_name || org.owner_email || '—' }}</strong>
-              <span>{{ org.owner_email || '—' }}</span>
+              <strong v-else :class="{ 'hfl-empty-mark': !org.owner_display_name && !org.owner_email }">{{ org.owner_display_name || org.owner_email || '—' }}</strong>
+              <span :class="{ 'hfl-empty-mark': !org.owner_email }">{{ org.owner_email || '—' }}</span>
             </div>
           </div>
           <el-button v-if="org.owner_user_id" @click="router.push(`/platform-ops/users/${org.owner_user_id}`)">
@@ -395,19 +395,19 @@ watch(orgId, () => { void load() }, { immediate: true })
         <div v-loading="summaryLoading" class="hfl-detail-grid">
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.plan') }}</span>
-            <span class="hfl-detail-row__value">{{ summary?.subscription?.plan_name || '—' }}</span>
+            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !summary?.subscription?.plan_name }">{{ summary?.subscription?.plan_name || '—' }}</span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.subscriptionStatus') }}</span>
-            <span class="hfl-detail-row__value">{{ summary?.subscription?.status || '—' }}</span>
+            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !summary?.subscription?.status }">{{ summary?.subscription?.status || '—' }}</span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.licenseStatus') }}</span>
-            <span class="hfl-detail-row__value">{{ summary?.license?.status || '—' }}</span>
+            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !summary?.license?.status }">{{ summary?.license?.status || '—' }}</span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.orgs.expiresAt') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--mono">
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !(summary?.license?.expires_at || summary?.subscription?.ends_at) }">
               {{ formatLocalDateTime(summary?.license?.expires_at || summary?.subscription?.ends_at, '—') }}
             </span>
           </div>

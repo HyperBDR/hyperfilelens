@@ -2607,7 +2607,10 @@ function onClosed() {
                         </div>
                         <div class="hfl-detail-row">
                           <span class="hfl-detail-row__label">{{ t('protection.backupsPage.flowBackupColLastBackup') }}</span>
-                          <span class="hfl-detail-row__value dp-flow-config-summary__value">
+                          <span
+                            class="hfl-detail-row__value dp-flow-config-summary__value"
+                            :class="{ 'hfl-detail-row__empty': !latestSnapshotForConfig(currentSourceConfig.id) }"
+                          >
                             {{
                               latestSnapshotForConfig(currentSourceConfig.id)
                                 ? formatNullableTime(latestSnapshotForConfig(currentSourceConfig.id)?.finished_at || latestSnapshotForConfig(currentSourceConfig.id)?.started_at || latestSnapshotForConfig(currentSourceConfig.id)?.created_at)
@@ -2636,7 +2639,7 @@ function onClosed() {
                               <span class="create-recovery-plan-mapping__text">{{ dir.path }}</span>
                             </code>
                           </div>
-                          <span v-else>—</span>
+                          <span v-else class="hfl-empty-mark">—</span>
                         </div>
                       </section>
 
@@ -2703,7 +2706,7 @@ function onClosed() {
                           </div>
                           <div class="hfl-detail-row hfl-detail-row--full">
                             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldSchedule') }}</span>
-                            <span class="hfl-detail-row__value">{{ enabledConfigLabel(currentSourcePolicy.schedule?.enabled, currentSourcePolicy.schedule_summary) }}</span>
+                            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': currentSourcePolicy.schedule?.enabled && !currentSourcePolicy.schedule_summary }">{{ enabledConfigLabel(currentSourcePolicy.schedule?.enabled, currentSourcePolicy.schedule_summary) }}</span>
                           </div>
                           <div class="hfl-detail-row hfl-detail-row--full">
                             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.fieldRetention') }}</span>
@@ -3009,7 +3012,7 @@ function onClosed() {
                       </el-table-column>
                       <el-table-column :label="t('protection.backupsPage.snapshotBrowserDirectorySnapshotId')" width="180">
                         <template #default="{ row: dir }">
-                          <span class="hfl-table-cell-mono">{{ dir.kopia_snapshot_id || '—' }}</span>
+                          <span class="hfl-table-cell-mono" :class="{ 'hfl-empty-mark': !dir.kopia_snapshot_id }">{{ dir.kopia_snapshot_id || '—' }}</span>
                         </template>
                       </el-table-column>
                       <el-table-column :label="t('protection.backupDetail.colSnapSize')" width="110" align="right">
@@ -3034,7 +3037,7 @@ function onClosed() {
                           <span v-if="dir.error_message" class="snapshot-directory-error">
                             {{ dir.error_code ? `[${dir.error_code}] ` : '' }}{{ dir.error_message }}
                           </span>
-                          <span v-else class="protection-flow-cell-muted">{{ t('protection.backupDetail.durationDash') }}</span>
+                          <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
                         </template>
                       </el-table-column>
                       <el-table-column
@@ -3084,6 +3087,7 @@ function onClosed() {
                 <template #default="{ row }">
                   <span
                     class="hfl-table-cell-time snapshot-point-time"
+                    :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }"
                     :title="formatNullableTime(row.started_at || row.created_at)"
                   >
                     {{ formatNullableTime(row.started_at || row.created_at) }}
@@ -3094,6 +3098,7 @@ function onClosed() {
                 <template #default="{ row }">
                   <span
                     class="hfl-table-cell-time snapshot-point-time"
+                    :class="{ 'hfl-empty-mark': !row.finished_at }"
                     :title="formatNullableTime(row.finished_at)"
                   >
                     {{ formatNullableTime(row.finished_at) }}
@@ -3249,7 +3254,7 @@ function onClosed() {
                     </span>
                     <span class="dp-snapshot-file-browser__tree-path truncate">{{ selectedSnapshotDirectory.source_path }}</span>
                     <span class="dp-snapshot-file-browser__tree-size">{{ fmtBytes(selectedSnapshotDirectory.size_bytes) }}</span>
-                    <span class="dp-snapshot-file-browser__tree-time">{{ formatNullableTime(selectedSnapshotDirectory.created_at) }}</span>
+                    <span class="dp-snapshot-file-browser__tree-time" :class="{ 'hfl-empty-mark': !selectedSnapshotDirectory.created_at }">{{ formatNullableTime(selectedSnapshotDirectory.created_at) }}</span>
                   </div>
                 </template>
                 <template v-else>
@@ -3339,7 +3344,7 @@ function onClosed() {
                       </span>
                       <span class="dp-snapshot-file-browser__tree-path truncate">{{ data.path }}</span>
                       <span class="dp-snapshot-file-browser__tree-size">{{ data.type === 'dir' ? '—' : fmtBytes(data.size_bytes) }}</span>
-                      <span class="dp-snapshot-file-browser__tree-time">{{ formatNullableTime(data.modified_at) }}</span>
+                      <span class="dp-snapshot-file-browser__tree-time" :class="{ 'hfl-empty-mark': !data.modified_at }">{{ formatNullableTime(data.modified_at) }}</span>
                     </div>
                   </template>
                 </el-tree>
@@ -3395,7 +3400,7 @@ function onClosed() {
                           <span class="restore-record-time-summary__label">
                             {{ t('protection.backupDetail.colStart') }}
                           </span>
-                          <span class="restore-record-time-summary__value">
+                          <span class="restore-record-time-summary__value" :class="{ 'hfl-empty-mark': !(row.task_summary?.started_at || row.created_at) }">
                             {{ formatNullableTime(row.task_summary?.started_at || row.created_at) }}
                           </span>
                         </div>
@@ -3406,7 +3411,7 @@ function onClosed() {
                           <span class="restore-record-time-summary__duration-label">
                             {{ t('protection.backupsPage.flowSourceDetailDuration') }}
                           </span>
-                          <span class="restore-record-time-summary__duration-value">
+                          <span class="restore-record-time-summary__duration-value" :class="{ 'hfl-empty-mark': restoreRecordDuration(row) === t('protection.backupDetail.durationDash') }">
                             {{ restoreRecordDuration(row) }}
                           </span>
                         </span>
@@ -3424,7 +3429,7 @@ function onClosed() {
                           <span class="restore-record-time-summary__label">
                             {{ t('protection.backupDetail.colEnd') }}
                           </span>
-                          <span class="restore-record-time-summary__value">
+                          <span class="restore-record-time-summary__value" :class="{ 'hfl-empty-mark': !row.task_summary?.finished_at }">
                             {{ formatNullableTime(row.task_summary?.finished_at) }}
                           </span>
                         </div>
@@ -3494,7 +3499,7 @@ function onClosed() {
                                     class="create-recovery-plan-mapping__icon"
                                   />
                                   <Folder v-else :size="14" class="create-recovery-plan-mapping__icon" />
-                                  <span class="create-recovery-plan-mapping__text hfl-table-cell-mono">
+                                  <span class="create-recovery-plan-mapping__text hfl-table-cell-mono" :class="{ 'hfl-empty-mark': !item.source_path }">
                                     {{ item.source_path || '—' }}
                                   </span>
                                 </span>
@@ -3596,7 +3601,7 @@ function onClosed() {
                   >
                     {{ row.task_uuid }}
                   </button>
-                  <span v-else>{{ t('protection.backupDetail.durationDash') }}</span>
+                  <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
                 </template>
               </el-table-column>
               <el-table-column
@@ -3652,7 +3657,7 @@ function onClosed() {
                 width="150"
               >
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ formatNullableTime(row.created_at) }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNullableTime(row.created_at) }}</span>
                 </template>
               </el-table-column>
             </el-table>
@@ -3788,7 +3793,7 @@ function onClosed() {
               </el-table-column>
               <el-table-column :label="t('protection.backupDetail.colCreated')" min-width="160">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ formatNullableTime(row.created_at) }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatNullableTime(row.created_at) }}</span>
                 </template>
               </el-table-column>
               <template #empty>
@@ -3936,15 +3941,15 @@ function onClosed() {
             <div class="dp-task-detail__time-grid">
               <div>
                 <span class="dp-task-detail__metric-label">{{ t('protection.backupDetail.colStart') }}</span>
-                <span class="dp-task-detail__time-value">{{ formatNullableTime(activeTask.started_at || activeTask.created_at) }}</span>
+                <span class="dp-task-detail__time-value" :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }">{{ formatNullableTime(activeTask.started_at || activeTask.created_at) }}</span>
               </div>
               <div>
                 <span class="dp-task-detail__metric-label">{{ t('protection.backupDetail.colEnd') }}</span>
-                <span class="dp-task-detail__time-value">{{ formatNullableTime(activeTask.finished_at) }}</span>
+                <span class="dp-task-detail__time-value" :class="{ 'hfl-empty-mark': !activeTask.finished_at }">{{ formatNullableTime(activeTask.finished_at) }}</span>
               </div>
               <div>
                 <span class="dp-task-detail__metric-label">{{ t('protection.backupsPage.flowSourceDetailDuration') }}</span>
-                <span class="dp-task-detail__time-value dp-task-detail__time-value--strong">{{ taskDuration(activeTask) }}</span>
+                <span class="dp-task-detail__time-value dp-task-detail__time-value--strong" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('protection.backupDetail.durationDash') }">{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
           </div>
@@ -4058,10 +4063,10 @@ function onClosed() {
               >
                 <span class="dp-task-detail__step-title">
                   {{ stepDisplayName(step.step_name, activeTask.task_type) }}
-                  <span class="dp-task-detail__step-executed-at">{{ formatNullableTime(step.created_at || activeTask.created_at) }}</span>
+                  <span class="dp-task-detail__step-executed-at" :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }">{{ formatNullableTime(step.created_at || activeTask.created_at) }}</span>
                 </span>
                 <TaskStatusTag :status="step.status" />
-                <span class="dp-task-detail__step-duration">
+                <span class="dp-task-detail__step-duration" :class="{ 'hfl-empty-mark': stepDuration(si) === t('protection.backupDetail.durationDash') }">
                   <Clock3 :size="12" />
                   {{ stepDuration(si) }}
                 </span>
@@ -4097,7 +4102,7 @@ function onClosed() {
                     </span>
                     <span v-if="eventErrorText(event)" class="dp-task-detail__event-error">{{ eventErrorText(event) }}</span>
                   </span>
-                  <span class="dp-task-detail__event-time">{{ formatNullableTime(event.created_at) }}</span>
+                  <span class="dp-task-detail__event-time" :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span>
                 </div>
               </div>
             </article>
@@ -4110,7 +4115,7 @@ function onClosed() {
             <article class="dp-task-detail__step-card">
               <div class="dp-task-detail__step-card-head dp-task-detail__step-card-head--static">
                 <span class="dp-task-detail__step-title">{{ t('protection.backupsPage.flowSourceDetailEvents') }}</span>
-                <span class="dp-task-detail__step-duration">{{ taskDuration(activeTask) }}</span>
+                <span class="dp-task-detail__step-duration" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('protection.backupDetail.durationDash') }">{{ taskDuration(activeTask) }}</span>
               </div>
               <div class="dp-task-detail__event-list">
                 <div v-for="event in unlinkedTaskEvents" :key="event.id" class="dp-task-detail__event-row">
@@ -4127,7 +4132,7 @@ function onClosed() {
                     </span>
                     <span v-if="eventErrorText(event)" class="dp-task-detail__event-error">{{ eventErrorText(event) }}</span>
                   </span>
-                  <span class="dp-task-detail__event-time">#{{ event.seq }} · {{ formatNullableTime(event.created_at) }}</span>
+                  <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
                 </div>
               </div>
             </article>
@@ -4149,7 +4154,7 @@ function onClosed() {
                     </span>
                     <span v-if="eventErrorText(event)" class="dp-task-detail__event-error">{{ eventErrorText(event) }}</span>
                   </span>
-            <span class="dp-task-detail__event-time">#{{ event.seq }} · {{ formatNullableTime(event.created_at) }}</span>
+            <span class="dp-task-detail__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatNullableTime(event.created_at) }}</span></span>
           </div>
         </div>
 
@@ -4240,7 +4245,10 @@ function onClosed() {
             </el-table-column>
             <el-table-column :label="selectedResourceType === 'backup_source' ? t('protection.backupsPage.colRegistered') : t('ops.task.updatedAt')" width="180">
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ formatNullableTime(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }}</span>
+                <span
+                  class="hfl-table-cell-time"
+                  :class="{ 'hfl-empty-mark': !(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }"
+                >{{ formatNullableTime(selectedResourceType === 'backup_source' ? row.registeredAt : row.updatedAt) }}</span>
               </template>
             </el-table-column>
           </el-table>

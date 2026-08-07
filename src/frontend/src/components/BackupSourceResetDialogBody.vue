@@ -126,13 +126,15 @@ function sourceTypeText(row: BackupSourceUnregisterDisplayRow) {
           >
             <template #default="{ row }">
               <ElTag
+                v-if="row.statusLabel && row.statusLabel !== '—'"
                 size="small"
                 effect="light"
                 :type="row.statusTag === 'neutral' ? undefined : (row.statusTag || 'info')"
                 :class="{ 'hfl-tag--neutral': row.statusTag === 'neutral' }"
               >
-                {{ row.statusLabel || '—' }}
+                {{ row.statusLabel }}
               </ElTag>
+              <span v-else class="hfl-empty-mark">—</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
@@ -141,7 +143,7 @@ function sourceTypeText(row: BackupSourceUnregisterDisplayRow) {
             align="right"
           >
             <template #default="{ row }">
-              <span class="hfl-flow-action-dialog__count tabular-nums">
+              <span class="hfl-flow-action-dialog__count tabular-nums" :class="{ 'hfl-empty-mark': row.snapshotCount == null }">
                 {{ row.snapshotCount ?? '—' }}
               </span>
             </template>
@@ -151,7 +153,7 @@ function sourceTypeText(row: BackupSourceUnregisterDisplayRow) {
             width="150"
           >
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt || row.registeredAt === '—' }">
                 {{ row.registeredAt || '—' }}
               </span>
             </template>

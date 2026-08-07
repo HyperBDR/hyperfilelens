@@ -788,7 +788,7 @@ onUnmounted(() => {
                 </div>
                 <div class="hfl-detail-row hfl-detail-row--full">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colCapacity') }}</span>
-                  <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                  <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__value--stacked': capacityParts.total > 0 }">
                     <HflCapacityCell
                       :used-bytes="capacityParts.used"
                       :total-bytes="capacityParts.total"
@@ -806,11 +806,11 @@ onUnmounted(() => {
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
-                  <span class="hfl-detail-row__value">{{ formatNodeDate(row.availability_updated_at) }}</span>
+                  <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !row.availability_updated_at }">{{ formatNodeDate(row.availability_updated_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colRegistered') }}</span>
-                  <span class="hfl-detail-row__value">{{ formatNodeDate(row.created_at) }}</span>
+                  <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !row.created_at }">{{ formatNodeDate(row.created_at) }}</span>
                 </div>
                 <div class="hfl-detail-row">
                   <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colLastHeartbeat') }}</span>

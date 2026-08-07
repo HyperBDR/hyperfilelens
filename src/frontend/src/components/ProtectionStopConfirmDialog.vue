@@ -150,7 +150,7 @@ function confirm() {
                 </ElTag>
                 <span
                   v-else
-                  class="hfl-table-cell-time"
+                  class="hfl-table-cell-time hfl-empty-mark"
                 >—</span>
               </template>
             </ElTableColumn>
@@ -159,7 +159,7 @@ function confirm() {
               min-width="180"
             >
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ detailText(row) }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': detailText(row) === '—' }">{{ detailText(row) }}</span>
               </template>
             </ElTableColumn>
           </ElTable>

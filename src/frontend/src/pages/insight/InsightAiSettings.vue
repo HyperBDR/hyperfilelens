@@ -377,14 +377,14 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.aiSettings.labelProvider')" min-width="120">
-            <template #default="{ row }">{{ row.provider || row.name || '—' }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.provider && !row.name }">{{ row.provider || row.name || '—' }}</span></template>
           </el-table-column>
           <el-table-column :label="t('insight.aiSettings.labelModel')" min-width="160">
-            <template #default="{ row }">{{ row.config?.model || '—' }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.config?.model }">{{ row.config?.model || '—' }}</span></template>
           </el-table-column>
           <el-table-column :label="t('insight.aiSettings.labelApiBase')" min-width="200">
             <template #default="{ row }">
-              <span class="insight-ai-models-mono">{{ row.config?.api_base || '—' }}</span>
+              <span class="insight-ai-models-mono" :class="{ 'hfl-empty-mark': !row.config?.api_base }">{{ row.config?.api_base || '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.aiSettings.labelActive')" width="110">

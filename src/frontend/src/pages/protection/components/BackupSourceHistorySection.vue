@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
         </el-table-column>
         <el-table-column :label="t('protection.backupDetail.colSnapEnd')" min-width="200">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatDate(row.snapshot.endTime) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.snapshot.endTime }">{{ formatDate(row.snapshot.endTime) }}</span>
           </template>
         </el-table-column>
         <el-table-column
@@ -304,12 +304,12 @@ onBeforeUnmount(() => {
         </el-table-column>
         <el-table-column :label="t('protection.backupDetail.colStart')" min-width="170" prop="startTime">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatDate(row.startTime) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.startTime }">{{ formatDate(row.startTime) }}</span>
           </template>
         </el-table-column>
         <el-table-column :label="t('protection.backupDetail.colEnd')" min-width="170" prop="endTime">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatDate(row.endTime) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.endTime }">{{ formatDate(row.endTime) }}</span>
           </template>
         </el-table-column>
         <el-table-column :label="t('protection.backupDetail.colDuration')" width="100" prop="duration" />

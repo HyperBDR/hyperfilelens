@@ -730,7 +730,7 @@ watch(
           </el-table-column>
           <el-table-column :label="t('ops.alertsCenter.policies.targetColumn')" width="130">
             <template #default="{ row }">
-              <span>{{ resourceTypeLabel(row.resourceType || row.resource_type) }}</span>
+              <span :class="{ 'hfl-empty-mark': !(row.resourceType || row.resource_type) }">{{ resourceTypeLabel(row.resourceType || row.resource_type) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('ops.alertsCenter.common.severity')" width="100">
@@ -761,7 +761,7 @@ watch(
           </el-table-column>
           <el-table-column :label="t('ops.alertsCenter.common.updatedAt')" width="170">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.updatedAt || row.updated_at) }">
                 {{ formatDate(row.updatedAt || row.updated_at) }}
               </span>
             </template>
@@ -864,7 +864,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
-                <span class="hfl-detail-row__value">{{ policyTypeLabel(detailPolicy.type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !detailPolicy.type }">{{ policyTypeLabel(detailPolicy.type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.severity') }}</span>
@@ -920,11 +920,11 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span class="hfl-detail-row__value">{{ resourceTypeLabel(detailResourceType(detailPolicy)) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !detailResourceType(detailPolicy) }">{{ resourceTypeLabel(detailResourceType(detailPolicy)) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.updatedAt') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time">
+                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(detailPolicy.updatedAt || detailPolicy.updated_at) }">
                   {{ formatDate(detailPolicy.updatedAt || detailPolicy.updated_at) }}
                 </span>
               </div>
@@ -939,7 +939,7 @@ watch(
                     </span>
                   </template>
                   <template v-else>
-                    <span class="hfl-detail-row__text">{{ detailPolicy.description || t('common.empty') }}</span>
+                    <span class="hfl-detail-row__text" :class="{ 'hfl-empty-mark': !detailPolicy.description }">{{ detailPolicy.description || t('common.empty') }}</span>
                     <ElButton text circle size="small" class="hfl-detail-row__edit" :title="t('common.edit')" @click="beginPolicyInlineEdit('description')">
                       <Pencil :size="13" />
                     </ElButton>

@@ -83,11 +83,11 @@ onMounted(load)
           <div class="hfl-detail-grid">
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.settings.environment.appVersion') }}</span>
-              <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ payload.app_version || '—' }}</span>
+              <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !payload.app_version }">{{ payload.app_version || '—' }}</span>
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.settings.environment.agentVersion') }}</span>
-              <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ payload.agent_version || '—' }}</span>
+              <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !payload.agent_version }">{{ payload.agent_version || '—' }}</span>
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.settings.environment.djangoDebug') }}</span>
@@ -120,7 +120,7 @@ onMounted(load)
           <div v-if="Object.keys(health).length" class="hfl-detail-grid">
             <div v-for="(value, key) in health" :key="key" class="hfl-detail-row hfl-detail-row--full">
               <span class="hfl-detail-row__label platform-env__label"><strong>{{ humanizeKey(String(key)) }}</strong><code>{{ String(key) }}</code></span>
-              <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatValue(value) }}</span>
+              <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': formatValue(value) === '—' }">{{ formatValue(value) }}</span>
             </div>
           </div>
           <el-empty v-else :description="t('platformOps.settings.environment.emptyHealth')" :image-size="80" />

@@ -52,7 +52,8 @@ describe('related backup source detail columns', () => {
       expect(positions.every((position) => position >= 0)).toBe(true)
       expect(positions).toEqual([...positions].sort((a, b) => a - b))
       expect(table).toContain('{{ row.source_ref_id }}')
-      expect(table).toContain('{{ relatedSourceRegisteredAt(row) }}')
+      expect(table).toContain("{{ relatedSourceRegisteredAt(row) || '—' }}")
+      expect(table).toContain("'hfl-empty-mark': !relatedSourceRegisteredAt(row)")
       expect(table).toContain('relatedSourceAvailability(row)')
       expect(table).toContain('relatedSourceAvailabilityLabel(row)')
     }

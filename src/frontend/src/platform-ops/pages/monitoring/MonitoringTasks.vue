@@ -359,7 +359,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               width="100"
             >
               <template #default="{ row }">
-                {{ duration(row) }}
+                <span :class="{ 'hfl-empty-mark': !row.started_at }">{{ duration(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -367,7 +367,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               width="170"
             >
               <template #default="{ row }">
-                {{ displayTime(row.finished_at || row.created_at) }}
+                <span :class="{ 'hfl-empty-mark': !(row.finished_at || row.created_at) }">{{ displayTime(row.finished_at || row.created_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -426,13 +426,13 @@ watch(() => [pagination.page, pagination.pageSize], load)
               <span>{{ t('platformOps.monitoring.colTaskType') }}</span><strong>{{ selected.task_type }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.started') }}</span><strong>{{ displayTime(selected.started_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.started') }}</span><strong :class="{ 'hfl-empty-mark': !selected.started_at }">{{ displayTime(selected.started_at) }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.finished') }}</span><strong>{{ displayTime(selected.finished_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.finished') }}</span><strong :class="{ 'hfl-empty-mark': !selected.finished_at }">{{ displayTime(selected.finished_at) }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.duration') }}</span><strong>{{ duration(selected) }}</strong>
+              <span>{{ t('platformOps.monitoring.duration') }}</span><strong :class="{ 'hfl-empty-mark': !selected.started_at }">{{ duration(selected) }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
               <span>{{ t('platformOps.monitoring.retryCount') }}</span><strong>{{ selected.retry_count }}</strong>

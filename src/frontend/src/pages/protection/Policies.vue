@@ -1206,12 +1206,12 @@ function onMoreDisable() {
           </el-table-column>
           <el-table-column :label="t('protection.policiesPage.colUpdated')" width="180">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ fmtLocalTime(row.updatedAt) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.updatedAt }">{{ fmtLocalTime(row.updatedAt) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('protection.policiesPage.colCreated')" width="180">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ fmtLocalTime(row.createdAt) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.createdAt }">{{ fmtLocalTime(row.createdAt) }}</span>
             </template>
           </el-table-column>
           <template #empty>
@@ -1312,12 +1312,12 @@ function onMoreDisable() {
           </el-table-column>
           <el-table-column :label="t('protection.policiesPage.colUpdated')" width="180">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ fmtLocalTime(row.updatedAt) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.updatedAt }">{{ fmtLocalTime(row.updatedAt) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('protection.policiesPage.colCreated')" width="180">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ fmtLocalTime(row.createdAt) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.createdAt }">{{ fmtLocalTime(row.createdAt) }}</span>
             </template>
           </el-table-column>
           <template #empty>
@@ -1417,7 +1417,7 @@ function onMoreDisable() {
                           />
                         </span>
                       </ElTooltip>
-                      <span v-else class="policy-related-source-cell__trait-empty">
+                      <span v-else class="hfl-empty-mark">
                         {{ t('protection.policiesPage.timeDash') }}
                       </span>
                     </span>
@@ -1438,7 +1438,7 @@ function onMoreDisable() {
               </el-table-column>
               <el-table-column :label="t('protection.backupsPage.colRegistered')" min-width="170">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ relatedSourceRegisteredAt(row) }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }">{{ relatedSourceRegisteredAt(row) || '—' }}</span>
                 </template>
               </el-table-column>
               <template #empty>
@@ -1535,7 +1535,7 @@ function onMoreDisable() {
                           />
                         </span>
                       </ElTooltip>
-                      <span v-else class="policy-related-source-cell__trait-empty">
+                      <span v-else class="hfl-empty-mark">
                         {{ t('protection.policiesPage.timeDash') }}
                       </span>
                     </span>
@@ -1556,7 +1556,7 @@ function onMoreDisable() {
               </el-table-column>
               <el-table-column :label="t('protection.backupsPage.colRegistered')" min-width="170">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ relatedSourceRegisteredAt(row) }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !relatedSourceRegisteredAt(row) }">{{ relatedSourceRegisteredAt(row) || '—' }}</span>
                 </template>
               </el-table-column>
               <template #empty>
@@ -2003,12 +2003,6 @@ function onMoreDisable() {
 
 .policy-related-source-cell__trait-icon {
   flex: 0 0 auto;
-}
-
-.policy-related-source-cell__trait-empty {
-  font-size: 12px;
-  line-height: 17px;
-  color: rgb(100 116 139);
 }
 
 .policy-related-backup-footer {

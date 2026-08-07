@@ -486,13 +486,13 @@ watch(
           </el-table-column>
           <el-table-column :label="t('ops.alertsCenter.active.firstTriggered')" width="170">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.firstTriggeredAt || row.first_triggered_at) }">
                 {{ formatDate(row.firstTriggeredAt || row.first_triggered_at) }}
               </span>
             </template>
           </el-table-column>
           <el-table-column :label="t('ops.alertsCenter.common.duration')" width="100">
-            <template #default="{ row }">{{ duration(row) }}</template>
+            <template #default="{ row }"><span :class="{ 'hfl-empty-mark': (row.durationSeconds ?? row.duration_seconds) == null }">{{ duration(row) }}</span></template>
           </el-table-column>
           <template #empty>
             <el-empty :description="emptyDescription" />
@@ -555,7 +555,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
-                <span class="hfl-detail-row__value">{{ typeLabel(selected.type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selected.type }">{{ typeLabel(selected.type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.id') }}</span>
@@ -577,7 +577,7 @@ watch(
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span class="hfl-detail-row__value">{{ resourceTypeLabel(selected.resourceType || selected.resource_type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !(selected.resourceType || selected.resource_type) }">{{ resourceTypeLabel(selected.resourceType || selected.resource_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.resource') }}</span>
@@ -593,30 +593,30 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.duration') }}</span>
-                <span class="hfl-detail-row__value">{{ duration(selected) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': (selected.durationSeconds ?? selected.duration_seconds) == null }">{{ duration(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.active.firstTriggered') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time">
+                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(selected.firstTriggeredAt || selected.first_triggered_at) }">
                   {{ formatDate(selected.firstTriggeredAt || selected.first_triggered_at) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.updatedAt') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time">
+                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }">
                   {{ formatDate(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }}
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">Current</span>
-                <span class="hfl-detail-row__value">
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': (selected.currentValue ?? selected.current_value) == null }">
                   {{ alertNumericValue(selected.currentValue ?? selected.current_value) }}
                   <template v-if="selected.unit"> {{ selected.unit }}</template>
                 </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">Threshold</span>
-                <span class="hfl-detail-row__value">
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': (selected.thresholdValue ?? selected.threshold_value) == null }">
                   {{ alertNumericValue(selected.thresholdValue ?? selected.threshold_value) }}
                   <template v-if="selected.unit"> {{ selected.unit }}</template>
                 </span>

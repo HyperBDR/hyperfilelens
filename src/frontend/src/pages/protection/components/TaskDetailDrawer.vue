@@ -668,7 +668,7 @@ watch(
             <TaskStatusTag :status="activeTask.status" />
           </div>
           <div class="hfl-task-drawer__header-meta">
-            <span>{{ t('ops.task.ownerLabel') }}: {{ taskOwner || t('ops.task.emptyMark') }}</span>
+            <span>{{ t('ops.task.ownerLabel') }}: <span :class="{ 'hfl-empty-mark': !taskOwner || taskOwner === t('ops.task.emptyMark') }">{{ taskOwner || t('ops.task.emptyMark') }}</span></span>
             <span class="hfl-task-drawer__header-divider" />
             <span class="hfl-task-drawer__uuid">
               {{ activeTask.task_uuid }}
@@ -763,15 +763,15 @@ watch(
             <div class="hfl-task-drawer__time-grid">
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
-                <span class="hfl-task-drawer__time-value">{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
+                <span class="hfl-task-drawer__time-value" :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }">{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
               </div>
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
-                <span class="hfl-task-drawer__time-value">{{ formatTime(activeTask.finished_at) }}</span>
+                <span class="hfl-task-drawer__time-value" :class="{ 'hfl-empty-mark': !activeTask.finished_at }">{{ formatTime(activeTask.finished_at) }}</span>
               </div>
               <div>
                 <span class="hfl-task-drawer__metric-label">{{ t('ops.task.totalDuration') }}</span>
-                <span class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong">{{ taskDuration(activeTask) }}</span>
+                <span class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('ops.task.emptyMark') }">{{ taskDuration(activeTask) }}</span>
               </div>
             </div>
           </div>
@@ -838,7 +838,7 @@ watch(
               >
                 <span class="hfl-task-drawer__step-title">
                   {{ stepDisplayName(step.step_name) }}
-                  <span class="hfl-task-drawer__step-executed-at">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
+                  <span class="hfl-task-drawer__step-executed-at" :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
                 </span>
                 <TaskStatusTag :status="step.status" />
                 <span class="hfl-task-drawer__step-duration"><Clock3 :size="12" /> {{ stepDuration(index) }}</span>
@@ -870,7 +870,7 @@ watch(
                     <span v-if="eventObjectText(event)" class="hfl-task-drawer__event-object"><Link2 :size="11" /><span>{{ eventObjectText(event) }}</span></span>
                     <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
                   </span>
-                  <span class="hfl-task-drawer__event-time">{{ formatTime(event.created_at) }}</span>
+                  <span class="hfl-task-drawer__event-time" :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span>
                 </div>
               </div>
             </article>
@@ -886,7 +886,7 @@ watch(
                 <span class="hfl-task-drawer__event-msg" :class="eventMessageClass(event)">{{ eventDisplayMessage(event) }}</span>
                 <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
               </span>
-              <span class="hfl-task-drawer__event-time">#{{ event.seq }} · {{ formatTime(event.created_at) }}</span>
+              <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
             </div>
           </div>
         </div>
@@ -936,7 +936,7 @@ watch(
               </template>
             </el-table-column>
             <el-table-column :label="t('repositoriesPage.colRegistered')" width="180">
-              <template #default="{ row }"><span class="hfl-table-cell-time">{{ formatTime(row.registeredAt) }}</span></template>
+              <template #default="{ row }"><span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ formatTime(row.registeredAt) }}</span></template>
             </el-table-column>
           </el-table>
           <el-empty v-else :description="t('ops.task.emptyResources')" :image-size="52" />
@@ -987,7 +987,7 @@ watch(
             </template>
           </el-table-column>
           <el-table-column :label="t('protection.backupsPage.colRegistered')" width="180">
-            <template #default="{ row }"><span class="hfl-table-cell-time">{{ formatTime(row.registeredAt) }}</span></template>
+            <template #default="{ row }"><span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ formatTime(row.registeredAt) }}</span></template>
           </el-table-column>
         </el-table>
         <el-table

@@ -73,7 +73,7 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
           <component :is="nasMountProtocolIcon(display.nasProtocolType(row))" :size="12" stroke-width="2.25" />
           {{ display.nasProtocolLabel(row) }}
         </span>
-        <span v-else>—</span>
+        <span v-else class="hfl-empty-mark">—</span>
       </template>
     </el-table-column>
     <el-table-column :label="t('protection.sourceResources.colNasServer')" min-width="140">
@@ -101,7 +101,7 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
       </template>
       <template #default="{ row }">
         <div class="table-stack-cell">
-          <span class="table-stack-cell__primary">{{ display.nasSourceProxyName(row) || '—' }}</span>
+          <span class="table-stack-cell__primary" :class="{ 'hfl-empty-mark': !display.nasSourceProxyName(row) }">{{ display.nasSourceProxyName(row) || '—' }}</span>
           <span v-if="display.nasSourceProxyIp(row)" class="table-stack-cell__secondary">
             {{ display.nasSourceProxyIp(row) }}
           </span>
@@ -128,7 +128,7 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
         >
           {{ t('protection.sourceResources.capacitySyncing') }}
         </span>
-        <span v-else>—</span>
+        <span v-else class="hfl-empty-mark">—</span>
       </template>
     </el-table-column>
     <el-table-column :label="t('protection.sourceResources.colStatus')" width="88">
@@ -142,7 +142,7 @@ const display = useNasSourceListDisplay(toRef(props, 'proxyNodes'))
     </el-table-column>
     <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="170">
       <template #default="{ row }">
-        <span class="hfl-table-cell-time">{{ display.formatDate(display.sourceRegisteredAt(row)) }}</span>
+        <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !display.sourceRegisteredAt(row) }">{{ display.formatDate(display.sourceRegisteredAt(row)) }}</span>
       </template>
     </el-table-column>
     <template #empty>

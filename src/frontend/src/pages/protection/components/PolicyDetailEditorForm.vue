@@ -175,7 +175,7 @@ function enabledText(enabled: boolean) {
           </div>
           <div class="hfl-detail-row policy-detail-editor__pair-item">
             <span class="hfl-detail-row__label">{{ t('protection.policiesPage.scheduleStartsAt') }}</span>
-            <span class="hfl-detail-row__value">{{ policyForm.scheduleStartsAt || emptyText }}</span>
+            <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !policyForm.scheduleStartsAt }">{{ policyForm.scheduleStartsAt || emptyText }}</span>
           </div>
         </div>
         <div v-if="policyForm.sectionScheduleEnabled" class="hfl-detail-row hfl-detail-row--full">
