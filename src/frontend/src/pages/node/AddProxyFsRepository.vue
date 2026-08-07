@@ -942,6 +942,12 @@ watch(enableQuotaAlert, (enabled) => {
               <div class="add-form-preview-section">
                 <h5 class="add-form-preview-section__title">{{ t('addS3Repo.previewConnection') }}</h5>
                 <div class="add-form-preview-row">
+                  <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldRepositoryServerHost') }}</span>
+                  <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !repositoryServerHost }">
+                    {{ repositoryServerHost || t('repositoriesPage.repositoryServerHostNotConfigured') }}
+                  </span>
+                </div>
+                <div class="add-form-preview-row">
                   <span class="add-form-preview-row__label">{{ t('repositoriesPage.fieldProxyNodeDir') }}</span>
                   <span class="add-form-preview-row__value" :class="{ 'add-form-preview-row__value--empty': !proxyNodeDir }">
                     {{ proxyNodeDir || '—' }}

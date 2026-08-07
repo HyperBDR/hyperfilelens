@@ -13,4 +13,9 @@ describe('Add Local Disk Repository proxy availability', () => {
   it('only offers proxy nodes whose availability is online', () => {
     expect(page).toContain("node.role === 'proxy' && node.availability === 'online'")
   })
+
+  it('includes the optional repository server address in the confirmation summary', () => {
+    expect(page).toContain("t('repositoriesPage.fieldRepositoryServerHost')")
+    expect(page).toContain("repositoryServerHost || t('repositoriesPage.repositoryServerHostNotConfigured')")
+  })
 })

@@ -1828,6 +1828,7 @@ export const en = {
     phProxyNodeDir: '/proxy-data/backup-repo',
     hintProxyNodeDir: 'Enter an absolute path on the proxy node, which must be read/write for storing repository data. Recommended path format: /proxy-data/{repo-name}',
     fieldRepositoryServerHost: 'Repository Server Address',
+    repositoryServerHostNotConfigured: 'Not configured',
     phRepositoryServerHost: 'repo-proxy.example.internal',
     hintRepositoryServerHost: 'Optional for same-proxy use. For cross-proxy access, enter a reachable DNS name or IP address without a scheme, path, or port.',
     dirSelectTree: 'Tree Select',

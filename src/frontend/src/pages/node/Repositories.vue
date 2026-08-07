@@ -450,6 +450,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
         proxy_node_name: proxyNodeName || sourceNode.name,
         proxy_node_ip: proxyNodeIp || sourceNode.ip_address,
         proxy_node_dir: proxyNodeDir || loc,
+        proxy_repository_server_host: configString(config, 'proxy_repository_server_host'),
         quota_gb: configNumber(config, 'quota_gb') ?? 0,
         quota_alert_enabled: configBoolean(config, 'quota_alert_enabled') ?? false,
         quota_alert_threshold: configNumber(config, 'quota_alert_threshold') ?? 0,
@@ -1590,6 +1591,11 @@ function localDiskRepositoryPath(row: RepositoryRow) {
 function localDiskHostingProxyNode(row: RepositoryRow) {
   if (row.kind !== 'proxy_fs') return DETAIL_EMPTY
   return proxyNodeLabel(row) || DETAIL_EMPTY
+}
+
+function localDiskRepositoryServerHost(row: RepositoryRow) {
+  if (row.kind !== 'proxy_fs') return DETAIL_EMPTY
+  return row.config.proxy_repository_server_host || t('repositoriesPage.repositoryServerHostNotConfigured')
 }
 
 function nasRepoProxyIp(row: RepositoryRow) {
@@ -2995,6 +3001,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldProxyNodeDir') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ localDiskRepositoryPath(detailRow) }}</span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldRepositoryServerHost') }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ localDiskRepositoryServerHost(detailRow) }}</span>
                   </div>
                 </div>
               </section>
