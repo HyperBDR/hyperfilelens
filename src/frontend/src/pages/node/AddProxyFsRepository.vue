@@ -43,7 +43,9 @@ const proxyDirTreeRef = ref<InstanceType<typeof ElTree>>()
 const proxyNodesRefreshing = ref(false)
 const proxyNodes = ref<ApiNode[]>([])
 
-const availableProxyNodes = computed(() => proxyNodes.value.filter((node) => node.role === 'proxy'))
+const availableProxyNodes = computed(() =>
+  proxyNodes.value.filter((node) => node.role === 'proxy' && node.availability === 'online'),
+)
 const selectedProxyNodeName = computed(() =>
   availableProxyNodes.value.find((node) => node.id === proxyNodeId.value)?.name || '',
 )
@@ -388,7 +390,7 @@ async function refreshProxyDirectory(data: TreeNode) {
 }
 
 async function loadProxyNodes() {
-  proxyNodes.value = await listAllNodes({ role: 'proxy', status: 'online' }).catch(() => [])
+  proxyNodes.value = await listAllNodes({ role: 'proxy' }).catch(() => [])
 }
 
 async function refreshProxyNodesManually() {
