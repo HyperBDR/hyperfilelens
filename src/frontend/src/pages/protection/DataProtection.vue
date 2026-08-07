@@ -68,6 +68,7 @@ import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { flowSourceReadyStatus } from '../../lib/flowSourceDisplay'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
+import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import {
   useProtectionDemoStore,
   type DemoBackup,
@@ -1506,18 +1507,6 @@ function syncStep2WizardCountFromPipeline() {
   step2SelectableCount.value = pipelineStep2Count.value
 }
 
-async function ensureSelectableCatalog(ids: string[], signal?: AbortSignal) {
-  const missing = ids.filter((id) => isBackupSelectableId(id) && !backupSelectableById.value.has(id))
-  if (!missing.length) return
-  try {
-    const list = await listBackupSelectableSources({ ids: missing.join(',') }, { signal })
-    rememberSelectableRows(list.results.map(mapBackupSelectableToFlowRow))
-  } catch (e) {
-    if (pageRequests.isAbortError(e)) throw e
-    /* best-effort for step2 display */
-  }
-}
-
 async function refreshSelectableCatalog(ids: string[], signal?: AbortSignal) {
   const realIds = normalizeSourceIdList(ids.filter(isBackupSelectableId))
   if (!realIds.length) return
@@ -1743,6 +1732,7 @@ function openRecoveryWithBackupIds(backupIds: string[]) {
     ElMessage.warning({ message: t('protection.backupsPage.msgPickBackupForRecovery'), grouping: true })
     return
   }
+  void restoreTargetCatalog.ensureByIds(backupIds.map(backupSourceHostId).filter(Boolean))
   invalidateRecoverySnapshotLists(backupIds)
   recOpen.value = true
   ensureRecoveryNodes()
@@ -2055,15 +2045,14 @@ const proxyNodesRefreshing = ref(false)
 const recoveryNodeRows = ref<ApiNode[]>([])
 const recoveryNodeLoading = ref(false)
 const recoveryNodeLoaded = ref(false)
-const RECOVERY_TARGET_HOST_PAGE_SIZE = 100
-const recoveryTargetHostRows = ref<FlowSourceRow[]>([])
-const recoveryTargetHostCount = ref(0)
-const recoveryTargetHostPage = ref(0)
-const recoveryTargetHostSearch = ref('')
-const recoveryTargetHostLoading = ref(false)
-const recoveryTargetHostLoadingMore = ref(false)
-let recoveryTargetHostRequestSeq = 0
-let recoveryTargetHostSearchTimer: ReturnType<typeof setTimeout> | null = null
+const restoreTargetCatalog = useRestoreTargetCatalog()
+const recoveryTargetHostRows = computed(() => restoreTargetCatalog.rows.value.map(mapBackupSelectableToFlowRow))
+const recoveryTargetHostLoading = restoreTargetCatalog.loading
+const recoveryTargetHostLoadingMore = restoreTargetCatalog.loadingMore
+const recoveryTargetHostError = restoreTargetCatalog.error
+watch(restoreTargetCatalog.allRecords, (records) => {
+  rememberSelectableRows(records.map(mapBackupSelectableToFlowRow))
+}, { flush: 'sync' })
 const inlineEditorMode = computed<'recovery' | null>(() => {
   if (recOpen.value) return 'recovery'
   return null
@@ -2103,62 +2092,13 @@ function ensureRecoveryNodes() {
 }
 
 async function loadRecoveryTargetHostOptions(opts: { reset?: boolean } = {}) {
-  const reset = opts.reset === true
-  if (recoveryTargetHostLoading.value || recoveryTargetHostLoadingMore.value) return
-  const nextPage = reset ? 1 : recoveryTargetHostPage.value + 1
-  if (!reset && recoveryTargetHostCount.value > 0 && recoveryTargetHostRows.value.length >= recoveryTargetHostCount.value) return
-  const seq = ++recoveryTargetHostRequestSeq
-  if (reset) recoveryTargetHostLoading.value = true
-  else recoveryTargetHostLoadingMore.value = true
-  try {
-    const page = await listBackupSelectableSources({
-      page: nextPage,
-      page_size: RECOVERY_TARGET_HOST_PAGE_SIZE,
-      search: recoveryTargetHostSearch.value.trim(),
-      status: 'online',
-    })
-    if (seq !== recoveryTargetHostRequestSeq) return
-    const rows = page.results.map(mapBackupSelectableToFlowRow)
-    rememberSelectableRows(rows)
-    if (reset) {
-      recoveryTargetHostRows.value = rows
-    } else {
-      const merged = new Map(recoveryTargetHostRows.value.map((row) => [row.id, row]))
-      for (const row of rows) merged.set(row.id, row)
-      recoveryTargetHostRows.value = [...merged.values()]
-    }
-    recoveryTargetHostCount.value = page.count
-    recoveryTargetHostPage.value = nextPage
-  } catch (e) {
-    if (!pageRequests.isAbortError(e)) {
-      if (reset) recoveryTargetHostRows.value = []
-      if (reset) recoveryTargetHostCount.value = 0
-    }
-  } finally {
-    if (seq === recoveryTargetHostRequestSeq) {
-      // Keep the popper open until newly fetched options have registered with ElSelect.
-      await nextTick()
-      recoveryTargetHostLoading.value = false
-      recoveryTargetHostLoadingMore.value = false
-    }
-  }
+  if (opts.reset === true) await restoreTargetCatalog.reset()
+  else await restoreTargetCatalog.loadMore()
+  rememberSelectableRows(restoreTargetCatalog.allRecords.value.map(mapBackupSelectableToFlowRow))
 }
 
 function searchRecoveryTargetHostOptions(query: string) {
-  const normalizedQuery = query.trim()
-  if (normalizedQuery === recoveryTargetHostSearch.value) {
-    // Element Plus invokes remote-method with an empty query whenever the
-    // dropdown opens. Reuse the step's initial fetch instead of starting it again.
-    if (!recoveryTargetHostRows.value.length && !recoveryTargetHostLoading.value && !recoveryTargetHostLoadingMore.value) {
-      void loadRecoveryTargetHostOptions({ reset: true })
-    }
-    return
-  }
-  recoveryTargetHostSearch.value = normalizedQuery
-  if (recoveryTargetHostSearchTimer) clearTimeout(recoveryTargetHostSearchTimer)
-  recoveryTargetHostSearchTimer = setTimeout(() => {
-    void loadRecoveryTargetHostOptions({ reset: true })
-  }, 180)
+  restoreTargetCatalog.setSearch(query)
 }
 
 function onRecoveryTargetNodeSelectVisible(visible: boolean) {
@@ -2170,7 +2110,7 @@ function onRecoveryTargetNodePopupScroll(event: Event | { scrollTop?: number; cl
   const target = (event instanceof Event ? event.target : event) as HTMLElement | null
   if (!target) return
   const remaining = target.scrollHeight - target.scrollTop - target.clientHeight
-  if (remaining <= 48) void loadRecoveryTargetHostOptions()
+  if (remaining <= 48) void restoreTargetCatalog.loadMore()
 }
 
 async function refreshProxyNodesManually() {
@@ -2625,10 +2565,6 @@ onUnmounted(() => {
   if (taskSearchDebounceTimer) {
     clearTimeout(taskSearchDebounceTimer)
     taskSearchDebounceTimer = null
-  }
-  if (recoveryTargetHostSearchTimer) {
-    clearTimeout(recoveryTargetHostSearchTimer)
-    recoveryTargetHostSearchTimer = null
   }
   flowTableZoneObserver?.disconnect()
   flowTableZoneObserver = null
@@ -5601,7 +5537,8 @@ async function initializeFixedSnapshotRestore() {
     }
     fixedRestoreSnapshot.value = detail
     const sourceId = endpointUiId(detail.source_type, Number(detail.source_ref_id))
-    await ensureSelectableCatalog([sourceId])
+    await restoreTargetCatalog.ensureByIds([sourceId])
+    rememberSelectableRows(restoreTargetCatalog.allRecords.value.map(mapBackupSelectableToFlowRow))
 
     let config = backupConfigDetailById.value.get(Number(detail.backup_config_id))
     if (!config) {
@@ -6580,11 +6517,16 @@ type RecoveryTargetNodeOption = {
   sourceSummary: RecoverySourceSummary
   node?: ApiNode
   source?: FlowSourceRow
+  selectable: boolean
+  unavailableReason: 'offline' | 'busy' | null
 }
 
 const recRecoveryDestStepReady = computed(() => {
   if (!recBackupSourceGroups.value.length) return false
-  return recBackupSourceGroups.value.every((group) => !!recoveryDestConfiguredEntryForHost(group.hostId))
+  return recBackupSourceGroups.value.every((group) => {
+    const targetId = recoveryDestConfiguredEntryForHost(group.hostId)?.hostId || ''
+    return Boolean(targetId && restoreTargetCatalog.isSelectable(targetId))
+  })
 })
 
 const recRecoveryDestSourceRows = computed<RecRecoveryDestSourceRow[]>(() =>
@@ -6653,18 +6595,21 @@ function recoverySourceTargetOption(source: FlowSourceRow, sourceHostId: string)
     sourceType: source.type,
     sourceSummary,
     source,
+    selectable: restoreTargetCatalog.isSelectable(source.id),
+    unavailableReason: source.availability !== 'online' ? 'offline' : restoreTargetCatalog.isSelectable(source.id) ? null : 'busy',
   }
 }
 
 function recoveryOriginalTargetOptions(sourceHostId: string): RecoveryTargetNodeOption[] {
   const source = backupSelectableById.value.get(sourceHostId) ?? recoveryOriginalSourceById(sourceHostId)
-  if (!source || !flowSourceCanOperate(source)) return []
+  if (!source || !restoreTargetCatalog.isSelectable(sourceHostId)) return []
   return [recoverySourceTargetOption(source, sourceHostId)]
 }
 
 function recoveryTargetNodeOptionsForSource(sourceHostId: string): RecoveryTargetNodeOption[] {
-  return recoveryTargetHostRows.value
-    .map((source) => recoverySourceTargetOption(source, sourceHostId))
+  const currentTargetId = recoveryTargetNodeModelForSource(sourceHostId)
+  return restoreTargetCatalog.options([currentTargetId])
+    .map(({ source }) => recoverySourceTargetOption(mapBackupSelectableToFlowRow(source), sourceHostId))
 }
 
 
@@ -6710,6 +6655,7 @@ function setRecoveryTargetNodeForSource(hostId: string, optionValue: string | nu
     return
   }
   const value = String(optionValue)
+  if (!restoreTargetCatalog.isSelectable(value)) return
   const parsed = parseEndpointUiId(value)
   if (!parsed && !backupSelectableById.value.get(value)) return
   const entry: RecoveryDestinationEntry = {
@@ -8452,6 +8398,7 @@ function onRecoveryEntryModeChange(mode: string | number | boolean | undefined) 
 
 function applyRecoveryPlans(plans: RecoveryPlanSummary[]) {
   if (!plans.length) return
+  void restoreTargetCatalog.ensureByIds(plans.map((plan) => plan.destHostId).filter(Boolean))
   recBackupIds.value = uniqueBackupIds(plans.map((plan) => plan.backupId))
   recBackupId.value = plans[0].backupId
   recSnapshotMap.value = Object.fromEntries(plans.map((plan) => [plan.backupId, plan.snapshotId]))
@@ -11374,6 +11321,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         :key="option.value"
                         :label="option.label"
                         :value="option.value"
+                        :disabled="!option.selectable"
                       >
                         <div class="recovery-target-node-option">
                           <div class="recovery-target-node-option__main">
@@ -11416,6 +11364,25 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                       >
                         <span class="recovery-target-node-option__loading">{{ t('common.loading') }}</span>
                       </el-option>
+                      <el-option
+                        v-else-if="recoveryTargetHostError"
+                        key="recovery-target-load-more-error"
+                        disabled
+                        value="__load_more_error__"
+                        :label="t('protection.backupsPage.recoveryTargetLoadFailed')"
+                      >
+                        <ElButton link type="primary" @click.stop="restoreTargetCatalog.retry">
+                          {{ t('common.retry') }}
+                        </ElButton>
+                      </el-option>
+                      <template #empty>
+                        <div class="py-3 text-center text-xs text-slate-500">
+                          <span>{{ recoveryTargetHostError ? t('protection.backupsPage.recoveryTargetLoadFailed') : t('protection.backupsPage.recoveryTargetEmpty') }}</span>
+                          <ElButton v-if="recoveryTargetHostError" link type="primary" @click.stop="restoreTargetCatalog.retry">
+                            {{ t('common.retry') }}
+                          </ElButton>
+                        </div>
+                      </template>
                     </el-select>
                   </div>
                 </template>
