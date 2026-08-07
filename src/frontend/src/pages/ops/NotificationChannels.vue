@@ -1317,11 +1317,11 @@ watch(
                 >
                   {{ logStatusLabel(channelLastDeliveryStatus(row)) }}
                 </el-tag>
-                <div class="hfl-ops-cell-stack__meta hfl-table-cell-time">
+                <div class="hfl-ops-cell-stack__meta hfl-table-cell-time" :class="{ 'hfl-empty-mark': !channelLastDeliveryAt(row) }">
                   {{ formatDate(channelLastDeliveryAt(row)) }}
                 </div>
               </div>
-              <span v-else class="hfl-table-cell-muted">{{ t('common.empty') }}</span>
+              <span v-else class="hfl-empty-mark">{{ t('common.empty') }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -1329,7 +1329,7 @@ watch(
             width="170"
           >
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ formatDate(row.updatedAt || row.updated_at) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.updatedAt || row.updated_at) }">{{ formatDate(row.updatedAt || row.updated_at) }}</span>
             </template>
           </el-table-column>
           <template #empty>
@@ -1496,25 +1496,25 @@ watch(
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.colCreatedAt') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time">
+                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(detailChannel(details)?.createdAt || detailChannel(details)?.created_at) }">
                         {{ formatDate(detailChannel(details)?.createdAt || detailChannel(details)?.created_at) }}
                       </span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.colUpdatedAt') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time">
+                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(detailChannel(details)?.updatedAt || detailChannel(details)?.updated_at) }">
                         {{ formatDate(detailChannel(details)?.updatedAt || detailChannel(details)?.updated_at) }}
                       </span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.lastSuccess') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time">
+                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !details.stats?.last_success_at }">
                         {{ formatDate(details.stats?.last_success_at) }}
                       </span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('ops.notification.lastFailed') }}</span>
-                      <span class="hfl-detail-row__value hfl-table-cell-time">
+                      <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !details.stats?.last_failed_at }">
                         {{ formatDate(details.stats?.last_failed_at) }}
                       </span>
                     </div>
@@ -1570,7 +1570,7 @@ watch(
                       v-if="summarizeConfig(detailChannel(details)).length === 0"
                       class="hfl-detail-row hfl-detail-row--full"
                     >
-                      <span class="hfl-detail-row__value hfl-table-cell-muted">{{ t('common.empty') }}</span>
+                      <span class="hfl-detail-row__value hfl-detail-row__empty">{{ t('common.empty') }}</span>
                     </div>
                   </div>
                 </section>
@@ -1683,7 +1683,7 @@ watch(
                   width="170"
                 >
                   <template #default="{ row }">
-                    <span class="hfl-table-cell-time">{{ formatDate(row.sent_at || row.sentAt) }}</span>
+                    <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.sent_at || row.sentAt) }">{{ formatDate(row.sent_at || row.sentAt) }}</span>
                   </template>
                 </el-table-column>
                 <template #empty>
@@ -1787,7 +1787,7 @@ watch(
               width="140"
             >
               <template #default="{ row }">
-                <span class="notification-batch-impact__hint">{{ row.hint || '—' }}</span>
+                <span class="notification-batch-impact__hint" :class="{ 'hfl-empty-mark': !row.hint }">{{ row.hint || '—' }}</span>
               </template>
             </ElTableColumn>
           </ElTable>

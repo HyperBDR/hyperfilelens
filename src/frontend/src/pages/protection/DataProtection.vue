@@ -9507,7 +9507,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         </el-table-column>
         <el-table-column :label="t('protection.backupsPage.colRegistered')" width="154">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -9661,7 +9661,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         </el-table-column>
         <el-table-column :label="t('protection.backupsPage.colRegistered')" width="154">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -9853,7 +9853,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </ul>
               </HflPopover>
             </div>
-            <span v-else class="protection-flow-cell-muted">{{ t('protection.backupDetail.durationDash') }}</span>
+            <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
           </template>
         </el-table-column>
         <el-table-column :label="t('protection.backupsPage.flowBackupColCurrentTaskStatus')" min-width="228">
@@ -10002,7 +10002,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 {{ t('protection.backupsPage.flowSourceTargetOverflow', { n: sourceTargetsOverflowCount(row.id) }) }}
               </button>
             </div>
-            <span v-else class="protection-flow-cell-muted">{{ t('protection.backupDetail.durationDash') }}</span>
+            <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
           </template>
         </el-table-column>
         <el-table-column
@@ -10046,7 +10046,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </div>
               </div>
             </HflPopover>
-            <span v-else class="protection-flow-cell-muted">{{ t('protection.backupDetail.durationDash') }}</span>
+            <span v-else class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
           </template>
         </el-table-column>
         <el-table-column
@@ -10250,7 +10250,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         </el-table-column>
         <el-table-column :label="t('protection.backupsPage.colRegistered')" width="184">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registeredAt }">{{ flowSourceRegisteredAt(row.registeredAt) }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -10633,12 +10633,12 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             </el-table-column>
             <el-table-column :label="t('protection.backupsPage.flowRestoreRecordColCreated')" min-width="150">
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ fmtLocalTime(row.startedAt) }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.startedAt }">{{ fmtLocalTime(row.startedAt) }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('protection.backupsPage.flowRestoreRecordColFinished')" min-width="150">
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ row.endedAt ? fmtLocalTime(row.endedAt) : t('protection.backupDetail.durationDash') }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.endedAt }">{{ row.endedAt ? fmtLocalTime(row.endedAt) : t('protection.backupDetail.durationDash') }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -10702,7 +10702,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           @click="onBackupPickSelected(backup)"
         >
           <span class="font-medium text-slate-800">{{ backup.name }}</span>
-          <span class="block text-xs text-slate-500 mt-0.5 truncate">{{ backup.sources[0]?.path || '—' }}</span>
+          <span class="block text-xs text-slate-500 mt-0.5 truncate" :class="{ 'hfl-empty-mark': !backup.sources[0]?.path }">{{ backup.sources[0]?.path || '—' }}</span>
         </button>
       </div>
     </el-dialog>
@@ -11059,7 +11059,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </button>
                       </el-option>
                     </el-select>
-                    <span v-else class="text-xs text-slate-400">—</span>
+                    <span v-else class="hfl-empty-mark">—</span>
                   </template>
                 </el-table-column>
               </el-table>

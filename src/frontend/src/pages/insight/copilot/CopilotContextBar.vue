@@ -132,8 +132,8 @@ function openBackupDetail() {
         <h3>{{ t('insight.copilot.detailsDataSource') }}</h3>
         <dl><dt>{{ t('insight.copilot.dataOriginLabel') }}</dt><dd>{{ originLabel }}</dd></dl>
         <dl><dt>{{ t('insight.kb.fieldBackupSource') }}</dt><dd>{{ sourceName }}</dd></dl>
-        <dl><dt>{{ t('insight.kb.fieldSnapshot') }}</dt><dd>{{ session.snapshot_created_at ? formatLocalDateTime(session.snapshot_created_at) : '—' }}</dd></dl>
-        <dl><dt>{{ t('insight.copilot.snapshotSizeLabel') }}</dt><dd>{{ session.snapshot_size_bytes != null ? formatBytes(session.snapshot_size_bytes) : '—' }}</dd></dl>
+        <dl><dt>{{ t('insight.kb.fieldSnapshot') }}</dt><dd :class="{ 'hfl-empty-mark': !session.snapshot_created_at }">{{ session.snapshot_created_at ? formatLocalDateTime(session.snapshot_created_at) : '—' }}</dd></dl>
+        <dl><dt>{{ t('insight.copilot.snapshotSizeLabel') }}</dt><dd :class="{ 'hfl-empty-mark': session.snapshot_size_bytes == null }">{{ session.snapshot_size_bytes != null ? formatBytes(session.snapshot_size_bytes) : '—' }}</dd></dl>
         <div v-if="dataContext?.restore_path || dataContext?.backup_detail_path" class="copilot-details__actions">
           <ElButton v-if="dataContext?.restore_path" size="small" @click="openRestore">{{ t('insight.copilot.openSnapshotRestore') }}</ElButton>
           <ElButton v-if="dataContext?.backup_detail_path" size="small" @click="openBackupDetail">{{ t('insight.copilot.openBackupDetail') }}</ElButton>
@@ -146,7 +146,7 @@ function openBackupDetail() {
       <section>
         <h3>{{ t('insight.copilot.detailsProcessingLocation') }}</h3>
         <dl><dt>{{ t('insight.copilot.gatewayTypeLabel') }}</dt><dd>{{ compactGatewayType }}</dd></dl>
-        <dl><dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt><dd>{{ session.gateway_name || '—' }}</dd></dl>
+        <dl><dt>{{ t('insight.copilot.gatewayNameLabel') }}</dt><dd :class="{ 'hfl-empty-mark': !session.gateway_name }">{{ session.gateway_name || '—' }}</dd></dl>
         <p class="copilot-details__note">{{ t('insight.copilot.processingLocationNote') }}</p>
       </section>
       <section v-if="conversion">

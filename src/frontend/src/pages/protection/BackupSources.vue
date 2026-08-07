@@ -726,7 +726,7 @@ function agentInstalledVersion(node: ApiNode) {
 
 function agentVersion(node: ApiNode) {
   const version = agentInstalledVersion(node)
-  return version || '--'
+  return version || '—'
 }
 
 
@@ -2137,7 +2137,7 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colHostIp')" min-width="120">
                 <template #default="{ row }">
-                  <span>{{ row.ip_address?.trim() || '—' }}</span>
+                  <span :class="{ 'hfl-empty-mark': !row.ip_address?.trim() }">{{ row.ip_address?.trim() || '—' }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="OS" min-width="105">
@@ -2152,17 +2152,17 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colCpu')" min-width="76">
                 <template #default="{ row }">
-                  <span>{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+                  <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colMemory')" min-width="90">
                 <template #default="{ row }">
-                  <span>{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
+                  <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colDiskCount')" min-width="78">
                 <template #default="{ row }">
-                  <span>{{ nodeDiskCount(row) ?? '—' }}</span>
+                  <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colCapacity')" min-width="170">
@@ -2195,7 +2195,7 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ formatDate(row.created_at) }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatDate(row.created_at) }}</span>
                 </template>
               </el-table-column>
               <template #empty>
@@ -2256,7 +2256,7 @@ onUnmounted(() => {
                     <component :is="nasMountProtocolIcon(nasProtocolType(row))" :size="12" stroke-width="2.25" />
                     {{ nasProtocolLabel(row) }}
                   </span>
-                  <span v-else>—</span>
+                  <span v-else class="hfl-empty-mark">—</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colNasServer')" min-width="115">
@@ -2284,7 +2284,7 @@ onUnmounted(() => {
                 </template>
                 <template #default="{ row }">
                   <div class="table-stack-cell">
-                    <span class="table-stack-cell__primary">{{ nasSourceProxyName(row) || '—' }}</span>
+                    <span class="table-stack-cell__primary" :class="{ 'hfl-empty-mark': !nasSourceProxyName(row) }">{{ nasSourceProxyName(row) || '—' }}</span>
                     <span v-if="sourceNeedsProxyRebind(row)" class="table-stack-cell__secondary source-needs-proxy">
                       {{ t('protection.sourceResources.needsProxyRebind') }}
                     </span>
@@ -2309,7 +2309,7 @@ onUnmounted(() => {
                   <span v-else-if="nasShouldRefreshCapacity(row)" class="source-capacity-pending">
                     {{ t('protection.sourceResources.capacitySyncing') }}
                   </span>
-                  <span v-else>—</span>
+                  <span v-else class="hfl-empty-mark">—</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colAvailability')" min-width="110" align="center" header-align="center">
@@ -2323,7 +2323,7 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column :label="t('protection.sourceResources.colRegistered')" min-width="145">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ formatDate(sourceRegisteredAt(row)) }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !sourceRegisteredAt(row) }">{{ formatDate(sourceRegisteredAt(row)) }}</span>
                 </template>
               </el-table-column>
               <template #empty>

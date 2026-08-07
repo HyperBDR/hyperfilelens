@@ -618,7 +618,7 @@ onMounted(refresh)
           </div>
           <div>
             <span>{{ t('dashboard.ribbon.capacityTotal') }}</span>
-            <strong>{{ storageTotalCapacityLabel }}</strong>
+            <strong :class="{ 'hfl-empty-mark': storageTotalCapacityLabel === '—' }">{{ storageTotalCapacityLabel }}</strong>
           </div>
         </div>
       </RouterLink>
@@ -782,7 +782,7 @@ onMounted(refresh)
 	                      :class="{ 'storage-item__bytes--unlimited': repo.capacityMode !== 'known' }"
 	                    >
 	                      <span class="storage-item__used">{{ formatBytes(repo.usedBytes) }}</span>
-	                      <span class="storage-item__capacity">/ {{ repoCapacityLabel(repo) }}</span>
+                      <span class="storage-item__capacity" :class="{ 'hfl-empty-mark': repoCapacityLabel(repo) === '—' }">{{ repoCapacityLabel(repo) === '—' ? '—' : `/ ${repoCapacityLabel(repo)}` }}</span>
 	                      <span v-if="repo.capacityMode === 'known' && repo.pct !== null" class="storage-item__pct">
 	                        {{ repo.pct }}%
 	                      </span>
@@ -950,7 +950,7 @@ onMounted(refresh)
               </div>
               <div class="running-item__meta">
                 <span>{{ taskTypeLabel(task.task_type) }}</span>
-                <span>{{ formatTime(task.started_at || task.created_at) }}</span>
+                <span :class="{ 'hfl-empty-mark': !(task.started_at || task.created_at) }">{{ formatTime(task.started_at || task.created_at) }}</span>
               </div>
             </div>
           </div>

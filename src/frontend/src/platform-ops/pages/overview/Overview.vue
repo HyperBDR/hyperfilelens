@@ -482,7 +482,7 @@ onMounted(load)
                     </td>
                     <td>
                       <span class="overview-table__primary">{{ row.title }}</span>
-                      <span class="overview-table__secondary">{{ row.resource_name || row.resource_type || '—' }}</span>
+                      <span class="overview-table__secondary" :class="{ 'hfl-empty-mark': !row.resource_name && !row.resource_type }">{{ row.resource_name || row.resource_type || '—' }}</span>
                     </td>
                     <td>{{ row.organization_key }}</td>
                     <td class="overview-table__time">

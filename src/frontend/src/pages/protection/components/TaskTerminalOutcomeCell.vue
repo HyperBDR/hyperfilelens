@@ -101,7 +101,7 @@ const outcome = computed(() => {
       <span v-if="outcome.reason" class="task-terminal-outcome__reason">{{ outcome.reason }}</span>
     </span>
   </span>
-  <span v-else class="task-terminal-outcome task-terminal-outcome--empty">—</span>
+  <span v-else class="task-terminal-outcome task-terminal-outcome--empty hfl-empty-mark">—</span>
 </template>
 
 <style scoped>

@@ -60,11 +60,11 @@ function bindNodeLabel(target: TargetRepositoryItem): string {
 }
 
 function locationForTarget(target: TargetRepositoryItem): string {
-  return target.location || '-'
+  return target.location || '—'
 }
 
 function formatBytes(value: number | null | undefined): string {
-  if (!value || value <= 0) return '-'
+  if (!value || value <= 0) return '—'
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   let v = value
   let i = 0

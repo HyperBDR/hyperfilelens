@@ -423,18 +423,18 @@ watch(
           </el-table-column>
           <el-table-column :label="t('insight.assistants.colAgentModel')" min-width="180">
             <template #default="{ row }">
-              <span class="insight-assistants-model">{{ agentModelLabel(row) }}</span>
+              <span class="insight-assistants-model" :class="{ 'hfl-empty-mark': agentModelLabel(row) === '—' }">{{ agentModelLabel(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.assistants.colMultimodalModel')" min-width="180">
             <template #default="{ row }">
-              <span class="insight-assistants-model">{{ multimodalModelLabel(row) }}</span>
+              <span class="insight-assistants-model" :class="{ 'hfl-empty-mark': multimodalModelLabel(row) === '—' }">{{ multimodalModelLabel(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.assistants.colKnowledgeSource')" min-width="220">
             <template #default="{ row }">
               <div class="insight-assistants-identity">
-                <strong>{{ knowledgeSourceName(row) }}</strong>
+                <strong :class="{ 'hfl-empty-mark': knowledgeSourceName(row) === '—' }">{{ knowledgeSourceName(row) }}</strong>
                 <span v-if="knowledgeSourceMeta(row)">{{ knowledgeSourceMeta(row) }}</span>
               </div>
             </template>

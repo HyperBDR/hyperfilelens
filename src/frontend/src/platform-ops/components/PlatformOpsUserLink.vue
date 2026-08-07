@@ -13,7 +13,7 @@ defineProps<{
   >
     {{ displayName || userId }}
   </router-link>
-  <span v-else>{{ displayName || '—' }}</span>
+  <span v-else :class="{ 'hfl-empty-mark': !displayName }">{{ displayName || '—' }}</span>
 </template>
 
 <style scoped>

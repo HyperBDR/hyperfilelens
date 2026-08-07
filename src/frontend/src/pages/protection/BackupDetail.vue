@@ -1032,10 +1032,10 @@ function closeDeleteSnapshotDialog() {
         <el-tab-pane :label="t('protection.backupDetail.tabDetail')" name="detail">
           <el-descriptions :column="1" border size="default" class="max-w-3xl">
             <el-descriptions-item :label="t('protection.backupDetail.labelName')">{{ backup.name }}</el-descriptions-item>
-            <el-descriptions-item :label="t('protection.backupDetail.labelRemark')">{{ backup.remark || t('protection.backupDetail.durationDash') }}</el-descriptions-item>
+            <el-descriptions-item :label="t('protection.backupDetail.labelRemark')"><span :class="{ 'hfl-empty-mark': !backup.remark }">{{ backup.remark || t('protection.backupDetail.durationDash') }}</span></el-descriptions-item>
             <el-descriptions-item :label="t('protection.backupDetail.labelSnapshotCount')">{{ backup.snapshots.length }}</el-descriptions-item>
             <el-descriptions-item :label="t('protection.backupDetail.labelLatestEnd')">
-              {{ backup.latestSnapshotAt ?? t('protection.backupDetail.durationDash') }}
+              <span :class="{ 'hfl-empty-mark': !backup.latestSnapshotAt }">{{ backup.latestSnapshotAt ?? t('protection.backupDetail.durationDash') }}</span>
             </el-descriptions-item>
             <el-descriptions-item :label="t('protection.backupDetail.labelSources')">
               <ul class="list-none m-0 p-0 space-y-2">
@@ -1106,7 +1106,7 @@ function closeDeleteSnapshotDialog() {
               </el-table-column>
               <el-table-column :label="t('protection.backupDetail.colSnapEnd')" width="260" prop="endTime">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ row.endTime }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.endTime }">{{ row.endTime || '—' }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('protection.backupDetail.colSnapSize')" width="120" header-cell-class-name="snapshot-th-split-start">
@@ -1182,7 +1182,7 @@ function closeDeleteSnapshotDialog() {
               </el-table-column>
               <el-table-column :label="t('protection.backupDetail.colCreated')" min-width="180" prop="createdAt">
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ row.createdAt }}</span>
+                  <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.createdAt }">{{ row.createdAt || '—' }}</span>
                 </template>
               </el-table-column>
               <template #empty>

@@ -335,7 +335,7 @@ watch(
           </el-table-column>
           <el-table-column :label="t('insight.mcpServers.colEndpoint')" min-width="240">
             <template #default="{ row }">
-              <span class="insight-mcp-mono">{{ row.endpoint || '—' }}</span>
+              <span class="insight-mcp-mono" :class="{ 'hfl-empty-mark': !row.endpoint }">{{ row.endpoint || '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.mcpServers.colRuntimeSettings')" width="150">

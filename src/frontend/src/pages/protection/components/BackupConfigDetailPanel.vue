@@ -61,7 +61,7 @@ watch(
     <el-descriptions :column="1" border size="default" class="backup-config-detail-panel__desc">
       <el-descriptions-item :label="t('protection.backupDetail.labelName')">{{ realConfig.name }}</el-descriptions-item>
       <el-descriptions-item :label="t('protection.backupDetail.labelRemark')">
-        {{ realConfig.remark || t('protection.backupDetail.durationDash') }}
+        <span :class="{ 'hfl-empty-mark': !realConfig.remark }">{{ realConfig.remark || t('protection.backupDetail.durationDash') }}</span>
       </el-descriptions-item>
       <el-descriptions-item :label="t('protection.backupDetail.labelSources')">
         {{ realConfig.source_type }}:{{ realConfig.source_ref_id }}
@@ -103,13 +103,13 @@ watch(
     <el-descriptions :column="1" border size="default" class="backup-config-detail-panel__desc">
       <el-descriptions-item :label="t('protection.backupDetail.labelName')">{{ backup.name }}</el-descriptions-item>
       <el-descriptions-item :label="t('protection.backupDetail.labelRemark')">
-        {{ backup.remark || t('protection.backupDetail.durationDash') }}
+        <span :class="{ 'hfl-empty-mark': !backup.remark }">{{ backup.remark || t('protection.backupDetail.durationDash') }}</span>
       </el-descriptions-item>
       <el-descriptions-item :label="t('protection.backupDetail.labelSnapshotCount')">
         {{ backup.snapshots.length }}
       </el-descriptions-item>
       <el-descriptions-item :label="t('protection.backupDetail.labelLatestEnd')">
-        {{ backup.latestSnapshotAt ?? t('protection.backupDetail.durationDash') }}
+        <span :class="{ 'hfl-empty-mark': !backup.latestSnapshotAt }">{{ backup.latestSnapshotAt ?? t('protection.backupDetail.durationDash') }}</span>
       </el-descriptions-item>
       <el-descriptions-item :label="t('protection.backupDetail.labelSources')">
         <ul class="list-none m-0 p-0 space-y-2">

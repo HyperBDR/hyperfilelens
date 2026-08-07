@@ -67,5 +67,5 @@ const percent = computed(() => {
       <span class="repo-usage-cell__capacity">/ {{ unlimitedTotalLabel }}</span>
     </div>
   </div>
-  <span v-else>{{ emptyLabel }}</span>
+  <span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>
 </template>

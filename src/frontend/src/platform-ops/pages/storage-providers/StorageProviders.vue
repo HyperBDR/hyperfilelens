@@ -606,7 +606,7 @@ async function confirmReset() {
             <el-table-column prop="region_count" :label="t('platformOps.storageProviders.regions')" min-width="110" />
             <el-table-column :label="t('platformOps.storageProviders.updated')" min-width="170">
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ formatLocalDateTime(row.updated_at, '—') }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.updated_at }">{{ formatLocalDateTime(row.updated_at, '—') }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('platformOps.storageProviders.actions')" width="100" fixed="right" align="center">
@@ -665,7 +665,7 @@ async function confirmReset() {
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.storageProviders.updated') }}</span>
-              <span class="hfl-detail-row__value hfl-table-cell-time">{{ formatLocalDateTime(selectedProvider.updated_at, '—') }}</span>
+              <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !selectedProvider.updated_at }">{{ formatLocalDateTime(selectedProvider.updated_at, '—') }}</span>
             </div>
             <div class="hfl-detail-row">
               <span class="hfl-detail-row__label">{{ t('platformOps.storageProviders.regions') }}</span>

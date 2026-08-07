@@ -361,7 +361,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
                 >
                   {{ row.title }}
                 </button>
-                <span class="platform-monitoring-page__cell-meta">{{ resourceLabel(row) }}</span>
+                <span class="platform-monitoring-page__cell-meta" :class="{ 'hfl-empty-mark': !row.resource_name && !row.resource_type }">{{ resourceLabel(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -388,7 +388,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               width="170"
             >
               <template #default="{ row }">
-                {{ displayTime(row.last_triggered_at || row.created_at) }}
+                <span :class="{ 'hfl-empty-mark': !(row.last_triggered_at || row.created_at) }">{{ displayTime(row.last_triggered_at || row.created_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -447,21 +447,21 @@ watch(() => [pagination.page, pagination.pageSize], load)
               <span>{{ t('platformOps.monitoring.colStatus') }}</span><strong>{{ selected.status }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.resource') }}</span><strong>{{ resourceLabel(selected) }}</strong>
+              <span>{{ t('platformOps.monitoring.resource') }}</span><strong :class="{ 'hfl-empty-mark': !selected.resource_name && !selected.resource_type }">{{ resourceLabel(selected) }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.occurrences') }}</span><strong>{{ selected.metadata?.occurrences || '—' }}</strong>
+              <span>{{ t('platformOps.monitoring.occurrences') }}</span><strong :class="{ 'hfl-empty-mark': !selected.metadata?.occurrences }">{{ selected.metadata?.occurrences || '—' }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.firstTriggered') }}</span><strong>{{ displayTime(selected.first_triggered_at || selected.created_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.firstTriggered') }}</span><strong :class="{ 'hfl-empty-mark': !(selected.first_triggered_at || selected.created_at) }">{{ displayTime(selected.first_triggered_at || selected.created_at) }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.lastTriggered') }}</span><strong>{{ displayTime(selected.last_triggered_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.lastTriggered') }}</span><strong :class="{ 'hfl-empty-mark': !selected.last_triggered_at }">{{ displayTime(selected.last_triggered_at) }}</strong>
             </div>
           </div>
         </section>
         <section class="platform-monitoring-drawer__section">
-          <h3>{{ t('platformOps.monitoring.description') }}</h3><p class="platform-monitoring-drawer__message">
+          <h3>{{ t('platformOps.monitoring.description') }}</h3><p class="platform-monitoring-drawer__message" :class="{ 'hfl-empty-mark': !selected.message }">
             {{ selected.message || '—' }}
           </p>
         </section>

@@ -295,7 +295,7 @@ watch(
             </el-table-column>
             <el-table-column :label="t('ops.notification.logsPolicy')" min-width="150">
               <template #default="{ row }">
-                <div class="hfl-ops-cell-stack__title">{{ logPolicyName(row) }}</div>
+                <div class="hfl-ops-cell-stack__title" :class="{ 'hfl-empty-mark': logPolicyName(row) === t('common.empty') }">{{ logPolicyName(row) }}</div>
                 <div class="hfl-ops-cell-stack__meta">
                   <AlertPolicyTypeLabel :type="logPolicyTypeValue(row)" />
                 </div>
@@ -303,8 +303,8 @@ watch(
             </el-table-column>
             <el-table-column :label="t('ops.notification.logsChannel')" width="160">
               <template #default="{ row }">
-                <div class="hfl-ops-cell-stack__title">{{ row.channel?.name || '—' }}</div>
-                <div class="hfl-ops-cell-stack__meta uppercase">{{ row.channel?.type || '—' }}</div>
+                <div class="hfl-ops-cell-stack__title" :class="{ 'hfl-empty-mark': !row.channel?.name }">{{ row.channel?.name || '—' }}</div>
+                <div class="hfl-ops-cell-stack__meta uppercase" :class="{ 'hfl-empty-mark': !row.channel?.type }">{{ row.channel?.type || '—' }}</div>
               </template>
             </el-table-column>
             <el-table-column :label="t('ops.notification.logsNotificationType')" width="110">
@@ -342,7 +342,7 @@ watch(
             </el-table-column>
           <el-table-column :label="t('ops.notification.logsSentAt')" width="170">
             <template #default="{ row }">
-              <span class="hfl-table-cell-time">{{ formatDate(row.sentAt || row.sent_at) }}</span>
+              <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.sentAt || row.sent_at) }">{{ formatDate(row.sentAt || row.sent_at) }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -412,7 +412,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsNotificationType') }}</span>
-                <span class="hfl-detail-row__value">{{ notificationTypeLabel(selected.notificationType || selected.notification_type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !(selected.notificationType || selected.notification_type) }">{{ notificationTypeLabel(selected.notificationType || selected.notification_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.colStatus') }}</span>
@@ -436,7 +436,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsSentAt') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-time">
+                <span class="hfl-detail-row__value hfl-table-cell-time" :class="{ 'hfl-detail-row__empty': !(selected.sentAt || selected.sent_at) }">
                   {{ formatDate(selected.sentAt || selected.sent_at) }}
                 </span>
               </div>
@@ -456,19 +456,19 @@ watch(
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsChannel') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(selected.channel?.name) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selected.channel?.name }">{{ displayValue(selected.channel?.name) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.colType') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(selected.channel?.type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !selected.channel?.type }">{{ displayValue(selected.channel?.type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsPolicy') }}</span>
-                <span class="hfl-detail-row__value">{{ logPolicyName(selected) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': logPolicyName(selected) === t('common.empty') }">{{ logPolicyName(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
-                <span class="hfl-detail-row__value">{{ logPolicyType(selected) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': logPolicyType(selected) === t('common.empty') }">{{ logPolicyType(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.severity') }}</span>
@@ -480,7 +480,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span class="hfl-detail-row__value">{{ logResourceSummary(selected) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': logResourceSummary(selected) === t('common.empty') }">{{ logResourceSummary(selected) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsAlert') }}</span>

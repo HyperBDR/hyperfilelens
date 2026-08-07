@@ -215,7 +215,7 @@ onMounted(load)
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.users.colJoined') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatLocalDateTime(user.date_joined, '—') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !user.date_joined }">{{ formatLocalDateTime(user.date_joined, '—') }}</span>
           </div>
         </div>
         <div class="platform-ops-detail__footer">
@@ -275,11 +275,11 @@ onMounted(load)
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.users.lastLoginIp') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ user.last_login_ip || '—' }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !user.last_login_ip }">{{ user.last_login_ip || '—' }}</span>
           </div>
           <div class="hfl-detail-row">
             <span class="hfl-detail-row__label">{{ t('platformOps.users.registeredAt') }}</span>
-            <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ formatLocalDateTime(user.registered_at, '—') }}</span>
+            <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="{ 'hfl-detail-row__empty': !user.registered_at }">{{ formatLocalDateTime(user.registered_at, '—') }}</span>
           </div>
         </div>
         <div class="platform-ops-detail__footer">

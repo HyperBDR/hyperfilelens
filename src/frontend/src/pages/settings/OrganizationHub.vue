@@ -78,7 +78,7 @@ watch(pageSize, () => {
       >
         <el-table-column prop="name" :label="t('settings.org.colName')" min-width="140" />
         <el-table-column :label="t('settings.org.colOwner')" min-width="160">
-          <template #default="{ row }">{{ row.owner_email || '—' }}</template>
+          <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.owner_email }">{{ row.owner_email || '—' }}</span></template>
         </el-table-column>
         <el-table-column :label="t('settings.org.colMembers')" width="100">
           <template #default="{ row }">{{ row.member_count ?? 0 }}</template>
@@ -95,7 +95,7 @@ watch(pageSize, () => {
         </el-table-column>
         <el-table-column :label="t('settings.org.colCreated')" width="170">
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatCreatedAt(row.created_at) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatCreatedAt(row.created_at) }}</span>
           </template>
         </el-table-column>
         <template #empty>

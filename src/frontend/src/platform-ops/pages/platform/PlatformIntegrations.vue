@@ -58,7 +58,7 @@ onMounted(load)
             <div><dt>Gateway Endpoint</dt><dd>{{ row.gateway_base_url || 'Not configured' }}</dd></div>
             <div><dt>Connectivity</dt><dd>{{ row.reachable ? 'Reachable' : 'Unavailable' }}</dd></div>
             <div><dt>Authentication</dt><dd>{{ row.authenticated ? 'Authenticated' : 'Unavailable' }}</dd></div>
-            <div><dt>Last Checked</dt><dd>{{ formatLocalDateTime(row.checked_at) }}</dd></div>
+            <div><dt>Last Checked</dt><dd :class="{ 'hfl-empty-mark': !row.checked_at }">{{ formatLocalDateTime(row.checked_at, '—') }}</dd></div>
           </dl>
           <div class="platform-integration-card__footer"><span>Service configuration is managed by deployment environment variables.</span><a v-if="consoleUrl(row)" :href="consoleUrl(row)" target="_blank" rel="noopener noreferrer">Open SourceLens Console <ExternalLink :size="14" /></a></div>
         </article>

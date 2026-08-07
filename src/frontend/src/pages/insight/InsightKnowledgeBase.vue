@@ -390,7 +390,7 @@ watch(hasSyncingRows, (syncing) => {
           <ElTableColumn :label="t('insight.kb.colLinkedVersion')" min-width="120">
           <template #default="{ row }">
               <span v-if="row.backup_source_snapshot_id">{{ versionLabel(row) }}</span>
-              <span v-else class="ks-list-muted">—</span>
+              <span v-else class="hfl-empty-mark">—</span>
           </template>
           </ElTableColumn>
           <ElTableColumn :label="t('insight.kb.colRetrieval')" prop="ingest_summary" min-width="140" />

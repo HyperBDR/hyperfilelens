@@ -333,7 +333,7 @@ watch(
               <span v-if="skillContentPreview(row)" class="insight-skills-content-preview">
                 {{ skillContentPreview(row) }}
               </span>
-              <span v-else class="insight-skills-muted">—</span>
+              <span v-else class="hfl-empty-mark">—</span>
             </template>
           </el-table-column>
           <el-table-column :label="t('insight.skills.colEnabled')" width="110">

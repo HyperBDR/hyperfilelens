@@ -318,7 +318,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               width="170"
             >
               <template #default="{ row }">
-                {{ displayTime(row.sent_at || row.created_at) }}
+                <span :class="{ 'hfl-empty-mark': !(row.sent_at || row.created_at) }">{{ displayTime(row.sent_at || row.created_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -372,7 +372,7 @@ watch(() => [pagination.page, pagination.pageSize], load)
               <span>{{ t('platformOps.monitoring.eventType') }}</span><strong>{{ selected.event_type }}</strong>
             </div>
             <div class="platform-monitoring-drawer__field">
-              <span>{{ t('platformOps.monitoring.lastAttempt') }}</span><strong>{{ displayTime(selected.sent_at || selected.created_at) }}</strong>
+              <span>{{ t('platformOps.monitoring.lastAttempt') }}</span><strong :class="{ 'hfl-empty-mark': !(selected.sent_at || selected.created_at) }">{{ displayTime(selected.sent_at || selected.created_at) }}</strong>
             </div>
           </div>
         </section>

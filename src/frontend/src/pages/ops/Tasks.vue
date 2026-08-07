@@ -1126,7 +1126,7 @@ watch(
           width="165"
         >
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatTime(row.started_at || row.created_at) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.started_at || row.created_at) }">{{ formatTime(row.started_at || row.created_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column
@@ -1134,7 +1134,7 @@ watch(
           width="165"
         >
           <template #default="{ row }">
-            <span class="hfl-table-cell-time">{{ formatTime(row.finished_at) }}</span>
+            <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.finished_at }">{{ formatTime(row.finished_at) }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -1219,7 +1219,7 @@ watch(
               <TaskStatusTag :status="displayTaskStatus(activeTask)" />
             </div>
             <div class="hfl-task-drawer__header-meta">
-              <span>{{ t('ops.task.ownerLabel') }}: {{ taskOwner || t('ops.task.emptyMark') }}</span>
+              <span>{{ t('ops.task.ownerLabel') }}: <span :class="{ 'hfl-empty-mark': !taskOwner || taskOwner === t('ops.task.emptyMark') }">{{ taskOwner || t('ops.task.emptyMark') }}</span></span>
               <span class="hfl-task-drawer__header-divider" />
               <span class="hfl-task-drawer__uuid">
                 {{ activeTask.task_uuid }}
@@ -1295,7 +1295,7 @@ watch(
               <div class="hfl-task-drawer__time-grid">
                 <div>
                   <span class="hfl-task-drawer__metric-label">{{ t('ops.task.startedAt') }}</span>
-                  <span class="hfl-task-drawer__time-value">{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
+                  <span class="hfl-task-drawer__time-value" :class="{ 'hfl-empty-mark': !(activeTask.started_at || activeTask.created_at) }">{{ formatTime(activeTask.started_at || activeTask.created_at) }}</span>
                 </div>
                 <div>
                   <span class="hfl-task-drawer__metric-label">{{ t('ops.task.finishedAt') }}</span>
@@ -1303,7 +1303,7 @@ watch(
                 </div>
                 <div>
                   <span class="hfl-task-drawer__metric-label">{{ t('ops.task.totalDuration') }}</span>
-                  <span class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong">{{ taskDuration(activeTask) }}</span>
+                  <span class="hfl-task-drawer__time-value hfl-task-drawer__time-value--strong" :class="{ 'hfl-empty-mark': taskDuration(activeTask) === t('ops.task.emptyMark') }">{{ taskDuration(activeTask) }}</span>
                 </div>
               </div>
             </div>
@@ -1432,7 +1432,7 @@ watch(
                   <span class="hfl-task-drawer__step-title">
                     {{ stepDisplayName(step.step_name, activeTask.task_type) }}
                     <span class="hfl-task-drawer__step-executed-at">
-                      {{ formatTime(step.created_at || activeTask.created_at) }}
+                      <span :class="{ 'hfl-empty-mark': !(step.created_at || activeTask.created_at) }">{{ formatTime(step.created_at || activeTask.created_at) }}</span>
                     </span>
                   </span>
                   <TaskStatusTag :status="step.status" />
@@ -1476,7 +1476,7 @@ watch(
                       </span>
                       <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
                     </span>
-                    <span class="hfl-task-drawer__event-time">{{ formatTime(event.created_at) }}</span>
+                    <span class="hfl-task-drawer__event-time" :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span>
                   </div>
                 </div>
               </article>
@@ -1510,7 +1510,7 @@ watch(
                       </span>
                       <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
                     </span>
-                    <span class="hfl-task-drawer__event-time">{{ formatTime(event.created_at) }}</span>
+                    <span class="hfl-task-drawer__event-time" :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span>
                   </div>
                 </div>
               </article>
@@ -1536,7 +1536,7 @@ watch(
                 </span>
                 <span v-if="eventErrorText(event)" class="hfl-task-drawer__event-error">{{ eventErrorText(event) }}</span>
               </span>
-              <span class="hfl-task-drawer__event-time">#{{ event.seq }} · {{ formatTime(event.created_at) }}</span>
+              <span class="hfl-task-drawer__event-time">#{{ event.seq }} · <span :class="{ 'hfl-empty-mark': !event.created_at }">{{ formatTime(event.created_at) }}</span></span>
             </div>
           </div>
 
@@ -1604,7 +1604,7 @@ watch(
               <el-table-column v-if="selectedResourceType === 'backup_source'" :label="t('protection.backupsPage.colConnectionAddress')" min-width="200">
                 <template #default="{ row }">
                   <FlowSourceConnectionCell v-if="row.flowSource" :row="row.flowSource" />
-                  <span v-else>{{ row.endpointIp || row.endpointName || t('ops.task.emptyMark') }}</span>
+                  <span v-else :class="{ 'hfl-empty-mark': !row.endpointIp && !row.endpointName }">{{ row.endpointIp || row.endpointName || t('ops.task.emptyMark') }}</span>
                 </template>
               </el-table-column>
               <el-table-column
@@ -1645,7 +1645,10 @@ watch(
                 width="180"
               >
                 <template #default="{ row }">
-                  <span class="hfl-table-cell-time">{{ formatTime(selectedResourceType === 'backup_source' || isRepositoryResourceType ? row.registeredAt : row.updatedAt) }}</span>
+                  <span
+                    class="hfl-table-cell-time"
+                    :class="{ 'hfl-empty-mark': !(selectedResourceType === 'backup_source' || isRepositoryResourceType ? row.registeredAt : row.updatedAt) }"
+                  >{{ formatTime(selectedResourceType === 'backup_source' || isRepositoryResourceType ? row.registeredAt : row.updatedAt) }}</span>
                 </template>
               </el-table-column>
             </el-table>

@@ -236,6 +236,7 @@ async function onDialogBeforeClose(done: () => void) {
                   <td>
                     <span
                       class="hfl-danger-confirm__item-desc"
+                      :class="{ 'hfl-empty-mark': !item.description && !item.hint }"
                       :title="item.description || item.hint || '—'"
                     >{{ item.description || item.hint || '—' }}</span>
                   </td>

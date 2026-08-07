@@ -63,10 +63,10 @@ const showPercentMetric = computed(() => shouldShowPercentMetric(props.progress)
     />
     <p v-if="showMetrics" class="kopia-transfer-progress__metrics">
       <span v-if="capacity">{{ capacity }}</span>
-      <span v-else>—</span>
+      <span v-else class="hfl-empty-mark">—</span>
       <span v-if="showPercentMetric">{{ percent }}%</span>
-      <span>{{ speed || '—' }}</span>
-      <span>{{ eta || '—' }}</span>
+      <span :class="{ 'hfl-empty-mark': !speed }">{{ speed || '—' }}</span>
+      <span :class="{ 'hfl-empty-mark': !eta }">{{ eta || '—' }}</span>
     </p>
   </div>
 </template>

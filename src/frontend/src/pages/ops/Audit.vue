@@ -523,7 +523,7 @@ watch(
             </el-table-column>
             <el-table-column :label="t('ops.audit.colTime')" width="170">
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ formatTime(row.timestamp || row.created_at) }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !(row.timestamp || row.created_at) }">{{ formatTime(row.timestamp || row.created_at) }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('ops.audit.colUser')" min-width="150" class-name="hfl-audit-user-column">
@@ -576,7 +576,7 @@ watch(
             </el-table-column>
             <el-table-column :label="t('ops.audit.colIp')" width="130" prop="ip_address">
               <template #default="{ row }">
-                <span class="hfl-table-cell-mono">{{ row.ip_address || '—' }}</span>
+                <span class="hfl-table-cell-mono" :class="{ 'hfl-empty-mark': !row.ip_address }">{{ row.ip_address || '—' }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -701,15 +701,15 @@ watch(
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colTime') }}</span>
-                <span class="hfl-detail-row__value">{{ formatTime(detailLog.timestamp || detailLog.created_at) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !(detailLog.timestamp || detailLog.created_at) }">{{ formatTime(detailLog.timestamp || detailLog.created_at) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colUser') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.user_display) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.user_display) }">{{ displayValue(detailLog.user_display) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colAction') }}</span>
-                <span class="hfl-detail-row__value">{{ actionLabel(detailLog.action) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.action) }">{{ actionLabel(detailLog.action) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colResult') }}</span>
@@ -733,11 +733,11 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colIp') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.ip_address) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.ip_address) }">{{ displayValue(detailLog.ip_address) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colOrg') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.organization_name || detailLog.organization) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.organization_name || detailLog.organization) }">{{ displayValue(detailLog.organization_name || detailLog.organization) }}</span>
               </div>
             </div>
           </section>
@@ -747,11 +747,11 @@ watch(
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.phFilterResourceType') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.resource_type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.resource_type) }">{{ displayValue(detailLog.resource_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colResourceName') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.resource_name) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.resource_name) }">{{ displayValue(detailLog.resource_name) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailResourceId') }}</span>
@@ -759,7 +759,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailTargetType') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.target_type) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.target_type) }">{{ displayValue(detailLog.target_type) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.detailTargetId') }}</span>
@@ -767,7 +767,7 @@ watch(
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colId') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-mono">{{ displayValue(detailLog.id) }}</span>
+                <span class="hfl-detail-row__value hfl-table-cell-mono" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.id) }">{{ displayValue(detailLog.id) }}</span>
               </div>
             </div>
           </section>
@@ -801,11 +801,11 @@ watch(
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.userAgent') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.user_agent) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.user_agent) }">{{ displayValue(detailLog.user_agent) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.errorMessage') }}</span>
-                <span class="hfl-detail-row__value" :class="{ 'text-red-600': detailLog.error_message }">
+                <span class="hfl-detail-row__value" :class="{ 'text-red-600': detailLog.error_message, 'hfl-detail-row__empty': !hasDisplayValue(detailLog.error_message) }">
                   {{ displayValue(detailLog.error_message) }}
                 </span>
               </div>
@@ -817,7 +817,7 @@ watch(
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.colDetails') }}</span>
-                <span class="hfl-detail-row__value">{{ displayValue(detailLog.details) }}</span>
+                <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !hasDisplayValue(detailLog.details) }">{{ displayValue(detailLog.details) }}</span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.audit.changes') }}</span>

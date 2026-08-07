@@ -35,7 +35,7 @@ const hostPlatformLabel = computed(() => {
     </span>
     <span class="source-os-cell__platform">{{ hostPlatformLabel }}</span>
   </span>
-  <span v-else-if="row.type === 'host'" class="protection-flow-cell-muted">{{ t('protection.backupDetail.durationDash') }}</span>
+  <span v-else-if="row.type === 'host'" class="hfl-empty-mark">{{ t('protection.backupDetail.durationDash') }}</span>
   <span
     v-else
     class="repo-protocol-pill"

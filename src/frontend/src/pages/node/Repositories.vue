@@ -198,7 +198,7 @@ function fmtBytes(n: number) {
 }
 
 function formatLocalDateTime(value?: string | null) {
-  return formatAppDateTime(value, '--')
+  return formatAppDateTime(value, '—')
 }
 
 function parseDateTime(value: string) {
@@ -995,10 +995,14 @@ function formatRelativeAgo(iso?: string | null): string {
 }
 
 function formatLastCheckedAt(iso?: string | null): string {
-  if (!iso) return '--'
+  if (!iso) return DETAIL_EMPTY
   const timeStr = formatAppTime(iso, iso)
   const relative = formatRelativeAgo(iso)
   return relative ? `${timeStr} (${relative})` : timeStr
+}
+
+function detailEmptyValueClass(value: string) {
+  return value === DETAIL_EMPTY ? 'hfl-detail-row__empty' : ''
 }
 
 async function copyDetailText(value: string) {
@@ -1698,6 +1702,16 @@ function repoCapacityProbeFailed(row: RepositoryRow) {
   return String(row.capacity_probe_status || 'pending') === 'failed'
 }
 
+function hasS3UsageData(row: RepositoryRow) {
+  const { total, used } = s3UsageParts(row)
+  return total > 0 || used > 0
+}
+
+function hasRepositoryUsageData(row: RepositoryRow) {
+  const { total, used } = repoUsageParts(row)
+  return total > 0 || used > 0
+}
+
 function applySearch() {
   selectedRows.value = []
   tableRef.value?.clearSelection()
@@ -2339,7 +2353,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               min-width="120"
             >
               <template #default="{ row }">
-                <span :class="{ 'repo-s3-region-empty': s3RegionCellText(row) === '—' }">
+                <span :class="{ 'hfl-empty-mark': s3RegionCellText(row) === DETAIL_EMPTY }">
                   {{ s3RegionCellText(row) }}
                 </span>
               </template>
@@ -2350,7 +2364,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               min-width="200"
             >
               <template #default="{ row }">
-                <span>{{ s3EndpointDisplay(row.config.endpoint) }}</span>
+                <span :class="{ 'hfl-empty-mark': s3EndpointDisplay(row.config.endpoint) === DETAIL_EMPTY }">{{ s3EndpointDisplay(row.config.endpoint) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -2359,7 +2373,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               min-width="160"
             >
               <template #default="{ row }">
-                <span>{{ s3BucketCell(row) }}</span>
+                <span :class="{ 'hfl-empty-mark': s3BucketCell(row) === DETAIL_EMPTY }">{{ s3BucketCell(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -2368,7 +2382,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               min-width="126"
             >
               <template #default="{ row }">
-                <span>{{ s3ObjectPrefixCell(row) }}</span>
+                <span :class="{ 'hfl-empty-mark': s3ObjectPrefixCell(row) === DETAIL_EMPTY }">{{ s3ObjectPrefixCell(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -2386,7 +2400,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <component v-else :is="nasMountProtocolIcon(row.protocol)" :size="12" stroke-width="2.25" />
                   {{ activeTab === 'proxy_fs' ? repoListProtocolLabel(row) : protocolLabel(row.protocol) }}
                 </span>
-                <span v-else>—</span>
+                <span v-else class="hfl-empty-mark">—</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -2395,7 +2409,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               min-width="260"
             >
               <template #default="{ row }">
-                <span class="hfl-table-mono">{{ nasRepositoryLocation(row) }}</span>
+                <span class="hfl-table-mono" :class="{ 'hfl-empty-mark': nasRepositoryLocation(row) === DETAIL_EMPTY }">{{ nasRepositoryLocation(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -2442,7 +2456,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </span>
                 </ElTooltip>
                 <div v-else class="table-stack-cell">
-                  <span class="table-stack-cell__primary">{{ repoListSourceProxyName(row) }}</span>
+                  <span class="table-stack-cell__primary" :class="{ 'hfl-empty-mark': repoListSourceProxyName(row) === DETAIL_EMPTY }">{{ repoListSourceProxyName(row) }}</span>
                   <span v-if="repoListSourceProxyIp(row)" class="table-stack-cell__secondary">{{ repoListSourceProxyIp(row) }}</span>
                 </div>
               </template>
@@ -2453,7 +2467,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               min-width="220"
             >
               <template #default="{ row }">
-                <span>{{ repoListMountPoint(row) }}</span>
+                <span :class="{ 'hfl-empty-mark': repoListMountPoint(row) === DETAIL_EMPTY }">{{ repoListMountPoint(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -2479,7 +2493,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     :show-bar="false"
                     :show-percent="false"
                   />
-                  <span v-else>—</span>
+                  <span v-else class="hfl-empty-mark">—</span>
                 </template>
                 <template v-else-if="activeTab === 'nas' || activeTab === 'proxy_fs'">
                   <span v-if="repoMetricMessage(row)">{{ repoMetricMessage(row) }}</span>
@@ -2507,7 +2521,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     :show-bar="false"
                     :show-percent="false"
                   />
-                  <span v-else>—</span>
+                  <span v-else class="hfl-empty-mark">—</span>
                 </template>
               </template>
             </el-table-column>
@@ -2527,7 +2541,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
               :min-width="activeTab === 'nas' ? 163 : activeTab === 's3' || activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
             >
               <template #default="{ row }">
-                <span class="hfl-table-cell-time">{{ formatLocalDateTime(row.created_at) }}</span>
+                <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatLocalDateTime(row.created_at) }}</span>
               </template>
             </el-table-column>
             <template #empty>
@@ -2591,7 +2605,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colRegistered') }}</span>
-                    <span class="hfl-detail-row__value">{{ formatLocalDateTime(detailRow.created_at) }}</span>
+                    <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !detailRow.created_at }">{{ formatLocalDateTime(detailRow.created_at) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldPlatform') }}</span>
@@ -2613,13 +2627,13 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldPrefix') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--mono">
-                      <span class="hfl-detail-row__text">{{ detailRow.config.prefix || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__text" :class="detailEmptyValueClass(detailRow.config.prefix || DETAIL_EMPTY)">{{ detailRow.config.prefix || DETAIL_EMPTY }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLocation') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
-                      <span class="hfl-detail-row__text">{{ s3RepositoryLocation(detailRow) }}</span>
+                      <span class="hfl-detail-row__text" :class="detailEmptyValueClass(s3RepositoryLocation(detailRow))">{{ s3RepositoryLocation(detailRow) }}</span>
                       <ElButton
                         v-if="s3RepositoryLocation(detailRow) !== DETAIL_EMPTY"
                         text
@@ -2642,19 +2656,19 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldEndpoint') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--mono">
-                      <span class="hfl-detail-row__text">{{ s3EndpointDisplay(detailRow.config.endpoint) || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__text" :class="detailEmptyValueClass(s3EndpointDisplay(detailRow.config.endpoint) || DETAIL_EMPTY)">{{ s3EndpointDisplay(detailRow.config.endpoint) || DETAIL_EMPTY }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldRegion') }}</span>
                     <span class="hfl-detail-row__value">
-                      <span class="hfl-detail-row__text">{{ detailRow.config.region || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__text" :class="detailEmptyValueClass(detailRow.config.region || DETAIL_EMPTY)">{{ detailRow.config.region || DETAIL_EMPTY }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldAccessKey') }}</span>
                     <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
-                      <span class="hfl-detail-row__text">{{ detailRow.config.access_key_id || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__text" :class="detailEmptyValueClass(detailRow.config.access_key_id || DETAIL_EMPTY)">{{ detailRow.config.access_key_id || DETAIL_EMPTY }}</span>
                       <ElButton
                         v-if="detailRow.config.access_key_id"
                         text
@@ -2670,7 +2684,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldSecretKey') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ s3SecretKeyDisplay(detailRow) }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(s3SecretKeyDisplay(detailRow))">{{ s3SecretKeyDisplay(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldS3UrlStyle') }}</span>
@@ -2705,7 +2719,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </template>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldBucket') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ detailRow.config.bucket || DETAIL_EMPTY }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(detailRow.config.bucket || DETAIL_EMPTY)">{{ detailRow.config.bucket || DETAIL_EMPTY }}</span>
                   </div>
                 </div>
               </section>
@@ -2715,7 +2729,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                    <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__value--stacked': hasS3UsageData(detailRow) }">
                       <HflCapacityCell
                         v-if="s3UsageParts(detailRow).total > 0"
                         :used-bytes="s3UsageParts(detailRow).used"
@@ -2740,11 +2754,11 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLastChecked') }}</span>
-                    <span class="hfl-detail-row__value">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.last_checked_at))">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuota') }}</span>
-                    <span class="hfl-detail-row__value">{{ s3QuotaLimitLabel(detailRow) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(s3QuotaLimitLabel(detailRow))">{{ s3QuotaLimitLabel(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuotaAlert') }}</span>
@@ -2784,7 +2798,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colRegistered') }}</span>
-                    <span class="hfl-detail-row__value">{{ formatLocalDateTime(detailRow.created_at) }}</span>
+                    <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !detailRow.created_at }">{{ formatLocalDateTime(detailRow.created_at) }}</span>
                   </div>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLocation') }}</span>
@@ -2814,7 +2828,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                       {{ detailRow.protocol === 'smb' ? t('addNasRepo.fieldSmbHost') : t('addNasRepo.fieldNfsHost') }}
                     </span>
                     <span class="hfl-detail-row__value repo-detail__inline-value">
-                      <span class="hfl-detail-row__text hfl-detail-row__value--mono">{{ nasServerValueWithProtocol(detailRow) }}</span>
+                      <span class="hfl-detail-row__text hfl-detail-row__value--mono" :class="detailEmptyValueClass(nasServerValueWithProtocol(detailRow))">{{ nasServerValueWithProtocol(detailRow) }}</span>
                       <ElTag :type="nasProtocolTagType(detailRow.protocol)" size="small" effect="plain">
                         <span class="hfl-detail-protocol-tag">
                           <component :is="nasMountProtocolIcon(detailRow.protocol)" :size="12" stroke-width="2.25" />
@@ -2827,21 +2841,21 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                     <span class="hfl-detail-row__label">
                       {{ detailRow.protocol === 'smb' ? t('addNasRepo.fieldSmbShare') : t('addNasRepo.fieldNfsExport') }}
                     </span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ nasRepoShareOrExport(detailRow) }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(nasRepoShareOrExport(detailRow))">{{ nasRepoShareOrExport(detailRow) }}</span>
                   </div>
                   <template v-if="detailRow.protocol === 'smb'">
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldSmbUsername') }}</span>
-                      <span class="hfl-detail-row__value">{{ detailRow.config.smb_username || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__value" :class="detailEmptyValueClass(detailRow.config.smb_username || DETAIL_EMPTY)">{{ detailRow.config.smb_username || DETAIL_EMPTY }}</span>
                     </div>
                     <div class="hfl-detail-row">
                       <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldSmbDomain') }}</span>
-                      <span class="hfl-detail-row__value">{{ detailRow.config.smb_domain || DETAIL_EMPTY }}</span>
+                      <span class="hfl-detail-row__value" :class="detailEmptyValueClass(detailRow.config.smb_domain || DETAIL_EMPTY)">{{ detailRow.config.smb_domain || DETAIL_EMPTY }}</span>
                     </div>
                   </template>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('addNasRepo.fieldMountOptions') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ detailRow.config.nfs_options || DETAIL_EMPTY }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(detailRow.config.nfs_options || DETAIL_EMPTY)">{{ detailRow.config.nfs_options || DETAIL_EMPTY }}</span>
                   </div>
                 </div>
               </section>
@@ -2878,8 +2892,13 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
                     <span
-                      class="hfl-detail-row__value hfl-detail-row__value--stacked"
+                      class="hfl-detail-row__value"
                       :class="{
+                        'hfl-detail-row__value--stacked':
+                          Boolean(repoMetricMessage(detailRow)) ||
+                          repoCapacityProbeFailed(detailRow) ||
+                          repoUsageProbeFailed(detailRow) ||
+                          hasRepositoryUsageData(detailRow),
                         'hfl-detail-row__value--metric-state':
                           Boolean(repoMetricMessage(detailRow)) ||
                           repoCapacityProbeFailed(detailRow) ||
@@ -2919,11 +2938,11 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLastChecked') }}</span>
-                    <span class="hfl-detail-row__value">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.last_checked_at))">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuota') }}</span>
-                    <span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(storageLimitLabel(detailRow))">{{ storageLimitLabel(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('addS3Repo.fieldQuotaAlert') }}</span>
@@ -2963,7 +2982,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.colRegistered') }}</span>
-                    <span class="hfl-detail-row__value">{{ formatLocalDateTime(detailRow.created_at) }}</span>
+                    <span class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !detailRow.created_at }">{{ formatLocalDateTime(detailRow.created_at) }}</span>
                   </div>
                   <div class="hfl-detail-row hfl-detail-row--full">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLocation') }}</span>
@@ -2990,11 +3009,11 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldHostingProxyNode') }}</span>
-                    <span class="hfl-detail-row__value">{{ localDiskHostingProxyNode(detailRow) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(localDiskHostingProxyNode(detailRow))">{{ localDiskHostingProxyNode(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldProxyNodeDir') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--mono">{{ localDiskRepositoryPath(detailRow) }}</span>
+                    <span class="hfl-detail-row__value hfl-detail-row__value--mono" :class="detailEmptyValueClass(localDiskRepositoryPath(detailRow))">{{ localDiskRepositoryPath(detailRow) }}</span>
                   </div>
                 </div>
               </section>
@@ -3005,8 +3024,13 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
                     <span
-                      class="hfl-detail-row__value hfl-detail-row__value--stacked"
+                      class="hfl-detail-row__value"
                       :class="{
+                        'hfl-detail-row__value--stacked':
+                          Boolean(repoMetricMessage(detailRow)) ||
+                          repoCapacityProbeFailed(detailRow) ||
+                          repoUsageProbeFailed(detailRow) ||
+                          hasRepositoryUsageData(detailRow),
                         'hfl-detail-row__value--metric-state':
                           Boolean(repoMetricMessage(detailRow)) ||
                           repoCapacityProbeFailed(detailRow) ||
@@ -3046,11 +3070,11 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldLastChecked') }}</span>
-                    <span class="hfl-detail-row__value">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.last_checked_at))">{{ formatLastCheckedAt(detailRow.last_checked_at) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldQuota') }}</span>
-                    <span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
+                    <span class="hfl-detail-row__value" :class="detailEmptyValueClass(storageLimitLabel(detailRow))">{{ storageLimitLabel(detailRow) }}</span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.fieldQuotaAlert') }}</span>
@@ -3135,7 +3159,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                               />
                             </span>
                           </ElTooltip>
-                          <span v-else class="repo-associated-source-cell__trait-empty">
+                          <span v-else class="hfl-empty-mark">
                             {{ DETAIL_EMPTY }}
                           </span>
                         </div>
@@ -3185,7 +3209,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                       <ElTag size="small" v-bind="associatedSourceHealthTagAttrs(row)">
                         {{ associatedSourceHealthLabel(row) }}
                       </ElTag>
-                      <span class="repo-associated-health-cell__time">{{ associatedSourceCheckedAt(row) }}</span>
+                      <span class="repo-associated-health-cell__time" :class="{ 'hfl-empty-mark': associatedSourceCheckedAt(row) === DETAIL_EMPTY }">{{ associatedSourceCheckedAt(row) }}</span>
                       <ElTooltip
                         v-if="row.last_error"
                         :content="row.last_error"
@@ -3213,7 +3237,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   min-width="170"
                 >
                   <template #default="{ row }">
-                    <span class="hfl-table-cell-time">{{ formatLocalDateTime(row.registered_at) }}</span>
+                    <span class="hfl-table-cell-time" :class="{ 'hfl-empty-mark': !row.registered_at }">{{ formatLocalDateTime(row.registered_at) }}</span>
                   </template>
                 </ElTableColumn>
               </ElTable>
@@ -3352,7 +3376,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   </template>
                 </ElTableColumn>
                 <ElTableColumn :label="t('repositoriesPage.tasksCreated')" width="180">
-                  <template #default="{ row }">{{ formatLocalDateTime(row.created_at) }}</template>
+                  <template #default="{ row }"><span :class="{ 'hfl-empty-mark': !row.created_at }">{{ formatLocalDateTime(row.created_at) }}</span></template>
                 </ElTableColumn>
               </ElTable>
               <div v-if="repositoryTasksCount > repositoryTasksPageSize || repositoryTasks.length" class="repo-tasks__footer">
@@ -3832,12 +3856,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
 
 .repo-associated-source-cell__trait-icon {
   flex: 0 0 auto;
-}
-
-.repo-associated-source-cell__trait-empty {
-  color: rgb(100 116 139);
-  font-size: 12px;
-  line-height: 17px;
 }
 
 .repo-associated-mount-point-cell {
