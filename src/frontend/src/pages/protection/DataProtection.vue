@@ -3519,17 +3519,7 @@ const flowBindingFilterOptions = computed(() => [
   { text: t('protection.backupsPage.flowFilterUnbound'), value: 'unbound' },
 ])
 
-const flowBackupTaskStatusFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.flowTaskStatusRunning'), value: 'running' },
-  { text: t('protection.backupsPage.flowTaskStatusCompleted'), value: 'completed' },
-  { text: t('protection.backupsPage.flowTaskStatusFailed'), value: 'failed' },
-  { text: t('protection.backupsPage.flowSourceTaskIdle'), value: 'idle' },
-])
 
-const flowRestoreTaskFilterOptions = computed(() => [
-  { text: t('protection.backupsPage.flowFilterRestoreRunning'), value: 'running' },
-  { text: t('protection.backupsPage.flowFilterRestoreNone'), value: 'none' },
-])
 
 const flowRepoHealthFilterOptions = computed(() => [
   { text: t('protection.backupsPage.targetStatusOnline'), value: 'online' },
@@ -3537,14 +3527,6 @@ const flowRepoHealthFilterOptions = computed(() => [
   { text: t('protection.backupsPage.targetStatusUnknown'), value: 'unknown' },
 ])
 
-const flowLastBackupModeOptions = computed(() => [
-  { label: t('protection.backupsPage.flowFilterTimeAll'), value: 'all' },
-  { label: t('protection.backupsPage.flowFilterTimeNever'), value: 'never' },
-  { label: t('protection.backupsPage.flowFilterTime24Hours'), value: 'days24' },
-  { label: t('protection.backupsPage.flowFilterTime7Days'), value: 'days7' },
-  { label: t('protection.backupsPage.flowFilterTime30Days'), value: 'days30' },
-  { label: t('protection.backupsPage.flowFilterTimeCustom'), value: 'custom' },
-])
 
 const step3SearchFieldOptions = computed(() => [
   { label: t('protection.backupsPage.step3SearchSourceName'), value: 'source_name' as const },
@@ -3820,31 +3802,6 @@ function flowStep3FiltersMatch(row: FlowSourceRow) {
   )
 }
 
-function clearFlowFilters() {
-  flowFilterSourceTypes.value = []
-  flowFilterSourceStatuses.value = []
-  flowFilterPolicyBinding.value = []
-  flowFilterFileFilterBinding.value = []
-  flowFilterBackupTaskStatuses.value = []
-  flowFilterRestoreTasks.value = []
-  flowFilterRepoHealth.value = []
-  flowFilterNodeQuery.value = ''
-  flowFilterTargetQuery.value = ''
-  flowFilterDirectoryQuery.value = ''
-  flowFilterLastBackupMode.value = 'all'
-  flowFilterLastBackupRange.value = null
-  step3SourceStatus.value = ''
-  step3SourceType.value = ''
-  step3Availability.value = ''
-  step3BackupTaskStatus.value = ''
-  step3RestoreTaskStatus.value = ''
-  step3AdvancedSourceName.value = ''
-  step3AdvancedHostname.value = ''
-  step3AdvancedIp.value = ''
-  step3BackupPolicyId.value = ''
-  step3FileFilterRuleId.value = ''
-  step3RepositoryId.value = ''
-}
 
 function syncStep3AdvancedFilterDrafts() {
   draftStep3SourceType.value = step3SourceType.value
