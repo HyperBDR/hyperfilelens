@@ -41,7 +41,7 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(kopia_estimated_usage_from_packed(100), 105)
 
     def test_parse_agent_repo_status_result(self):
-        estimated, total, mount_point = _parse_agent_repo_status_result(
+        estimated, total, mount_point, usage_error, capacity_error = _parse_agent_repo_status_result(
             {
                 "estimated_usage_bytes": 210,
                 "space_info": {"total_bytes": 1000, "used_bytes": 300},
@@ -50,9 +50,11 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(estimated, 210)
         self.assertEqual(total, 1000)
         self.assertEqual(mount_point, "")
+        self.assertEqual(usage_error, "")
+        self.assertEqual(capacity_error, "")
 
     def test_parse_agent_repo_status_result_falls_back_to_space_used(self):
-        estimated, total, mount_point = _parse_agent_repo_status_result(
+        estimated, total, mount_point, _usage_error, _capacity_error = _parse_agent_repo_status_result(
             {
                 "repository_type": "proxy_fs",
                 "space_info": {"total_bytes": 1000, "used_bytes": 300},
@@ -62,8 +64,32 @@ class RepositoryUsageTests(TestCase):
         self.assertEqual(total, 1000)
         self.assertEqual(mount_point, "")
 
+    def test_parse_agent_repo_status_result_accepts_zero_usage_probe(self):
+        estimated, total, _mount_point, usage_error, capacity_error = _parse_agent_repo_status_result(
+            {
+                "usage_probe": {"status": "success", "estimated_usage_bytes": 0},
+                "capacity_probe": {"status": "success", "total_bytes": 1000},
+            }
+        )
+        self.assertEqual(estimated, 0)
+        self.assertEqual(total, 1000)
+        self.assertEqual(usage_error, "")
+        self.assertEqual(capacity_error, "")
+
+    def test_parse_agent_repo_status_result_keeps_partial_probe_error(self):
+        estimated, total, _mount_point, usage_error, capacity_error = _parse_agent_repo_status_result(
+            {
+                "usage_probe": {"status": "success", "estimated_usage_bytes": 100},
+                "capacity_probe": {"status": "failed", "error": "statfs failed"},
+            }
+        )
+        self.assertEqual(estimated, 100)
+        self.assertIsNone(total)
+        self.assertEqual(usage_error, "")
+        self.assertEqual(capacity_error, "statfs failed")
+
     def test_parse_agent_repo_status_result_strips_repository_subdir_from_space_path(self):
-        _estimated, _total, mount_point = _parse_agent_repo_status_result(
+        _estimated, _total, mount_point, _usage_error, _capacity_error = _parse_agent_repo_status_result(
             {
                 "repository_type": "nas",
                 "space_info": {
@@ -79,7 +105,7 @@ class RepositoryUsageTests(TestCase):
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.collect_usage_candidates",
-        return_value=(0, None),
+        return_value=(0, None, "", ""),
     )
     def test_sync_applies_quota_capacity(self, _collect):
         repo = Repository.objects.create(
@@ -98,7 +124,7 @@ class RepositoryUsageTests(TestCase):
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
-        return_value=(5 * 1024**3, 100 * 1024**3),
+        return_value=RepositoryUsageProbeResult(5 * 1024**3, 100 * 1024**3),
     )
     def test_proxy_fs_sync_uses_agent_kopia_usage_and_mount_capacity(self, _probe):
         repo = Repository.objects.create(
@@ -118,6 +144,32 @@ class RepositoryUsageTests(TestCase):
         repo.refresh_from_db()
         self.assertEqual(repo.estimated_usage_bytes, 5 * 1024**3)
         self.assertEqual(repo.capacity_bytes, 100 * 1024**3)
+        self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
+        self.assertEqual(repo.capacity_probe_status, Repository.MetricProbeStatus.SUCCESS)
+
+    @mock.patch(
+        "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
+        return_value=RepositoryUsageProbeResult(100, None, capacity_error="statfs failed"),
+    )
+    def test_proxy_fs_sync_marks_only_capacity_probe_failed(self, _probe):
+        repo = Repository.objects.create(
+            organization_id=1,
+            name="partial-probe-repo",
+            repo_type=Repository.Type.PROXY_FS,
+            status=Repository.Status.CREATED,
+            health=Repository.Health.ONLINE,
+            config={"proxy_node_dir": "/data/repo"},
+            bind_node_type=Repository.BindNodeType.PROXY,
+            bind_node_id=9,
+        )
+
+        sync_repository_usage(repo)
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.estimated_usage_bytes, 100)
+        self.assertEqual(repo.usage_probe_status, Repository.MetricProbeStatus.SUCCESS)
+        self.assertEqual(repo.capacity_probe_status, Repository.MetricProbeStatus.FAILED)
+        self.assertEqual(repo.capacity_last_error, "statfs failed")
 
     @mock.patch("apps.storage.services.internal.repository_usage.agent_repository_usage_probe")
     def test_proxy_fs_sync_uses_quota_capacity_without_path_probe(self, mock_probe):
@@ -132,7 +184,7 @@ class RepositoryUsageTests(TestCase):
             bind_node_type=Repository.BindNodeType.PROXY,
             bind_node_id=9,
         )
-        mock_probe.return_value = (3 * 1024**3, 100 * 1024**3)
+        mock_probe.return_value = RepositoryUsageProbeResult(3 * 1024**3, 100 * 1024**3)
 
         sync_repository_usage(repo)
 
@@ -142,7 +194,7 @@ class RepositoryUsageTests(TestCase):
 
     @mock.patch(
         "apps.storage.services.internal.repository_usage.agent_repository_usage_probe",
-        return_value=(2 * 1024**3, 50 * 1024**3),
+        return_value=RepositoryUsageProbeResult(2 * 1024**3, 50 * 1024**3),
     )
     def test_nas_sync_uses_agent_probe(self, _probe):
         repo = Repository.objects.create(

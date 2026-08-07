@@ -623,6 +623,11 @@
   gap: 8px;
 }
 
+.hfl-detail-row__value--stacked.hfl-detail-row__value--metric-state {
+  align-items: flex-start;
+  justify-content: center;
+}
+
 .hfl-detail-row--full .hfl-detail-row__value--stacked {
   width: 100%;
 }

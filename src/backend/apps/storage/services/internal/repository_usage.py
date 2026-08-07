@@ -61,6 +61,8 @@ class RepositoryUsageProbeResult:
     capacity_bytes: int | None
     error: str = ""
     mount_point: str = ""
+    usage_error: str = ""
+    capacity_error: str = ""
 
 
 def capacity_bytes_from_config(config: dict | None) -> int:
@@ -314,15 +316,27 @@ def _parse_agent_repo_status_result(
     result: dict[str, Any],
     *,
     repository_subdir: str = "",
-) -> tuple[int | None, int | None, str]:
+) -> tuple[int | None, int | None, str, str, str]:
+    usage_error = ""
+    capacity_error = ""
+    usage_probe = result.get("usage_probe")
+    capacity_probe = result.get("capacity_probe")
+
     estimated: int | None = None
+    if isinstance(usage_probe, dict) and str(usage_probe.get("status") or "").lower() == "failed":
+        usage_error = str(usage_probe.get("error") or "Unable to read repository usage.")[:1000]
+    elif isinstance(usage_probe, dict) and "estimated_usage_bytes" in usage_probe:
+        try:
+            estimated = max(0, int(usage_probe.get("estimated_usage_bytes")))
+        except (TypeError, ValueError):
+            usage_error = "Unable to read repository usage."
     raw_estimated = result.get("estimated_usage_bytes")
-    if raw_estimated is not None:
+    if estimated is None and not usage_error and raw_estimated is not None:
         try:
             estimated = max(0, int(raw_estimated))
         except (TypeError, ValueError):
             estimated = None
-    if estimated is None:
+    if estimated is None and not usage_error:
         content_stats = result.get("content_stats")
         stdout = ""
         if isinstance(content_stats, dict):
@@ -334,6 +348,17 @@ def _parse_agent_repo_status_result(
             estimated = kopia_estimated_usage_from_packed(packed)
 
     fs_total: int | None = None
+    if isinstance(capacity_probe, dict) and str(capacity_probe.get("status") or "").lower() == "failed":
+        capacity_error = str(capacity_probe.get("error") or "Unable to read filesystem capacity.")[:1000]
+    elif isinstance(capacity_probe, dict) and "total_bytes" in capacity_probe:
+        try:
+            total = int(capacity_probe.get("total_bytes") or 0)
+            if total > 0:
+                fs_total = total
+            else:
+                capacity_error = "Unable to read filesystem capacity."
+        except (TypeError, ValueError):
+            capacity_error = "Unable to read filesystem capacity."
     fs_used: int | None = None
     space = result.get("space_info")
     if isinstance(space, dict):
@@ -349,9 +374,9 @@ def _parse_agent_repo_status_result(
                 fs_used = used
         except (TypeError, ValueError):
             fs_used = None
-    if estimated is None and fs_used is not None:
+    if estimated is None and not usage_error and not isinstance(usage_probe, dict) and fs_used is not None:
         estimated = fs_used
-    return estimated, fs_total, _repo_status_mount_point(result, repository_subdir=repository_subdir)
+    return estimated, fs_total, _repo_status_mount_point(result, repository_subdir=repository_subdir), usage_error, capacity_error
 
 
 def _run_repository_usage_probe(
@@ -412,27 +437,33 @@ def _run_repository_usage_probe(
     result = outcome.result if isinstance(outcome.result, dict) else {}
     repository_payload = payload.get("repository") if isinstance(payload.get("repository"), dict) else {}
     repository_subdir = str(repository_payload.get("subdir") or "").strip()
-    estimated, capacity, mount_point = _parse_agent_repo_status_result(
+    estimated, capacity, mount_point, usage_error, capacity_error = _parse_agent_repo_status_result(
         result,
         repository_subdir=repository_subdir,
     )
-    return RepositoryUsageProbeResult(estimated, capacity, mount_point=mount_point)
+    return RepositoryUsageProbeResult(
+        estimated,
+        capacity,
+        mount_point=mount_point,
+        usage_error=usage_error,
+        capacity_error=capacity_error,
+    )
 
 
-def agent_repository_usage_probe(repository: Repository) -> tuple[int | None, int | None]:
-    """Return (estimated_usage_bytes, filesystem_total_bytes) via repo.status."""
+def agent_repository_usage_probe(repository: Repository) -> RepositoryUsageProbeResult:
+    """Return repository usage and filesystem capacity probe results via repo.status."""
     if repository.status != Repository.Status.CREATED:
-        return None, None
+        return RepositoryUsageProbeResult(None, None, "Repository is not ready for metrics collection.")
     resolved = _agent_repository_payload(repository)
     if resolved is None:
-        return None, None
+        return RepositoryUsageProbeResult(None, None, "Repository owner is unavailable.")
     node_id, payload = resolved
     result = _run_repository_usage_probe(
         repository=repository,
         node_id=node_id,
         payload=payload,
     )
-    return result.estimated_usage_bytes, result.capacity_bytes
+    return result
 
 
 def _is_unbound_nas_repository(repository: Repository) -> bool:
@@ -673,36 +704,49 @@ def proxy_fs_filesystem_capacity_bytes(repository: Repository) -> int | None:
     return stats[1]
 
 
-def collect_usage_candidates(repository: Repository) -> tuple[int | None, int | None]:
-    """
-    Return (estimated_usage_bytes, optional_filesystem_capacity_bytes).
-    """
+def collect_usage_candidates(repository: Repository) -> tuple[int | None, int | None, str, str]:
+    """Return usage, capacity, and independent probe errors."""
     fs_capacity: int | None = None
     estimated_usage_bytes: int | None = None
+    usage_error = ""
+    capacity_error = ""
 
     if repository.repo_type == Repository.Type.S3:
         kopia_estimated = kopia_repository_estimated_usage_bytes(repository)
         if kopia_estimated is not None:
             estimated_usage_bytes = max(0, int(kopia_estimated))
+        else:
+            usage_error = "Unable to read repository usage."
 
     if _is_unbound_nas_repository(repository):
-        return _sync_direct_nas_agent_usage_shards(repository)
+        estimated, capacity = _sync_direct_nas_agent_usage_shards(repository)
+        return (
+            estimated,
+            capacity,
+            "" if estimated is not None else "Unable to read repository usage.",
+            "" if capacity is not None else "Unable to read filesystem capacity.",
+        )
 
     if repository.repo_type in (Repository.Type.NAS, Repository.Type.PROXY_FS):
-        agent_estimated, agent_fs_total = agent_repository_usage_probe(repository)
-        if agent_estimated is not None:
-            estimated_usage_bytes = agent_estimated
-        if agent_fs_total and agent_fs_total > 0:
-            fs_capacity = agent_fs_total
-        elif (
+        probe = agent_repository_usage_probe(repository)
+        if probe.estimated_usage_bytes is not None:
+            estimated_usage_bytes = probe.estimated_usage_bytes
+        else:
+            usage_error = probe.usage_error or probe.error or "Unable to read repository usage."
+        if probe.capacity_bytes and probe.capacity_bytes > 0:
+            fs_capacity = probe.capacity_bytes
+        else:
+            capacity_error = probe.capacity_error or probe.error or "Unable to read filesystem capacity."
+        if fs_capacity is None and (
             repository.repo_type == Repository.Type.PROXY_FS
             and capacity_bytes_from_config(repository.config) <= 0
         ):
             total = proxy_fs_filesystem_capacity_bytes(repository)
             if total and total > 0:
                 fs_capacity = total
+                capacity_error = ""
 
-    return estimated_usage_bytes, fs_capacity
+    return estimated_usage_bytes, fs_capacity, usage_error, capacity_error
 
 
 def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Repository:
@@ -711,7 +755,7 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
     if config_capacity > 0 and int(repository.capacity_bytes or 0) != config_capacity:
         repository.capacity_bytes = config_capacity
         capacity_changed = True
-    estimated_usage_bytes, fs_capacity = collect_usage_candidates(repository)
+    estimated_usage_bytes, fs_capacity, usage_error, capacity_error = collect_usage_candidates(repository)
     capacity_bytes = int(repository.capacity_bytes or 0)
     if config_capacity <= 0 and fs_capacity and fs_capacity > 0 and capacity_bytes != fs_capacity:
         capacity_bytes = fs_capacity
@@ -725,12 +769,37 @@ def sync_repository_usage(repository: Repository, *, persist: bool = True) -> Re
         repository.capacity_bytes = capacity_bytes
     if usage_changed:
         repository.estimated_usage_bytes = estimated_usage_bytes
-    repository.last_checked_at = timezone.now()
-    update_fields: list[str] = ["last_checked_at"]
+    checked_at = timezone.now()
+    repository.last_checked_at = checked_at
+    repository.metrics_last_attempt_at = checked_at
+    update_fields: list[str] = ["last_checked_at", "metrics_last_attempt_at"]
     if capacity_changed:
         update_fields.append("capacity_bytes")
     if usage_changed:
         update_fields.append("estimated_usage_bytes")
+    if repository.repo_type in (Repository.Type.NAS, Repository.Type.PROXY_FS):
+        if estimated_usage_bytes is not None:
+            repository.usage_probe_status = Repository.MetricProbeStatus.SUCCESS
+            repository.usage_last_success_at = checked_at
+            repository.usage_last_error = ""
+        else:
+            repository.usage_probe_status = Repository.MetricProbeStatus.FAILED
+            repository.usage_last_error = str(usage_error or "Unable to read repository usage.")[:1000]
+        if config_capacity > 0 or (fs_capacity is not None and fs_capacity > 0):
+            repository.capacity_probe_status = Repository.MetricProbeStatus.SUCCESS
+            repository.capacity_last_success_at = checked_at
+            repository.capacity_last_error = ""
+        else:
+            repository.capacity_probe_status = Repository.MetricProbeStatus.FAILED
+            repository.capacity_last_error = str(capacity_error or "Unable to read filesystem capacity.")[:1000]
+        update_fields.extend([
+            "usage_probe_status",
+            "usage_last_success_at",
+            "usage_last_error",
+            "capacity_probe_status",
+            "capacity_last_success_at",
+            "capacity_last_error",
+        ])
     update_fields.append("updated_at")
     if persist:
         repository.save(update_fields=update_fields)

@@ -17,7 +17,7 @@ export type StorageSummary = {
   capacityBytes: number
   repoCount: number
   /** known = sum of repo capacities; unlimited = object storage without cap; pending = awaiting sync */
-  capacityMode: 'empty' | 'known' | 'unlimited' | 'pending'
+  capacityMode: 'empty' | 'known' | 'unlimited' | 'pending' | 'unavailable'
 }
 
 export type RepoUsageRow = {
@@ -28,7 +28,9 @@ export type RepoUsageRow = {
   usedBytes: number
   capacityBytes: number
   pct: number | null
-  capacityMode: 'known' | 'unlimited' | 'pending'
+  capacityMode: 'known' | 'unlimited' | 'pending' | 'unavailable'
+  usageProbeStatus: string
+  capacityProbeStatus: string
 }
 
 export type { QuotaUsageRow } from './licenseQuotaDisplay'
@@ -159,6 +161,8 @@ type ApiRepository = {
   capacity_bytes?: number
   estimated_usage_bytes?: number
   physical_usage_bytes?: number | null
+  usage_probe_status?: string
+  capacity_probe_status?: string
 }
 
 type ApiPolicy = {
@@ -266,7 +270,7 @@ function isRepoCapacityPending(repo: ApiRepository): boolean {
   const cap = Number(repo.capacity_bytes) || 0
   if (cap > 0) return false
   if (repo.repo_type === 's3') return repoConfigQuotaGb(repo) > 0
-  return repo.repo_type === 'nas' || repo.repo_type === 'proxy_fs'
+  return (repo.repo_type === 'nas' || repo.repo_type === 'proxy_fs') && repo.capacity_probe_status !== 'failed'
 }
 
 function summarizeStorage(repos: ApiRepository[]): StorageSummary {
@@ -304,6 +308,7 @@ function repoCapacityMode(repo: ApiRepository): RepoUsageRow['capacityMode'] {
   const cap = Number(repo.capacity_bytes) || 0
   if (cap > 0) return 'known'
   if (isRepoCapacityPending(repo)) return 'pending'
+  if (repo.repo_type === 'nas' || repo.repo_type === 'proxy_fs') return 'unavailable'
   return 'unlimited'
 }
 
@@ -323,6 +328,8 @@ function topRepos(repos: ApiRepository[], limit = 5): RepoUsageRow[] {
         capacityBytes,
         pct,
         capacityMode,
+        usageProbeStatus: String(r.usage_probe_status || 'pending'),
+        capacityProbeStatus: String(r.capacity_probe_status || 'pending'),
       }
     })
     .sort((a, b) => b.usedBytes - a.usedBytes)

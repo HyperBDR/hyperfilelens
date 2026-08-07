@@ -72,6 +72,7 @@ function formatPct(value: number): string {
 function repoCapacityLabel(repo: RepoUsageRow) {
   if (repo.capacityMode === 'known') return formatBytes(repo.capacityBytes)
   if (repo.capacityMode === 'pending') return t('dashboard.ribbon.usagePending')
+  if (repo.capacityMode === 'unavailable') return t('repositoriesPage.capacityUnavailable')
   return t('dashboard.unlimited')
 }
 
