@@ -43,6 +43,7 @@ import ProtectionPolicyEditorForm from './components/ProtectionPolicyEditorForm.
 import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useListSearch } from '../../composables/useListSearch'
+import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import {
   backupFlowSourceStepIcon,
   backupSourceTypeIcon,
@@ -77,7 +78,6 @@ import {
 } from '../../lib/protectionBackupTargetValidationApi'
 import {
   createSourceResource,
-  listBackupSelectableSources,
   listBackupSourceDirectories,
   getBackupSourcePathInfo,
   getSourceResource,
@@ -336,6 +336,10 @@ type WizardFilter = {
 }
 
 const realSourceById = ref(new Map<string, RealSourceRow>())
+const restoreTargetCatalog = useRestoreTargetCatalog()
+const recoveryTargetLoading = restoreTargetCatalog.loading
+const recoveryTargetLoadingMore = restoreTargetCatalog.loadingMore
+const recoveryTargetError = restoreTargetCatalog.error
 const realPolicies = ref<WizardPolicy[]>([])
 const realFilters = ref<WizardFilter[]>([])
 const realTargets = ref<WizardTarget[]>([])
@@ -1514,8 +1518,9 @@ const wizardSourceGroups = computed<WizardSourceGroup[]>(() => {
 })
 
 const createRecoveryTargetOptions = computed(() =>
-  Array.from(realSourceById.value.values())
-    .filter((source) => source.availability === 'online')
+  restoreTargetCatalog.rows.value
+    .filter((source) => restoreTargetCatalog.isSelectable(source.id))
+    .map(mapSelectableSource)
 )
 
 const createRecoveryPlanGroups = computed(() =>
@@ -1798,6 +1803,8 @@ type CreateRecoveryTargetOption = {
   ipLabel: string
   typeLabel: string
   isSource: boolean
+  selectable: boolean
+  unavailableReason: 'offline' | 'busy' | null
   summary: CreateRecoveryTargetSummary
 }
 
@@ -1825,12 +1832,14 @@ function createRecoveryTargetOptionFromSource(source: RealSourceRow, group: Wiza
     ipLabel: summary.ipLine,
     typeLabel: summary.typeLabel,
     isSource: source.id === group.sourceId,
+    selectable: restoreTargetCatalog.isSelectable(source.id),
+    unavailableReason: source.availability !== 'online' ? 'offline' : restoreTargetCatalog.isSelectable(source.id) ? null : 'busy',
     summary,
   }
 }
 
 function createRecoverySourceTargetAvailable(group: WizardSourceGroup) {
-  return realSourceById.value.get(group.sourceId)?.availability === 'online'
+  return restoreTargetCatalog.isSelectable(group.sourceId)
 }
 
 function createRecoverySourceTargetActionValue(group: WizardSourceGroup) {
@@ -1845,22 +1854,21 @@ function isCreateRecoverySourceTargetSelected(group: WizardSourceGroup, dirPlan:
   return dirPlan.targetHostId === group.sourceId
 }
 
-function createRecoveryTargetOptionsForGroup(group: WizardSourceGroup): CreateRecoveryTargetOption[] {
-  const options: CreateRecoveryTargetOption[] = []
-  const seen = new Set<string>()
-  for (const source of createRecoveryTargetOptions.value) {
-    if (seen.has(source.id)) continue
-    seen.add(source.id)
-    options.push(createRecoveryTargetOptionFromSource(source, group))
+function createRecoveryTargetOptionsForGroup(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig): CreateRecoveryTargetOption[] {
+  return restoreTargetCatalog.options([group.sourceId, dirPlan.targetHostId])
+    .map(({ source }) => createRecoveryTargetOptionFromSource(mapSelectableSource(source), group))
+}
+
+function onCreateRecoveryTargetVisible(visible: boolean) {
+  if (visible && !restoreTargetCatalog.rows.value.length && !recoveryTargetLoading.value) {
+    void restoreTargetCatalog.reset()
   }
-  const source = realSourceById.value.get(group.sourceId)
-  if (source?.availability === 'online' && !seen.has(source.id)) {
-    options.push({
-      ...createRecoveryTargetOptionFromSource(source, group),
-      isSource: true,
-    })
-  }
-  return options
+}
+
+function onCreateRecoveryTargetPopupScroll(event: Event | { scrollTop?: number; clientHeight?: number; scrollHeight?: number }) {
+  const target = (event instanceof Event ? event.target : event) as HTMLElement | null
+  if (!target) return
+  if (target.scrollHeight - target.scrollTop - target.clientHeight <= 48) void restoreTargetCatalog.loadMore()
 }
 
 function selectCreateRecoverySourceTarget(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
@@ -1932,7 +1940,7 @@ function recoveryDirPlanMissingFields(group: WizardSourceGroup, dirPlan: CreateR
   if (!dirPlan.sourcePath || dirPlan.sourcePathValidation === 'pending' || dirPlan.sourcePathValidation === 'invalid') {
     missing.push('sourcePath')
   }
-  if (!dirPlan.targetHostId) missing.push('targetHostId')
+  if (!dirPlan.targetHostId || !restoreTargetCatalog.isSelectable(dirPlan.targetHostId)) missing.push('targetHostId')
   if (!dirPlan.restoreDir || dirPlan.restoreDirValidation === 'pending' || dirPlan.restoreDirValidation === 'invalid') {
     missing.push('restoreDir')
   }
@@ -2958,20 +2966,17 @@ function fmtBytes(n: number) {
 async function loadWizardSources(ids: string[]) {
   const realIds = normalizeSourceIdList(ids.filter(isBackupSelectableSourceId))
   if (!realIds.length) return
-  const list = await listBackupSelectableSources({ ids: realIds.join(',') })
+  const rows = await restoreTargetCatalog.ensureByIds(realIds)
   const next = new Map(realSourceById.value)
-  for (const row of list.results.map(mapSelectableSource)) next.set(row.id, row)
+  for (const row of rows.map(mapSelectableSource)) next.set(row.id, row)
   realSourceById.value = next
 }
 
-async function loadOnlineRecoveryTargets() {
-  const list = await listBackupSelectableSources({ page: 1, page_size: 500, availability: 'online' })
+watch(restoreTargetCatalog.allRecords, (records) => {
   const next = new Map(realSourceById.value)
-  for (const row of list.results.map(mapSelectableSource)) {
-    if (row.availability === 'online') next.set(row.id, row)
-  }
+  for (const row of records.map(mapSelectableSource)) next.set(row.id, row)
   realSourceById.value = next
-}
+}, { flush: 'sync' })
 
 async function refreshWizardTargets() {
   targetsRefreshing.value = true
@@ -3181,7 +3186,8 @@ async function openEditConfigs(configIds: number[], section: BackupConfigEditSec
   editConfigs.value = configs
   editSection.value = section
   const sourceIds = [...new Set(configs.map(sourceIdFromConfig))]
-  await loadWizardSources(sourceIds)
+  const savedTargetIds = configs.flatMap((config) => (config.recovery_plans || []).map(targetIdFromPlan)).filter(Boolean)
+  await loadWizardSources([...sourceIds, ...savedTargetIds])
   const existingSourceIds = sourceIds.filter((sourceId) => realSourceById.value.has(sourceId))
   if (!existingSourceIds.length) {
     ElMessage.error({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })
@@ -3227,7 +3233,7 @@ onMounted(async () => {
   try {
     await Promise.all([
       loadWizardSources(sourceIds),
-      loadOnlineRecoveryTargets(),
+      restoreTargetCatalog.reset(),
       loadWizardReferences(),
     ])
   } catch (err) {
@@ -7530,9 +7536,15 @@ function preserveShallowestPathOrder(paths: string[]) {
                               :ref="(el) => setCreateRecoveryTargetSelectRef(group, dirPlan, el)"
                               :model-value="dirPlan.targetHostId"
                               filterable
+                              remote
+                              reserve-keyword
                               class="w-full"
+                              :remote-method="restoreTargetCatalog.setSearch"
+                              :loading="recoveryTargetLoading || recoveryTargetLoadingMore"
                               popper-class="create-recovery-target-node-select-popper"
                               :placeholder="t('protection.backupsPage.createRecoveryTargetHostPlaceholder')"
+                              @visible-change="onCreateRecoveryTargetVisible"
+                              @popup-scroll="onCreateRecoveryTargetPopupScroll"
                               @update:model-value="(value) => onCreateRecoveryTargetHostChange(group, dirPlan, value)"
                             >
                               <template #header>
@@ -7569,10 +7581,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                                 </div>
                               </template>
                               <el-option
-                                v-for="option in createRecoveryTargetOptionsForGroup(group)"
+                                v-for="option in createRecoveryTargetOptionsForGroup(group, dirPlan)"
                                 :key="option.value"
                                 :label="option.label"
                                 :value="option.value"
+                                :disabled="!option.selectable"
                               >
                                 <div class="create-recovery-target-node-option">
                                   <div class="create-recovery-target-node-option__main">
@@ -7619,6 +7632,32 @@ function preserveShallowestPathOrder(paths: string[]) {
                                   </div>
                                 </div>
                               </el-option>
+                              <el-option
+                                v-if="recoveryTargetLoadingMore"
+                                key="create-recovery-target-loading-more"
+                                disabled
+                                value="__loading_more__"
+                                :label="t('common.loading')"
+                              />
+                              <el-option
+                                v-else-if="recoveryTargetError"
+                                key="create-recovery-target-load-more-error"
+                                disabled
+                                value="__load_more_error__"
+                                :label="t('protection.backupsPage.recoveryTargetLoadFailed')"
+                              >
+                                <ElButton link type="primary" @click.stop="restoreTargetCatalog.retry">
+                                  {{ t('common.retry') }}
+                                </ElButton>
+                              </el-option>
+                              <template #empty>
+                                <div class="py-3 text-center text-xs text-slate-500">
+                                  <span>{{ recoveryTargetError ? t('protection.backupsPage.recoveryTargetLoadFailed') : t('protection.backupsPage.recoveryTargetEmpty') }}</span>
+                                  <ElButton v-if="recoveryTargetError" link type="primary" @click.stop="restoreTargetCatalog.retry">
+                                    {{ t('common.retry') }}
+                                  </ElButton>
+                                </div>
+                              </template>
                             </el-select>
                           </div>
                           <div

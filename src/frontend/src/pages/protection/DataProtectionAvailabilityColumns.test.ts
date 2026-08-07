@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/DataProtection.vue'), 'utf8')
 const createWizard = readFileSync(resolve(process.cwd(), 'src/pages/protection/BackupCreateWizard.vue'), 'utf8')
+const restoreTargetCatalog = readFileSync(resolve(process.cwd(), 'src/composables/useRestoreTargetCatalog.ts'), 'utf8')
 
 function tableForStep(step: number) {
   const startMarker = `<div v-if="flowMainStep === ${step}"`
@@ -69,11 +70,34 @@ describe('Backup Wizard availability columns', () => {
     expect(page).toContain('flowSourceAvailabilityLabel(row.availability)')
   })
 
+  it('delegates recovery targets to the shared online catalog', () => {
+    const start = page.indexOf('async function loadRecoveryTargetHostOptions')
+    const end = page.indexOf('function searchRecoveryTargetHostOptions', start)
+    const loader = page.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(loader).toContain('restoreTargetCatalog.reset()')
+    expect(loader).toContain('restoreTargetCatalog.loadMore()')
+    expect(loader).not.toContain("status: 'online'")
+    expect(restoreTargetCatalog).toContain("availability: 'online'")
+    expect(restoreTargetCatalog).toContain('page_size: RESTORE_TARGET_PAGE_SIZE')
+    expect(page).toContain(':remote-method="searchRecoveryTargetHostOptions"')
+    expect(page).toContain('@popup-scroll="onRecoveryTargetNodePopupScroll"')
+    expect(page).toContain('restoreTargetCatalog.ensureByIds(plans.map((plan) => plan.destHostId).filter(Boolean))')
+    expect(page).not.toContain('recoveryTargetHostRequestSeq')
+    expect(page).not.toContain('recoveryTargetHostSearchTimer')
+  })
+
   it('uses availability rather than lifecycle status for Backup Setup connectivity checks', () => {
     expect(createWizard).toContain("availability: item.availability === 'online' ? 'online' : 'offline'")
     expect(createWizard).toContain(".filter((row): row is NonNullable<ReturnType<typeof sourceRecord>> => row != null && row.availability !== 'online')")
     expect(createWizard).toContain("const availability = sourceRecord(sourceId)?.availability")
-    expect(createWizard).toContain("page: 1, page_size: 500, availability: 'online'")
+    expect(createWizard).toContain('const restoreTargetCatalog = useRestoreTargetCatalog()')
+    expect(createWizard).toContain('restoreTargetCatalog.reset()')
+    expect(createWizard).toContain(':remote-method="restoreTargetCatalog.setSearch"')
+    expect(createWizard).toContain('@popup-scroll="onCreateRecoveryTargetPopupScroll"')
+    expect(createWizard).not.toContain('loadOnlineRecoveryTargets')
     expect(createWizard).not.toContain("item.status === 'online' || item.status === 'reconnecting' ? item.status : 'offline'")
   })
 

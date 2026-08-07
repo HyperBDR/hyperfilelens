@@ -443,6 +443,8 @@ export const enProtectionPages = {
     recStepConfirm: 'Review',
     recoveryUseSourceHost: 'Restore to Source',
     recoverySourceHostUnavailable: 'Source target is unavailable.',
+    recoveryTargetEmpty: 'No online restore targets available.',
+    recoveryTargetLoadFailed: 'Failed to load restore targets.',
     recWizardHintRestoreNode: 'Pick the destination node for the restore',
     recWizardHintBackupAndSnapshot: 'Pick a snapshot version for each backup source',
     recWizardHintBackup: 'Pick the backup to restore from',
