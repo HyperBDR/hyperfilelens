@@ -2264,7 +2264,7 @@ onUnmounted(() => {
                   {{ nasServerAddress(row) }}
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="130">
+              <el-table-column :label="t('protection.sourceResources.colNasShareExport')" min-width="120">
                 <template #default="{ row }">
                   <div class="table-stack-cell">
                     <span class="table-stack-cell__secondary">{{ t(nasPathKindLabelKey(row)) }}</span>
@@ -2272,7 +2272,7 @@ onUnmounted(() => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="130">
+              <el-table-column :label="t('protection.sourceResources.colSourceProxy')" min-width="120">
                 <template #header>
                   <span class="hfl-table-header-with-tip">
                     <span>{{ t('protection.sourceResources.colSourceProxy') }}</span>
@@ -2292,7 +2292,7 @@ onUnmounted(() => {
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('protection.sourceResources.colProxyMountPoint')" min-width="170">
+              <el-table-column :label="t('protection.sourceResources.colProxyMountPoint')" min-width="165">
                 <template #default="{ row }">
                   <span class="hfl-table-cell-full hfl-table-no-tooltip">{{ nasProxyMountPoint(row) }}</span>
                 </template>
