@@ -73,6 +73,8 @@ export type RepositoryRow = {
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
   last_checked_at?: string | null
+  usage_probe_status?: string
+  capacity_probe_status?: string
   created_at?: string | null
   source_node_id: number
   source_node_name: string
@@ -143,6 +145,8 @@ type ApiRepository = {
   estimated_usage_bytes: number
   physical_usage_bytes?: number | null
   last_checked_at?: string | null
+  usage_probe_status?: string
+  capacity_probe_status?: string
   created_at?: string | null
   updated_at?: string | null
   nas_protocol?: NasProtocol | null
@@ -395,6 +399,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
       last_checked_at: r.last_checked_at ?? null,
+      usage_probe_status: r.usage_probe_status || 'pending',
+      capacity_probe_status: r.capacity_probe_status || 'pending',
       created_at: r.created_at ?? null,
       source_node_id: sourceNode.id,
       source_node_name: sourceNode.name,
@@ -433,6 +439,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       estimated_usage_bytes: r.estimated_usage_bytes,
       physical_usage_bytes: r.physical_usage_bytes ?? null,
       last_checked_at: r.last_checked_at ?? null,
+      usage_probe_status: r.usage_probe_status || 'pending',
+      capacity_probe_status: r.capacity_probe_status || 'pending',
       created_at: r.created_at ?? null,
       source_node_id: sourceNode.id,
       source_node_name: proxyNodeName || sourceNode.name,
@@ -461,6 +469,8 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     estimated_usage_bytes: r.estimated_usage_bytes,
     physical_usage_bytes: r.physical_usage_bytes ?? null,
     last_checked_at: r.last_checked_at ?? null,
+    usage_probe_status: r.usage_probe_status || 'pending',
+    capacity_probe_status: r.capacity_probe_status || 'pending',
     created_at: r.created_at ?? null,
     source_node_id: sourceNode.id,
     source_node_name: sourceNode.name,
@@ -1671,6 +1681,23 @@ function repoUsageParts(row: RepositoryRow) {
   return repositoryCapacityParts(row)
 }
 
+function repoMetricMessage(row: RepositoryRow) {
+  if (row.kind !== 'nas' && row.kind !== 'proxy_fs') return ''
+  const usage = String(row.usage_probe_status || 'pending')
+  const capacity = String(row.capacity_probe_status || 'pending')
+  if (usage === 'failed' && capacity === 'failed') return t('repositoriesPage.metricsUnavailable')
+  if (usage === 'pending' && capacity === 'pending') return t('repositoriesPage.metricsPending')
+  return ''
+}
+
+function repoUsageProbeFailed(row: RepositoryRow) {
+  return String(row.usage_probe_status || 'pending') === 'failed'
+}
+
+function repoCapacityProbeFailed(row: RepositoryRow) {
+  return String(row.capacity_probe_status || 'pending') === 'failed'
+}
+
 function applySearch() {
   selectedRows.value = []
   tableRef.value?.clearSelection()
@@ -2455,8 +2482,15 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   <span v-else>—</span>
                 </template>
                 <template v-else-if="activeTab === 'nas' || activeTab === 'proxy_fs'">
+                  <span v-if="repoMetricMessage(row)">{{ repoMetricMessage(row) }}</span>
+                  <span v-else-if="repoCapacityProbeFailed(row)">
+                    {{ fmtBytes(repoUsageParts(row).used) }} / {{ t('repositoriesPage.capacityUnavailable') }}
+                  </span>
+                  <span v-else-if="repoUsageProbeFailed(row)">
+                    {{ t('repositoriesPage.usageUnavailable') }} / {{ fmtBytes(repoUsageParts(row).total) }}
+                  </span>
                   <HflCapacityCell
-                    v-if="repoUsageParts(row).total > 0"
+                    v-else-if="repoUsageParts(row).total > 0"
                     :used-bytes="repoUsageParts(row).used"
                     :total-bytes="repoUsageParts(row).total"
                     variant="compact"
@@ -2843,9 +2877,26 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                    <span
+                      class="hfl-detail-row__value hfl-detail-row__value--stacked"
+                      :class="{
+                        'hfl-detail-row__value--metric-state':
+                          Boolean(repoMetricMessage(detailRow)) ||
+                          repoCapacityProbeFailed(detailRow) ||
+                          repoUsageProbeFailed(detailRow),
+                      }"
+                    >
+                      <span v-if="repoMetricMessage(detailRow)" class="hfl-detail-row__text hfl-detail-row__empty">
+                        {{ repoMetricMessage(detailRow) }}
+                      </span>
+                      <span v-else-if="repoCapacityProbeFailed(detailRow)" class="hfl-detail-row__text">
+                        {{ fmtBytes(repoUsageParts(detailRow).used) }} / {{ t('repositoriesPage.capacityUnavailable') }}
+                      </span>
+                      <span v-else-if="repoUsageProbeFailed(detailRow)" class="hfl-detail-row__text">
+                        {{ t('repositoriesPage.usageUnavailable') }} / {{ fmtBytes(repoUsageParts(detailRow).total) }}
+                      </span>
                       <HflCapacityCell
-                        v-if="repoUsageParts(detailRow).total > 0"
+                        v-else-if="repoUsageParts(detailRow).total > 0"
                         :used-bytes="repoUsageParts(detailRow).used"
                         :total-bytes="repoUsageParts(detailRow).total"
                         variant="compact"
@@ -2953,9 +3004,26 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('repositoriesPage.detailFieldCapacity') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
+                    <span
+                      class="hfl-detail-row__value hfl-detail-row__value--stacked"
+                      :class="{
+                        'hfl-detail-row__value--metric-state':
+                          Boolean(repoMetricMessage(detailRow)) ||
+                          repoCapacityProbeFailed(detailRow) ||
+                          repoUsageProbeFailed(detailRow),
+                      }"
+                    >
+                      <span v-if="repoMetricMessage(detailRow)" class="hfl-detail-row__text hfl-detail-row__empty">
+                        {{ repoMetricMessage(detailRow) }}
+                      </span>
+                      <span v-else-if="repoCapacityProbeFailed(detailRow)" class="hfl-detail-row__text">
+                        {{ fmtBytes(repoUsageParts(detailRow).used) }} / {{ t('repositoriesPage.capacityUnavailable') }}
+                      </span>
+                      <span v-else-if="repoUsageProbeFailed(detailRow)" class="hfl-detail-row__text">
+                        {{ t('repositoriesPage.usageUnavailable') }} / {{ fmtBytes(repoUsageParts(detailRow).total) }}
+                      </span>
                       <HflCapacityCell
-                        v-if="repoUsageParts(detailRow).total > 0"
+                        v-else-if="repoUsageParts(detailRow).total > 0"
                         :used-bytes="repoUsageParts(detailRow).used"
                         :total-bytes="repoUsageParts(detailRow).total"
                         variant="compact"

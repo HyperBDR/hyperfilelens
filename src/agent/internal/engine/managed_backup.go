@@ -806,9 +806,16 @@ func appendRepositoryUsageMetrics(
 	}
 	result["content_stats"] = commandResult(statsRes)
 	if statsErr == nil {
-		if packed := parseKopiaPackedBytes(statsRes.Stdout); packed > 0 {
-			result["content_stats_bytes"] = packed
-			result["estimated_usage_bytes"] = uint64(float64(packed) * kopiaEstimatedUsageFactor)
+		packed := parseKopiaPackedBytes(statsRes.Stdout)
+		estimated := uint64(float64(packed) * kopiaEstimatedUsageFactor)
+		result["content_stats_bytes"] = packed
+		result["estimated_usage_bytes"] = estimated
+		result["usage_probe"] = map[string]any{
+			"status": "success", "estimated_usage_bytes": estimated,
+		}
+	} else {
+		result["usage_probe"] = map[string]any{
+			"status": "failed", "error": "Unable to read repository usage.",
 		}
 	}
 
@@ -818,7 +825,13 @@ func appendRepositoryUsageMetrics(
 	}
 	total, used, free, err := agentdisk.Usage(spacePath)
 	if err != nil {
+		result["capacity_probe"] = map[string]any{
+			"status": "failed", "error": "Unable to read filesystem capacity.",
+		}
 		return
+	}
+	result["capacity_probe"] = map[string]any{
+		"status": "success", "total_bytes": total,
 	}
 	result["space_info"] = map[string]any{
 		"path":        spacePath,

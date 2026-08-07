@@ -63,6 +63,10 @@ class Credential(models.Model):
 
 
 class Repository(models.Model):
+    class MetricProbeStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SUCCESS = "success", "Success"
+        FAILED = "failed", "Failed"
     class Type(models.TextChoices):
         S3 = "s3", "S3"
         NAS = "nas", "NAS"
@@ -124,6 +128,17 @@ class Repository(models.Model):
     estimated_usage_bytes = models.BigIntegerField(default=0)
     physical_usage_bytes = models.BigIntegerField(blank=True, null=True)
     last_checked_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    metrics_last_attempt_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    usage_probe_status = models.CharField(
+        max_length=20, choices=MetricProbeStatus.choices, default=MetricProbeStatus.PENDING
+    )
+    usage_last_success_at = models.DateTimeField(blank=True, null=True)
+    usage_last_error = models.CharField(max_length=1000, blank=True, default="")
+    capacity_probe_status = models.CharField(
+        max_length=20, choices=MetricProbeStatus.choices, default=MetricProbeStatus.PENDING
+    )
+    capacity_last_success_at = models.DateTimeField(blank=True, null=True)
+    capacity_last_error = models.CharField(max_length=1000, blank=True, default="")
     nas_protocol = models.CharField(
         max_length=20,
         choices=NasProtocol.choices,
