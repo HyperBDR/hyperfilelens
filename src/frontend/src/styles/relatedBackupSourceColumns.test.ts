@@ -18,7 +18,7 @@ describe('related backup source detail columns', () => {
       'associatedSourceColId',
       'associatedSourceColSource',
       'associatedSourceColEndpoint',
-      'associatedSourceColStatus',
+      'associatedSourceColAvailability',
       'repositoriesPage.colRegistered',
     ]
 
@@ -29,9 +29,11 @@ describe('related backup source detail columns', () => {
     expect(table).toContain(':min-width="isDirectNasAssociatedSources() ? 160 : 260"')
     expect(table).toMatch(/associatedSourceColNasConnectivity'[\s\S]*?min-width="129"/)
     expect(table).toMatch(/v-if="!isDirectNasAssociatedSources\(\)"[\s\S]*?repositoriesPage\.colRegistered/)
+    expect(table).toContain('associatedSourceStatusTagAttrs(row.availability)')
+    expect(table).toContain('associatedSourceStatusLabel(row.availability)')
   })
 
-  it('uses ID, Backup Source, Endpoint, Status, Registered for policies and filters', () => {
+  it('uses ID, Backup Source, Endpoint, Availability, Registered for policies and filters', () => {
     expect(occurrences(policiesPage, "t('repositoriesPage.associatedSourceColId')")).toBe(2)
     expect(occurrences(policiesPage, "t('protection.backupsPage.colRegistered')")).toBe(2)
 
@@ -39,7 +41,7 @@ describe('related backup source detail columns', () => {
       'associatedSourceColId',
       'colBackupSource',
       'associatedSourceColEndpoint',
-      'associatedSourceColStatus',
+      'associatedSourceColAvailability',
       'colRegistered',
     ]
     for (const resizeKey of ['protection.policies.backup.related', 'protection.policies.filters.related']) {
@@ -51,6 +53,8 @@ describe('related backup source detail columns', () => {
       expect(positions).toEqual([...positions].sort((a, b) => a - b))
       expect(table).toContain('{{ row.source_ref_id }}')
       expect(table).toContain('{{ relatedSourceRegisteredAt(row) }}')
+      expect(table).toContain('relatedSourceAvailability(row)')
+      expect(table).toContain('relatedSourceAvailabilityLabel(row)')
     }
   })
 })

@@ -598,6 +598,7 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(row["source_name"], "source-agent")
         self.assertEqual(row["source_kind"], "host")
         self.assertEqual(row["node_ip"], "10.0.8.10")
+        self.assertEqual(row["availability"], Node.Availability.ONLINE)
         self.assertEqual(row["registered_at"], agent.created_at.isoformat())
         self.assertEqual(row["nas_location"], "nfs://192.168.8.82/nfsshare")
         self.assertEqual(row["repository_subdir"], f"hp-repos/agent-{agent.id}")
@@ -657,6 +658,7 @@ class StorageRepositoryApiTests(TestCase):
         row = response.data["results"][0]
         self.assertEqual(row["repository_subdir"], f"hp-repos/agent-{proxy.id}")
         self.assertEqual(row["repository_mount_point"], f"/mnt/hfl/storage-repositories/repo-{repo.id}-node-{proxy.id}")
+        self.assertEqual(row["availability"], source.availability)
         self.assertEqual(row["health"], Repository.Health.ONLINE)
 
     def test_associated_sources_exposes_nas_registration_and_missing_source_fallback(self):
@@ -786,8 +788,10 @@ class StorageRepositoryApiTests(TestCase):
         self.assertEqual(len(page_one.data["results"]), 1)
         self.assertEqual(len(page_two.data["results"]), 1)
         self.assertEqual(page_one.data["results"][0]["source_name"], "source-agent-a")
+        self.assertEqual(page_one.data["results"][0]["availability"], Node.Availability.ONLINE)
         self.assertEqual(page_one.data["results"][0]["repository_mount_point"], "")
         self.assertEqual(page_two.data["results"][0]["source_name"], "source-agent-b")
+        self.assertEqual(page_two.data["results"][0]["availability"], Node.Availability.OFFLINE)
         self.assertEqual(local_disk.status_code, status.HTTP_200_OK, local_disk.content)
         self.assertEqual(local_disk.data["count"], 1)
         self.assertEqual(local_disk.data["results"][0]["repository_mount_point"], "")

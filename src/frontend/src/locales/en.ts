@@ -1730,6 +1730,7 @@ export const en = {
     associatedSourceColNasConnectivity: 'NAS Connectivity',
     associatedSourceColEndpoint: 'Endpoint',
     associatedSourceColStatus: 'Status',
+    associatedSourceColAvailability: 'Availability',
     associatedSourceTypeHost: 'Host',
     associatedSourceTypeNas: 'NAS',
     associatedSourceOnline: 'Online',

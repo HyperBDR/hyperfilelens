@@ -72,6 +72,7 @@ export type StorageRepositoryAssociatedSource = {
   source_name: string
   source_kind: 'host' | 'nas' | string
   status: 'online' | 'reconnecting' | 'offline' | string
+  availability: 'online' | 'offline' | string
   platform?: string | null
   hostname?: string | null
   node_name?: string | null

@@ -710,15 +710,14 @@ function relatedSourceEndpointRow(config: BackupConfig) {
   }
 }
 
-function relatedSourceStatus(config: BackupConfig) {
-  return relatedSource(config)?.status || ''
+function relatedSourceAvailability(config: BackupConfig) {
+  return relatedSource(config)?.availability || ''
 }
 
-function relatedSourceStatusLabel(config: BackupConfig) {
-  const status = relatedSourceStatus(config)
-  if (status === 'online') return t('protection.backupsPage.sourceStatusOnline')
-  if (status === 'reconnecting') return t('protection.backupsPage.sourceStatusReconnecting')
-  if (status === 'offline') return t('protection.backupsPage.sourceStatusOffline')
+function relatedSourceAvailabilityLabel(config: BackupConfig) {
+  const availability = relatedSourceAvailability(config)
+  if (availability === 'online') return t('protection.backupsPage.sourceStatusOnline')
+  if (availability === 'offline') return t('protection.backupsPage.sourceStatusOffline')
   return t('repositoriesPage.associatedSourceUnknown')
 }
 
@@ -1430,10 +1429,10 @@ function onMoreDisable() {
                   <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('repositoriesPage.associatedSourceColStatus')" min-width="130">
+              <el-table-column :label="t('repositoriesPage.associatedSourceColAvailability')" min-width="130">
                 <template #default="{ row }">
-                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceStatus(row))">
-                    {{ relatedSourceStatusLabel(row) }}
+                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceAvailability(row))">
+                    {{ relatedSourceAvailabilityLabel(row) }}
                   </ElTag>
                 </template>
               </el-table-column>
@@ -1548,10 +1547,10 @@ function onMoreDisable() {
                   <FlowSourceConnectionCell :row="relatedSourceEndpointRow(row)" />
                 </template>
               </el-table-column>
-              <el-table-column :label="t('repositoriesPage.associatedSourceColStatus')" min-width="130">
+              <el-table-column :label="t('repositoriesPage.associatedSourceColAvailability')" min-width="130">
                 <template #default="{ row }">
-                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceStatus(row))">
-                    {{ relatedSourceStatusLabel(row) }}
+                  <ElTag size="small" v-bind="lifecycleStatusTagAttrs(relatedSourceAvailability(row))">
+                    {{ relatedSourceAvailabilityLabel(row) }}
                   </ElTag>
                 </template>
               </el-table-column>

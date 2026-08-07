@@ -3031,9 +3031,9 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                           <ElTag
                             v-if="isDirectNasAssociatedSources()"
                             size="small"
-                            v-bind="associatedSourceStatusTagAttrs(row.status)"
+                            v-bind="associatedSourceStatusTagAttrs(row.availability)"
                           >
-                            {{ associatedSourceStatusLabel(row.status) }}
+                            {{ associatedSourceStatusLabel(row.availability) }}
                           </ElTag>
                           <ElTag
                             size="small"
@@ -3127,12 +3127,12 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 </ElTableColumn>
                 <ElTableColumn
                   v-else
-                  :label="t('repositoriesPage.associatedSourceColStatus')"
+                  :label="t('repositoriesPage.associatedSourceColAvailability')"
                   min-width="130"
                 >
                   <template #default="{ row }">
-                    <ElTag size="small" v-bind="associatedSourceStatusTagAttrs(row.status)">
-                      {{ associatedSourceStatusLabel(row.status) }}
+                    <ElTag size="small" v-bind="associatedSourceStatusTagAttrs(row.availability)">
+                      {{ associatedSourceStatusLabel(row.availability) }}
                     </ElTag>
                   </template>
                 </ElTableColumn>
