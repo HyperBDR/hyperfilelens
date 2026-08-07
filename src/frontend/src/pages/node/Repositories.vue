@@ -2278,7 +2278,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             </el-table-column>
             <el-table-column
               :label="t('repositoriesPage.colStatus')"
-              :width="activeTab === 'proxy_fs' ? 148 : 112"
+              :width="activeTab === 'proxy_fs' ? 148 : activeTab === 's3' || activeTab === 'nas' ? 134 : 112"
             >
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip">
@@ -2309,7 +2309,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 's3'"
               :label="t('repositoriesPage.colRegion')"
-              min-width="100"
+              min-width="120"
             >
               <template #default="{ row }">
                 <span :class="{ 'repo-s3-region-empty': s3RegionCellText(row) === '—' }">
@@ -2338,7 +2338,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 's3'"
               :label="t('repositoriesPage.colS3ObjectPrefix')"
-              min-width="180"
+              min-width="126"
             >
               <template #default="{ row }">
                 <span>{{ s3ObjectPrefixCell(row) }}</span>
@@ -2374,7 +2374,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               v-if="activeTab === 'nas' || activeTab === 'proxy_fs'"
               :label="t('repositoriesPage.colSourceProxyIp')"
-              :min-width="activeTab === 'proxy_fs' ? 144 : 180"
+              :min-width="activeTab === 'proxy_fs' ? 144 : 173"
             >
               <template #header>
                 <span class="repo-table-header-with-tip">
@@ -2429,7 +2429,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 <span>{{ repoListMountPoint(row) }}</span>
               </template>
             </el-table-column>
-            <el-table-column :label="usageColumnLabel" :min-width="activeTab === 's3' ? 200 : 198">
+            <el-table-column
+              :label="usageColumnLabel"
+              :min-width="activeTab === 's3' ? 170 : activeTab === 'nas' ? 190 : 198"
+            >
               <template #default="{ row }">
                 <template v-if="activeTab === 's3'">
                   <HflCapacityCell
@@ -2487,7 +2490,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             <el-table-column
               prop="created_at"
               :label="activeTab === 's3' || activeTab === 'nas' || activeTab === 'proxy_fs' ? t('repositoriesPage.colRegistered') : t('repositoriesPage.colCreated')"
-              :min-width="activeTab === 's3' || activeTab === 'nas' || activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
+              :min-width="activeTab === 'nas' ? 163 : activeTab === 's3' || activeTab === 'proxy_fs' ? 170 : createdAtColumnMinWidth"
             >
               <template #default="{ row }">
                 <span class="hfl-table-cell-time">{{ formatLocalDateTime(row.created_at) }}</span>
