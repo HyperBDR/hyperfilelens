@@ -20,6 +20,7 @@ describe('protection policy quick schedule editor', () => {
     expect(editorSource).toContain('policyForm.scheduleMonthDays.includes(day)')
     expect(editorSource).toContain('v-model="policyForm.scheduleTime"')
     expect(editorSource).toContain("policyForm.scheduleMonthEnd = !policyForm.scheduleMonthEnd")
+    expect(editorSource).toContain('.schedule-interval-unit {\n  width: 240px !important;')
   })
 
   it('uses the shared policy payload mapper in the backup wizard', () => {

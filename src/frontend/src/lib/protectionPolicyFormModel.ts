@@ -22,13 +22,58 @@ export type ScheduleWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
 const SCHEDULE_TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/
 const SCHEDULE_START_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):([0-5]\d)$/
 
-export function getScheduleTimezoneOptions(): string[] {
+export interface ScheduleTimezoneOption {
+  value: string
+  label: string
+  offsetMinutes: number
+}
+
+function timezoneOffsetMinutes(timezoneName: string, now: Date): number | null {
+  try {
+    const offset = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezoneName,
+      timeZoneName: 'longOffset',
+    }).formatToParts(now).find((part) => part.type === 'timeZoneName')?.value
+    if (offset === 'GMT') return 0
+    const matched = /^GMT([+-])(\d{1,2}):(\d{2})$/.exec(offset || '')
+    if (!matched) return null
+    const minutes = Number(matched[2]) * 60 + Number(matched[3])
+    return matched[1] === '-' ? -minutes : minutes
+  } catch {
+    return null
+  }
+}
+
+function formatTimezoneOffset(offsetMinutes: number): string {
+  const sign = offsetMinutes < 0 ? '-' : '+'
+  const absoluteMinutes = Math.abs(offsetMinutes)
+  const hours = String(Math.floor(absoluteMinutes / 60)).padStart(2, '0')
+  const minutes = String(absoluteMinutes % 60).padStart(2, '0')
+  return `GMT${sign}${hours}:${minutes}`
+}
+
+export function getScheduleTimezoneOptions(
+  selectedTimezone?: string,
+  now = new Date(),
+): ScheduleTimezoneOption[] {
   const supportedValuesOf = (
     Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] }
   ).supportedValuesOf
   const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   const values = supportedValuesOf ? supportedValuesOf('timeZone') : []
-  return [...new Set(['UTC', browserTimezone, ...values])]
+  return [...new Set(['UTC', browserTimezone, selectedTimezone, ...values].filter(Boolean))]
+    .map((value) => {
+      const offsetMinutes = timezoneOffsetMinutes(value, now)
+      return {
+        value,
+        label: offsetMinutes === null ? value : `(${formatTimezoneOffset(offsetMinutes)}) ${value}`,
+        offsetMinutes: offsetMinutes ?? Number.POSITIVE_INFINITY,
+      }
+    })
+    .sort((left, right) => (
+      left.offsetMinutes - right.offsetMinutes
+      || (left.value === 'UTC' ? -1 : right.value === 'UTC' ? 1 : left.value.localeCompare(right.value))
+    ))
 }
 
 function defaultScheduleTimezone(): string {

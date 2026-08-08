@@ -40,7 +40,7 @@ const { t } = useI18n()
 const router = useRouter()
 const messageLocale = computed<MessageLocale>(() => 'en')
 const simpleIntervalOptions = computed(() => getSimpleIntervalUnitOptions(messageLocale.value))
-const scheduleTimezoneOptions = computed(() => getScheduleTimezoneOptions())
+const scheduleTimezoneOptions = computed(() => getScheduleTimezoneOptions(policyForm.value.scheduleTimezone))
 const quickScheduleTypeOptions = computed(() => [
   { value: 'interval' as const, label: t('protection.policiesPage.scheduleTypeInterval') },
   { value: 'daily' as const, label: t('protection.policiesPage.scheduleTypeDaily') },
@@ -336,10 +336,10 @@ function toggleScheduleMonthDay(day: number) {
               :placeholder="t('protection.policiesPage.scheduleTimezonePlaceholder')"
             >
               <el-option
-                v-for="timezoneName in scheduleTimezoneOptions"
-                :key="timezoneName"
-                :label="timezoneName"
-                :value="timezoneName"
+                v-for="timezone in scheduleTimezoneOptions"
+                :key="timezone.value"
+                :label="timezone.label"
+                :value="timezone.value"
               />
             </el-select>
           </ElFormItem>
@@ -953,7 +953,7 @@ function toggleScheduleMonthDay(day: number) {
 }
 
 .schedule-interval-unit {
-  width: 200px;
+  width: 240px !important;
 }
 
 .schedule-picker-block {
