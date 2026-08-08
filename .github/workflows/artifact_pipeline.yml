@@ -354,6 +354,34 @@ jobs:
             --image-tag "hyperfilelens-website-builder:${GITHUB_RUN_ID}" \
             --platform linux/amd64
 
+      - name: Materialize Open Core extensions for image bake
+        env:
+          HFL_EXTENSION_SOURCES: ${{ vars.HFL_EXTENSION_SOURCES }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.HFL_EXTENSION_GIT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/release/extensions
+          : >build/release/extensions/.gitkeep
+          if [[ -z "${HFL_EXTENSION_SOURCES// }" ]]; then
+            echo "HFL_EXTENSIONS=" >>"${GITHUB_ENV}"
+            echo "Community bake: HFL_EXTENSION_SOURCES empty"
+            exit 0
+          fi
+          # Prefer packaging secret for private plugin repos; do not fall back to
+          # github.token (that token cannot clone other private repositories).
+          # Scope to HFL_EXTENSION_GIT_TOKEN only (materialize reads it first).
+          exts="$(
+            HFL_EXTENSION_GIT_TOKEN="${HFL_EXTENSION_GIT_TOKEN:-}" \
+              python3 tools/extensions/materialize_extensions.py \
+              --repo-root . \
+              --sources "${HFL_EXTENSION_SOURCES}" \
+              --bake-dir build/release/extensions \
+              --print-extensions
+          )"
+          echo "HFL_EXTENSIONS=${exts}" >>"${GITHUB_ENV}"
+          echo "Enterprise bake: HFL_EXTENSIONS=${exts}"
+
       - name: Build and push image
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -374,6 +402,7 @@ jobs:
             SENTRY_FRONTEND_PROJECT=${{ vars.SENTRY_FRONTEND_PROJECT }}
             SENTRY_RELEASE=hyperfilelens-frontend@${{ needs.prepare.outputs.version }}
             VITE_SHOW_EULA=false
+            HFL_EXTENSIONS=${{ env.HFL_EXTENSIONS }}
           secrets: ${{ matrix.component == 'hfl-frontend' && secrets.SENTRY_AUTH_TOKEN != '' && format('sentry_auth_token={0}', secrets.SENTRY_AUTH_TOKEN) || '' }}
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
           cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=min
@@ -771,6 +800,10 @@ jobs:
           mkdir -p build/ci-input
           gh release download "${{ needs.prepare.outputs.tag }}" --pattern '_internal-*.tar' --dir build/ci-input
       - name: Assemble canonical offline release
+        env:
+          # Same sources as image bake so packaged .env.example matches image ENV.
+          HFL_EXTENSION_SOURCES: ${{ vars.HFL_EXTENSION_SOURCES }}
+          HFL_EXTENSION_GIT_TOKEN: ${{ secrets.HFL_EXTENSION_GIT_TOKEN }}
         run: |
           ./release/ci/assemble-release.sh \
             --input-dir build/ci-input \

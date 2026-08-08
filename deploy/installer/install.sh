@@ -1457,6 +1457,7 @@ sub_key(
 path.write_text(text, encoding="utf-8")
 PY
 	chmod 600 "${env_file}"
+	reconcile_hfl_extensions_env "${env_file}" "${example}"
 	log ".env created (fixed login credentials, generated internal secrets, DJANGO_DEBUG=false)"
 }
 
@@ -1669,6 +1670,55 @@ sync_env_from_example() {
 	step "Merging missing keys from .env.example into .env ..."
 	python3 "${sync_script}" --env-file "${env_file}" --example "${example}"
 	chmod 600 "${env_file}"
+	reconcile_hfl_extensions_env "${env_file}" "${example}"
+}
+
+reconcile_hfl_extensions_env() {
+	# Empty HFL_EXTENSIONS= in .env overrides Dockerfile ENV and disables baked plugins.
+	# - Example has a non-empty value → fill missing/empty .env from example (Enterprise).
+	# - Example omits the key (Community) → drop empty HFL_EXTENSIONS= so image ENV wins.
+	# Non-empty operator overrides in .env are preserved.
+	local env_file=$1
+	local example=$2
+	[[ -f "${env_file}" ]] || return 0
+	python3 - "${env_file}" "${example}" <<'PY'
+import pathlib
+import re
+import sys
+
+env_path = pathlib.Path(sys.argv[1])
+example_path = pathlib.Path(sys.argv[2])
+env_text = env_path.read_text(encoding="utf-8")
+example_text = example_path.read_text(encoding="utf-8") if example_path.is_file() else ""
+
+def read_key(text, key):
+    m = re.search(rf"(?m)^[ \t]*{re.escape(key)}=(.*)$", text)
+    if not m:
+        return None
+    return m.group(1).strip().strip("'\"")
+
+example_val = read_key(example_text, "HFL_EXTENSIONS")
+env_val = read_key(env_text, "HFL_EXTENSIONS")
+
+if example_val:
+    if env_val is None:
+        env_text = env_text.rstrip() + f"\nHFL_EXTENSIONS={example_val}\n"
+    elif env_val == "":
+        env_text = re.sub(
+            r"(?m)^[ \t]*HFL_EXTENSIONS=.*$",
+            f"HFL_EXTENSIONS={example_val}",
+            env_text,
+            count=1,
+        )
+    else:
+        raise SystemExit(0)
+elif env_val == "":
+    env_text = re.sub(r"(?m)^[ \t]*HFL_EXTENSIONS=.*\n?", "", env_text)
+else:
+    raise SystemExit(0)
+
+env_path.write_text(env_text, encoding="utf-8")
+PY
 }
 
 pin_gateway_version_if_missing() {

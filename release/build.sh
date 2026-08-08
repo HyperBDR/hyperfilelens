@@ -47,6 +47,10 @@ VERBOSE="${HFL_LOG_VERBOSE:-0}"
 PRINT_CONFIG=0
 OPT_VERSION=""
 SOURCELENS_BUILD_ENV="${ROOT}/tools/sourcelens/defaults.env"
+# Open Core extension bake (packaging only). Repeatable --extension-source.
+EXTENSION_SOURCES=()
+EXTENSION_BAKE_DIR="${ROOT}/build/release/extensions"
+HFL_EXTENSIONS_RUNTIME=""
 
 log() { hfl_log_info "$@"; }
 die() { hfl_die "$1" "${2:-1}"; }
@@ -64,6 +68,9 @@ normalize_release_permissions() {
 	find "${pkg_root}" -type d -exec chmod 755 {} +
 	find "${pkg_root}" -type f -exec chmod 644 {} +
 	chmod 755 "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py"
+	if [[ -f "${pkg_root}/sync-env.py" ]]; then
+		chmod 755 "${pkg_root}/sync-env.py"
+	fi
 	if [[ -d "${pkg_root}/sourcelens" ]]; then
 		chmod 755 "${pkg_root}/sourcelens/install.sh" \
 			"${pkg_root}/sourcelens/patch-env-runtime.py" \
@@ -227,7 +234,9 @@ Version:
 
 Mirror options (Kopia fetch + Agent publishing + SourceLens Git + runtime image pull; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
-  --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
+  --github-token TOKEN             GitHub token for API/release fetch, private SourceLens clone,
+                                     and private extension git sources (env: GITHUB_TOKEN /
+                                     HFL_EXTENSION_GIT_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for ubuntu:24.04, postgres, redis (env: DOCKER_DOWNLOAD_MIRROR)
   --docker-pull-timeout SECONDS    Timeout for each Docker pull attempt (env: DOCKER_PULL_TIMEOUT_SECONDS)
   --docker-apt-mirror URL          Docker CE apt repo base URL (env: DOCKER_APT_MIRROR / BUILD_DOCKER_APT_MIRROR)
@@ -238,6 +247,14 @@ Mirror options (Kopia fetch + Agent publishing + SourceLens Git + runtime image 
   --pip-index-url URL              Python package index (env: PIP_INDEX_URL)
   --pip-trusted-host HOST          Trusted pip host (env: PIP_TRUSTED_HOST)
   --npm-registry URL               npm registry (env: NPM_REGISTRY)
+
+Open Core extensions (bake into control-plane images at packaging time):
+  --extension-source SRC           Local path or git/HTTPS URL[+@ref]. Repeatable.
+                                     Empty = Community (no plugin). Not read from
+                                     .env. CI may set process env
+                                     HFL_EXTENSION_SOURCES / HFL_EXTENSION_GIT_TOKEN.
+                                     Private HTTPS: --github-token or
+                                     HFL_EXTENSION_GIT_TOKEN (SSH uses your agent).
 
 Kopia artifacts (tools/kopia/defaults.env; default: build patched source):
   --kopia-mode MODE               build or download
@@ -261,6 +278,8 @@ Output options:
 
 Examples:
   ./release/build.sh
+  ./release/build.sh --extension-source ../hyperfilelens-ee
+  ./release/build.sh --extension-source https://github.com/org/hyperfilelens-ee.git@main --github-token "$TOKEN"
   ./release/build.sh --ubuntu2404-arch amd64
   ./release/build.sh --github-download-mirror https://ghfast.top --docker-download-mirror docker.m.daocloud.io --apt-mirror https://mirrors.tuna.tsinghua.edu.cn
 USAGE
@@ -310,6 +329,8 @@ go_sumdb=${GOSUMDB}
 pip_index_url=${PIP_INDEX_URL:-<official>}
 pip_trusted_host=${PIP_TRUSTED_HOST:-<unset>}
 npm_registry=${NPM_REGISTRY:-<official>}
+extension_sources=${EXTENSION_SOURCES_CSV:-<none>}
+hfl_extensions=<resolved at image bake>
 log_file=${LOG_FILE:-<none>}
 verbose=${VERBOSE}
 EOF
@@ -471,11 +492,90 @@ parse_args() {
 			SOURCELENS_FORCE_BUILD=1
 			shift
 			;;
+		--extension-source)
+			require_value "$1" "${2:-}"
+			EXTENSION_SOURCES+=("$2")
+			shift 2
+			;;
 		*)
 			die "unknown argument: $1 (try --help)" 2
 			;;
 		esac
 	done
+	# Process-env / CI fallback only (never loaded from repo .env).
+	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 && -n "${HFL_EXTENSION_SOURCES:-}" ]]; then
+		local _src
+		IFS=',' read -r -a _src <<<"${HFL_EXTENSION_SOURCES}"
+		local _item
+		for _item in "${_src[@]}"; do
+			_item="${_item#"${_item%%[![:space:]]*}"}"
+			_item="${_item%"${_item##*[![:space:]]}"}"
+			[[ -n "${_item}" ]] && EXTENSION_SOURCES+=("${_item}")
+		done
+	fi
+	if [[ ${#EXTENSION_SOURCES[@]} -gt 0 ]]; then
+		local IFS=','
+		EXTENSION_SOURCES_CSV="${EXTENSION_SOURCES[*]}"
+	else
+		EXTENSION_SOURCES_CSV=""
+	fi
+}
+
+stage_release_env_example() {
+	# Package .env.example must not ship HFL_EXTENSIONS= (empty) — compose env_file
+	# would clear the baked image ENV and disable Enterprise plugins at runtime.
+	local pkg_root=$1
+	local example="${pkg_root}/.env.example"
+	cp "${ROOT}/.env.example" "${example}"
+	HFL_EXTENSIONS_RUNTIME="${HFL_EXTENSIONS_RUNTIME:-}" python3 - "${example}" <<'PY'
+import os
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"(?m)^[ \t]*HFL_EXTENSIONS=.*\n?", "", text)
+runtime = os.environ.get("HFL_EXTENSIONS_RUNTIME", "").strip()
+if runtime:
+    block = (
+        "\n# Baked into this release's control-plane images (Open Core).\n"
+        f"HFL_EXTENSIONS={runtime}\n"
+    )
+    text = text.rstrip() + "\n" + block
+path.write_text(text, encoding="utf-8")
+PY
+}
+
+prepare_extension_bake() {
+	# Stage extensions into docker context for COPY; Community leaves an empty tree.
+	rm -rf "${EXTENSION_BAKE_DIR}"
+	mkdir -p "${EXTENSION_BAKE_DIR}"
+	: >"${EXTENSION_BAKE_DIR}/.gitkeep"
+	HFL_EXTENSIONS_RUNTIME=""
+	if [[ ${#EXTENSION_SOURCES[@]} -eq 0 ]]; then
+		log "Extension bake: Community (no HFL_EXTENSION_SOURCES)"
+		return 0
+	fi
+	local sources_csv
+	local IFS=','
+	sources_csv="${EXTENSION_SOURCES[*]}"
+	unset IFS
+	# Scope extension token to the materialize subprocess only — never overwrite
+	# global GITHUB_TOKEN (SourceLens / GitHub API may use a different credential).
+	apply_mirror_env_defaults
+	local ext_token="${HFL_EXTENSION_GIT_TOKEN:-${MIRROR_GITHUB_TOKEN:-}}"
+	log "Extension bake: materializing ${sources_csv}"
+	HFL_EXTENSIONS_RUNTIME="$(
+		HFL_EXTENSION_GIT_TOKEN="${ext_token}" \
+			python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
+			--repo-root "${ROOT}" \
+			--sources "${sources_csv}" \
+			--bake-dir "${EXTENSION_BAKE_DIR}" \
+			--print-extensions
+	)"
+	export HFL_EXTENSIONS_RUNTIME
+	log "Extension bake: HFL_EXTENSIONS=${HFL_EXTENSIONS_RUNTIME:-<empty>}"
 }
 
 prepare_kopia_artifacts() {
@@ -630,6 +730,7 @@ build_control_plane_images() {
 		--build-arg "KOPIA_BINARY=${KOPIA_BINARY:-build/kopia/dist/linux/amd64/kopia}" \
 		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
+		--build-arg "HFL_EXTENSIONS=${HFL_EXTENSIONS_RUNTIME:-}" \
 		"${ROOT}"
 
 	log "Building standalone Website artifact for hyperfilelens-frontend:${HFL_VERSION}"
@@ -655,6 +756,7 @@ build_control_plane_images() {
 		--build-arg "VITE_SHOW_EULA=${VITE_SHOW_EULA:-false}" \
 		--build-arg "IMAGE_VERSION=${HFL_VERSION}" \
 		--build-arg "IMAGE_REVISION=${RELEASE_COMMIT}" \
+		--build-arg "HFL_EXTENSIONS=${HFL_EXTENSIONS_RUNTIME:-}" \
 		"${ROOT}"
 }
 
@@ -1220,6 +1322,9 @@ main() {
 	log "Fetching host Docker CE debs (ubuntu 20.04/22.04/24.04 amd64)"
 	fetch_host_docker_debs
 
+	log "Preparing Open Core extension bake for control-plane images"
+	prepare_extension_bake
+
 	log "Building control-plane Docker images"
 	export_build_mirror_env
 	build_control_plane_images
@@ -1248,7 +1353,7 @@ main() {
 	log "Staging package files"
 	printf '%s\n' "${version}" > "${pkg_root}/VERSION"
 	cp "${ROOT}/deploy/docker-compose.yml" "${pkg_root}/docker-compose.yml"
-	cp "${ROOT}/.env.example" "${pkg_root}/.env.example"
+	stage_release_env_example "${pkg_root}"
 	cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
 	stage_default_tls_bundle "${pkg_root}"
 	cp "${ROOT}/deploy/nginx/default.conf" "${pkg_root}/deploy/nginx/default.conf"
@@ -1259,7 +1364,8 @@ main() {
 	cp "${ROOT}/deploy/blue-green/active-color" "${pkg_root}/deploy/blue-green/active-color"
 	cp "${ROOT}/deploy/installer/install.sh" "${pkg_root}/install.sh"
 	cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"
-	chmod +x "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py"
+	cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"
+	chmod +x "${pkg_root}/install.sh" "${pkg_root}/apply-runtime-config.py" "${pkg_root}/sync-env.py"
 	mkdir -p "${pkg_root}/deploy/logrotate"
 	cp "${ROOT}/deploy/logrotate/hyperfilelens.conf" "${pkg_root}/deploy/logrotate/hyperfilelens.conf"
 

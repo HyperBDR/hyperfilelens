@@ -10,6 +10,9 @@ build/**
 !build/kopia/dist/linux/amd64/kopia
 !build/website/
 !build/website/**
+!build/release/
+!build/release/extensions/
+!build/release/extensions/**
 logs
 *.log
 node_modules

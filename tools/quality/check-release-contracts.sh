@@ -1201,6 +1201,8 @@ grep -F 'Full release install, upgrade, and login verification passed' "${releas
 grep -F 'sudo env \' "${release_verifier}" >/dev/null
 grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
+grep -F 'cp "${ROOT}/tools/config/sync_env.py" "${pkg_root}/sync-env.py"' \
+	"${ROOT}/release/build.sh" >/dev/null
 grep -F 'cp "${ROOT}/deploy/installer/apply-runtime-config.py" "${pkg_root}/apply-runtime-config.py"' \
 	"${ROOT}/release/ci/assemble-release.sh" >/dev/null
 grep -F 'stage_default_tls_bundle "${pkg_root}"' \
