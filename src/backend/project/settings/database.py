@@ -28,6 +28,9 @@ if not DATABASE_URL:
     )
 
 
+_POSTGRES_ENGINE = "project.db.backends.postgresql"
+
+
 def _build_default_db_config(url: str) -> dict[str, object]:
     config = dj_database_url.parse(url, conn_max_age=0)
     if config["ENGINE"] != "django.db.backends.postgresql":
@@ -35,6 +38,9 @@ def _build_default_db_config(url: str) -> dict[str, object]:
             "HyperFileLens supports PostgreSQL only; DATABASE_URL must use "
             "the postgresql:// scheme."
         )
+    # Thin wrapper: same runtime behavior; terminates leftover sessions before
+    # DROP DATABASE during ``manage.py test`` teardown.
+    config["ENGINE"] = _POSTGRES_ENGINE
     options = dict(config.get("OPTIONS") or {})
     options.setdefault("connect_timeout", 60)
     options.setdefault("options", "-c statement_timeout=300000")
