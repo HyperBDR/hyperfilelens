@@ -934,6 +934,29 @@ for bootstrap in "${gateway_bootstrap_linux}" "${gateway_docker_installer}"; do
 	grep -F -- '--retry 3 --retry-connrefused --retry-delay 2' "${bootstrap}" >/dev/null
 	grep -F 'partial="${destination}.part"' "${bootstrap}" >/dev/null
 done
+# CentOS 7 / Bash < 4.4: empty CURL_TLS + set -u requires ${arr[@]+"${arr[@]}"} (not "${arr[@]}").
+for bootstrap in \
+	"${agent_bootstrap_linux}" \
+	"${agent_bootstrap_macos}" \
+	"${gateway_bootstrap_linux}" \
+	"${gateway_docker_installer}" \
+	"${gateway_sidecar_installer}"; do
+	safe_count="$(grep -cF '${CURL_TLS[@]+"${CURL_TLS[@]}"}' "${bootstrap}" || true)"
+	quoted_count="$(grep -oE '"\$\{CURL_TLS\[@\]\}"' "${bootstrap}" | wc -l | tr -d ' ')"
+	if [[ "${safe_count}" -lt 1 || "${safe_count}" -ne "${quoted_count}" ]]; then
+		printf 'ERROR: %s must expand CURL_TLS via \${CURL_TLS[@]+\"\${CURL_TLS[@]}\"} only (safe=%s quoted=%s)\n' \
+			"${bootstrap}" "${safe_count}" "${quoted_count}" >&2
+		exit 1
+	fi
+done
+# Quality must run the Bash 4.2 probe (not host-smoke-only).
+# Require an active run line; a commented-out copy must not satisfy this gate.
+if ! grep -E '^[[:space:]]+HFL_TEST_BASH42=1 \./tools/quality/test-bootstrap-curl-tls-nounset\.sh[[:space:]]*$' \
+	"${ROOT}/.github/workflows/artifact_pipeline.yml" >/dev/null; then
+	printf 'ERROR: artifact_pipeline Quality must run HFL_TEST_BASH42=1 ./tools/quality/test-bootstrap-curl-tls-nounset.sh\n' >&2
+	exit 1
+fi
+
 grep -F 'HyperFileLens enrollment helper' "${gateway_bootstrap_linux}" >/dev/null
 grep -F 'gateway-install' "${gateway_bootstrap_linux}" >/dev/null
 grep -F 'requires a systemd-based Linux distribution' "${gateway_bootstrap_linux}" >/dev/null
@@ -1198,6 +1221,7 @@ for executable in \
 	"${ROOT}/.github/scripts/remote-deploy.sh" \
 	"${ROOT}/tools/quality/check-python38-runtime.py" \
 	"${ROOT}/tools/quality/test-docker-pull-retry.sh" \
+	"${ROOT}/tools/quality/test-bootstrap-curl-tls-nounset.sh" \
 	"${ROOT}/tools/quality/test-gh-release-upload-retry.sh" \
 	"${ROOT}/release/ci/gh-release-upload.sh" \
 	"${ROOT}/tools/quality/test-main-channel-contracts.sh" \
