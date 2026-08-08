@@ -124,6 +124,7 @@ async function mountLogin(viewportWidth: number) {
     fallbackWarn: false,
   })
   const wrapper = mount(Login, {
+    attachTo: document.body,
     global: {
       plugins: [i18n, ElementPlus],
       stubs: {
@@ -205,7 +206,7 @@ describe('Login Turnstile lifecycle', () => {
     replayMount.unmount()
   })
 
-  it('keeps equal login tabs on password mode when Turnstile is blocked', async () => {
+  it('keeps the password tab selected when Turnstile is blocked', async () => {
     mocks.turnstileBlocked = true
     mocks.fetchDeployProfile.mockResolvedValue({
       email_signup_enabled: false,
@@ -219,11 +220,33 @@ describe('Login Turnstile lifecycle', () => {
     expect(tabs).toHaveLength(2)
     expect(tabs[0].classes()).toContain('is-active')
     expect(tabs[1].classes()).not.toContain('is-active')
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+    expect(tabs[0].attributes('aria-controls')).toBe('login-method-panel')
+    expect(wrapper.get('#login-method-panel').attributes('aria-labelledby')).toBe('login-method-tab-password')
     expect(wrapper.findComponent({ name: 'EmailCodeLoginForm' }).exists()).toBe(false)
 
     await tabs[1].trigger('click')
     expect(tabs[1].classes()).toContain('is-active')
+    expect(tabs[1].attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('#login-method-panel').attributes('aria-labelledby')).toBe('login-method-tab-email-code')
     expect(wrapper.findComponent({ name: 'EmailCodeLoginForm' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('switches login methods with tab-list keyboard navigation', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      email_signup_enabled: false,
+      email_code_login_available: true,
+      password_reset_available: false,
+    })
+
+    const wrapper = await mountLogin(1440)
+    const tabs = wrapper.findAll('.login-method-tabs__tab')
+
+    await tabs[0].trigger('keydown', { key: 'ArrowRight' })
+    await wrapper.vm.$nextTick()
+    expect(tabs[1].attributes('aria-selected')).toBe('true')
+    expect((tabs[1].element as HTMLButtonElement).ownerDocument.activeElement).toBe(tabs[1].element)
     wrapper.unmount()
   })
 
