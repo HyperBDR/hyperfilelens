@@ -1,14 +1,19 @@
 from django.urls import path
 
 from apps.monitor.api.views import SystemMonitorView
-from apps.monitor.api.views.node_monitor import NodeMonitorDetailView, NodeMonitorListView
 from apps.monitor.api.views.platform_monitor import PlatformMonitorView
 from apps.monitor.api.views.resource_monitor import ResourceMonitorView
+from common.extension_loader import extensions_enabled
 
 urlpatterns = [
     path("system/", SystemMonitorView.as_view(), name="monitor-system"),
     path("resources/", ResourceMonitorView.as_view(), name="monitor-resources"),
     path("platform/", PlatformMonitorView.as_view(), name="monitor-platform"),
-    path("nodes/", NodeMonitorListView.as_view(), name="monitor-nodes"),
-    path("nodes/<int:node_id>/", NodeMonitorDetailView.as_view(), name="monitor-node-detail"),
 ]
+
+# Tenant node monitor read APIs are an EE product surface (Operations → Monitor).
+# Host keeps metrics ingest; community builds do not expose these routes.
+if extensions_enabled():
+    from apps.platform_ops.api.tenant_node_monitor_urls import urlpatterns as _node_monitor_urls
+
+    urlpatterns += _node_monitor_urls

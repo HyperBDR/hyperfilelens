@@ -63,6 +63,7 @@ export async function fetchCurrentLicense() {
     organization_name?: string
     days_until_expiry?: number
     enforcement_enabled?: boolean
+    instance_shared?: boolean
   }>(await api<unknown>(`${base}/current/`, { headers: orgHeaders() }))
 }
 

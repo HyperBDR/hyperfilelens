@@ -1,3 +1,5 @@
-"""Platform Ops shared constants."""
+"""OSS re-export — prefer apps.iam.constants."""
 
-SUPPORT_SESSION_KEY = "hfl_support_org_key"
+from apps.iam.constants import SUPPORT_SESSION_KEY
+
+__all__ = ["SUPPORT_SESSION_KEY"]

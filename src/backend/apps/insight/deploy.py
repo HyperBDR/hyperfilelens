@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apps.platform_ops.services.internal import runtime_settings as runtime
+from apps.configuration.services import runtime_settings as runtime
 
 
 def openai_api_key() -> str | None:

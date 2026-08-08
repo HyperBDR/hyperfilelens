@@ -53,10 +53,20 @@ ROLE_FEATURES: dict[str, list[str]] = {
 }
 
 
-def get_effective_feature_keys(*, membership: Membership | None) -> list[str]:
+def get_effective_feature_keys(*, membership: Membership | None, role: str | None = None) -> list[str]:
     if membership is None:
         return ["dashboard"]
-    return normalize_feature_keys(ROLE_FEATURES.get(membership.role, ["dashboard"]))
+    from common.extension_spi import get_authz_provider
+
+    # Community (no EE authz): full feature surface for any active member.
+    if get_authz_provider() is None:
+        return normalize_feature_keys(list(FEATURE_KEYS))
+    effective = role
+    if not effective:
+        from apps.iam.services.membership_service import authoritative_role
+
+        effective = authoritative_role(membership)
+    return normalize_feature_keys(ROLE_FEATURES.get(effective, ["dashboard"]))
 
 
 def get_landing_path(*, feature_keys: list[str], preferred_feature: str = "") -> str:
@@ -95,13 +105,23 @@ def resolve_membership_for_org(user, org_key: str | None) -> Membership | None:
 
 def get_access_profile(user, *, org_key: str | None = None) -> dict[str, object]:
     membership = resolve_membership_for_org(user, org_key)
-    feature_keys = get_effective_feature_keys(membership=membership)
+    role = ""
+    if membership is not None:
+        from common.extension_spi import get_authz_provider
+
+        provider = get_authz_provider()
+        if provider is not None:
+            role = provider.get_org_role(user, membership.organization.key) or ""
+        else:
+            # Community: affiliation ⇒ owner-equivalent access profile.
+            role = Membership.Role.OWNER
+    feature_keys = get_effective_feature_keys(membership=membership, role=role or None)
     preferred_feature = ""
     if membership is not None:
         preferred_feature = str(membership.preferred_feature or "").strip()
     return {
         "org_key": getattr(membership.organization, "key", "") if membership else "",
-        "role": membership.role if membership else "",
+        "role": role,
         "visible_features": feature_keys,
         "available_platforms": serialize_available_platforms(feature_keys),
         "landing_path": get_landing_path(

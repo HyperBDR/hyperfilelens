@@ -29,7 +29,7 @@ def validate_turnstile(
     expected_hostname: str,
 ) -> bool:
     """Verify a Turnstile token and bind it to the expected action and host."""
-    from apps.platform_ops.services.internal.runtime_settings import turnstile_secret_key
+    from apps.configuration.services.runtime_settings import turnstile_secret_key
 
     secret = turnstile_secret_key()
     if not secret:

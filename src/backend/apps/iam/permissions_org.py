@@ -1,8 +1,9 @@
 """
 Org-scoped DRF permissions (IAM domain).
 
-This is business-domain aware (depends on Organization/Membership models) and
-therefore lives under apps/iam, not core/.
+Affiliation lives on OSS ``Membership``. Role authority:
+  - Community (no AuthzProvider): active member ⇒ full power (product: single-user org).
+  - Enterprise: ``AuthzProvider`` (EE ``MemberRole`` table).
 """
 
 from __future__ import annotations
@@ -12,8 +13,9 @@ from types import SimpleNamespace
 from rest_framework import permissions
 from rest_framework.request import Request
 
+from apps.iam.constants import SUPPORT_SESSION_KEY
 from apps.iam.models import Membership, Organization
-from apps.platform_ops.constants import SUPPORT_SESSION_KEY
+from common.extension_spi import get_authz_provider
 
 
 def resolve_org_key(request: Request) -> str:
@@ -54,6 +56,22 @@ def get_membership(request: Request) -> Membership | None:
     return None
 
 
+def get_effective_role(request: Request, membership=None) -> str | None:
+    """Authoritative org role for permission checks."""
+    membership = membership if membership is not None else get_membership(request)
+    if membership is None:
+        return None
+    if getattr(request, "hfl_support_readonly", False):
+        return Membership.Role.AUDITOR
+    org_key = getattr(getattr(membership, "organization", None), "key", "") or resolve_org_key(request)
+    provider = get_authz_provider()
+    if provider is not None:
+        role = provider.get_org_role(request.user, org_key)
+        return role
+    # Community: affiliation implies full tenant power.
+    return Membership.Role.OWNER
+
+
 class IsOrgMember(permissions.BasePermission):
     def has_permission(self, request, view) -> bool:
         return get_membership(request) is not None
@@ -70,13 +88,12 @@ class _RoleMixin:
             return False
         if not self.allowed_roles:
             return True
-        return membership.role in self.allowed_roles
+        role = get_effective_role(request, membership)
+        return role in self.allowed_roles
 
 
 class IsOrgReader(_RoleMixin, permissions.BasePermission):
-    """
-    Read-only: auditor + operator + admin + owner
-    """
+    """Read-only: auditor + operator + admin + owner."""
 
     allowed_roles = (
         Membership.Role.OWNER,
@@ -92,9 +109,7 @@ class IsOrgReader(_RoleMixin, permissions.BasePermission):
 
 
 class IsOrgStaffReader(_RoleMixin, permissions.BasePermission):
-    """
-    Read-only for operational/config data (excludes auditor).
-    """
+    """Read-only for operational/config data (excludes auditor)."""
 
     allowed_roles = (
         Membership.Role.OWNER,
@@ -115,30 +130,16 @@ class IsOrgAdmin(_RoleMixin, permissions.BasePermission):
 
 
 class IsOrgWriter(_RoleMixin, permissions.BasePermission):
-    """
-    Destructive / admin configuration: owner + admin only.
-    """
+    """Destructive / admin configuration: owner + admin only (incl. SAFE reads)."""
 
     allowed_roles = (Membership.Role.OWNER, Membership.Role.ADMIN)
 
-    def has_permission(self, request, view) -> bool:  # type: ignore[override]
-        if request.method in permissions.SAFE_METHODS:
-            return get_membership(request) is not None
-        return super().has_permission(request, view)
-
 
 class IsOrgOperator(_RoleMixin, permissions.BasePermission):
-    """
-    Backup and day-to-day operations: owner + admin + operator.
-    """
+    """Backup and day-to-day operations: owner + admin + operator (incl. SAFE reads)."""
 
     allowed_roles = (
         Membership.Role.OWNER,
         Membership.Role.ADMIN,
         Membership.Role.OPERATOR,
     )
-
-    def has_permission(self, request, view) -> bool:  # type: ignore[override]
-        if request.method in permissions.SAFE_METHODS:
-            return get_membership(request) is not None
-        return super().has_permission(request, view)

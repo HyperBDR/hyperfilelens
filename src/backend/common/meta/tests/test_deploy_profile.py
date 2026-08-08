@@ -45,17 +45,61 @@ class DeployProfileViewTest(TestCase):
         self.assertFalse(response.data["email_signup_enabled"])
         self.assertFalse(response.data["password_reset_available"])
         self.assertFalse(response.data["email_code_login_available"])
+        from common.deploy.site import platform_ops_landing_path
+
+        self.assertEqual(
+            response.data["admin_console_landing_path"],
+            platform_ops_landing_path(),
+        )
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
-    def test_password_reset_is_available_with_deliverable_test_backend(self):
+    def test_password_reset_stays_off_on_community_empty_socket(self):
         response = self.client.get("/api/v1/meta/deploy-profile")
-        self.assertTrue(response.data["password_reset_available"])
+        self.assertFalse(response.data["password_reset_available"])
+
+    @override_settings(
+        HFL_EMAIL_SIGNUP_ENABLED=True,
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    )
+    @patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "true"})
+    def test_email_signup_stays_off_on_community_empty_socket(self):
+        response = self.client.get("/api/v1/meta/deploy-profile")
+        self.assertFalse(response.data["email_signup_enabled"])
+        self.assertFalse(response.data["email_code_login_available"])
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_password_reset_is_available_with_extension_and_email(self, _identity):
+        tenant = self.client.get("/api/v1/meta/deploy-profile")
+        ops = self.client.get(
+            "/api/v1/meta/deploy-profile",
+            HTTP_X_HFL_SITE_ROLE="ops",
+        )
+        self.assertTrue(tenant.data["password_reset_available"])
+        self.assertFalse(ops.data["password_reset_available"])
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
         HFL_EMAIL_CODE_LOGIN_ENABLED=True,
     )
-    def test_email_code_login_requires_tenant_listener_and_email_delivery(self):
+    @patch.dict(
+        "os.environ",
+        {
+            "HFL_EMAIL_CODE_LOGIN_ENABLED": "true",
+            "EMAIL_BACKEND": "django.core.mail.backends.locmem.EmailBackend",
+        },
+    )
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_email_code_login_requires_tenant_listener_and_email_delivery(
+        self,
+        _identity,
+    ):
         tenant = self.client.get("/api/v1/meta/deploy-profile")
         ops = self.client.get(
             "/api/v1/meta/deploy-profile",
@@ -79,6 +123,14 @@ class DeployProfileViewTest(TestCase):
         self.assertTrue(response.data["admin_console_entry_visible"])
         self.assertFalse(response.data["platform_ops_access_allowed"])
         self.assertTrue(response.data["is_staff"])
+        from common.deploy.site import platform_ops_landing_path
+
+        # Tenant post-login stays "/"; Admin deep-link uses ops landing.
+        self.assertEqual(response.data["landing_path"], "/")
+        self.assertEqual(
+            response.data["admin_console_landing_path"],
+            platform_ops_landing_path(),
+        )
 
     def test_staff_is_allowed_platform_ops_on_ops_listener(self):
         self.client.force_authenticate(user=self.staff)
@@ -89,7 +141,13 @@ class DeployProfileViewTest(TestCase):
         self.assertEqual(response.data["site_role"], "ops")
         self.assertFalse(response.data["admin_console_entry_visible"])
         self.assertTrue(response.data["platform_ops_access_allowed"])
-        self.assertEqual(response.data["landing_path"], "/platform-ops/overview")
+        from common.deploy.site import platform_ops_landing_path
+
+        self.assertEqual(response.data["landing_path"], platform_ops_landing_path())
+        self.assertEqual(
+            response.data["admin_console_landing_path"],
+            platform_ops_landing_path(),
+        )
 
     @override_settings(FRONTEND_URL="https://app.example.com:11443", HFL_ADMIN_PORT=11444)
     def test_admin_console_url_uses_tenant_host_and_configured_port(self):

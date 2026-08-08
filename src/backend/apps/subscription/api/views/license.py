@@ -10,7 +10,7 @@ from rest_framework.response import Response
 
 from apps.audit.constants import AuditAction, AuditResult
 from apps.audit.services.interface import write_audit_log
-from apps.iam.permissions_org import get_membership
+from apps.iam.permissions_org import IsOrgAdmin, IsOrgMember, get_membership
 from apps.subscription.api.serializers import (
     ActivateLicenseSerializer,
     LicenseHistorySerializer,
@@ -39,8 +39,17 @@ def _require_org(request):
 class LicenseViewSet(viewsets.GenericViewSet):
     """License endpoints at /api/v1/subscription/licenses/."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOrgMember]
     queryset = License.objects.none()
+
+    def get_permissions(self):
+        # Activate / regenerate machine code: owner+admin when AuthzProvider is live;
+        # community (no provider) treats every active affiliation as OWNER.
+        if getattr(self, "action", None) == "activate":
+            return [IsAuthenticated(), IsOrgAdmin()]
+        if getattr(self, "action", None) == "machine_code" and self.request.method == "POST":
+            return [IsAuthenticated(), IsOrgAdmin()]
+        return [IsAuthenticated(), IsOrgMember()]
 
     def _org(self, request):
         return _require_org(request)
@@ -61,9 +70,29 @@ class LicenseViewSet(viewsets.GenericViewSet):
             "days_until_expiry": payload.get("days_until_expiry"),
             "enforcement_enabled": payload.get("enforcement_enabled", False),
             "organization_name": payload.get("organization_name") or org.name,
+            "instance_shared": bool(payload.get("instance_shared")),
         }
         if lic:
             data["license"] = LicenseSerializer(lic).data
+            if data["instance_shared"]:
+                # Secondary tenants must not see host grant secrets / identity.
+                for key in (
+                    "license_key",
+                    "organization",
+                    "organization_name",
+                    "organization_key",
+                    "machine_code",
+                    "signature",
+                    "max_organizations",
+                    "max_users",
+                    "max_nodes",
+                    "max_storage_gb",
+                    "max_gateways",
+                    "ai_insights_quota",
+                    "max_tasks",
+                    "max_alert_policies",
+                ):
+                    data["license"].pop(key, None)
         return Response(data)
 
     @action(detail=False, methods=["get", "post"], url_path="machine_code")

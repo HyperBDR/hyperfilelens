@@ -7,11 +7,13 @@ import { Mail, Lock, Key, Globe, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-ne
 import { api } from '../../lib/api'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
+import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
 import AuthBrandPanel from '../../components/auth/AuthBrandPanel.vue'
 import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import { appConfig } from '../../lib/appConfig'
 import { trackAppEvent } from '../../lib/analytics'
+import { LOGIN_ROUTE_NAME } from '../../lib/loginNavigation'
 
 const { t, locale } = useI18n()
 const {
@@ -418,6 +420,11 @@ function toggleLocale() {
 }
 
 onMounted(async () => {
+  const profile = await fetchDeployProfile()
+  if (!profile?.email_signup_enabled) {
+    await router.replace({ name: LOGIN_ROUTE_NAME })
+    return
+  }
   trackAppEvent('sign_up_started', { method: 'email' })
   turnstileToken.value = ''
   restoreCooldown()

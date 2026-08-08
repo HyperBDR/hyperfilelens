@@ -11,7 +11,7 @@ class TurnstileServiceTests(SimpleTestCase):
     def setUp(self):
         super().setUp()
         secret_patcher = patch(
-            "apps.platform_ops.services.internal.runtime_settings.turnstile_secret_key",
+            "apps.configuration.services.runtime_settings.turnstile_secret_key",
             return_value="secret-key",
         )
         secret_patcher.start()

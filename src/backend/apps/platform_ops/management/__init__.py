@@ -1,1 +1,0 @@
-"""Platform Operations management commands."""

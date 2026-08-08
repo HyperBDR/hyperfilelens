@@ -127,6 +127,11 @@ def create_source_resource(
     if source_resources_queryset(organization_id=organization.id).filter(name=normalized_name).exists():
         raise ValueError("A source resource with this name already exists.")
 
+    from apps.subscription.services.interface import enforce_license_quota
+
+    if resource_type in (ResourceType.NAS, ResourceType.NFS, ResourceType.CIFS):
+        enforce_license_quota(organization, "max_source_nas", additional=1)
+
     node = None
     if bound_node_id:
         node = Node.objects.filter(id=bound_node_id, organization_id=organization.id).first()

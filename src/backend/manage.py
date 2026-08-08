@@ -30,7 +30,15 @@ def _bootstrap_backend_root() -> Path:
 
 
 def main() -> None:
-    _bootstrap_backend_root()
+    backend_root = _bootstrap_backend_root()
+
+    # Optional extensions: append plugin backends from HFL_EXTENSIONS.
+    try:
+        from common.extension_loader import bootstrap_extensions
+
+        bootstrap_extensions(backend_dir=backend_root)
+    except Exception:
+        pass
 
     from project import configure_django
 

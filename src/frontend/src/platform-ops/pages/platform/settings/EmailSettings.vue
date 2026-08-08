@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
-import { usePlatformOpsSideNav } from '../../../composables/usePlatformOpsSideNav'
+import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
 import {
   fetchPlatformEmailSettings,
   patchPlatformEmailSettings,
@@ -13,7 +13,7 @@ import {
 import { apiErrorMessage } from '../../../../lib/api'
 
 const { t } = useI18n()
-const sideNav = usePlatformOpsSideNav()
+const sideNav = useResolvedPlatformOpsSideNav()
 
 const busy = ref(false)
 const saving = ref(false)
@@ -21,6 +21,8 @@ const testing = ref(false)
 const testRecipient = ref('')
 const meta = ref<PlatformEmailSettings | null>(null)
 const managedByDeployment = computed(() => !!meta.value?.managed_by_deployment)
+const enterpriseIdentityEnabled = computed(() => Boolean(meta.value?.enterprise_identity_enabled))
+const emailEditable = computed(() => enterpriseIdentityEnabled.value && !managedByDeployment.value)
 const deliveryStatusType = computed(() => (
   meta.value?.delivery_configured ? 'success' : 'warning'
 ))
@@ -56,6 +58,7 @@ async function load() {
 }
 
 async function save() {
+  if (!emailEditable.value) return
   saving.value = true
   try {
     const body: Record<string, unknown> = {
@@ -108,10 +111,9 @@ onMounted(load)
       <div class="platform-settings__toolbar">
         <p class="platform-settings__intro">{{ t('platformOps.settings.email.intro') }}</p>
         <el-button
-          v-if="!managedByDeployment"
+          v-if="emailEditable"
           type="primary"
           :loading="saving"
-          :disabled="managedByDeployment"
           @click="save"
         >
           {{ t('platformOps.settings.saveChanges') }}
@@ -120,7 +122,17 @@ onMounted(load)
 
       <div class="platform-settings__panel">
         <el-alert
-          v-if="meta"
+          v-if="meta && !enterpriseIdentityEnabled"
+          type="info"
+          :closable="false"
+          show-icon
+          class="platform-settings__alert"
+          :title="t('platformOps.settings.email.extensionRequiredTitle')"
+          :description="t('platformOps.settings.email.extensionRequiredBody')"
+        />
+
+        <el-alert
+          v-if="meta && enterpriseIdentityEnabled"
           :type="deliveryStatusType"
           :closable="false"
           show-icon
@@ -136,7 +148,7 @@ onMounted(load)
           </template>
         </el-alert>
 
-        <div v-if="managedByDeployment" class="platform-settings__readonly-summary hfl-detail-grid">
+        <div v-if="!emailEditable" class="platform-settings__readonly-summary hfl-detail-grid">
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.backend') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.backend }">{{ form.backend || '—' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.host') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.host }">{{ form.host || '—' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.port') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.port }">{{ form.port || '—' }}</strong></div>
@@ -144,7 +156,12 @@ onMounted(load)
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.password') }}</span><strong class="hfl-detail-row__value">{{ meta?.password_configured ? 'Configured' : 'Not configured' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('platformOps.settings.email.fromEmail') }}</span><strong class="hfl-detail-row__value" :class="{ 'hfl-detail-row__empty': !form.from_email }">{{ form.from_email || '—' }}</strong></div>
           <div class="hfl-detail-row"><span class="hfl-detail-row__label">Transport security</span><strong class="hfl-detail-row__value">{{ form.use_ssl ? 'SSL' : form.use_tls ? 'TLS' : 'None' }}</strong></div>
-          <div class="hfl-detail-row"><span class="hfl-detail-row__label">Configuration source</span><strong class="hfl-detail-row__value">Deployment environment</strong></div>
+          <div class="hfl-detail-row">
+            <span class="hfl-detail-row__label">Configuration source</span>
+            <strong class="hfl-detail-row__value">
+              {{ managedByDeployment ? 'Deployment environment' : (meta?.source || '—') }}
+            </strong>
+          </div>
         </div>
 
         <el-form

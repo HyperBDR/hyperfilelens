@@ -24,7 +24,7 @@ from apps.iam.services.oauth_error_events import (
     create_oauth_error_event,
 )
 from apps.iam.services.registration_service import complete_social_user_registration
-from apps.platform_ops.services.internal.runtime_settings import sync_google_social_app
+from apps.configuration.services.runtime_settings import sync_google_social_app
 
 
 @override_settings(
@@ -42,6 +42,12 @@ from apps.platform_ops.services.internal.runtime_settings import sync_google_soc
 class GoogleOAuthConfigTests(APITestCase):
     def setUp(self):
         super().setUp()
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         sync_google_social_app()
 
     def test_google_config_enabled(self):
@@ -121,6 +127,12 @@ class GoogleOAuthConfigTests(APITestCase):
 class GoogleOAuthReadinessCommandTests(APITestCase):
     def setUp(self):
         super().setUp()
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         sync_google_social_app()
 
     def test_local_callback_is_ready(self):
@@ -186,6 +198,33 @@ class GoogleOAuthDisabledTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
+@override_settings(
+    GOOGLE_CLIENT_ID="test-client-id",
+    GOOGLE_CLIENT_SECRET="test-client-secret",
+    HFL_GOOGLE_OAUTH_ENABLED=True,
+    FRONTEND_URL="https://app.example.com",
+)
+@patch.dict(
+    "os.environ",
+    {
+        "HFL_GOOGLE_OAUTH_ENABLED": "true",
+        "GOOGLE_CLIENT_ID": "test-client-id",
+        "GOOGLE_CLIENT_SECRET": "test-client-secret",
+    },
+)
+class GoogleOAuthCommunityEmptySocketTests(APITestCase):
+    """Credentials may be present; empty socket still keeps OAuth off."""
+
+    def test_google_config_stays_disabled_without_extension(self):
+        response = self.client.get(reverse("google_oauth_config"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["data"]["enabled"])
+
+    def test_google_login_stays_forbidden_without_extension(self):
+        response = self.client.get(reverse("google_login"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
 class SocialRegistrationServiceTests(APITestCase):
     @patch(
         "apps.lens_bridge.services.chat_user_provisioning."
@@ -206,7 +245,8 @@ class SocialRegistrationServiceTests(APITestCase):
         self.assertFalse(user.has_usable_password())
         self.assertTrue(Organization.objects.filter(pk=org.pk).exists())
         membership = Membership.objects.get(user=user, organization=org)
-        self.assertEqual(membership.role, Membership.Role.OWNER)
+        from apps.iam.services.membership_service import authoritative_role
+        self.assertEqual(authoritative_role(membership), Membership.Role.OWNER)
         self.assertEqual(Membership.objects.filter(user=user).count(), 1)
 
 
@@ -298,6 +338,12 @@ class OAuthErrorEventTests(APITestCase):
 class GoogleOAuthCallbackTests(APITestCase):
     def setUp(self):
         super().setUp()
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         sync_google_social_app()
 
     def test_incomplete_oauth_redirects_with_a_consumable_event(self):

@@ -146,7 +146,7 @@ def send_verification_code_email(
     content = _content_for_kind(kind, code, minutes)
     plain_body = _build_plain_body(content, code, minutes)
     html_body = _build_html_body(content, code, minutes)
-    from apps.platform_ops.services.internal.runtime_settings import email_connection_kwargs
+    from apps.configuration.services.runtime_settings import email_connection_kwargs
 
     cfg = email_connection_kwargs()
     connection = get_connection(

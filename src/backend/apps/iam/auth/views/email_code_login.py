@@ -24,7 +24,7 @@ from apps.iam.services.email_code_login_service import (
     verify_login_code,
 )
 from apps.iam.services.turnstile_service import get_client_ip
-from apps.platform_ops.services.internal.runtime_settings import (
+from apps.configuration.services.runtime_settings import (
     email_code_login_enabled,
     email_delivery_configured,
 )
@@ -269,11 +269,13 @@ class EmailCodeLoginVerifyView(AnonymousPublicViewMixin, APIView):
 
         request.session["pending_user_id"] = user.id
         request.session.save()
+        from apps.iam.services.membership_service import authoritative_role
+
         available_orgs = [
             {
                 "org_key": membership.organization.key,
                 "org_name": membership.organization.name,
-                "role": membership.role,
+                "role": authoritative_role(membership),
             }
             for membership in memberships
         ]
@@ -287,7 +289,7 @@ class EmailCodeLoginVerifyView(AnonymousPublicViewMixin, APIView):
                         "username": user.username,
                         "is_staff": False,
                     },
-                    "roles": [membership.role for membership in memberships],
+                    "roles": [authoritative_role(membership) for membership in memberships],
                     "available_orgs": available_orgs,
                     "message": _("Select organization to continue"),
                 },

@@ -41,12 +41,15 @@ class Command(BaseCommand):
             membership, created = Membership.objects.get_or_create(
                 user=user,
                 organization=org,
-                defaults={"role": role, "is_active": True},
+                defaults={"is_active": True},
             )
-            if not created and (membership.role != role or not membership.is_active):
-                membership.role = role
+            if not created and not membership.is_active:
                 membership.is_active = True
-                membership.save(update_fields=["role", "is_active"])
+                membership.save(update_fields=["is_active"])
+            # Role authority is EE MemberRole (or community default).
+            from apps.iam.services.membership_service import sync_member_role
+
+            sync_member_role(user_id=user.id, organization_id=org.id, role=role)
             self.stdout.write(f"    -> {org.key} as {role}")
 
         owner = create_user("owner@hyperfilelens.com", "Owner@12345")

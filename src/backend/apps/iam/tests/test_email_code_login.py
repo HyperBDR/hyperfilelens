@@ -20,9 +20,22 @@ from apps.iam.models import Membership, Organization
     HFL_EMAIL_CODE_LOGIN_ENABLED=True,
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
 )
+@patch.dict(
+    "os.environ",
+    {
+        "HFL_EMAIL_CODE_LOGIN_ENABLED": "true",
+        "EMAIL_BACKEND": "django.core.mail.backends.locmem.EmailBackend",
+    },
+)
 class EmailCodeLoginApiTests(APITestCase):
     def setUp(self):
         cache.clear()
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.email = "member-code-login@example.com"
         self.user = User.objects.create_user(
             username=self.email,
@@ -279,8 +292,38 @@ class EmailCodeLoginApiTests(APITestCase):
         )
 
     @override_settings(HFL_EMAIL_CODE_LOGIN_ENABLED=False)
+    @patch.dict("os.environ", {"HFL_EMAIL_CODE_LOGIN_ENABLED": "false"})
     def test_feature_is_off_by_default_policy(self):
         response = self._send()
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(len(mail.outbox), 0)
+
+
+@override_settings(
+    HFL_EMAIL_CODE_LOGIN_ENABLED=True,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+)
+@patch.dict(
+    "os.environ",
+    {
+        "HFL_EMAIL_CODE_LOGIN_ENABLED": "true",
+        "EMAIL_BACKEND": "django.core.mail.backends.locmem.EmailBackend",
+    },
+)
+class EmailCodeLoginCommunityEmptySocketTests(APITestCase):
+    """Env may enable code login; empty socket still forbids it."""
+
+    def test_send_code_stays_off_without_platform_extension(self):
+        response = self.client.post(
+            reverse("email_code_login_send"),
+            {"email": "community-code@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "EMAIL_CODE_LOGIN_DISABLED",
+        )
         self.assertEqual(len(mail.outbox), 0)

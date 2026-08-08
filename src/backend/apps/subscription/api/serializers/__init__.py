@@ -1,23 +1,17 @@
+"""Subscription API serializers (OSS + EE via extend_path)."""
+
+from pkgutil import extend_path
+
+__path__ = extend_path(__path__, __name__)
+
 from apps.subscription.api.serializers.license import (
     ActivateLicenseSerializer,
     LicenseHistorySerializer,
     LicenseSerializer,
     MachineCodeSerializer,
 )
-from apps.subscription.api.serializers.subscription import (
-    EntitlementSerializer,
-    OrganizationSubscriptionSerializer,
-    PlanSerializer,
-    QuotaSerializer,
-    UsageCounterSerializer,
-)
 
 __all__ = [
-    "PlanSerializer",
-    "OrganizationSubscriptionSerializer",
-    "EntitlementSerializer",
-    "QuotaSerializer",
-    "UsageCounterSerializer",
     "LicenseSerializer",
     "LicenseHistorySerializer",
     "MachineCodeSerializer",

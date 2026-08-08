@@ -22,7 +22,7 @@ def turnstile_enabled() -> bool:
 
 def turnstile_configured() -> bool:
     """Return whether both effective Turnstile keys are available."""
-    from apps.platform_ops.services.internal.runtime_settings import (
+    from apps.configuration.services.runtime_settings import (
         turnstile_secret_key,
         turnstile_site_key,
     )
@@ -32,6 +32,10 @@ def turnstile_configured() -> bool:
 
 def turnstile_required(request: Any) -> bool:
     """Require Turnstile only on the tenant-facing authentication endpoint."""
+    from apps.configuration.services.runtime_settings import enterprise_identity_enabled
+
+    if not enterprise_identity_enabled():
+        return False
     return turnstile_enabled() and resolve_site_role(request) == "tenant"
 
 

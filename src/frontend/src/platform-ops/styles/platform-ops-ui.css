@@ -239,6 +239,10 @@
   overflow-y: auto;
 }
 
+.platform-ops-shell .platform-settings__alert {
+  margin-bottom: 1rem;
+}
+
 .platform-ops-shell .platform-settings__intro {
   margin: 0 0 16px;
   font-size: 13px;

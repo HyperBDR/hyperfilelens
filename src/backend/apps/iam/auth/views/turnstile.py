@@ -13,7 +13,7 @@ from apps.iam.services.turnstile_verification import (
     turnstile_configured,
     turnstile_required,
 )
-from apps.platform_ops.services.internal.runtime_settings import turnstile_site_key
+from apps.configuration.services.runtime_settings import turnstile_site_key
 
 
 class TurnstileConfigView(AnonymousPublicViewMixin, APIView):

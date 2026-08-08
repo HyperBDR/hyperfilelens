@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth.models import User
 from django.test import override_settings
 from django.urls import reverse
@@ -60,7 +62,11 @@ class EmailLoginApiTests(APITestCase):
         TURNSTILE_SITE_KEY="site-key",
         TURNSTILE_SECRET_KEY="",
     )
-    def test_incomplete_turnstile_configuration_fails_closed(self):
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_incomplete_turnstile_configuration_fails_closed(self, _identity):
         response = self.client.post(
             reverse("email_login"),
             {

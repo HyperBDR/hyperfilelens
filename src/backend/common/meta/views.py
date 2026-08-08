@@ -12,6 +12,7 @@ from common.deploy.site import (
     admin_console_public_url,
     default_landing_path,
     platform_ops_access_allowed,
+    platform_ops_landing_path,
     resolve_site_role,
     tenant_public_url,
 )
@@ -28,10 +29,11 @@ class DeployProfileView(APIView):
     authentication_classes = [OptionalJWTAuthenticationFromCookies]
 
     def get(self, request):
-        from apps.platform_ops.services.internal.runtime_settings import (
+        from apps.configuration.services.runtime_settings import (
             email_code_login_enabled,
             email_delivery_configured,
             email_signup_enabled,
+            password_reset_available,
             platform_ops_enabled,
         )
 
@@ -40,7 +42,10 @@ class DeployProfileView(APIView):
             "site_role": site_role,
             "email_signup_enabled": email_signup_enabled() if site_role == "tenant" else False,
             "platform_ops_enabled": platform_ops_enabled(),
-            "password_reset_available": email_delivery_configured(),
+            # Tenant-only self-serve reset (EE + SMTP); ops stays password-only.
+            "password_reset_available": (
+                password_reset_available() if site_role == "tenant" else False
+            ),
             "email_code_login_available": bool(
                 site_role == "tenant"
                 and email_code_login_enabled()
@@ -48,7 +53,10 @@ class DeployProfileView(APIView):
             ),
             "tenant_public_url": tenant_public_url(),
             "admin_console_url": admin_console_public_url(request),
+            # Site-local post-login path (tenant "/" vs ops AI Models / Overview).
             "landing_path": default_landing_path(request),
+            # Tenant → Admin Console deep link (never tenant "/").
+            "admin_console_landing_path": platform_ops_landing_path(),
             "admin_console_entry_visible": False,
             "platform_ops_access_allowed": False,
         }
@@ -61,7 +69,7 @@ class DeployProfileView(APIView):
             payload["platform_ops_access_allowed"] = platform_ops_access_allowed(
                 request,
             )
-            from apps.platform_ops.constants import SUPPORT_SESSION_KEY
+            from apps.iam.constants import SUPPORT_SESSION_KEY
 
             support_key = request.session.get(SUPPORT_SESSION_KEY)
             if support_key and request.user.is_staff:

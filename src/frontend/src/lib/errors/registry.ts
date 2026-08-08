@@ -21,6 +21,7 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'SMB_CHARSET_UNAVAILABLE': 'errors.codes.smbCharsetUnavailable',
   'AGENT.TASK_FAILED': 'errors.codes.agentTaskFailed',
   'BACKUP.QUOTA_EXCEEDED': 'errors.codes.backupQuotaExceeded',
+  'SUBSCRIPTION.QUOTA_EXCEEDED': 'errors.codes.subscriptionQuotaExceeded',
   'BACKUP.ALREADY_RUNNING': 'errors.codes.backupAlreadyRunning',
   'RESTORE.ALREADY_RUNNING': 'errors.codes.restoreAlreadyRunning',
 }
@@ -45,6 +46,8 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'SMB_CHARSET_UNAVAILABLE': 'SMB UTF-8 filename support is unavailable on the Proxy Host. Install the matching kernel extra-modules package, then remount the share.',
   'AGENT.TASK_FAILED': 'Agent task failed. Please try again.',
   'BACKUP.QUOTA_EXCEEDED': 'Backup quota exceeded. Upgrade your subscription and try again.',
+  'SUBSCRIPTION.QUOTA_EXCEEDED':
+    'Organization quota is full. Contact your platform administrator to raise limits.',
   'BACKUP.ALREADY_RUNNING': 'A backup is already running for this source.',
   'RESTORE.ALREADY_RUNNING': 'A restore task is already running for this source.',
 }

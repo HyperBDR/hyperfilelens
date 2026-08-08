@@ -67,6 +67,35 @@ def get_or_create_machine_code(*, organization: Organization, user, force: bool 
     return code
 
 
+def resolve_instance_license_organization() -> Organization | None:
+    """
+    Org that holds the deployment instance grant.
+
+    Prefer an organization that already has a License row, otherwise the oldest
+    active customer org. Excludes Platform Lens when that key is available.
+    """
+    try:
+        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
+    except Exception:  # pragma: no cover
+        PLATFORM_ORG_KEY = "__platform_lens__"
+
+    licensed = (
+        License.objects.select_related("organization")
+        .exclude(organization__key=PLATFORM_ORG_KEY)
+        .order_by("organization_id", "activated_at")
+        .first()
+    )
+    if licensed is not None:
+        return licensed.organization
+
+    return (
+        Organization.objects.filter(is_active=True)
+        .exclude(key=PLATFORM_ORG_KEY)
+        .order_by("id")
+        .first()
+    )
+
+
 def get_active_license(*, organization: Organization) -> License | None:
     try:
         lic = organization.license
@@ -80,27 +109,75 @@ def get_active_license(*, organization: Organization) -> License | None:
     return lic if lic.is_valid else None
 
 
+def get_instance_active_license() -> License | None:
+    """Active deployment grant, regardless of the caller's current organization."""
+    host = resolve_instance_license_organization()
+    if host is None:
+        return None
+    return get_active_license(organization=host)
+
+
 def build_current_payload(*, organization: Organization, user) -> dict:
     machine_code = get_or_create_machine_code(organization=organization, user=user)
     license_obj = get_active_license(organization=organization)
     usage = collect_usage_stats(organization_id=organization.id)
-    if not license_obj:
+    from common.extension_spi import get_quota_provider
+
+    # Mirror LedgerQuotaProvider: enforcement only when provider is live and
+    # an instance license exists (pre-activation soft-skips hard checks).
+    instance_lic = get_instance_active_license()
+    provider = get_quota_provider()
+    enforcement_enabled = provider is not None and instance_lic is not None
+
+    def _limits_for(org: Organization, fallback_lic: License | None) -> dict:
+        # When enforcement is live, UI must match EffectiveQuota hard checks.
+        # Pre-activation (no instance license): show community defaults, not empty EE rows.
+        if (
+            provider is not None
+            and instance_lic is not None
+            and hasattr(provider, "get_limits")
+        ):
+            return dict(provider.get_limits(org) or {})
+        if fallback_lic is not None:
+            return fallback_lic.get_limits()
+        return dict(DEFAULT_LIMITS)
+
+    if license_obj is not None:
         return {
-            "is_valid": False,
-            "message": "No active license",
-            "machine_code": machine_code,
+            "is_valid": license_obj.is_valid,
+            "license": license_obj,
+            "limits": _limits_for(organization, license_obj),
+            "days_until_expiry": license_obj.days_until_expiry,
             "usage": usage,
-            "limits": dict(DEFAULT_LIMITS),
-            "organization_name": organization.name,
-            "enforcement_enabled": False,
+            "machine_code": machine_code,
+            "enforcement_enabled": enforcement_enabled,
         }
+
+    # Secondary tenant (no org-bound License row) under instance licensing:
+    # hard checks still use the deployment grant — surface that honestly.
+    # Include the instance License object so UIs that expect `license` still
+    # show status/expiry; `instance_shared` marks it as not this org's row.
+    if instance_lic is not None:
+        return {
+            "is_valid": instance_lic.is_valid,
+            "message": "Using instance license",
+            "license": instance_lic,
+            "instance_shared": True,
+            "limits": _limits_for(organization, instance_lic),
+            "days_until_expiry": instance_lic.days_until_expiry,
+            "usage": usage,
+            "machine_code": machine_code,
+            "organization_name": organization.name,
+            "enforcement_enabled": enforcement_enabled,
+        }
+
     return {
-        "is_valid": license_obj.is_valid,
-        "license": license_obj,
-        "limits": license_obj.get_limits(),
-        "days_until_expiry": license_obj.days_until_expiry,
-        "usage": usage,
+        "is_valid": False,
+        "message": "No active license",
         "machine_code": machine_code,
+        "usage": usage,
+        "limits": _limits_for(organization, None),
+        "organization_name": organization.name,
         "enforcement_enabled": False,
     }
 
@@ -122,6 +199,40 @@ def _determine_change_type(existing: License, new_limits: dict, new_expires_at) 
     return License.ChangeType.RENEWAL, "License updated"
 
 
+def _platform_org_key() -> str:
+    try:
+        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
+
+        return PLATFORM_ORG_KEY
+    except Exception:  # pragma: no cover
+        return "__platform_lens__"
+
+
+# Stable advisory lock id for serializing instance-license activation (PostgreSQL).
+_INSTANCE_LICENSE_ADVISORY_LOCK = 874_522_301
+
+
+def _acquire_instance_license_lock() -> None:
+    """Serialize first-activation races so two orgs cannot each mint a grant."""
+    from django.db import connection
+
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(%s)",
+                [_INSTANCE_LICENSE_ADVISORY_LOCK],
+            )
+        return
+    # Backends without advisory locks: lock the oldest customer org row.
+    (
+        Organization.objects.filter(is_active=True)
+        .exclude(key=_platform_org_key())
+        .order_by("id")
+        .select_for_update()
+        .first()
+    )
+
+
 @transaction.atomic
 def activate_license(
     *,
@@ -132,6 +243,22 @@ def activate_license(
     code = (activation_code or "").strip()
     if not code:
         raise ValueError("Activation code is required")
+
+    # One deployment grant per instance: once any customer License exists,
+    # only that host org (or Platform Ops, which activates on the host) may
+    # renew/replace it. Secondary tenants are covered via EffectiveQuota.
+    _acquire_instance_license_lock()
+    existing_grant = (
+        License.objects.exclude(organization__key=_platform_org_key())
+        .select_for_update()
+        .order_by("organization_id", "activated_at")
+        .first()
+    )
+    if existing_grant is not None and existing_grant.organization_id != organization.id:
+        raise ValueError(
+            "Instance license is already active on another organization. "
+            "Renew from the host organization or Platform Ops."
+        )
 
     machine_code = get_or_create_machine_code(organization=organization, user=user)
 
@@ -176,6 +303,7 @@ def activate_license(
         for field, val in limits.items():
             setattr(existing, field, val)
         existing.save()
+        _notify_license_activated(organization=organization, license_obj=existing)
         return existing, change_type
 
     lic = License.objects.create(
@@ -189,4 +317,19 @@ def activate_license(
         **limits,
     )
     lic.archive_to_history(change_type=License.ChangeType.INITIAL, reason="Initial activation", changed_by=user)
+    _notify_license_activated(organization=organization, license_obj=lic)
     return lic, License.ChangeType.INITIAL
+
+
+def _notify_license_activated(*, organization: Organization, license_obj: License) -> None:
+    """Optional plugin hook: seed EffectiveQuota and validate instance pool.
+
+    Failures propagate so the surrounding ``atomic`` activation rolls back
+    (license must not commit without a successful quota seed when a provider
+    is registered).
+    """
+    from common.extension_spi import get_quota_provider
+
+    provider = get_quota_provider()
+    if provider is not None and hasattr(provider, "on_license_activated"):
+        provider.on_license_activated(organization, license_obj)

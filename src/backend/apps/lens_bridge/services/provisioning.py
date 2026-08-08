@@ -864,6 +864,7 @@ def _resolve_gateway_link_identity(
                 "owner_user": None if is_platform else owner_user,
                 "scope": desired_scope,
                 "origin": desired_origin,
+                "capacity_gb": -1,
             },
         )
         if created:

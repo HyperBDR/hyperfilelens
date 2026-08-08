@@ -105,6 +105,7 @@ Prepare (up / restart) always includes:
   frontend source bind mount with Vite HMR and persistent node_modules
   Website static artifact served by the shared Nginx gateway (no Website container)
   agent publish (full bundle) → data/media/agent-releases/
+  local public Data Gateway auto-deploy when HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true (default; Linux amd64)
   SourceLens bundled mode (default): clone/update only as a build input, then run images
   SourceLens external mode: prepare the Gateway LensNode bundle without touching the external stack
 
@@ -112,6 +113,11 @@ SourceLens options (default: enabled for up/restart):
   --no-sourcelens                  Skip SourceLens clone/build/start
   --sourcelens-ref REF             SourceLens release tag in vX.Y.Z form
   --sourcelens-git-url URL         Override SourceLens repository URL (env: SOURCELENS_GIT_URL)
+
+Extensions (optional overlay; community default = empty socket):
+  Set HFL_EXTENSION_SOURCES in .env to local plugin path(s) and/or git URL[@ref].
+  stack.sh materializes them and loads build/docker-compose.extensions.yml.
+  Runtime uses HFL_EXTENSIONS only (never git clone inside api/ui).
 
 Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
@@ -317,9 +323,28 @@ require_docker() {
 }
 
 compose() {
+	local files=(-f docker-compose.yml)
+	local sources extensions compose_overlay
+	# Opt-in only: community CI / default stack.sh stay Host-only (empty socket).
+	sources="$(read_env_value_or HFL_EXTENSION_SOURCES "" "${ROOT}/.env" 2>/dev/null || true)"
+	extensions="$(read_env_value_or HFL_EXTENSIONS "" "${ROOT}/.env" 2>/dev/null || true)"
+	compose_overlay="${ROOT}/build/docker-compose.extensions.yml"
+	if [[ -n "${sources}" || -n "${extensions}" ]]; then
+		python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
+			--repo-root "${ROOT}" \
+			--sources "${sources}" \
+			--extensions "${extensions}" \
+			--compose-out "${compose_overlay}" \
+			|| die "failed to materialize HFL_EXTENSION_SOURCES / HFL_EXTENSIONS"
+		[[ -f "${compose_overlay}" ]] \
+			|| die "extension compose overlay missing after materialize: ${compose_overlay}"
+		files+=(-f "${compose_overlay}")
+	elif [[ -f "${compose_overlay}" ]]; then
+		rm -f "${compose_overlay}"
+	fi
 	(
 		cd "${ROOT}"
-		"${COMPOSE[@]}" --env-file "${ROOT}/.env" "$@"
+		"${COMPOSE[@]}" --env-file "${ROOT}/.env" "${files[@]}" "$@"
 	)
 }
 
@@ -826,18 +851,197 @@ Notes
 EOF
 }
 
-sync_optional_identity_settings() {
-	local api_container health attempt output command_status
+wait_for_api_healthy() {
+	local api_container="" health="" attempt
 	for ((attempt = 1; attempt <= 90; attempt++)); do
 		api_container="$(compose ps -q api 2>/dev/null || true)"
 		health=""
 		if [[ -n "${api_container}" ]]; then
 			health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${api_container}" 2>/dev/null || true)"
 		fi
-		[[ "${health}" == "healthy" ]] && break
+		[[ "${health}" == "healthy" ]] && return 0
 		sleep 1
 	done
-	if [[ "${health}" != "healthy" ]]; then
+	return 1
+}
+
+platform_gateway_auto_deploy_enabled() {
+	local raw
+	raw="$(read_env_value_or HFL_PLATFORM_GATEWAY_AUTO_DEPLOY true "${ROOT}/.env" | tr '[:upper:]' '[:lower:]')"
+	case "${raw}" in
+	1 | true | yes | on) return 0 ;;
+	0 | false | no | off) return 1 ;;
+	*)
+		warn "invalid HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=${raw}; treating as enabled"
+		return 0
+		;;
+	esac
+}
+
+# Ensure the installer-managed local public Data Gateway (host Agent + LensNode).
+# Mirrors deploy/installer/install.sh ensure_local_platform_gateway for the dev stack.
+# Failures warn instead of aborting stack up so Darwin/non-root hosts stay usable.
+ensure_local_platform_gateway_dev() {
+	if ! platform_gateway_auto_deploy_enabled; then
+		log "Local platform Gateway auto-deploy is disabled (HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false)"
+		return 0
+	fi
+	if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+		warn "Skipping local platform Gateway auto-deploy (requires Linux amd64/x86_64)"
+		return 0
+	fi
+	if ! wait_for_api_healthy; then
+		warn "Skipping local platform Gateway auto-deploy because the API is not healthy yet"
+		return 0
+	fi
+
+	local helper="${ROOT}/data/media/enroll-bootstrap/hfl-enroll-linux-amd64"
+	if [[ ! -x "${helper}" ]]; then
+		warn "Skipping local platform Gateway auto-deploy; enrollment helper missing: ${helper}"
+		return 0
+	fi
+
+	log "Ensuring local public Data Gateway (platform Gateway auto-deploy)"
+	# Sidecar install expects :latest; versioned tags alone leave gateway-install
+	# downloading the bootstrap archive (or failing when that archive is stale).
+	if ! docker image inspect hyperfilelens-sourcelens-lensnode:latest >/dev/null 2>&1; then
+		local versioned=""
+		versioned="$(
+			docker images --format '{{.Repository}}:{{.Tag}}' \
+				| grep -E '^hyperfilelens-sourcelens-lensnode:[0-9]' \
+				| head -1 || true
+		)"
+		if [[ -n "${versioned}" ]]; then
+			docker tag "${versioned}" hyperfilelens-sourcelens-lensnode:latest
+			log "Tagged ${versioned} -> hyperfilelens-sourcelens-lensnode:latest for Gateway sidecar"
+		fi
+	fi
+
+	local command_output parsed org_key token api_base wss_url managed_node_ids
+	local agent_env="/var/lib/hyperfilelens-agent/agent.env"
+	set +e
+	command_output="$(compose exec -T api python manage.py ensure_local_platform_gateway_enrollment 2>&1)"
+	local command_status=$?
+	set -e
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Local platform Gateway enrollment failed; the dev stack remains available"
+		[[ -n "${command_output}" ]] && printf '%s\n' "${command_output}"
+		return 0
+	fi
+	parsed="$(
+		printf '%s\n' "${command_output}" | python3 -c '
+import json
+import sys
+
+prefix = "HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT="
+matches = [line[len(prefix):] for line in sys.stdin.read().splitlines() if line.startswith(prefix)]
+if len(matches) != 1:
+    raise SystemExit("expected one local platform Gateway enrollment payload")
+payload = json.loads(matches[0])
+required = ("org_key", "token", "api_base", "wss_url")
+if any(not str(payload.get(key, "")).strip() for key in required):
+    raise SystemExit("local platform Gateway enrollment payload is incomplete")
+node_ids = ",".join(str(value) for value in payload.get("managed_node_ids", []))
+print("\t".join([*(str(payload[key]).strip() for key in required), node_ids]))
+'
+	)" || {
+		warn "Local platform Gateway enrollment payload could not be parsed; the dev stack remains available"
+		return 0
+	}
+	IFS=$'\t' read -r org_key token api_base wss_url managed_node_ids <<<"${parsed}"
+	if [[ "${org_key}" != "__platform_lens__" ]]; then
+		warn "Local platform Gateway enrollment returned unexpected org ${org_key}; skipping install"
+		return 0
+	fi
+
+	local tenant_port existing_org existing_role existing_node_id existing_token
+	tenant_port="$(read_env_value_or HFL_TENANT_PORT 11443 "${ROOT}/.env")"
+	api_base="https://127.0.0.1:${tenant_port}"
+	wss_url="wss://127.0.0.1:${tenant_port}/ws/node/agent/"
+
+	existing_org=""
+	existing_role=""
+	existing_node_id=""
+	existing_token=""
+	if [[ -f "${agent_env}" ]]; then
+		existing_org="$(grep -E '^HFL_ORG_KEY=' "${agent_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+		existing_role="$(grep -E '^HFL_NODE_ROLE=' "${agent_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+		existing_node_id="$(grep -E '^HFL_NODE_ID=' "${agent_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+		existing_token="$(grep -E '^HFL_NODE_TOKEN=' "${agent_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+	fi
+	if [[ -n "${existing_org}${existing_role}${existing_node_id}${existing_token}" ]]; then
+		if [[ "${existing_org}" != "${org_key}" || "${existing_role}" != "gateway" ]]; then
+			warn "Skipping local platform Gateway auto-deploy: existing host Agent conflicts (org=${existing_org:-unset} role=${existing_role:-unset})"
+			return 0
+		fi
+		if [[ -n "${existing_node_id}" ]]; then
+			case ",${managed_node_ids}," in
+			*",${existing_node_id},"*) ;;
+			*)
+				warn "Skipping local platform Gateway auto-deploy: host Agent node ${existing_node_id} is not installer-managed"
+				return 0
+				;;
+			esac
+		elif [[ -n "${existing_token}" && "${existing_token}" != "${token}" ]]; then
+			warn "Skipping local platform Gateway auto-deploy: partially enrolled Agent token is not installer-managed"
+			return 0
+		fi
+	fi
+
+	set +e
+	env \
+		-u SENTRY_ENABLED \
+		-u SENTRY_BACKEND_DSN \
+		-u SENTRY_ENVIRONMENT \
+		-u SENTRY_RELEASE \
+		-u SENTRY_TRACES_SAMPLE_RATE \
+		-u HFL_SENTRY_LENSNODE_RELEASE \
+		-u HFL_SENTRY_POLICY_MANAGED \
+		HFL_ORG_KEY="${org_key}" \
+		HFL_NODE_ROLE="gateway" \
+		HFL_NODE_TOKEN="${token}" \
+		HFL_API_BASE="${api_base}" \
+		HFL_WSS_URL="${wss_url}" \
+		HFL_INSECURE_TLS=1 \
+		HFL_FORCE_SIDECAR_INSTALL=1 \
+		"${helper}" gateway-install --yes
+	command_status=$?
+	set -e
+	if [[ "${command_status}" -ne 0 ]]; then
+		warn "Local platform Gateway host install failed (exit ${command_status}); the dev stack remains available"
+		return 0
+	fi
+	if ! wait_for_local_platform_gateway_ready_dev 180; then
+		warn "Local public Data Gateway installed but is not Copilot-ready yet; the dev stack remains available"
+		return 0
+	fi
+	log "Local public Data Gateway auto-deploy finished (online and usable)"
+}
+
+wait_for_local_platform_gateway_ready_dev() {
+	local timeout_seconds=${1:-180} deadline node_id
+	deadline=$((SECONDS + timeout_seconds))
+	node_id="$(grep -E '^HFL_NODE_ID=' /var/lib/hyperfilelens-agent/agent.env 2>/dev/null \
+		| head -1 | cut -d= -f2- | tr -d '\r' || true)"
+	if [[ ! "${node_id}" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+	local query
+	query="from apps.lens_bridge.models import LensGatewayLink; from apps.lens_bridge.services.gateway_readiness import gateway_runtime_state; from apps.lens_bridge.services.provisioning import sync_gateway_lensnode_status; link = LensGatewayLink.objects.select_related('gateway').filter(gateway_id=${node_id}, scope='platform').first(); link = sync_gateway_lensnode_status(link) if link is not None else None; state = gateway_runtime_state(link); raise SystemExit(0 if link is not None and state['hfl_usable'] and state['copilot_eligible'] else 1)"
+	while true; do
+		if compose exec -T api python manage.py shell -c "${query}" >/dev/null 2>&1; then
+			return 0
+		fi
+		if ((SECONDS >= deadline)); then
+			return 1
+		fi
+		sleep 2
+	done
+}
+
+sync_optional_identity_settings() {
+	local output command_status
+	if ! wait_for_api_healthy; then
 		warn "Skipping optional identity settings sync because the API is not healthy yet"
 		return 0
 	fi
@@ -885,6 +1089,7 @@ cmd_up() {
 	compose up -d --no-build --pull never --remove-orphans
 	refresh_website_nginx_mount
 	sync_optional_identity_settings
+	ensure_local_platform_gateway_dev
 	print_urls
 }
 
@@ -919,6 +1124,7 @@ cmd_restart() {
 		refresh_website_nginx_mount
 	fi
 	sync_optional_identity_settings
+	ensure_local_platform_gateway_dev
 	print_urls
 }
 

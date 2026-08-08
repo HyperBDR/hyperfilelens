@@ -60,6 +60,7 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
         name=(email or local or user.username or "org")[:200],
         is_active=True,
     )
+    # role= is popped by MembershipQuerySet and synced to EE MemberRole when present.
     membership = Membership.objects.create(
         user=user,
         organization=org,

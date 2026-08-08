@@ -1075,7 +1075,7 @@ grep -F './tools/quality/test-gateway-lifecycle-upgrade.sh' "${workflow}" >/dev/
 grep -F './tools/quality/test-platform-gateway-auto-deploy.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-release-retention.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-agent-gateway-uninstall.sh' "${workflow}" >/dev/null
-grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=false' "${ROOT}/.env.example" >/dev/null
+grep -F 'HFL_PLATFORM_GATEWAY_AUTO_DEPLOY=true' "${ROOT}/.env.example" >/dev/null
 grep -F 'com.hyperfilelens.component: "gateway-lensnode"' \
 	"${gateway_sidecar_installer}" >/dev/null
 grep -F './tools/quality/test-deployment-optional-config.sh' "${workflow}" >/dev/null
