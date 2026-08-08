@@ -1097,28 +1097,89 @@ def _complete_copilot_chat_provision(
     )
 
 
+def _orphan_knowledge_source_needs_enqueue(knowledge_source_id: int) -> bool:
+    """Return True when no live lease or future retry already covers the KS."""
+    now = timezone.now()
+    knowledge_source = (
+        LensKnowledgeSource.all_objects.filter(pk=knowledge_source_id)
+        .only(
+            "id",
+            "lifecycle_status",
+            "teardown_claimed_at",
+            "teardown_next_retry_at",
+        )
+        .first()
+    )
+    if knowledge_source is None:
+        return False
+    if (
+        knowledge_source.lifecycle_status
+        == LensKnowledgeSource.LifecycleStatus.DELETED
+    ):
+        return False
+    if (
+        knowledge_source.teardown_claimed_at
+        and knowledge_source.teardown_claimed_at
+        > now - timedelta(seconds=TEARDOWN_CLAIM_TTL_SECONDS)
+    ):
+        return False
+    if (
+        knowledge_source.teardown_next_retry_at
+        and knowledge_source.teardown_next_retry_at > now
+    ):
+        return False
+    return True
+
+
+def _enqueue_orphan_knowledge_source_teardown(
+    knowledge_source_id: int,
+) -> None:
+    """Enqueue durable KS teardown when no backoff/lease already covers it."""
+    if not _orphan_knowledge_source_needs_enqueue(knowledge_source_id):
+        return
+    from apps.lens_bridge.services.knowledge_source_teardown import _queue_teardown
+
+    _queue_teardown(knowledge_source_id)
+
+
 def _cleanup_orphan_knowledge_source(
     knowledge_source: LensKnowledgeSource,
     *,
     owner_session_link_id: int,
 ) -> None:
-    """Durably tear down a KS that could not be attached to its Chat."""
-    try:
-        from apps.lens_bridge.services.knowledge_source_teardown import (
-            request_knowledge_source_teardown,
-            run_knowledge_source_teardown,
-        )
+    """Durably tear down a KS that could not be attached to its Chat.
 
-        request_knowledge_source_teardown(knowledge_source)
-        run_knowledge_source_teardown(
+    Prefer an owner-aware inline teardown. ``busy`` / ``scheduled`` already have
+    a live worker or a recorded ``teardown_next_retry_at`` for reconciler, so
+    they are not re-queued. Unexpected failures enqueue only when no live lease
+    or future retry is already recorded (avoids IncompleteError no-op Celery).
+    """
+    from apps.lens_bridge.services.knowledge_source_teardown import (
+        run_knowledge_source_teardown,
+    )
+
+    LensKnowledgeSource.all_objects.filter(pk=knowledge_source.id).exclude(
+        lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETED
+    ).update(
+        lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETING,
+        status_detail="Knowledge source deletion is queued.",
+        updated_at=timezone.now(),
+    )
+    try:
+        result = run_knowledge_source_teardown(
             knowledge_source_id=knowledge_source.id,
             owner_session_link_id=owner_session_link_id,
         )
+        status = str(result.get("status") or "")
+        if status in {"deleted", "busy", "scheduled"}:
+            return
+        raise RuntimeError("Knowledge Source teardown is " + status)
     except Exception:
         logger.exception(
             "orphan knowledge source cleanup deferred knowledge_source_id=%s",
             knowledge_source.id,
         )
+        _enqueue_orphan_knowledge_source_teardown(knowledge_source.id)
 
 
 @transaction.atomic
