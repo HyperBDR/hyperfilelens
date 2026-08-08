@@ -14,7 +14,7 @@ class DatabaseSettingsTests(SimpleTestCase):
             "postgresql://hyperfilelens:secret@postgres:5432/hyperfilelens"
         )
 
-        self.assertEqual(config["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(config["ENGINE"], "project.db.backends.postgresql")
         self.assertEqual(config["CONN_MAX_AGE"], 0)
         self.assertEqual(config["OPTIONS"]["connect_timeout"], 60)
 
