@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""Materialize HFL_EXTENSION_SOURCES → HFL_EXTENSIONS and emit compose overlay.
+"""Materialize HFL_EXTENSION_SOURCES for stack.dev and release image bake.
 
-Used by ``dev/stack.sh``. Runtime processes only see local paths.
+Prepare stage only: local paths or git URL[+ref]. Runtime reads ``HFL_EXTENSIONS``
+(container/local directories). Never clones inside api/ui processes.
+
+Modes:
+  * compose overlay (``stack.sh``): mount host roots into containers
+  * ``--bake-dir`` (``release/build.sh`` / CI): copy into a docker-context tree
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def _split_list(raw: str) -> list[str]:
@@ -53,23 +61,65 @@ def _parse_source(item: str) -> tuple[str, str | None]:
     return item, None
 
 
+def _git_token() -> str:
+    return (
+        os.environ.get("HFL_EXTENSION_GIT_TOKEN", "").strip()
+        or os.environ.get("GITHUB_TOKEN", "").strip()
+    )
+
+
+def _git_env(url: str) -> dict[str, str]:
+    """Env for git subprocesses: HTTPS auth via GIT_CONFIG_* (not argv / .git/config)."""
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    token = _git_token()
+    if not token or not url.startswith("https://"):
+        return env
+    parts = urlsplit(url)
+    if not parts.hostname or parts.username:
+        return env
+    basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+    # Ephemeral config through the environment — avoids token-in-URL remotes and
+    # keeps the secret out of `ps` argv (unlike `git -c ...extraheader=...`).
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = f"http.https://{parts.hostname}/.extraheader"
+    env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: basic {basic}"
+    return env
+
+
 def _clone(url: str, dest: Path, ref: str | None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    env = _git_env(url)
     if dest.exists():
-        subprocess.check_call(["git", "-C", str(dest), "fetch", "--all", "--tags"], stdout=subprocess.DEVNULL)
+        # Ensure origin stays credential-free (clean up older token-in-URL caches).
+        subprocess.check_call(
+            ["git", "-C", str(dest), "remote", "set-url", "origin", url],
+            stdout=subprocess.DEVNULL,
+            env=env,
+        )
+        subprocess.check_call(
+            ["git", "-C", str(dest), "fetch", "--all", "--tags"],
+            stdout=subprocess.DEVNULL,
+            env=env,
+        )
         if ref:
-            subprocess.check_call(["git", "-C", str(dest), "checkout", ref], stdout=subprocess.DEVNULL)
+            subprocess.check_call(
+                ["git", "-C", str(dest), "checkout", ref],
+                stdout=subprocess.DEVNULL,
+                env=env,
+            )
             subprocess.check_call(
                 ["git", "-C", str(dest), "pull", "--ff-only"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=env,
             )
         return
     cmd = ["git", "clone", "--depth", "1"]
     if ref:
         cmd += ["--branch", ref]
     cmd += [url, str(dest)]
-    subprocess.check_call(cmd)
+    subprocess.check_call(cmd, env=env)
 
 
 def materialize(sources: list[str], cache_dir: Path) -> list[Path]:
@@ -77,7 +127,6 @@ def materialize(sources: list[str], cache_dir: Path) -> list[Path]:
     for item in sources:
         location, ref = _parse_source(item)
         if location.startswith("git@") or "://" in location:
-            # Dest folder name from repo basename
             base = location.rstrip("/").rsplit("/", 1)[-1]
             if base.endswith(".git"):
                 base = base[:-4]
@@ -92,23 +141,74 @@ def materialize(sources: list[str], cache_dir: Path) -> list[Path]:
     return roots
 
 
+def _copy_tree(src: Path, dest: Path) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        src,
+        dest,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            "__pycache__",
+            "*.pyc",
+            "node_modules",
+            ".venv",
+            "dist",
+            ".tmp",
+            # Never bake local secrets / credentials into release images.
+            ".env",
+            ".env.*",
+            "*.key",
+            "*.pem",
+            "*.p12",
+            "*.pfx",
+            "id_rsa",
+            "id_rsa.*",
+            "credentials.json",
+            ".secrets",
+            "secrets",
+        ),
+    )
+
+
+def bake_extensions(host_roots: list[Path], bake_dir: Path) -> list[tuple[str, Path]]:
+    """Copy each root to bake_dir/<id> and return (runtime_path, host_bake_path)."""
+    if bake_dir.exists():
+        shutil.rmtree(bake_dir)
+    bake_dir.mkdir(parents=True, exist_ok=True)
+    (bake_dir / ".gitkeep").write_text("", encoding="utf-8")
+
+    mounts: list[tuple[str, Path]] = []
+    seen_ids: set[str] = set()
+    for root in host_roots:
+        ext_id = _read_id(root)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", ext_id):
+            raise SystemExit(f"invalid extension id for bake: {ext_id!r}")
+        if ext_id in seen_ids:
+            raise SystemExit(f"duplicate extension id: {ext_id}")
+        seen_ids.add(ext_id)
+        staged = bake_dir / ext_id
+        _copy_tree(root, staged)
+        mounts.append((f"/opt/hfl/extensions/{ext_id}", staged.resolve()))
+    return mounts
+
+
 def write_compose(out: Path, mounts: list[tuple[str, Path]]) -> None:
     """mounts: (container_path, host_path)."""
     lines = [
         "# Generated by tools/extensions/materialize_extensions.py — do not edit.",
-        "# Loaded by stack.sh when HFL_EXTENSION_SOURCES / HFL_EXTENSIONS is set.",
+        "# Loaded by stack.sh when --extension-source materializes an overlay.",
         "services:",
     ]
     env_val = ",".join(c for c, _ in mounts)
     vol_lines = []
     for container, host in mounts:
         vol_lines.append(f"      - {host}:{container}:ro")
-        # Frontend live-reload for Vite when src/frontend exists
         fe = host / "src" / "frontend" / "src"
         if fe.is_dir():
             vol_lines.append(f"      - {fe}:{container}/src/frontend/src:ro")
 
-    # Deduplicate volume lines while preserving order
     seen: set[str] = set()
     uniq_vols: list[str] = []
     for v in vol_lines:
@@ -145,14 +245,21 @@ def main() -> int:
         help="Write docker-compose overlay (default: <repo>/build/docker-compose.extensions.yml)",
     )
     parser.add_argument(
+        "--bake-dir",
+        type=Path,
+        default=None,
+        help="Stage extension trees for docker COPY (release/CI). Skips compose overlay.",
+    )
+    parser.add_argument(
         "--print-extensions",
         action="store_true",
-        help="Print container HFL_EXTENSIONS value to stdout",
+        help="Print runtime HFL_EXTENSIONS value to stdout",
     )
     args = parser.parse_args()
     repo = args.repo_root.resolve()
     cache = repo / "build" / "extensions"
     compose_out = args.compose_out or (repo / "build" / "docker-compose.extensions.yml")
+    bake_dir = args.bake_dir.resolve() if args.bake_dir else None
 
     sources = _split_list(args.sources)
     extensions = _split_list(args.extensions)
@@ -167,21 +274,35 @@ def main() -> int:
                 raise SystemExit(f"not an extension root: {root}")
             host_roots.append(root)
     else:
-        if compose_out.exists():
+        if bake_dir is not None:
+            if bake_dir.exists():
+                shutil.rmtree(bake_dir)
+            bake_dir.mkdir(parents=True, exist_ok=True)
+            (bake_dir / ".gitkeep").write_text("", encoding="utf-8")
+        elif compose_out.exists():
             compose_out.unlink()
         if args.print_extensions:
             print("")
         return 0
 
-    mounts: list[tuple[str, Path]] = []
+    if bake_dir is not None:
+        mounts = bake_extensions(host_roots, bake_dir)
+        container_list = ",".join(c for c, _ in mounts)
+        if args.print_extensions:
+            print(container_list)
+        print(f"extensions baked: {len(mounts)} → {bake_dir}", file=sys.stderr)
+        for c, h in mounts:
+            print(f"  {c} <= {h}", file=sys.stderr)
+        return 0
+
+    mounts = []
     seen_ids: set[str] = set()
     for root in host_roots:
         ext_id = _read_id(root)
         if ext_id in seen_ids:
             raise SystemExit(f"duplicate extension id: {ext_id}")
         seen_ids.add(ext_id)
-        container = f"/opt/hfl/extensions/{ext_id}"
-        mounts.append((container, root))
+        mounts.append((f"/opt/hfl/extensions/{ext_id}", root))
 
     write_compose(compose_out, mounts)
     container_list = ",".join(c for c, _ in mounts)

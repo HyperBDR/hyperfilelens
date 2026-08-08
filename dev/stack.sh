@@ -78,6 +78,9 @@ WEBSITE_OUTPUT="${ROOT}/build/website"
 WEBSITE_BUILDER_IMAGE="hyperfilelens-website-builder:dev"
 WEBSITE_BASE_IMAGE="node:22-alpine"
 WEBSITE_ARTIFACT_REBUILT=0
+# Open Core extensions: CLI --extension-source only (not a .env setting).
+EXTENSION_SOURCES=()
+EXTENSION_SOURCES_CSV=""
 
 usage() {
 	cat <<'USAGE'
@@ -115,13 +118,18 @@ SourceLens options (default: enabled for up/restart):
   --sourcelens-git-url URL         Override SourceLens repository URL (env: SOURCELENS_GIT_URL)
 
 Extensions (optional overlay; community default = empty socket):
-  Set HFL_EXTENSION_SOURCES in .env to local plugin path(s) and/or git URL[@ref].
-  stack.sh materializes them and loads build/docker-compose.extensions.yml.
-  Runtime uses HFL_EXTENSIONS only (never git clone inside api/ui).
+  --extension-source SRC           Local path or git/HTTPS URL[+@ref]. Repeatable.
+                                     Not read from .env (prepare/packaging input only).
+                                     Private HTTPS uses --github-token or
+                                     HFL_EXTENSION_GIT_TOKEN (SSH uses your agent).
+  stack.sh materializes sources → build/docker-compose.extensions.yml.
+  Runtime containers see HFL_EXTENSIONS paths only (never git clone in api/ui).
 
 Mirror options (Kopia fetch + Agent publishing + SourceLens git clone; env fallback):
   --github-download-mirror URL     GitHub Git/release mirror (env: GITHUB_DOWNLOAD_MIRROR)
-  --github-token TOKEN             GitHub token for API/release fetch and private SourceLens clone (env: GITHUB_TOKEN)
+  --github-token TOKEN             GitHub token for API/release fetch, private SourceLens
+                                     clone, and private extension git sources (env:
+                                     GITHUB_TOKEN / HFL_EXTENSION_GIT_TOKEN)
   --docker-download-mirror URL     Docker Hub mirror for builds and runtime images (env: DOCKER_DOWNLOAD_MIRROR)
   --apt-mirror URL                 Ubuntu apt mirror for NAS container (env: APT_MIRROR)
   --ubuntu2404-arch ARCH           NAS deb arch for agent bundle: amd64 | arm64 | all (default: amd64)
@@ -146,6 +154,7 @@ Output options:
 
 Examples:
   ./dev/stack.sh up
+  ./dev/stack.sh up --extension-source ../hyperfilelens-ee
   ./dev/stack.sh up --ubuntu2404-arch amd64
   ./dev/stack.sh down
   ./dev/stack.sh restart
@@ -256,6 +265,7 @@ go_sumdb=${GOSUMDB:-<official>}
 pip_index_url=${OPT_PIP_INDEX_URL:-<official>}
 pip_trusted_host=${OPT_PIP_TRUSTED_HOST:-<unset>}
 npm_registry=${OPT_NPM_REGISTRY:-<official>}
+extension_sources=${EXTENSION_SOURCES_CSV:-<none>}
 docker_pull_timeout=${DOCKER_PULL_TIMEOUT}
 docker_pull_retries=${DOCKER_PULL_RETRIES}
 offline=${DEV_OFFLINE}
@@ -324,18 +334,17 @@ require_docker() {
 
 compose() {
 	local files=(-f docker-compose.yml)
-	local sources extensions compose_overlay
-	# Opt-in only: community CI / default stack.sh stay Host-only (empty socket).
-	sources="$(read_env_value_or HFL_EXTENSION_SOURCES "" "${ROOT}/.env" 2>/dev/null || true)"
-	extensions="$(read_env_value_or HFL_EXTENSIONS "" "${ROOT}/.env" 2>/dev/null || true)"
+	local compose_overlay ext_token
+	# CLI --extension-source only; never read prepare sources from .env.
 	compose_overlay="${ROOT}/build/docker-compose.extensions.yml"
-	if [[ -n "${sources}" || -n "${extensions}" ]]; then
-		python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
+	if [[ -n "${EXTENSION_SOURCES_CSV:-}" ]]; then
+		ext_token="${HFL_EXTENSION_GIT_TOKEN:-${MIRROR_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}}"
+		HFL_EXTENSION_GIT_TOKEN="${ext_token}" \
+			python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
 			--repo-root "${ROOT}" \
-			--sources "${sources}" \
-			--extensions "${extensions}" \
+			--sources "${EXTENSION_SOURCES_CSV}" \
 			--compose-out "${compose_overlay}" \
-			|| die "failed to materialize HFL_EXTENSION_SOURCES / HFL_EXTENSIONS"
+			|| die "failed to materialize --extension-source"
 		[[ -f "${compose_overlay}" ]] \
 			|| die "extension compose overlay missing after materialize: ${compose_overlay}"
 		files+=(-f "${compose_overlay}")
@@ -1406,6 +1415,11 @@ main() {
 			LOG_FILE="$2"
 			shift 2
 			;;
+		--extension-source)
+			require_value "$1" "${2:-}"
+			EXTENSION_SOURCES+=("$2")
+			shift 2
+			;;
 		--github-download-mirror | --github-token | --docker-download-mirror | --apt-mirror | --ubuntu2404-arch | --kopia-mode | --kopia-git-url | --kopia-ref | --sourcelens-ref | --sourcelens-git-url | --go-proxy | --go-sumdb | --pip-index-url | --pip-trusted-host | --npm-registry | --pull-timeout | --pull-retries | --no-sourcelens | --hfl-only | --pull | --offline)
 			parse_common_option "$@" || die "failed to parse option: $1"
 			if [[ "$1" == "--no-sourcelens" || "$1" == "--hfl-only" \
@@ -1420,6 +1434,12 @@ main() {
 			;;
 		esac
 	done
+	if [[ ${#EXTENSION_SOURCES[@]} -gt 0 ]]; then
+		local IFS=','
+		EXTENSION_SOURCES_CSV="${EXTENSION_SOURCES[*]}"
+	else
+		EXTENSION_SOURCES_CSV=""
+	fi
 	CMD="${cmd}"
 	hfl_logging_configure dev "${LOG_FILE}" "${VERBOSE}"
 	if [[ "${PRINT_CONFIG}" -eq 1 ]]; then

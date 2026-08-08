@@ -179,7 +179,19 @@ chmod 644 "${gateway_dir}/hfl-sentry-sitecustomize.py"
 log "Staging release runtime files"
 printf '%s\n' "${version}" >"${pkg_root}/VERSION"
 cp "${ROOT}/deploy/docker-compose.yml" "${pkg_root}/docker-compose.yml"
-cp "${ROOT}/.env.example" "${pkg_root}/.env.example"
+# Prefer CI/image bake value so packaged .env.example cannot clear image ENV.
+HFL_EXTENSIONS_RUNTIME="${HFL_EXTENSIONS_RUNTIME:-${HFL_EXTENSIONS:-}}"
+if [[ -z "${HFL_EXTENSIONS_RUNTIME}" && -n "${HFL_EXTENSION_SOURCES:-}" ]]; then
+	HFL_EXTENSIONS_RUNTIME="$(
+		python3 "${ROOT}/tools/extensions/materialize_extensions.py" \
+			--repo-root "${ROOT}" \
+			--sources "${HFL_EXTENSION_SOURCES}" \
+			--bake-dir "${RELEASE_BUILD_DIR}/extensions-assemble" \
+			--print-extensions
+	)"
+fi
+export HFL_EXTENSIONS_RUNTIME
+stage_release_env_example "${pkg_root}"
 cp "${ROOT}/LICENSE" "${pkg_root}/LICENSE"
 mkdir -p \
 	"${pkg_root}/deploy/nginx/certs" \

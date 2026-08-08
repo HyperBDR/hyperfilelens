@@ -101,6 +101,10 @@ RUN rm -f /tmp/dev-requirements.txt
 COPY src/backend /opt/backend
 COPY deploy/bootstrap /opt/bootstrap
 COPY deploy/docker/backend-entrypoint.sh /entrypoint.sh
+# Optional Open Core extensions staged by release/build.sh or CI (may be empty).
+COPY build/release/extensions/ /opt/hfl/extensions/
+ARG HFL_EXTENSIONS=
+ENV HFL_EXTENSIONS=${HFL_EXTENSIONS}
 
 RUN chmod +x /entrypoint.sh
 

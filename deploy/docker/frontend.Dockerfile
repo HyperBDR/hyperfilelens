@@ -32,6 +32,10 @@ ENTRYPOINT ["/usr/local/bin/hfl-frontend-dev"]
 FROM frontend-dependencies AS frontend-build
 
 COPY src/frontend/ ./
+# Optional Open Core extensions for Vite discovery at build time (may be empty).
+COPY build/release/extensions/ /opt/hfl/extensions/
+ARG HFL_EXTENSIONS=
+ENV HFL_EXTENSIONS=${HFL_EXTENSIONS}
 ENV VITE_SHOW_EULA=${VITE_SHOW_EULA}
 RUN --mount=type=secret,id=sentry_auth_token \
     SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" \
