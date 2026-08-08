@@ -21,6 +21,8 @@ def collect_usage_stats(*, organization_id: int) -> dict:
     target_nas_count = 0
     standalone_disk_count = 0
     alert_policies_count = 0
+    protected_sources_count = 0
+    ai_used = 0
     try:
         from apps.node.models import Node
         from apps.node.models.base import NodeRole
@@ -33,19 +35,27 @@ def collect_usage_stats(*, organization_id: int) -> dict:
     except Exception:
         pass
     try:
-        from apps.source.constants import ResourceType
+        from apps.source.constants import ResourceStatus, ResourceType
         from apps.source.models import SourceResource
 
-        source_nas_count = SourceResource.objects.filter(
-            organization_id=organization_id,
-            resource_type__in=(ResourceType.NAS, ResourceType.NFS, ResourceType.CIFS),
-        ).count()
+        source_nas_count = (
+            SourceResource.objects.filter(
+                organization_id=organization_id,
+                resource_type__in=(ResourceType.NAS, ResourceType.NFS, ResourceType.CIFS),
+            )
+            .exclude(
+                status__in=(ResourceStatus.REMOVING, ResourceStatus.REMOVED),
+            )
+            .count()
+        )
     except Exception:
         pass
     try:
         from apps.storage.repositories.models import Repository
 
-        repo_qs = Repository.objects.filter(organization_id=organization_id)
+        repo_qs = Repository.objects.filter(organization_id=organization_id).exclude(
+            status=Repository.Status.REMOVED
+        )
         object_storage_count = repo_qs.filter(repo_type=Repository.Type.S3).count()
         target_nas_count = repo_qs.filter(repo_type=Repository.Type.NAS).count()
         standalone_disk_count = repo_qs.filter(repo_type=Repository.Type.PROXY_FS).count()
@@ -57,6 +67,53 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         alert_policies_count = AlertPolicy.objects.filter(organization_id=organization_id).count()
     except Exception:
         pass
+    try:
+        from apps.protection.models.backup_config import BackupConfig
+
+        protected_sources_count = BackupConfig.objects.filter(
+            organization_id=organization_id,
+        ).count()
+    except Exception:
+        pass
+    try:
+        from apps.lens_bridge.models import LensUsageCounter
+
+        # Best-effort; missing table/app → 0
+        row = (
+            LensUsageCounter.objects.filter(organization_id=organization_id)
+            .order_by("-id")
+            .first()
+        )
+        if row is not None:
+            ai_used = int(getattr(row, "requests_used", 0) or getattr(row, "value", 0) or 0)
+    except Exception:
+        pass
+
+    try:
+        from django.db.models import Sum, Value
+        from django.db.models.functions import Coalesce
+
+        from apps.storage.repositories.models import Repository
+
+        # Prefer physical probe when present; else estimated usage (Host domain facts).
+        # Exclude REMOVED tombstones so deleted repos do not inflate quota.
+        total_bytes = (
+            Repository.objects.filter(organization_id=organization_id)
+            .exclude(status=Repository.Status.REMOVED)
+            .aggregate(
+                total=Sum(
+                    Coalesce(
+                        "physical_usage_bytes",
+                        "estimated_usage_bytes",
+                        Value(0),
+                    )
+                )
+            )
+            .get("total")
+        )
+        storage_used_gb = float(total_bytes or 0) / float(1024**3)
+    except Exception:
+        storage_used_gb = 0.0
 
     return {
         "organizations_count": Organization.objects.filter(is_active=True).count(),
@@ -69,8 +126,10 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         "object_storage_count": object_storage_count,
         "target_nas_count": target_nas_count,
         "standalone_disk_count": standalone_disk_count,
-        "storage_used_gb": 0.0,
-        "ai_insights_used": 0,
+        "protected_sources_count": protected_sources_count,
+        "storage_used_gb": storage_used_gb,
+        "ai_insights_used": ai_used,
+        "ai_requests_used": ai_used,
         "tasks_count": 0,
         "alert_policies_count": alert_policies_count,
     }
@@ -88,8 +147,10 @@ def _empty_usage() -> dict:
         "object_storage_count": 0,
         "target_nas_count": 0,
         "standalone_disk_count": 0,
+        "protected_sources_count": 0,
         "storage_used_gb": 0.0,
         "ai_insights_used": 0,
+        "ai_requests_used": 0,
         "tasks_count": 0,
         "alert_policies_count": 0,
     }

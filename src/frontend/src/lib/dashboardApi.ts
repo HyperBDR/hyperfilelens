@@ -496,8 +496,8 @@ export async function loadDashboardOverview(
   const offlineNodes = nodes.filter((n) => n.status !== 'online')
 
   const orgName =
-    license.license?.organization_name ||
     license.organization_name ||
+    license.license?.organization_name ||
     orgKey ||
     '—'
 
@@ -508,7 +508,12 @@ export async function loadDashboardOverview(
   } else if (lic?.expires_at) {
     licenseExpiresLabel = t('dashboard.licenseExpires', {
       date: new Date(lic.expires_at).toLocaleDateString(),
-      days: lic.days_until_expiry ?? '—',
+      days: lic.days_until_expiry ?? license.days_until_expiry ?? '—',
+    })
+  } else if (license.is_valid && license.days_until_expiry != null) {
+    licenseExpiresLabel = t('dashboard.licenseExpires', {
+      date: '—',
+      days: license.days_until_expiry,
     })
   }
 
@@ -551,10 +556,14 @@ export async function loadDashboardOverview(
 
   return {
     orgName,
-    licenseValid: Boolean(license.is_valid && license.license),
-    licenseKey: license.license?.license_key,
+    licenseValid: Boolean(license.is_valid),
+    licenseKey: license.instance_shared ? undefined : license.license?.license_key,
     licenseExpiresLabel,
-    quotaRows: buildQuotaRows(license.usage || {}, license.limits || {}, lic as Record<string, unknown> | undefined),
+    quotaRows: buildQuotaRows(
+      license.usage || {},
+      license.limits || {},
+      license.instance_shared ? undefined : (lic as Record<string, unknown> | undefined),
+    ),
     taskStats: {
       total: taskStats.total,
       running: taskStats.running,

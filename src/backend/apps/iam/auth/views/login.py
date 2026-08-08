@@ -309,13 +309,15 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
         available_orgs = []
         try:
             from apps.iam.models import Membership
+            from apps.iam.services.membership_service import authoritative_role
+
             memberships = Membership.objects.filter(user=user_obj, is_active=True).select_related("organization")
-            roles = [m.role for m in memberships]
+            roles = [authoritative_role(m) for m in memberships]
             available_orgs = [
                 {
                     "org_key": m.organization.key,
                     "org_name": m.organization.name,
-                    "role": m.role,
+                    "role": authoritative_role(m),
                 }
                 for m in memberships
                 if m.organization.is_active
@@ -432,6 +434,8 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        from apps.iam.services.membership_service import authoritative_role
+
         # Generate tokens and complete login
         # Clear pending_user_id from session
         request.session.pop('pending_user_id', None)
@@ -450,7 +454,7 @@ class OrgSelectView(AnonymousPublicViewMixin, APIView):
                     "selected_org": {
                         "org_key": org_key,
                         "org_name": membership.organization.name,
-                        "role": membership.role,
+                        "role": authoritative_role(membership),
                     },
                     "message": _("Login successful"),
                 },

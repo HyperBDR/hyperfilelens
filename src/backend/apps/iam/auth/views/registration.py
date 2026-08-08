@@ -37,7 +37,8 @@ from apps.iam.services.registration_service import (
     validate_password_format,
 )
 from apps.iam.services.token_service import blacklist_all_user_tokens
-from apps.platform_ops.services.internal.runtime_settings import (
+from apps.configuration.services import runtime_settings as runtime_settings_svc
+from apps.configuration.services.runtime_settings import (
     email_delivery_configured,
     email_signup_enabled,
 )
@@ -75,6 +76,15 @@ def _email_signup_disabled_response() -> Response:
     return _build_error_response(
         "EMAIL_SIGNUP_DISABLED",
         _("Email sign-up is disabled"),
+        http_status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _password_reset_disabled_response() -> Response:
+    """Self-serve password reset is an enterprise identity feature."""
+    return _build_error_response(
+        "PASSWORD_RESET_DISABLED",
+        _("Password reset is disabled"),
         http_status=status.HTTP_403_FORBIDDEN,
     )
 
@@ -552,6 +562,10 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        # Community empty socket: self-serve reset is EE-only.
+        if not runtime_settings_svc.enterprise_identity_enabled():
+            return _password_reset_disabled_response()
+
         configuration_error = _turnstile_misconfigured_response(request)
         if configuration_error is not None:
             return configuration_error
@@ -566,8 +580,7 @@ class ForgotPasswordView(AnonymousPublicViewMixin, APIView):
                         "error_code": "VALIDATION_ERROR",
                         "message": _("Missing required fields"),
                         "fields": {
-                            **missing_turnstile_fields(request.data, request),
-                            "email": [_('Required')] if not email else [],
+                            **missing_turnstile_fields(request.data, request),                            "email": [_('Required')] if not email else [],
                         },
                     },
                 },
@@ -666,6 +679,9 @@ class ForgotPasswordConfirmView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        if not runtime_settings_svc.enterprise_identity_enabled():
+            return _password_reset_disabled_response()
+
         email = (request.data.get("email") or "").strip().lower()
         code = request.data.get("code")
         password = request.data.get("password")

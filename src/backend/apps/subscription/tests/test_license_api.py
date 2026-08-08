@@ -6,13 +6,28 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
-from apps.subscription.models import License
+from apps.subscription.models import License, LicenseHistory, MachineCode
 from apps.subscription.services.internal.crypto import generate_activation_code
 from apps.subscription.services.interface import get_or_create_machine_code
 
 
+def _clear_license_state() -> None:
+    """Reset Host licenses and any EE EffectiveQuota rows left by prior activates."""
+    LicenseHistory.objects.all().delete()
+    License.objects.all().delete()
+    MachineCode.objects.all().delete()
+    try:
+        from apps.subscription_gov.models import Quota
+
+        Quota.objects.all().delete()
+    except Exception:  # pragma: no cover — community Host has no ee ledger
+        pass
+
+
 class LicenseApiTests(TestCase):
     def setUp(self):
+        # keepdb can leave licenses/quotas from earlier runs; pin-to-host must start clean.
+        _clear_license_state()
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
@@ -56,6 +71,55 @@ class LicenseApiTests(TestCase):
         self.assertTrue(resp.data["success"])
         self.assertTrue(License.objects.filter(organization=self.org).exists())
 
+    @override_settings(DEBUG=True)
+    def test_secondary_org_instance_license_and_activate_pin(self):
+        """Secondary tenants share the host grant; only the host may activate."""
+        activate = self.client.post(
+            "/api/v1/subscription/licenses/activate/",
+            {"activation_code": "DEV-UNLIMITED"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(activate.status_code, status.HTTP_200_OK)
+
+        org2 = Organization.objects.create(key="license-secondary-org", name="Secondary Org")
+        Membership.objects.create(
+            user=self.user,
+            organization=org2,
+            role=Membership.Role.ADMIN,
+        )
+        headers2 = {"HTTP_X_ORG_KEY": org2.key}
+
+        current = self.client.get(
+            "/api/v1/subscription/licenses/current/",
+            **headers2,
+        )
+        self.assertEqual(current.status_code, status.HTTP_200_OK)
+        self.assertTrue(current.data["is_valid"])
+        self.assertTrue(current.data.get("instance_shared"))
+        self.assertIn("license", current.data)
+        self.assertNotIn("license_key", current.data["license"] or {})
+        self.assertNotIn("organization_key", current.data["license"] or {})
+        self.assertEqual(current.data.get("organization_name"), org2.name)
+
+        blocked = self.client.post(
+            "/api/v1/subscription/licenses/activate/",
+            {"activation_code": "DEV-UNLIMITED"},
+            format="json",
+            **headers2,
+        )
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already active", (blocked.data.get("message") or "").lower())
+        self.assertFalse(License.objects.filter(organization=org2).exists())
+
+        renew = self.client.post(
+            "/api/v1/subscription/licenses/activate/",
+            {"activation_code": "DEV-UNLIMITED"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(renew.status_code, status.HTTP_200_OK)
+
     def test_activate_with_signed_code(self):
         machine_code = get_or_create_machine_code(organization=self.org, user=self.user)
         code = generate_activation_code(
@@ -78,13 +142,26 @@ class LicenseApiTests(TestCase):
         self.assertEqual(lic.max_users, 100)
 
     def test_validate_always_allows_in_dev(self):
+        from common.extension_spi import get_quota_provider
+
         resp = self.client.get(
             "/api/v1/subscription/licenses/validate/",
             {"quota_type": "users", "amount": "9999"},
             **self._headers(),
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertTrue(resp.data["is_valid"])
+        payload = resp.data.get("data", resp.data) if isinstance(resp.data, dict) else resp.data
+        provider = get_quota_provider()
+        if provider is None:
+            self.assertTrue(payload["is_valid"])
+            return
+        # Plugin present but no instance license → create-path enforcement skipped.
+        if not payload.get("enforcement_enabled"):
+            self.assertTrue(payload["is_valid"])
+            return
+        # With an active instance grant + EffectiveQuota, hard limits apply.
+        self.assertFalse(payload["is_valid"])
+        self.assertTrue(payload.get("enforcement_enabled"))
 
     def test_history_empty(self):
         resp = self.client.get(

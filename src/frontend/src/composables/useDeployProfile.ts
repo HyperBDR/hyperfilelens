@@ -6,14 +6,18 @@ export interface DeployProfile {
   password_reset_available: boolean
   tenant_public_url: string
   admin_console_url: string
+  /** Site-local post-login path (tenant "/" or ops AI Models / Overview). */
   landing_path: string
+  /** Tenant → Admin Console deep link (community AI Models / EE Overview). */
+  admin_console_landing_path: string
   admin_console_entry_visible: boolean
   platform_ops_access_allowed: boolean
   is_staff?: boolean
   support_org_key?: string | null
 }
 
-export const PLATFORM_OPS_LANDING_PATH = '/platform-ops/overview'
+/** Community-safe Admin entry when deploy-profile omits admin_console_landing_path. */
+export const PLATFORM_OPS_LANDING_PATH = '/platform-ops/engine/ai-settings'
 
 let cachedProfile: DeployProfile | null = null
 let inflight: Promise<DeployProfile | null> | null = null
@@ -69,9 +73,12 @@ export function shouldForceDeployProfileRefresh(
   return targetsPlatformOps && !fromPath.startsWith('/platform-ops')
 }
 
-export function platformOpsEntryUrl(adminConsoleUrl: string): string {
+export function platformOpsEntryUrl(adminConsoleUrl: string, landingPath?: string): string {
   const origin = adminConsoleUrl.trim().replace(/\/+$/, '')
-  return origin ? `${origin}${PLATFORM_OPS_LANDING_PATH}` : ''
+  if (!origin) return ''
+  const path = (landingPath || PLATFORM_OPS_LANDING_PATH).trim()
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return `${origin}${normalized}`
 }
 
 /** Resolve the deployment-specific post-login landing page. */

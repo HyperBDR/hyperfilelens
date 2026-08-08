@@ -13,8 +13,10 @@ import { booleanStatusTag } from '../../lib/statusTag'
 
 const { t } = useI18n()
 const nodeMenus = useNodeSideNav()
+/** Commercial plugin frontend present → show org roles; community hides them. */
+const showMemberRoles = __HFL_EXTENSIONS_FRONTEND__
 
-type MemberRole = 'owner' | 'admin' | 'operator' | 'auditor'
+type MemberRole = 'owner' | 'admin' | 'operator' | 'auditor' | ''
 
 interface Member {
   id: number
@@ -57,6 +59,7 @@ function memberDisplayName(member: Member): string {
 }
 
 function roleLabel(role: MemberRole): string {
+  if (!role) return '—'
   const key = `settings.member.role${role.charAt(0).toUpperCase()}${role.slice(1)}` as
     | 'settings.member.roleOwner'
     | 'settings.member.roleAdmin'
@@ -123,7 +126,11 @@ watch(pageSize, () => {
         <el-table-column :label="t('settings.member.colName')" min-width="180">
           <template #default="{ row }">{{ memberDisplayName(row) }}</template>
         </el-table-column>
-        <el-table-column :label="t('settings.member.colRole')" width="120">
+        <el-table-column
+          v-if="showMemberRoles"
+          :label="t('settings.member.colRole')"
+          width="120"
+        >
           <template #default="{ row }">
             <HflTypeLabel :label="roleLabel(row.role)" />
           </template>

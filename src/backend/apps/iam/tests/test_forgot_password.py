@@ -12,7 +12,50 @@ from apps.iam.email_verification_models import EmailVerificationCode
 
 
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class ForgotPasswordCommunityDisabledTests(APITestCase):
+    """Community empty socket: self-serve reset stays off even with SMTP."""
+
+    def test_password_reset_is_forbidden_without_extension(self):
+        response = self.client.post(
+            reverse("forgot_password"),
+            {"email": "community@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "PASSWORD_RESET_DISABLED",
+        )
+
+    def test_password_reset_confirm_is_forbidden_without_extension(self):
+        response = self.client.post(
+            reverse("forgot_password_confirm"),
+            {
+                "email": "community@example.com",
+                "code": "123456",
+                "password": "NewPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "PASSWORD_RESET_DISABLED",
+        )
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class ForgotPasswordApiTests(APITestCase):
+    def setUp(self):
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _payload(self, email: str) -> dict:
         return {"email": email}
 

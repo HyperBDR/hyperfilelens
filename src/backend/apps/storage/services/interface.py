@@ -230,6 +230,18 @@ def create_repository(
     config_dict = sanitized_config if isinstance(sanitized_config, dict) else {}
     capacity_bytes = capacity_bytes_from_config(config_dict)
 
+    from apps.subscription.services.interface import enforce_repository_type_quota
+
+    org = None
+    try:
+        from apps.iam.models import Organization
+
+        org = Organization.objects.filter(id=organization_id).first()
+    except Exception:
+        org = None
+    if org is not None:
+        enforce_repository_type_quota(organization=org, repo_type=repo_type)
+
     with transaction.atomic():
         credential = create_credential_payload(
             organization_id=organization_id,

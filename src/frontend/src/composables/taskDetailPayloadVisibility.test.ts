@@ -10,7 +10,6 @@ const taskDetailSurfaces = [
   'pages/protection/components/BackupSourceHistorySection.vue',
   'pages/protection/components/FlowBackupSourceDetailDrawer.vue',
   'pages/protection/components/TaskDetailDrawer.vue',
-  'platform-ops/pages/monitoring/MonitoringTasks.vue',
 ]
 
 const tabbedTaskDetailSurfaces = [

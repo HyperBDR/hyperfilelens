@@ -6,6 +6,7 @@ Composition-layer module: allowed to include business apps.
 from django.contrib import admin
 from django.urls import include, path
 
+from common.extension_loader import extensions_enabled
 from common.http.schema import redoc_view, schema_view, swagger_view
 from common.ops.health import liveness, readiness
 from common.ops.metrics import metrics
@@ -51,6 +52,27 @@ urlpatterns = [
     path("api/v1/configuration/", include("apps.configuration.urls")),
     # Deprecated alias for existing console paths (/api/v1/config/)
     path("api/v1/config/", include("apps.configuration.api.legacy_urls")),
+    # Instance essential settings (OSS) — canonical + legacy Admin Console paths
+    path("api/v1/instance-settings/", include("apps.instance_settings.api.urls")),
+    path(
+        "api/v1/platform-ops/platform/settings/",
+        include("apps.instance_settings.api.urls"),
+    ),
     path("api/v1/meta/", include("common.meta.urls")),
-    path("api/v1/platform-ops/", include("apps.platform_ops.api.urls")),
 ]
+
+# Full Platform Ops console APIs — commercial / platform extension only
+if extensions_enabled():
+    urlpatterns.append(
+        path("api/v1/platform-ops/", include("apps.platform_ops.api.urls")),
+    )
+else:
+    # Community empty socket: Host still serves platform AI Models / settings.
+    # When EE is loaded it mounts these same Host views (avoid a greedy lens/
+    # include that would steal EE lens/gateways routes).
+    urlpatterns.append(
+        path(
+            "api/v1/platform-ops/lens/",
+            include("apps.instance_settings.api.lens_urls"),
+        ),
+    )

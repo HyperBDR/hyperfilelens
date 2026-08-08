@@ -33,7 +33,11 @@ class TurnstileVerificationTests(SimpleTestCase):
         )
 
     @override_settings(TURNSTILE_ENABLED=True)
-    def test_enabled_mode_requires_token(self):
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_enabled_mode_requires_token(self, _identity):
         request = self._request()
         self.assertTrue(turnstile_enabled())
         self.assertTrue(turnstile_required(request))
@@ -60,19 +64,25 @@ class TurnstileVerificationTests(SimpleTestCase):
         FRONTEND_URL="https://app.example.com",
     )
     @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    @patch(
         "apps.iam.services.turnstile_verification.validate_turnstile",
         return_value=True,
     )
-    def test_enabled_mode_binds_token_to_action_and_hostname(self, mock_validate):
+    def test_enabled_mode_binds_token_to_action_and_hostname(
+        self, mock_validate, _identity
+    ):
         request = self._request()
 
         with (
             patch(
-                "apps.platform_ops.services.internal.runtime_settings.turnstile_site_key",
+                "apps.configuration.services.runtime_settings.turnstile_site_key",
                 return_value="site-key",
             ),
             patch(
-                "apps.platform_ops.services.internal.runtime_settings.turnstile_secret_key",
+                "apps.configuration.services.runtime_settings.turnstile_secret_key",
                 return_value="secret-key",
             ),
         ):
@@ -96,14 +106,18 @@ class TurnstileVerificationTests(SimpleTestCase):
         TURNSTILE_SITE_KEY="site-key",
         TURNSTILE_SECRET_KEY="",
     )
-    def test_enabled_mode_rejects_incomplete_configuration(self):
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_enabled_mode_rejects_incomplete_configuration(self, _identity):
         with (
             patch(
-                "apps.platform_ops.services.internal.runtime_settings.turnstile_site_key",
+                "apps.configuration.services.runtime_settings.turnstile_site_key",
                 return_value="site-key",
             ),
             patch(
-                "apps.platform_ops.services.internal.runtime_settings.turnstile_secret_key",
+                "apps.configuration.services.runtime_settings.turnstile_secret_key",
                 return_value="",
             ),
         ):

@@ -12,7 +12,24 @@ if TYPE_CHECKING:
     from django.http import HttpRequest
 
 
-PLATFORM_OPS_LANDING_PATH = "/platform-ops/overview"
+# Community Host socket: AI Models (instance essential).
+PLATFORM_OPS_LANDING_PATH_COMMUNITY = "/platform-ops/engine/ai-settings"
+# Enterprise plugin adds Overview; prefer it when extensions are loaded.
+PLATFORM_OPS_LANDING_PATH_ENTERPRISE = "/platform-ops/overview"
+# Back-compat alias (enterprise default); prefer platform_ops_landing_path().
+PLATFORM_OPS_LANDING_PATH = PLATFORM_OPS_LANDING_PATH_ENTERPRISE
+
+
+def platform_ops_landing_path() -> str:
+    """Ops-site home: overview with plugin, AI Models on empty socket."""
+    try:
+        from common.extension_loader import extensions_enabled
+
+        if extensions_enabled():
+            return PLATFORM_OPS_LANDING_PATH_ENTERPRISE
+    except Exception:  # pragma: no cover
+        pass
+    return PLATFORM_OPS_LANDING_PATH_COMMUNITY
 
 
 def resolve_site_role(request: HttpRequest) -> str:
@@ -50,7 +67,7 @@ def client_ip_allowed(request: HttpRequest, cidrs: list[str]) -> bool:
 
 def platform_ops_api_allowed(request: HttpRequest) -> bool:
     """Whether Platform Ops API may be used on this request."""
-    from apps.platform_ops.services.internal.runtime_settings import (
+    from apps.configuration.services.runtime_settings import (
         platform_ops_allowed_cidrs,
         platform_ops_enabled,
     )
@@ -72,7 +89,7 @@ def platform_ops_api_allowed(request: HttpRequest) -> bool:
 
 def platform_ops_access_allowed(request: HttpRequest) -> bool:
     """Whether the current operations-site user may open Platform Ops."""
-    from apps.platform_ops.services.internal.runtime_settings import platform_ops_enabled
+    from apps.configuration.services.runtime_settings import platform_ops_enabled
 
     if not platform_ops_enabled():
         return False
@@ -85,7 +102,7 @@ def platform_ops_access_allowed(request: HttpRequest) -> bool:
 
 def admin_console_entry_visible(request: HttpRequest) -> bool:
     """Whether the tenant shell should show the Admin Console entry."""
-    from apps.platform_ops.services.internal.runtime_settings import platform_ops_enabled
+    from apps.configuration.services.runtime_settings import platform_ops_enabled
 
     user = request.user
     return bool(
@@ -131,5 +148,5 @@ def admin_console_public_url(request: HttpRequest) -> str:
 def default_landing_path(request: HttpRequest) -> str:
     site = resolve_site_role(request)
     if site == "ops" and platform_ops_access_allowed(request):
-        return PLATFORM_OPS_LANDING_PATH
+        return platform_ops_landing_path()
     return "/"

@@ -187,3 +187,39 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
             )
 
         request_json.assert_not_called()
+
+    @mock.patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_platform_gateway_create_defaults_capacity_gb(self, request_json):
+        """Regression: DB NOT NULL capacity_gb must be set when creating the link."""
+        platform_org = Organization.objects.create(
+            key="__platform_lens__",
+            name="Platform Lens",
+        )
+        gateway = Node.objects.create(
+            organization=platform_org,
+            name="Local platform gateway",
+            role=NodeRole.GATEWAY,
+            metadata={
+                "deployment_mode": "local-platform",
+                "managed_by": "hfl-installer",
+                "install_key": "local-platform-gateway",
+            },
+        )
+        remote_uuid = uuid.uuid4()
+
+        def response_for(method, path, **kwargs):
+            if method == "GET":
+                return []
+            return {"uuid": str(remote_uuid), "token": "platform-token"}
+
+        request_json.side_effect = response_for
+
+        result = provisioning.ensure_lensnode_for_gateway(
+            org=platform_org,
+            gateway=gateway,
+            scope=LensGatewayLink.GatewayScope.PLATFORM,
+        )
+
+        self.assertEqual(result.capacity_gb, -1)
+        self.assertEqual(result.scope, LensGatewayLink.GatewayScope.PLATFORM)
+        self.assertEqual(result.sl_lensnode_uuid, remote_uuid)

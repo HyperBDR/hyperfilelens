@@ -37,6 +37,8 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+.env.backup
+.env.backup.*
 # .env.*.example matches .env.staging.example but NOT .env.example
 # (.env.example is tracked and intentionally kept in the repo)
 .env.*.example
@@ -48,6 +50,7 @@ hyperfilelens-[0-9]*.tar.gz
 # --- Build outputs ---
 dist/
 src/backend/staticfiles/
+/build/
 
 # --- Logs ---
 *.log

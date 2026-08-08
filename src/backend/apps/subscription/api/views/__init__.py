@@ -1,18 +1,12 @@
+"""Subscription API views (OSS + EE via extend_path)."""
+
+from pkgutil import extend_path
+
+__path__ = extend_path(__path__, __name__)
+
 from apps.subscription.api.views.license import LicenseViewSet, health
-from apps.subscription.api.views.subscription import (
-    EntitlementViewSet,
-    OrganizationSubscriptionViewSet,
-    PlanViewSet,
-    QuotaViewSet,
-    UsageCounterViewSet,
-)
 
 __all__ = [
-    "EntitlementViewSet",
-    "OrganizationSubscriptionViewSet",
-    "PlanViewSet",
-    "QuotaViewSet",
-    "UsageCounterViewSet",
     "health",
     "LicenseViewSet",
 ]

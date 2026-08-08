@@ -15,6 +15,7 @@ const deployProfile = {
   tenant_public_url: 'https://example.test:11443',
   admin_console_url: 'https://example.test:11444',
   landing_path: '/platform-ops/overview',
+  admin_console_landing_path: '/platform-ops/overview',
   admin_console_entry_visible: false,
   platform_ops_access_allowed: true,
 }
@@ -64,11 +65,27 @@ describe('deploy profile caching', () => {
     await expect(resolvePostLoginPath()).resolves.toBe('/platform-ops/overview')
   })
 
-  it('builds the tenant-to-admin entry URL for the Admin Overview', () => {
+  it('builds the tenant-to-admin entry URL (community-safe default)', () => {
     expect(platformOpsEntryUrl('https://example.test:11444/')).toBe(
+      'https://example.test:11444/platform-ops/engine/ai-settings',
+    )
+    expect(platformOpsEntryUrl('https://example.test:11444/', '/platform-ops/overview')).toBe(
       'https://example.test:11444/platform-ops/overview',
     )
     expect(platformOpsEntryUrl('')).toBe('')
+  })
+
+  it('does not use tenant site landing_path "/" for the Admin Console entry', () => {
+    // Tenant post-login stays "/"; Admin deep-link must use admin_console_landing_path.
+    expect(platformOpsEntryUrl('https://example.test:11444/', '/')).toBe(
+      'https://example.test:11444/',
+    )
+    expect(
+      platformOpsEntryUrl(
+        'https://example.test:11444/',
+        '/platform-ops/engine/ai-settings',
+      ),
+    ).toBe('https://example.test:11444/platform-ops/engine/ai-settings')
   })
 })
 

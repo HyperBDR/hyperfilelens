@@ -115,6 +115,14 @@ def create_backup_config(
         repository_id=payload["repository_id"],
     )
 
+    from apps.iam.models import Organization
+    from apps.subscription.services.interface import enforce_license_quota
+
+    org = Organization.objects.filter(id=organization_id).first()
+    if org is not None:
+        enforce_license_quota(org, "max_protected_sources", additional=1)
+        enforce_license_quota(org, "max_storage_gb", additional=0)
+
     with transaction.atomic():
         config = BackupConfig.objects.create(organization_id=organization_id, **payload)
 

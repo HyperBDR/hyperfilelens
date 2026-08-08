@@ -1,4 +1,4 @@
-"""Node monitor API and ingest tests."""
+"""Node monitor ingest (Host) and community read-API gating."""
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -10,67 +10,20 @@ from apps.monitor.models import ResourceMetric
 from apps.monitor.services.internal.node_metrics import ingest_node_monitor_sample
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
+from common.extension_loader import extensions_enabled
 
 
-class NodeMonitorApiTests(TestCase):
+class NodeMonitorIngestTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
-        user_model = get_user_model()
-        self.user = user_model.objects.create_user(
-            username="node-monitor@test.local",
-            email="node-monitor@test.local",
-            password="test-pass",
-        )
         self.org = Organization.objects.create(key="node-monitor-org", name="Node Monitor Org")
-        Membership.objects.create(
-            user=self.user,
-            organization=self.org,
-            role=Membership.Role.ADMIN,
-        )
-        self.client.force_authenticate(user=self.user)
-        self.client.credentials(HTTP_X_ORG_KEY=self.org.key)
         self.node = Node.objects.create(
             organization=self.org,
             name="agent-01",
             role=NodeRole.AGENT,
-            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            status=Node.Status.ACTIVE,
+            availability=Node.Availability.ONLINE,
             metadata={"inventory": {"hostname": "agent-host", "os": "linux", "arch": "amd64"}},
         )
-
-    def test_list_nodes_requires_org(self):
-        bare = APIClient()
-        bare.force_authenticate(user=self.user)
-        resp = bare.get("/api/v1/monitors/nodes/", {"role": "agent"})
-        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(resp.data["data"]["code"], "AUTH.FORBIDDEN")
-
-    def test_list_nodes_by_role(self):
-        resp = self.client.get("/api/v1/monitors/nodes/", {"role": "agent"})
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        body = resp.data["data"] if "data" in resp.data else resp.data
-        self.assertEqual(len(body["items"]), 1)
-        self.assertEqual(body["items"][0]["id"], self.node.id)
-
-    def test_node_monitor_detail_returns_series(self):
-        sample = {
-            "cpu": {"usage_percent": 12.5, "logical_cores": 4},
-            "memory": {"total": 8_000_000_000, "available": 4_000_000_000, "percent": 50},
-            "swap": {"percent": 0},
-            "disks": [{"mountpoint": "/", "percent": 40, "used": 40, "total": 100}],
-            "disk_io": [{"name": "sda", "read_bytes": 1000, "write_bytes": 2000}],
-            "networks": [{"name": "eth0", "bytes_recv": 3000, "bytes_sent": 4000}],
-            "load_average": [0.5, 0.4, 0.3],
-            "boot_time": 1_700_000_000,
-        }
-        ingest_node_monitor_sample(node=self.node, sample=sample)
-
-        resp = self.client.get(f"/api/v1/monitors/nodes/{self.node.id}/", {"hours": "1"})
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        body = resp.data["data"] if "data" in resp.data else resp.data
-        self.assertIn("host", body)
-        self.assertIn("series", body)
-        self.assertGreaterEqual(len(body["series"]), 1)
-        self.assertEqual(body["host"]["hostname"], "agent-host")
 
     def test_ingest_persists_resource_metric(self):
         ingest_node_monitor_sample(
@@ -119,3 +72,39 @@ class NodeMonitorApiTests(TestCase):
         self.assertEqual(inv.get("disk_used_bytes"), 600_000_000_000)
         self.assertEqual(inv.get("disk_free_bytes"), 900_000_000_000)
         self.assertEqual(inv.get("disk_count"), 2)
+
+
+class NodeMonitorReadApiCommunityTests(TestCase):
+    """HTTP-level check: community process has no node-monitor read routes.
+
+    URL-pattern gating (both on/off) is covered in ``test_monitor_url_gating``
+    without requiring EE. This class only runs when the process itself is a
+    community socket so Django's live URLconf matches that edition.
+    """
+
+    def setUp(self):
+        if extensions_enabled():
+            self.skipTest("live URLconf has extension routes; see test_monitor_url_gating")
+        self.client = APIClient()
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="node-monitor-community@test.local",
+            email="node-monitor-community@test.local",
+            password="test-pass",
+        )
+        self.org = Organization.objects.create(key="node-monitor-community", name="Community Org")
+        Membership.objects.create(
+            user=self.user,
+            organization=self.org,
+            role=Membership.Role.ADMIN,
+        )
+        self.client.force_authenticate(user=self.user)
+        self.client.credentials(HTTP_X_ORG_KEY=self.org.key)
+
+    def test_list_nodes_unavailable_without_extension(self):
+        resp = self.client.get("/api/v1/monitors/nodes/", {"role": "agent"})
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_node_detail_unavailable_without_extension(self):
+        resp = self.client.get("/api/v1/monitors/nodes/1/", {"hours": "1"})
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)

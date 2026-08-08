@@ -1,3 +1,7 @@
+"""Thin OSS Platform Ops: models/migrations. Console APIs come from EE via extend_path."""
+
+from __future__ import annotations
+
 import logging
 
 from django.apps import AppConfig
@@ -11,7 +15,6 @@ class PlatformOpsConfig(AppConfig):
     verbose_name = "Platform Ops"
 
     def ready(self) -> None:
-        # Run after django.contrib.admin autodiscover and per-app admin.py modules.
         try:
             from common.admin_autoregister import autoregister_project_models
 
@@ -20,3 +23,14 @@ class PlatformOpsConfig(AppConfig):
                 logger.info("Django Admin: auto-registered %s project model(s)", count)
         except Exception:
             logger.exception("Failed to auto-register Django Admin models")
+
+        # When EE is on sys.path, register its audit writer.
+        try:
+            from apps.platform_ops.services.internal.audit import write_platform_audit_log
+            from common.platform_audit import register_platform_audit_writer
+
+            register_platform_audit_writer(write_platform_audit_log)
+        except ImportError:
+            pass
+        except Exception:
+            logger.exception("Failed to register platform audit writer")

@@ -13,8 +13,8 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 @admin.register(Membership)
 class MembershipAdmin(admin.ModelAdmin):
-    list_display = ("organization", "user", "role", "is_active", "created_at")
-    list_filter = ("role", "is_active")
+    list_display = ("organization", "user", "is_active", "created_at")
+    list_filter = ("is_active",)
     search_fields = ("organization__key", "user__username", "user__email")
 
 

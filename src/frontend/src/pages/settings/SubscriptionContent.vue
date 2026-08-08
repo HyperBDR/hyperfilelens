@@ -28,6 +28,7 @@ const { t, te } = useI18n()
 
 const loading = ref(false)
 const currentLicense = ref<LicenseRecord | null>(null)
+const instanceShared = ref(false)
 const usage = ref<LicenseUsage>({})
 const limits = ref<Record<string, number>>({ ...FALLBACK_LIMITS })
 const machineCode = ref('')
@@ -36,6 +37,7 @@ const activationCode = ref('')
 const activating = ref(false)
 
 const hasActiveLicense = computed(() => Boolean(currentLicense.value?.is_valid))
+const canActivateHere = computed(() => !instanceShared.value)
 
 const limitItems = computed(() =>
   quotaDefsForSubscription().map((def) => ({
@@ -84,8 +86,11 @@ function formatLimit(val?: number) {
 }
 
 function getLimit(key: string): number {
-  const fromLic = currentLicense.value as Record<string, unknown> | null
-  if (fromLic && key in fromLic) return Number(fromLic[key]) || 0
+  // Instance-shared: prefer EffectiveQuota / payload limits, not host License columns.
+  if (!instanceShared.value) {
+    const fromLic = currentLicense.value as Record<string, unknown> | null
+    if (fromLic && key in fromLic) return Number(fromLic[key]) || 0
+  }
   return limits.value[key] ?? FALLBACK_LIMITS[key] ?? 0
 }
 
@@ -140,9 +145,24 @@ async function loadAll() {
     usage.value = current.usage || {}
     machineCode.value = current.machine_code || ''
     limits.value = { ...FALLBACK_LIMITS, ...(current.limits || {}) }
+    instanceShared.value = Boolean(current.instance_shared)
     if (current.is_valid && current.license) {
       currentLicense.value = current.license
-      if (current.license.machine_code) machineCode.value = current.license.machine_code
+      if (current.license.machine_code && !current.instance_shared) {
+        machineCode.value = current.license.machine_code
+      }
+    } else if (current.is_valid) {
+      // Secondary tenant covered by instance grant without a nested license object.
+      currentLicense.value = {
+        id: 'instance-shared',
+        license_key: '',
+        is_valid: true,
+        status: 'active',
+        days_until_expiry: current.days_until_expiry,
+        is_perpetual: current.days_until_expiry == null,
+        organization_name: current.organization_name,
+        ...(current.limits || {}),
+      }
     } else {
       currentLicense.value = null
     }
@@ -155,6 +175,7 @@ async function loadAll() {
     const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: string }).message) : ''
     ElMessage.error({ message: msg || t('settings.subscription.activateFailed'), grouping: true })
     currentLicense.value = null
+    instanceShared.value = false
     licenseHistory.value = []
     limits.value = { ...FALLBACK_LIMITS }
   } finally {
@@ -257,38 +278,43 @@ onMounted(loadAll)
       </header>
 
       <div class="subscription-activation">
-        <div class="subscription-activation__step">
-          <h3 class="subscription-activation__step-title">{{ t('settings.subscription.activationStep1Title') }}</h3>
-          <div class="subscription-activation__code-row">
-            <code class="subscription-activation__code">{{ machineCode || '—' }}</code>
-            <ElButton type="primary" :disabled="!machineCode" @click="copyIdentification">
-              {{ t('settings.subscription.copyIdentification') }}
-            </ElButton>
+        <template v-if="canActivateHere">
+          <div class="subscription-activation__step">
+            <h3 class="subscription-activation__step-title">{{ t('settings.subscription.activationStep1Title') }}</h3>
+            <div class="subscription-activation__code-row">
+              <code class="subscription-activation__code">{{ machineCode || '—' }}</code>
+              <ElButton type="primary" :disabled="!machineCode" @click="copyIdentification">
+                {{ t('settings.subscription.copyIdentification') }}
+              </ElButton>
+            </div>
+            <p class="subscription-activation__hint">{{ t('settings.subscription.activationStep1Hint') }}</p>
           </div>
-          <p class="subscription-activation__hint">{{ t('settings.subscription.activationStep1Hint') }}</p>
-        </div>
 
-        <div class="subscription-activation__step">
-          <h3 class="subscription-activation__step-title">{{ t('settings.subscription.activationStep2Title') }}</h3>
-          <ElInput
-            v-model="activationCode"
-            type="textarea"
-            :rows="4"
-            :placeholder="t('settings.subscription.activationPlaceholder')"
-            class="subscription-activation__input font-mono"
-          />
-          <div class="subscription-activation__actions">
-            <ElButton
-              type="primary"
-              size="large"
-              :loading="activating"
-              :disabled="!activationCode.trim()"
-              @click="submitActivate"
-            >
-              {{ t('settings.subscription.activateNow') }}
-            </ElButton>
+          <div class="subscription-activation__step">
+            <h3 class="subscription-activation__step-title">{{ t('settings.subscription.activationStep2Title') }}</h3>
+            <ElInput
+              v-model="activationCode"
+              type="textarea"
+              :rows="4"
+              :placeholder="t('settings.subscription.activationPlaceholder')"
+              class="subscription-activation__input font-mono"
+            />
+            <div class="subscription-activation__actions">
+              <ElButton
+                type="primary"
+                size="large"
+                :loading="activating"
+                :disabled="!activationCode.trim()"
+                @click="submitActivate"
+              >
+                {{ t('settings.subscription.activateNow') }}
+              </ElButton>
+            </div>
           </div>
-        </div>
+        </template>
+        <p v-else class="subscription-activation__hint">
+          {{ t('settings.subscription.instanceSharedHint') }}
+        </p>
       </div>
     </section>
 

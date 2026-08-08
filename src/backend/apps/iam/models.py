@@ -1,5 +1,8 @@
 """
-IAM domain models: organization/tenant and membership.
+IAM domain models: organization/tenant and thin user↔org affiliation.
+
+Role authority lives in the commercial AuthzProvider (plugin).
+Community (no provider): any active affiliation is owner-equivalent.
 """
 
 import secrets
@@ -32,9 +35,32 @@ class Organization(models.Model):
         return f"{self.name} ({self.key})"
 
 
+class MembershipQuerySet(models.QuerySet):
+    """Affiliation rows only. ``role=`` on create is forwarded to AuthzProvider sync."""
+
+    def create(self, **kwargs):
+        from django.db import transaction
+
+        role = kwargs.pop("role", None)
+        with transaction.atomic():
+            obj = super().create(**kwargs)
+            # Seed EE role for inactive rows too (reactivate must not invent OPERATOR).
+            if role is not None:
+                from apps.iam.services.membership_service import sync_member_role
+
+                sync_member_role(
+                    user_id=obj.user_id,
+                    organization_id=obj.organization_id,
+                    role=role,
+                )
+            return obj
+
+
 class Membership(models.Model):
     """
-    User membership under an organization.
+    Thin user↔organization affiliation (no role column).
+
+    ``Role`` enum values remain as permission vocabulary / EE sync constants.
     """
 
     class Role(models.TextChoices):
@@ -53,12 +79,6 @@ class Membership(models.Model):
         on_delete=models.CASCADE,
         related_name="memberships",
     )
-    role = models.CharField(
-        max_length=20,
-        choices=Role.choices,
-        default=Role.OPERATOR,
-        db_index=True,
-    )
     is_active = models.BooleanField(default=True, db_index=True)
     preferred_feature = models.CharField(
         max_length=50,
@@ -68,27 +88,25 @@ class Membership(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = MembershipQuerySet.as_manager()
+
     class Meta:
         db_table = "iam_membership"
         constraints = [
             models.UniqueConstraint(
                 fields=["user", "organization"],
                 name="uniq_iam_user_org",
-            )
+            ),
         ]
         indexes = [
-            models.Index(fields=["organization", "role", "is_active"]),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["organization"],
-                condition=models.Q(role="owner", is_active=True),
-                name="uniq_iam_org_active_owner",
+            models.Index(
+                fields=["organization", "is_active"],
+                name="iam_members_org_active_idx",
             ),
         ]
 
     def __str__(self):
-        return f"{self.user_id}@{self.organization_id}:{self.role}"
+        return f"{self.user_id}@{self.organization_id}"
 
 
 class PersonalApiKey(models.Model):

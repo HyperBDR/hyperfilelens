@@ -68,13 +68,21 @@ class MembershipViewSet(viewsets.ModelViewSet):
         serializer.save(organization=membership.organization)
 
     def perform_destroy(self, instance):
+        from django.db import transaction
+
         try:
             assert_can_delete(instance)
         except MembershipPolicyError as exc:
             from rest_framework.exceptions import ValidationError
 
             raise ValidationError(exc.detail) from exc
-        instance.delete()
+        user_id = instance.user_id
+        organization_id = instance.organization_id
+        from apps.iam.services.membership_service import sync_member_role
+
+        with transaction.atomic():
+            instance.delete()
+            sync_member_role(user_id=user_id, organization_id=organization_id, role=None)
 
 
 class PersonalApiKeyViewSet(viewsets.ModelViewSet):

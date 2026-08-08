@@ -9,7 +9,8 @@ import Sidebar from '../../components/Sidebar.vue'
 import { useTheme } from '../../composables/useTheme'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { applyThemeVars } from '../composables/applyThemeVars'
-import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
+import { useResolvedPlatformOpsSideNav } from '../composables/useResolvedPlatformOpsSideNav'
+import { platformOpsRouteViewKey } from '../lib/platformOpsRouteViewKey'
 import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import '../styles/platform-ops-ui.css'
 import '../styles/monitoring.css'
@@ -22,7 +23,7 @@ const { theme } = useTheme()
 const tenantUrl = ref('')
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
-const fallbackMenuItems = usePlatformOpsSideNav()
+const fallbackMenuItems = useResolvedPlatformOpsSideNav()
 const mobileNavigationOpen = ref(false)
 
 const routeSkeletonShowsCards = computed(
@@ -118,8 +119,8 @@ watch(
       :module-items="fallbackMenuItems"
     />
     <main class="platform-ops-main">
-      <RouterView v-slot="{ Component, route }">
-        <Suspense :key="route.path" timeout="0">
+      <RouterView v-slot="{ Component, route: viewRoute }">
+        <Suspense :key="platformOpsRouteViewKey(viewRoute)" timeout="0">
           <component :is="Component" />
           <template #fallback>
             <div

@@ -18,9 +18,15 @@ const mocks = vi.hoisted(() => ({
   retryTurnstileConfig: vi.fn(),
   resetWidget: vi.fn(),
   routerPush: vi.fn(),
+  routerReplace: vi.fn(),
+  fetchDeployProfile: vi.fn(),
 }))
 
 vi.mock('../../lib/api', () => ({ api: mocks.api }))
+
+vi.mock('../../composables/useDeployProfile', () => ({
+  fetchDeployProfile: mocks.fetchDeployProfile,
+}))
 
 vi.mock('../../composables/useLocaleSwitch', () => ({
   useLocaleSwitch: () => ({
@@ -51,7 +57,10 @@ vi.mock('../../lib/appConfig', () => ({
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
-  useRouter: () => ({ push: mocks.routerPush }),
+  useRouter: () => ({
+    push: mocks.routerPush,
+    replace: mocks.routerReplace,
+  }),
 }))
 
 const AuthTurnstileFieldStub = defineComponent({
@@ -127,6 +136,7 @@ describe('authentication Turnstile retry flows', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    mocks.fetchDeployProfile.mockResolvedValue({ email_signup_enabled: true })
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
     mocks.retryTurnstileConfig.mockResolvedValue(undefined)
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (

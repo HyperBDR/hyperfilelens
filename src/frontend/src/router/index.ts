@@ -1,8 +1,12 @@
 import { nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import AppShell from '../app/layout/AppShell.vue'
-import { platformOpsRoutes } from '../platform-ops/routes'
+import { resolvePlatformOpsRoutes } from '../platform-ops/resolveRoutes'
+import { resolveTenantOpsRoutes } from '../ops/resolveRoutes'
 import PlatformOpsShell from '../platform-ops/layout/PlatformOpsShell.vue'
+
+const platformOpsRoutes = resolvePlatformOpsRoutes()
+const tenantOpsRoutes = resolveTenantOpsRoutes()
 import { beginRouteRequestScope } from '../lib/routeRequestAbort'
 import { beginRouteTransition, finishRouteTransition } from '../lib/routeTransition'
 import { lazyRoute } from './lazyRoute'
@@ -50,7 +54,6 @@ const OpsNotificationChannelsPage = lazyRoute(() => import('../pages/ops/Notific
 const OpsNotificationChannelEditorPage = lazyRoute(() => import('../pages/ops/NotificationChannelEditorPage.vue'))
 const OpsNotificationRecordsPage = lazyRoute(() => import('../pages/ops/NotificationRecords.vue'))
 const OpsAuditPage = lazyRoute(() => import('../pages/ops/Audit.vue'))
-const OpsHostMonitorPage = lazyRoute(() => import('../pages/ops/HostMonitor.vue'))
 const SettingsMembersPage = lazyRoute(() => import('../pages/settings/Members.vue'))
 const OrganizationHubPage = lazyRoute(() => import('../pages/settings/OrganizationHub.vue'))
 const SubscriptionPage = lazyRoute(() => import('../pages/settings/Subscription.vue'))
@@ -143,7 +146,7 @@ export const router = createRouter({
         { path: 'node/system', component: NodeGlobalSettingsPage },
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
         { path: 'ops', redirect: '/ops/alerts/incidents' },
-        { path: 'ops/host-monitor', component: OpsHostMonitorPage },
+        ...tenantOpsRoutes,
         { path: 'ops/task', component: OpsTasksPage },
         { path: 'ops/alerts', redirect: '/ops/alerts/incidents' },
         { path: 'ops/alerts/incidents', component: OpsAlertIncidentsPage },

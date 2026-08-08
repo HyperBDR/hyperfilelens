@@ -1,5 +1,7 @@
 """Tests for GET /api/v1/auth/turnstile/config."""
 
+from unittest.mock import patch
+
 from django.test import TestCase, override_settings
 
 
@@ -20,7 +22,25 @@ class TurnstileConfigViewTests(TestCase):
         TURNSTILE_SITE_KEY="test-site-key",
         TURNSTILE_SECRET_KEY="test-secret-key",
     )
-    def test_enabled_config(self):
+    def test_community_empty_socket_keeps_turnstile_off(self):
+        response = self.client.get("/api/v1/auth/turnstile/config")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["data"]["enabled"])
+        self.assertFalse(payload["data"]["configured"])
+        self.assertNotIn("site_key", payload["data"])
+
+    @override_settings(
+        TURNSTILE_ENABLED=True,
+        TURNSTILE_SITE_KEY="test-site-key",
+        TURNSTILE_SECRET_KEY="test-secret-key",
+    )
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_enabled_config(self, _identity):
         response = self.client.get("/api/v1/auth/turnstile/config")
 
         self.assertEqual(response.status_code, 200)
@@ -34,7 +54,11 @@ class TurnstileConfigViewTests(TestCase):
         TURNSTILE_SITE_KEY="test-site-key",
         TURNSTILE_SECRET_KEY="",
     )
-    def test_incomplete_config_fails_closed(self):
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=True,
+    )
+    def test_incomplete_config_fails_closed(self, _identity):
         response = self.client.get("/api/v1/auth/turnstile/config")
 
         self.assertEqual(response.status_code, 200)
@@ -42,7 +66,6 @@ class TurnstileConfigViewTests(TestCase):
         self.assertTrue(payload["data"]["enabled"])
         self.assertFalse(payload["data"]["configured"])
         self.assertNotIn("site_key", payload["data"])
-
     @override_settings(
         TURNSTILE_ENABLED=True,
         TURNSTILE_SITE_KEY="test-site-key",

@@ -2,11 +2,15 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ModulePage from '../../components/ModulePage.vue'
-import { usePlatformOpsSideNav } from '../composables/usePlatformOpsSideNav'
+import { useResolvedPlatformOpsSideNav } from '../composables/useResolvedPlatformOpsSideNav'
 import { setLensApiScope } from '../../lib/lensApi'
 
 defineOptions({ name: 'PlatformEngineLayout' })
 
+/**
+ * Admin Engine always uses platform lens APIs
+ * (``/api/v1/platform-ops/lens/*`` → Host ``__platform_lens__`` models).
+ */
 setLensApiScope('platform')
 
 onMounted(() => {
@@ -18,7 +22,7 @@ onUnmounted(() => {
   setLensApiScope('tenant')
 })
 
-const sideNav = usePlatformOpsSideNav()
+const sideNav = useResolvedPlatformOpsSideNav()
 const route = useRoute()
 const hidePageTitle = computed(() => /\/(?:add|edit)$/.test(route.path))
 </script>

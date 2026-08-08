@@ -2945,7 +2945,7 @@ configured_sourcelens_mode() {
 
 platform_gateway_auto_deploy_enabled() {
 	local enabled
-	enabled="$(read_env_boolean HFL_PLATFORM_GATEWAY_AUTO_DEPLOY false)" \
+	enabled="$(read_env_boolean HFL_PLATFORM_GATEWAY_AUTO_DEPLOY true)" \
 		|| die "invalid HFL_PLATFORM_GATEWAY_AUTO_DEPLOY value (use true or false)"
 	[[ "${enabled}" == "true" ]]
 }

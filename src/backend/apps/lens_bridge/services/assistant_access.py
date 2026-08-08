@@ -15,7 +15,9 @@ from apps.lens_bridge.models import LensAssistantLink, LensKnowledgeSource
 def can_manage_all_assistants(membership: Membership | None) -> bool:
     if membership is None:
         return False
-    return membership.role in (Membership.Role.OWNER, Membership.Role.ADMIN)
+    from apps.iam.services.membership_service import authoritative_role
+
+    return authoritative_role(membership) in (Membership.Role.OWNER, Membership.Role.ADMIN)
 
 
 def parse_visibility_scope(raw: Any, *, default: str = LensAssistantLink.VisibilityScope.USER) -> str:

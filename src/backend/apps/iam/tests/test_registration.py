@@ -27,6 +27,14 @@ from apps.iam.services.registration_service import (
     },
 )
 class RegistrationApiTests(APITestCase):
+    def setUp(self):
+        patcher = patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _send_code_payload(self, email: str) -> dict:
         return {"email": email}
 
@@ -76,7 +84,8 @@ class RegistrationApiTests(APITestCase):
         org = Organization.objects.get(key=org_key)
         self.assertEqual(org.name, email)
         membership = Membership.objects.get(user=user, organization=org)
-        self.assertEqual(membership.role, Membership.Role.OWNER)
+        from apps.iam.services.membership_service import authoritative_role
+        self.assertEqual(authoritative_role(membership), Membership.Role.OWNER)
         self.assertTrue(membership.is_active)
         self.assertEqual(Membership.objects.filter(user=user).count(), 1)
         self.assertEqual(Organization.objects.filter(memberships__user=user).count(), 1)
@@ -220,6 +229,25 @@ class EmailSignupDisabledTests(APITestCase):
         self.assertFalse(User.objects.filter(email="disabled@example.com").exists())
 
 
+@override_settings(HFL_EMAIL_SIGNUP_ENABLED=True)
+@patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "true"})
+class EmailSignupCommunityEmptySocketTests(APITestCase):
+    """Env may enable signup, but empty socket still forbids it."""
+
+    def test_email_signup_stays_off_without_platform_extension(self):
+        response = self.client.post(
+            reverse("email_register_send_code"),
+            {"email": "community-signup@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "EMAIL_SIGNUP_DISABLED",
+        )
+
+
 class RegistrationServiceTests(APITestCase):
     def test_provision_registered_user_tenant_is_idempotent(self):
         user = User.objects.create_user(
@@ -252,10 +280,7 @@ class RegistrationServiceTests(APITestCase):
         self.assertIsNone(reason)
         self.assertIsNotNone(org)
         self.assertTrue(Organization.objects.filter(key=org.key).exists())
-        self.assertTrue(
-            Membership.objects.filter(
-                user=user,
-                organization=org,
-                role=Membership.Role.OWNER,
-            ).exists()
-        )
+        membership = Membership.objects.get(user=user, organization=org, is_active=True)
+        from apps.iam.services.membership_service import authoritative_role
+
+        self.assertEqual(authoritative_role(membership), Membership.Role.OWNER)

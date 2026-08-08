@@ -5,12 +5,12 @@ import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
 import PlatformOpsDetailSection from '../../../components/PlatformOpsDetailSection.vue'
 import PlatformOpsRefreshButton from '../../../components/PlatformOpsRefreshButton.vue'
-import { usePlatformOpsSideNav } from '../../../composables/usePlatformOpsSideNav'
+import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
 import { fetchPlatformEnvironment, type PlatformEnvironmentSettings } from '../../../lib/platformOpsApi'
 import { apiErrorMessage } from '../../../../lib/api'
 
 const { t } = useI18n()
-const sideNav = usePlatformOpsSideNav()
+const sideNav = useResolvedPlatformOpsSideNav()
 
 const busy = ref(false)
 const payload = ref<PlatformEnvironmentSettings | null>(null)

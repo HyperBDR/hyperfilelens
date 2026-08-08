@@ -1,1 +1,0 @@
-"""Platform Ops API tests."""

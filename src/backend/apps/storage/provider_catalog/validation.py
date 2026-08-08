@@ -251,13 +251,13 @@ def write_validation_run_audit(
     *,
     result: str,
 ) -> None:
-    from apps.platform_ops.models import PlatformAuditLog
+    from common.platform_audit import write_platform_audit_log
 
-    PlatformAuditLog.objects.create(
-        actor_id=run.requested_by_id,
+    write_platform_audit_log(
         action="storage_provider.validation.result",
         target_type="storage_provider_validation_run",
         target_id=str(run.id),
+        actor_id=run.requested_by_id,
         details={
             "provider_id": run.provider_id,
             "run_id": str(run.id),
@@ -270,9 +270,9 @@ def write_validation_run_audit(
             **_region_counts(run),
         },
         result=(
-            PlatformAuditLog.Result.SUCCESS
+            "success"
             if result in {"passed", "cancelled", "expired", "replaced", "applied"}
-            else PlatformAuditLog.Result.FAILURE
+            else "failure"
         ),
     )
 

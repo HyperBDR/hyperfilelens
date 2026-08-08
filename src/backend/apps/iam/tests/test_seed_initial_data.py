@@ -30,7 +30,8 @@ class SeedInitialDataCommandTests(TestCase):
         self.assertTrue(user.check_password("Admin@123"))
 
         membership = Membership.objects.get(user=user)
-        self.assertEqual(membership.role, Membership.Role.OWNER)
+        from apps.iam.services.membership_service import authoritative_role
+        self.assertEqual(authoritative_role(membership), Membership.Role.OWNER)
         self.assertTrue(membership.is_active)
         self.assertEqual(membership.organization.name, "HyperFileLens")
 

@@ -24,6 +24,7 @@ const route = useRoute()
 const { theme } = useTheme()
 const supportOrgKey = ref<string | null>(null)
 const adminConsoleUrl = ref('')
+const adminConsoleLandingPath = ref('')
 // Bump this whenever theme changes so child components re-evaluate CSS var refs
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
@@ -37,7 +38,9 @@ const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
 const { canSwitchLocale, currentLocaleLabel, nextLocaleLabel, toggleLocale } = useLocaleSwitch()
 const { showSwitcher: showOrganizationSwitcher } = useOrganizationSwitcher()
 
-const adminConsoleHref = computed(() => platformOpsEntryUrl(adminConsoleUrl.value))
+const adminConsoleHref = computed(() =>
+  platformOpsEntryUrl(adminConsoleUrl.value, adminConsoleLandingPath.value || undefined),
+)
 const timezoneOffsetDisplay = computed(() => {
   const offset = new Date().getTimezoneOffset()
   const sign = offset <= 0 ? '+' : '-'
@@ -97,6 +100,9 @@ async function refreshHeaderProfile() {
   supportOrgKey.value = profile?.support_org_key ?? null
   adminConsoleUrl.value = profile?.admin_console_entry_visible
     ? profile.admin_console_url
+    : ''
+  adminConsoleLandingPath.value = profile?.admin_console_entry_visible
+    ? (profile.admin_console_landing_path || '')
     : ''
 }
 

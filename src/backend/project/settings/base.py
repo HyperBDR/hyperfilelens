@@ -12,6 +12,15 @@ from pathlib import Path
 
 from .env import BASE_DIR, env_bool, env_csv, env_int, env_str
 
+# Load extensions onto sys.path before INSTALLED_APPS (Gunicorn/Daphne entrypoints).
+try:
+    from common.extension_loader import bootstrap_extensions, extension_installed_apps
+
+    bootstrap_extensions(backend_dir=BASE_DIR)
+except Exception:  # pragma: no cover - settings must still load with empty socket
+    def extension_installed_apps() -> list[str]:
+        return []
+
 # Override in production; default is for local dev only.
 SECRET_KEY = env_str("SECRET_KEY", "dev-only-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", default=False)
@@ -56,6 +65,7 @@ INSTALLED_APPS = [
     "allauth.headless",
     "corsheaders",
     "apps.configuration.apps.ConfigurationConfig",
+    "apps.instance_settings.apps.InstanceSettingsConfig",
     "apps.iam.apps.IamConfig",
     "apps.node.apps.NodeConfig",
     "apps.storage.apps.StorageConfig",
@@ -72,6 +82,7 @@ INSTALLED_APPS = [
     "apps.source.apps.SourceConfig",
     "apps.platform_ops.apps.PlatformOpsConfig",
 ]
+INSTALLED_APPS += extension_installed_apps()
 
 SITE_ID = 1
 

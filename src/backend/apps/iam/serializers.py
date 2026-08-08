@@ -29,7 +29,20 @@ class OrganizationSerializer(serializers.ModelSerializer):
         }
 
     def get_owner_email(self, obj):
-        owner = obj.memberships.filter(role="owner", is_active=True).first()
+        from common.extension_spi import get_authz_provider
+
+        provider = get_authz_provider()
+        if provider is not None:
+            email = provider.resolve_owner_email(obj)
+            if email:
+                return email
+        # Community: sole / first active affiliation.
+        owner = (
+            obj.memberships.filter(is_active=True)
+            .select_related("user")
+            .order_by("id")
+            .first()
+        )
         return owner.user.email if owner else None
 
     def get_member_count(self, obj):
@@ -43,6 +56,7 @@ class MembershipSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
     organization_name = serializers.CharField(source="organization.name", read_only=True)
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = Membership
@@ -59,18 +73,40 @@ class MembershipSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "organization"]
 
+    def get_role(self, obj):
+        from apps.iam.services.membership_service import authoritative_role
+
+        return authoritative_role(obj)
+
     def validate_role(self, value):
         assert_role_assignable(value)
         return value
 
+    def to_internal_value(self, data):
+        # role is SerializerMethodField on output; accept writable role on input.
+        ret = super().to_internal_value(data)
+        if "role" in data:
+            role = data.get("role")
+            self.validate_role(role)
+            ret["role"] = role
+        return ret
+
     def validate(self, attrs):
         instance = getattr(self, "instance", None)
-        if instance is not None and instance.role == Membership.Role.OWNER:
+        from apps.iam.services.membership_service import (
+            active_owner_count,
+            authoritative_role,
+        )
+
+        if instance is None:
+            return attrs
+        if authoritative_role(instance) == Membership.Role.OWNER:
             if "role" in attrs and attrs["role"] != Membership.Role.OWNER:
                 raise serializers.ValidationError(
                     {"role": "Owner role cannot be changed via membership API."}
                 )
-            if attrs.get("is_active") is False:
+        if attrs.get("is_active") is False and instance.is_active:
+            if active_owner_count(instance.organization, exclude_pk=instance.pk) < 1:
                 raise serializers.ValidationError(
                     {"is_active": "Cannot deactivate the organization owner."}
                 )

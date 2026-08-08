@@ -385,6 +385,9 @@ class NodeViewSet(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelViewSet)
                     )
                 created_node = node is None
                 if node is None:
+                    from apps.subscription.services.interface import enforce_node_role_quota
+
+                    enforce_node_role_quota(organization=org, role=payload["role"])
                     try:
                         with transaction.atomic():
                             node = Node.objects.create(

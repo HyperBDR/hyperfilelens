@@ -17,7 +17,7 @@ from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 
 from apps.iam.services.oauth_error_events import build_oauth_error_redirect
 from apps.iam.services.registration_service import complete_social_user_registration
-from apps.platform_ops.services.internal.runtime_settings import google_oauth_ready
+from apps.configuration.services.runtime_settings import google_oauth_ready
 from common.deploy.site import tenant_public_url
 
 User = get_user_model()
