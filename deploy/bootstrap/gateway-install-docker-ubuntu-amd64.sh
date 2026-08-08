@@ -56,7 +56,8 @@ hfl_download() {
 	local started=${SECONDS} elapsed bytes rate
 	rm -f "${partial}"
 	hfl_step "Downloading ${label}."
-	if ! curl "${CURL_TLS[@]}" \
+	# ${arr[@]+...} keeps empty CURL_TLS safe under `set -u` on Bash < 4.4.
+	if ! curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} \
 		--fail --show-error --location --progress-bar \
 		--retry 3 --retry-connrefused --retry-delay 2 \
 		"${url}" -o "${partial}"; then

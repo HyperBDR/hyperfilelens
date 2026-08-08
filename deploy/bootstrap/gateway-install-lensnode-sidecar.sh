@@ -98,7 +98,8 @@ if [[ "${HFL_INSECURE_TLS}" == "0" ]]; then
 fi
 
 hfl_step "Verifying SourceLens connectivity at ${LENS_HOST_URL}."
-curl "${CURL_TLS[@]}" -fsSL "${LENS_HOST_URL%/}/health" >/dev/null
+# ${arr[@]+...} keeps empty CURL_TLS safe under `set -u` on Bash < 4.4 (CentOS 7).
+curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} -fsSL "${LENS_HOST_URL%/}/health" >/dev/null
 hfl_ok "SourceLens health check passed."
 
 hfl_step "Preparing Gateway workspace mounts for LensNode."
@@ -133,7 +134,7 @@ prepare_sentry_privacy_adapter() {
 		SENTRY_BACKEND_DSN=
 		return 0
 	fi
-	if ! curl "${CURL_TLS[@]}" -fsSL \
+	if ! curl ${CURL_TLS[@]+"${CURL_TLS[@]}"} -fsSL \
 		"${base%/}/media/gateway-bootstrap/hfl-sentry-sitecustomize.py" \
 		-o "${temporary}" \
 		|| ! grep -Fx '# HFL_SENTRY_PRIVACY_ADAPTER=1' "${temporary}" >/dev/null; then
