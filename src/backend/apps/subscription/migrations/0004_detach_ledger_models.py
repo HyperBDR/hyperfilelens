@@ -1,6 +1,7 @@
 # Detach Plan/OrgSubscription/Entitlement/Quota/UsageCounter from Host state.
 # Physical tables remain unused. Commercial plugin copies needed rows into
 # ee_* tables (currently ee_quota only); it does not re-bind all five models.
+# Follow-up 0005 drops their FKs so Community TransactionTestCase flush works.
 
 from django.db import migrations
 
