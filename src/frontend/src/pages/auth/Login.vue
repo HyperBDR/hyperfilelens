@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -112,7 +112,10 @@ formItems.password.placeholder = t('login.passwordPh')
 const submitLoading = ref(false)
 const showPassword = ref(false)
 const cardView = ref<'login' | 'reset'>('login')
-const authMode = ref<'password' | 'email-code'>('password')
+type AuthMode = 'password' | 'email-code'
+
+const authMode = ref<AuthMode>('password')
+const authModeTabs = ref<Partial<Record<AuthMode, HTMLButtonElement>>>({})
 const resetStep = ref<'request' | 'reset'>('request')
 const regEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 
@@ -131,6 +134,47 @@ function checkPasswordRequired(value: string) {
     return t('login.passwordErrRequired')
   }
   return ''
+}
+
+function setAuthModeTabRef(mode: AuthMode, element: Element | null) {
+  if (element instanceof HTMLButtonElement) {
+    authModeTabs.value[mode] = element
+  }
+}
+
+async function selectAuthMode(mode: AuthMode, focusTab = false) {
+  authMode.value = mode
+  if (!focusTab) return
+  await nextTick()
+  authModeTabs.value[mode]?.focus()
+}
+
+function onAuthModeKeydown(event: KeyboardEvent) {
+  const modes: AuthMode[] = ['password', 'email-code']
+  const currentIndex = modes.indexOf(authMode.value)
+  let nextMode: AuthMode | undefined
+
+  switch (event.key) {
+    case 'ArrowRight':
+    case 'ArrowDown':
+      nextMode = modes[(currentIndex + 1) % modes.length]
+      break
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      nextMode = modes[(currentIndex - 1 + modes.length) % modes.length]
+      break
+    case 'Home':
+      nextMode = modes[0]
+      break
+    case 'End':
+      nextMode = modes[modes.length - 1]
+      break
+    default:
+      return
+  }
+
+  event.preventDefault()
+  void selectAuthMode(nextMode, true)
 }
 
 // Real-time email validation
@@ -598,29 +642,46 @@ onMounted(async () => {
           class="login-method-tabs"
           role="tablist"
           :aria-label="t('login.methodLabel')"
+          aria-orientation="horizontal"
         >
           <button
+            id="login-method-tab-password"
             type="button"
             class="login-method-tabs__tab"
             :class="{ 'is-active': authMode === 'password' }"
             role="tab"
             :aria-selected="authMode === 'password'"
-            @click="authMode = 'password'"
+            aria-controls="login-method-panel"
+            :tabindex="authMode === 'password' ? 0 : -1"
+            :ref="element => setAuthModeTabRef('password', element)"
+            @click="selectAuthMode('password')"
+            @keydown="onAuthModeKeydown"
           >
             {{ t('login.passwordMethod') }}
           </button>
           <button
+            id="login-method-tab-email-code"
             type="button"
             class="login-method-tabs__tab"
             :class="{ 'is-active': authMode === 'email-code' }"
             role="tab"
             :aria-selected="authMode === 'email-code'"
-            @click="authMode = 'email-code'"
+            aria-controls="login-method-panel"
+            :tabindex="authMode === 'email-code' ? 0 : -1"
+            :ref="element => setAuthModeTabRef('email-code', element)"
+            @click="selectAuthMode('email-code')"
+            @keydown="onAuthModeKeydown"
           >
             {{ t('login.emailCodeMethod') }}
           </button>
         </div>
 
+        <div
+          id="login-method-panel"
+          class="login-method-panel"
+          role="tabpanel"
+          :aria-labelledby="`login-method-tab-${authMode}`"
+        >
         <!-- Email -->
         <div v-if="authMode === 'password'" class="input-wrapper" :class="{ 'has-error': formItems.email.showError }">
           <div class="input-row">
@@ -714,6 +775,7 @@ onMounted(async () => {
           <div v-if="passwordResetAvailable" class="forgot-row">
             <a href="#" class="forgot-link" @click.prevent="goForgetPwd">{{ t('login.forgotPwd') }}</a>
           </div>
+        </div>
         </div>
 
         <!-- Divider -->
@@ -854,41 +916,62 @@ onMounted(async () => {
 .login-method-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
 }
 
 .login-method-tabs__tab {
+  position: relative;
   min-height: 44px;
-  padding: 0 10px;
-  color: rgba(255, 255, 255, 0.58);
+  padding: 0 12px;
+  color: rgba(255, 255, 255, 0.62);
   background: transparent;
   border: 0;
-  border-radius: 7px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  transition: color 0.2s, background-color 0.2s;
+  transition: color 0.18s ease;
+}
+
+.login-method-tabs__tab::after {
+  position: absolute;
+  right: 20px;
+  bottom: -1px;
+  left: 20px;
+  height: 2px;
+  content: '';
+  background: linear-gradient(90deg, var(--color-primary), var(--color-brand-violet-soft));
+  border-radius: 999px;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.18s ease;
 }
 
 .login-method-tabs__tab:hover {
-  color: rgba(255, 255, 255, 0.88);
+  color: rgba(255, 255, 255, 0.84);
 }
 
 .login-method-tabs__tab:active {
-  background: rgba(109, 40, 217, 0.22);
+  color: #fff;
 }
 
 .login-method-tabs__tab.is-active {
   color: #fff;
-  background: rgba(109, 40, 217, 0.32);
+  font-weight: 600;
+}
+
+.login-method-tabs__tab.is-active::after {
+  transform: scaleX(1);
 }
 
 .login-method-tabs__tab:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+.login-method-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .session-alert {
