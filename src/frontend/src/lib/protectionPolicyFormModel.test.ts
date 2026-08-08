@@ -3,6 +3,7 @@ import type { BackupPolicy } from './protectionPolicyApi'
 import {
   backupPolicyToForm,
   createEmptyPolicyForm,
+  getScheduleTimezoneOptions,
   policyFormToWritePayload,
   quickScheduleToCron,
   summarizeSchedule,
@@ -45,6 +46,19 @@ function policyWithSchedule(schedule: BackupPolicy['schedule']): BackupPolicy {
 }
 
 describe('protection policy schedule mapping', () => {
+  it('labels timezones with their current GMT offsets and sorts by offset', () => {
+    const options = getScheduleTimezoneOptions('Asia/Shanghai', new Date('2026-08-08T00:00:00Z'))
+    const shanghai = options.find((option) => option.value === 'Asia/Shanghai')
+    const newYork = options.find((option) => option.value === 'America/New_York')
+    const utc = options.find((option) => option.value === 'UTC')
+
+    expect(shanghai).toMatchObject({ label: '(GMT+08:00) Asia/Shanghai', offsetMinutes: 480 })
+    expect(newYork).toMatchObject({ label: '(GMT-04:00) America/New_York', offsetMinutes: -240 })
+    expect(utc).toMatchObject({ label: '(GMT+00:00) UTC', offsetMinutes: 0 })
+    expect(options.indexOf(newYork!)).toBeLessThan(options.indexOf(utc!))
+    expect(options.indexOf(utc!)).toBeLessThan(options.indexOf(shanghai!))
+  })
+
   it('serializes hour and day intervals through the shared mapper', () => {
     const form = createEmptyPolicyForm()
     form.scheduleTimezone = 'UTC'
