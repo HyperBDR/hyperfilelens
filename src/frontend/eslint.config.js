@@ -24,7 +24,11 @@ export default tseslint.config(
   },
   {
     languageOptions: {
-      globals: globals.browser,
+      globals: {
+        ...globals.browser,
+        // Vite `define` compile-time flag (see vite.config.ts / vite-env.d.ts).
+        __HFL_EXTENSIONS_FRONTEND__: 'readonly',
+      },
     },
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
