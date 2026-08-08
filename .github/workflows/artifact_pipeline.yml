@@ -371,8 +371,13 @@ jobs:
           # Prefer packaging secret for private plugin repos; do not fall back to
           # github.token (that token cannot clone other private repositories).
           # Scope to HFL_EXTENSION_GIT_TOKEN only (materialize reads it first).
+          token="${HFL_EXTENSION_GIT_TOKEN:-}"
+          if [[ ${#token} -lt 20 || "${token}" == "-" ]]; then
+            echo "::error::HFL_EXTENSION_GIT_TOKEN is missing or a placeholder; set a PAT with contents:read on the private extension repo"
+            exit 1
+          fi
           exts="$(
-            HFL_EXTENSION_GIT_TOKEN="${HFL_EXTENSION_GIT_TOKEN:-}" \
+            HFL_EXTENSION_GIT_TOKEN="${token}" \
               python3 tools/extensions/materialize_extensions.py \
               --repo-root . \
               --sources "${HFL_EXTENSION_SOURCES}" \

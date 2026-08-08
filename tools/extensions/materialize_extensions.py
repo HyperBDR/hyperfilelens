@@ -68,15 +68,39 @@ def _git_token() -> str:
     )
 
 
-def _git_env(url: str) -> dict[str, str]:
+def _usable_git_token(token: str) -> bool:
+    """Reject empty / placeholder values that look set in CI but cannot auth."""
+    if len(token) < 20:
+        return False
+    if token in {"-", "null", "undefined", "NONE", "changeme"}:
+        return False
+    return True
+
+
+def _git_env(url: str, *, require_https_auth: bool = False) -> dict[str, str]:
     """Env for git subprocesses: HTTPS auth via GIT_CONFIG_* (not argv / .git/config)."""
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    # Drop inherited Actions checkout auth slots so a packaging token is the only
+    # http.*.extraheader applied (GITHUB_TOKEN cannot read private sibling repos).
+    for key in list(env):
+        if key == "GIT_CONFIG_COUNT" or key.startswith("GIT_CONFIG_KEY_") or key.startswith(
+            "GIT_CONFIG_VALUE_"
+        ):
+            env.pop(key, None)
     token = _git_token()
-    if not token or not url.startswith("https://"):
+    if not url.startswith("https://"):
         return env
     parts = urlsplit(url)
     if not parts.hostname or parts.username:
+        return env
+    if not _usable_git_token(token):
+        if require_https_auth:
+            raise SystemExit(
+                "HTTPS extension source requires a usable HFL_EXTENSION_GIT_TOKEN "
+                "(GitHub PAT / fine-grained token with contents:read on the private "
+                "extension repo). Placeholder or empty values are rejected."
+            )
         return env
     basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
     # Ephemeral config through the environment — avoids token-in-URL remotes and
@@ -89,7 +113,7 @@ def _git_env(url: str) -> dict[str, str]:
 
 def _clone(url: str, dest: Path, ref: str | None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    env = _git_env(url)
+    env = _git_env(url, require_https_auth=url.startswith("https://"))
     if dest.exists():
         # Ensure origin stays credential-free (clean up older token-in-URL caches).
         subprocess.check_call(
