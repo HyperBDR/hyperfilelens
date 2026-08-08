@@ -30,6 +30,30 @@ class KnowledgeSourceTeardownBusyError(RuntimeError):
     """Raised when another worker owns the Knowledge Source lease."""
 
 
+def _session_links_blocking_ks_teardown(
+    knowledge_source: LensKnowledgeSource,
+    *,
+    owner_session_link_id: int | None = None,
+):
+    """Return chats that still own this KS and must be deleted first.
+
+    Chats already in ``deleting``/``deleted`` are not blockers: they are tearing
+    the KS down (or finished). Treating ``deleting`` as active caused a deadlock
+    when Chat teardown and standalone KS teardown raced — KS waited for Chat to
+    become ``deleted``, while Chat waited for KS teardown to finish.
+    """
+
+    blockers = knowledge_source.session_links.exclude(
+        lifecycle_status__in=(
+            LensSessionLink.LifecycleStatus.DELETED,
+            LensSessionLink.LifecycleStatus.DELETING,
+        )
+    )
+    if owner_session_link_id is not None:
+        blockers = blockers.exclude(pk=owner_session_link_id)
+    return blockers
+
+
 def _claimed_update(
     knowledge_source_id: int,
     claim_token: str,
@@ -70,9 +94,7 @@ def request_knowledge_source_teardown(
     """Persist deletion intent and enqueue it after the transaction commits."""
 
     locked = LensKnowledgeSource.objects.select_for_update().get(pk=knowledge_source.pk)
-    if locked.session_links.exclude(
-        lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
-    ).exists():
+    if _session_links_blocking_ks_teardown(locked).exists():
         raise ValidationError(
             {"knowledge_source": "Delete the owning Chat before deleting this knowledge source."}
         )
@@ -261,12 +283,10 @@ def run_knowledge_source_teardown(
             raise ValidationError(
                 {"knowledge_source": "Data gateway restore work is still stopping."}
             )
-        blockers = knowledge_source.session_links.exclude(
-            lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
-        )
-        if owner_session_link_id is not None:
-            blockers = blockers.exclude(pk=owner_session_link_id)
-        if blockers.exists():
+        if _session_links_blocking_ks_teardown(
+            knowledge_source,
+            owner_session_link_id=owner_session_link_id,
+        ).exists():
             raise ValidationError(
                 {"knowledge_source": "Knowledge source still belongs to an active Chat."}
             )

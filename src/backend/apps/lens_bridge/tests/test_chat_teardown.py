@@ -301,6 +301,161 @@ class CopilotChatTeardownTests(TestCase):
         self.assertEqual(self.session.status, LensSessionLink.Status.ACTIVE)
         queue_teardown.assert_called_once_with(self.session.id)
 
+    @mock.patch(
+        "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown"
+    )
+    def test_orphan_ks_cleanup_returns_without_enqueue_when_deleted(
+        self,
+        queue_ks_teardown,
+    ):
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            return_value={
+                "knowledge_source_id": self.knowledge_source.id,
+                "status": "deleted",
+            },
+        ) as run_teardown:
+            chat_lifecycle._cleanup_orphan_knowledge_source(
+                self.knowledge_source,
+                owner_session_link_id=self.session.id,
+            )
+
+        run_teardown.assert_called_once_with(
+            knowledge_source_id=self.knowledge_source.id,
+            owner_session_link_id=self.session.id,
+        )
+        queue_ks_teardown.assert_not_called()
+        self.knowledge_source.refresh_from_db()
+        self.assertEqual(
+            self.knowledge_source.lifecycle_status,
+            LensKnowledgeSource.LifecycleStatus.DELETING,
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown"
+    )
+    def test_orphan_ks_cleanup_does_not_enqueue_when_busy_or_scheduled(
+        self,
+        queue_ks_teardown,
+    ):
+        for status in ("busy", "scheduled"):
+            queue_ks_teardown.reset_mock()
+            with mock.patch(
+                "apps.lens_bridge.services.knowledge_source_teardown."
+                "run_knowledge_source_teardown",
+                return_value={
+                    "knowledge_source_id": self.knowledge_source.id,
+                    "status": status,
+                },
+            ):
+                chat_lifecycle._cleanup_orphan_knowledge_source(
+                    self.knowledge_source,
+                    owner_session_link_id=self.session.id,
+                )
+
+            queue_ks_teardown.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown"
+    )
+    def test_orphan_ks_cleanup_enqueues_when_inline_teardown_fails(
+        self,
+        queue_ks_teardown,
+    ):
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            side_effect=RuntimeError("SourceLens unavailable"),
+        ):
+            chat_lifecycle._cleanup_orphan_knowledge_source(
+                self.knowledge_source,
+                owner_session_link_id=self.session.id,
+            )
+
+        queue_ks_teardown.assert_called_once_with(
+            knowledge_source_id=self.knowledge_source.id
+        )
+
+    @mock.patch(
+        "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown"
+    )
+    def test_orphan_ks_cleanup_skips_enqueue_when_retry_already_scheduled(
+        self,
+        queue_ks_teardown,
+    ):
+        def fail_and_schedule(**_kwargs):
+            LensKnowledgeSource.all_objects.filter(pk=self.knowledge_source.id).update(
+                teardown_next_retry_at=timezone.now() + timedelta(minutes=5),
+                teardown_claimed_at=None,
+                teardown_claim_token=None,
+                updated_at=timezone.now(),
+            )
+            raise RuntimeError("SourceLens unavailable")
+
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            side_effect=fail_and_schedule,
+        ):
+            chat_lifecycle._cleanup_orphan_knowledge_source(
+                self.knowledge_source,
+                owner_session_link_id=self.session.id,
+            )
+
+        queue_ks_teardown.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown"
+    )
+    def test_orphan_ks_cleanup_skips_enqueue_when_teardown_lease_is_live(
+        self,
+        queue_ks_teardown,
+    ):
+        def fail_with_live_claim(**_kwargs):
+            LensKnowledgeSource.all_objects.filter(pk=self.knowledge_source.id).update(
+                teardown_claimed_at=timezone.now(),
+                updated_at=timezone.now(),
+            )
+            raise RuntimeError("lease lost mid-teardown")
+
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            side_effect=fail_with_live_claim,
+        ):
+            chat_lifecycle._cleanup_orphan_knowledge_source(
+                self.knowledge_source,
+                owner_session_link_id=self.session.id,
+            )
+
+        queue_ks_teardown.assert_not_called()
+
+    @mock.patch(
+        "apps.lens_bridge.services.sync_queue.queue_knowledge_source_teardown",
+        side_effect=RuntimeError("broker unavailable"),
+    )
+    def test_orphan_ks_cleanup_records_queue_failure_on_status_detail(
+        self,
+        _queue_ks_teardown,
+    ):
+        with mock.patch(
+            "apps.lens_bridge.services.knowledge_source_teardown."
+            "run_knowledge_source_teardown",
+            side_effect=RuntimeError("SourceLens unavailable"),
+        ):
+            chat_lifecycle._cleanup_orphan_knowledge_source(
+                self.knowledge_source,
+                owner_session_link_id=self.session.id,
+            )
+
+        self.knowledge_source.refresh_from_db()
+        self.assertIn(
+            "waiting for the worker queue",
+            self.knowledge_source.status_detail.lower(),
+        )
+        self.assertIn("broker unavailable", self.knowledge_source.status_detail)
+
     @mock.patch("apps.lens_bridge.services.assistant_access.soft_delete_assistant_link")
     @mock.patch("apps.lens_bridge.services.assistants._delete_sl_assistant")
     @mock.patch("apps.node.services.internal.agent_task.run_agent_task_sync")

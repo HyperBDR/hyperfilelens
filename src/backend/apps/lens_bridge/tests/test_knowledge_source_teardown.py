@@ -117,6 +117,95 @@ class KnowledgeSourceDeleteApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
     @mock.patch(
+        "apps.lens_bridge.tasks.knowledge_source_teardown."
+        "execute_knowledge_source_teardown_task.delay"
+    )
+    def test_direct_delete_allowed_when_owning_chat_is_already_deleting(
+        self, delay
+    ):
+        LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(
+                reverse(
+                    "lens-knowledge-source-detail",
+                    kwargs={"pk": self.knowledge_source.id},
+                ),
+                HTTP_X_ORG_KEY=self.organization.key,
+            )
+
+        self.assertEqual(response.status_code, 202)
+        delay.assert_called_once_with(
+            knowledge_source_id=self.knowledge_source.id
+        )
+
+    @mock.patch(
+        "apps.node.services.internal.node_workload.get_node_workload_blockers",
+        return_value=[],
+    )
+    def test_standalone_teardown_proceeds_while_owner_chat_is_deleting(
+        self, _blockers
+    ):
+        """Chat+KS teardown race must not deadlock on a deleting owner chat."""
+        LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            lifecycle_status=LensSessionLink.LifecycleStatus.DELETING,
+        )
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.save(
+            update_fields=["lifecycle_status", "updated_at"]
+        )
+
+        result = knowledge_source_teardown.run_knowledge_source_teardown(
+            knowledge_source_id=self.knowledge_source.id
+        )
+
+        self.assertEqual(result["status"], "deleted")
+        self.knowledge_source.refresh_from_db()
+        self.assertTrue(self.knowledge_source.is_deleted)
+
+    @mock.patch(
+        "apps.node.services.internal.node_workload.get_node_workload_blockers",
+        return_value=[],
+    )
+    def test_standalone_teardown_still_blocked_by_ready_chat(self, _blockers):
+        LensSessionLink.objects.create(
+            organization=self.organization,
+            hfl_user=self.user,
+            gateway_link=self.gateway_link,
+            knowledge_source=self.knowledge_source,
+            lifecycle_status=LensSessionLink.LifecycleStatus.READY,
+        )
+        self.knowledge_source.lifecycle_status = (
+            LensKnowledgeSource.LifecycleStatus.DELETING
+        )
+        self.knowledge_source.save(
+            update_fields=["lifecycle_status", "updated_at"]
+        )
+
+        with self.assertRaises(
+            knowledge_source_teardown.KnowledgeSourceTeardownIncompleteError
+        ) as ctx:
+            knowledge_source_teardown.run_knowledge_source_teardown(
+                knowledge_source_id=self.knowledge_source.id
+            )
+
+        self.assertIn("active Chat", str(ctx.exception))
+        self.knowledge_source.refresh_from_db()
+        self.assertFalse(self.knowledge_source.is_deleted)
+
+    @mock.patch(
         "apps.lens_bridge.tasks.chat_lifecycle."
         "execute_copilot_chat_teardown_task.delay"
     )
