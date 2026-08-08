@@ -1,10 +1,14 @@
-"""Tests for deployment host registration and host-scoped monitoring."""
+"""Deployment host registration and host-scoped monitoring (Host services).
 
-import uuid
+Platform Ops HTTP surfaces (``/api/v1/platform-ops/monitoring/hosts|host``)
+live on the commercial extension. Community empty socket must not expose them;
+API behavior is covered in hyperfilelens-ee.
+"""
 
 from django.contrib.auth.models import User
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
@@ -18,80 +22,15 @@ from apps.monitor.services.internal.deployment_host import (
     _consolidate_duplicate_hosts,
     touch_local_deployment_host,
 )
+from common.extension_loader import extensions_enabled
 
 
-def _payload(response):
-    data = response.data
-    if isinstance(data, dict) and "data" in data and "code" in data:
-        return data["data"]
-    return data
-
-
-@override_settings(HFL_PLATFORM_OPS_ENABLED=True)
-class DeploymentHostMonitorTests(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        self.staff = User.objects.create_user(
-            username="staff@test.com",
-            email="staff@test.com",
-            password="Pass1234",
-            is_staff=True,
-        )
-        self.client.force_authenticate(user=self.staff)
-        self.client.defaults["HTTP_X_HFL_SITE_ROLE"] = "ops"
-        self.org = Organization.objects.create(key="acme", name="Acme")
-        Membership.objects.create(
-            user=self.staff,
-            organization=self.org,
-            role=Membership.Role.OWNER,
-        )
-
+class DeploymentHostServiceTests(TestCase):
     def test_touch_local_deployment_host_registers_current_machine(self):
         host = touch_local_deployment_host()
         self.assertIsNotNone(host.id)
         self.assertTrue(host.hostname)
         self.assertIsNotNone(host.last_seen_at)
-
-    def test_list_deployment_hosts_api(self):
-        touch_local_deployment_host()
-        response = self.client.get("/api/v1/platform-ops/monitoring/hosts")
-        self.assertEqual(response.status_code, 200)
-        payload = _payload(response)
-        self.assertGreaterEqual(len(payload["items"]), 1)
-        self.assertIn("hostname", payload["items"][0])
-        self.assertIn("status", payload["items"][0])
-
-    def test_monitoring_host_filters_by_host_id(self):
-        local = touch_local_deployment_host()
-        remote = DeploymentHost.objects.create(
-            hostname="remote-host-01",
-            platform="Linux-test",
-            ip_address="10.0.0.2",
-            last_seen_at=timezone.now(),
-        )
-        SystemMetric.objects.create(host=remote, cpu={"usage_percent": 42})
-
-        response = self.client.get(
-            "/api/v1/platform-ops/monitoring/host",
-            {"hours": "1", "host_id": str(remote.id)},
-        )
-        self.assertEqual(response.status_code, 200)
-        payload = _payload(response)
-        self.assertEqual(payload["host_id"], str(remote.id))
-        self.assertEqual(payload["host"]["hostname"], remote.hostname)
-
-        local_response = self.client.get(
-            "/api/v1/platform-ops/monitoring/host",
-            {"hours": "1", "host_id": str(local.id)},
-        )
-        self.assertEqual(local_response.status_code, 200)
-
-    def test_monitoring_host_unknown_id_returns_404(self):
-        response = self.client.get(
-            "/api/v1/platform-ops/monitoring/host",
-            {"hours": "1", "host_id": str(uuid.uuid4())},
-        )
-        self.assertEqual(response.status_code, 404)
 
     def test_build_system_monitor_payload_without_host_id_uses_local(self):
         local = touch_local_deployment_host()
@@ -109,7 +48,9 @@ class DeploymentHostMonitorTests(TestCase):
         since = timezone.now() - timezone.timedelta(hours=1)
         until = timezone.now()
         before = SystemMetric.objects.filter(host=local).count()
-        payload = build_system_monitor_payload(since=since, until=until, host_id=str(local.id))
+        payload = build_system_monitor_payload(
+            since=since, until=until, host_id=str(local.id)
+        )
         after = SystemMetric.objects.filter(host=local).count()
         self.assertIsNotNone(payload)
         self.assertEqual(before, after)
@@ -149,3 +90,39 @@ class DeploymentHostMonitorTests(TestCase):
         items = list_deployment_hosts()
         names = {item["name"] for item in items}
         self.assertNotIn("legacy-offline-host", names)
+
+
+class DeploymentHostPlatformOpsCommunityTests(TestCase):
+    """Live URLconf: Community empty socket has no Platform Ops host monitor routes."""
+
+    def setUp(self):
+        if extensions_enabled():
+            self.skipTest(
+                "live URLconf has extension routes; see hyperfilelens-ee platform_ops tests"
+            )
+        self.client = APIClient()
+        self.staff = User.objects.create_user(
+            username="staff@test.com",
+            email="staff@test.com",
+            password="Pass1234",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=self.staff)
+        self.client.defaults["HTTP_X_HFL_SITE_ROLE"] = "ops"
+        self.org = Organization.objects.create(key="acme", name="Acme")
+        Membership.objects.create(
+            user=self.staff,
+            organization=self.org,
+            role=Membership.Role.OWNER,
+        )
+
+    def test_monitoring_hosts_unavailable_without_extension(self):
+        response = self.client.get("/api/v1/platform-ops/monitoring/hosts")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_monitoring_host_unavailable_without_extension(self):
+        response = self.client.get(
+            "/api/v1/platform-ops/monitoring/host",
+            {"hours": "1"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
