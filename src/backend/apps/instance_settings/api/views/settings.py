@@ -52,7 +52,6 @@ from apps.configuration.services.runtime_settings import (
     SECRET_KEY_LANGFUSE_SECRET,
     SECRET_KEY_OPENAI,
     SECRET_KEY_TURNSTILE,
-    email_delivery_configured,
     email_code_login_enabled,
     email_signup_enabled,
     password_reset_available,
